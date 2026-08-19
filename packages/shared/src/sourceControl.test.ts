@@ -4,8 +4,17 @@ import {
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
+  isTerminalChangeRequestState,
   resolveChangeRequestPresentation,
 } from "./sourceControl.ts";
+
+describe("change request state", () => {
+  it("uses the shared provider state model for terminal settlement", () => {
+    expect(isTerminalChangeRequestState("open")).toBe(false);
+    expect(isTerminalChangeRequestState("closed")).toBe(true);
+    expect(isTerminalChangeRequestState("merged")).toBe(true);
+  });
+});
 
 describe("source control presentation", () => {
   it("uses merge request terminology for GitLab", () => {

@@ -7,7 +7,6 @@ import {
   GitBranch,
   GitPullRequest,
   Globe2,
-  type LucideIcon,
   Plus,
   TerminalSquare,
   Volume2,
@@ -42,8 +41,17 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
-import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import {
+  browserTabMuteMenuItem,
+  resolveBrowserTabRuntimeState,
+  setBrowserTabAudioMuted,
+} from "./rightPanelBrowserTabState";
+import {
+  type AddPanelSurfaceAction,
+  buildAddSurfaceActions,
+  surfaceShortcutActionForKey,
+} from "./rightPanelSurfaceActions";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -99,16 +107,6 @@ export interface PullRequestTabStatus {
   isDraft: boolean;
 }
 
-const SURFACE_DISABLED_REASONS = {
-  browser: "Browser previews are only available in the T3 Code desktop app.",
-  terminal: "Terminal surfaces are only available from a project thread.",
-  files: "Files are only available when a project is open.",
-  diff: "Diff is only available for server threads in Git repositories.",
-  sourceControl: "Version Control is only available when a project is open in a Git repository.",
-  pullRequest: "This thread's branch has no pull request yet.",
-  agents: "Agents are only available from a thread.",
-} as const;
-
 /** Overlays that must win over the launcher's letter shortcuts. */
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="dialog-popup"]',
@@ -121,39 +119,6 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="autocomplete-popup"]',
 ].join(",");
 
-/** One-line unavailability hints for the empty-state cards. */
-const SURFACE_UNAVAILABLE_HINTS = {
-  browser: "Only available in the desktop app.",
-  terminal: "Available when a project is open.",
-  files: "Available when a project is open.",
-  diff: "Available for Git repositories.",
-  sourceControl: "Available for Git repositories.",
-  pullRequest: "No pull request on this branch yet.",
-  agents: "Available from a thread.",
-} as const;
-
-type AddPanelSurfaceId =
-  | "source-control"
-  | "browser"
-  | "terminal"
-  | "files"
-  | "diff"
-  | "pull-request"
-  | "agents";
-
-type AddPanelSurfaceAction = {
-  readonly id: AddPanelSurfaceId;
-  readonly label: string;
-  readonly description: string;
-  readonly icon: LucideIcon;
-  readonly shortcut: string;
-  readonly available: boolean;
-  readonly disabledReason?: string;
-  readonly unavailableHint?: string;
-  readonly onClick: () => void;
-  readonly badgeCount: number;
-};
-
 type TabContextMenuAction =
   | "copy-path"
   | "toggle-mute"
@@ -161,201 +126,6 @@ type TabContextMenuAction =
   | "close-others"
   | "close-to-right"
   | "close-all";
-
-/**
- * Desktop preview tab backing a surface, or null for non-preview surfaces, the
- * "new browser tab" placeholder, and the web build where no desktop tab exists.
- */
-function previewTabIdOf(
-  surface: RightPanelSurface,
-  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
-): string | null {
-  if (surface.kind !== "preview" || !surface.resourceId) return null;
-  return sessions[surface.resourceId]?.tabId ?? null;
-}
-
-/**
- * Label and enabled state for a preview tab's mute menu entry.
- * Stays disabled until desktop overlay state arrives: a server session id can
- * resolve while the preview manager's createTab is still in flight, and muting
- * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
- */
-export function tabMuteMenuItem(input: {
-  overlay: DesktopPreviewOverlay | null;
-  canResolveRuntimeTabId: boolean;
-}): { label: string; disabled: boolean } {
-  const muted = input.overlay?.audioMuted ?? false;
-  return {
-    label: muted ? "Unmute tab" : "Mute tab",
-    disabled: input.overlay === null || !input.canResolveRuntimeTabId,
-  };
-}
-
-type TabAudioState = "none" | "audible" | "muted";
-
-/**
- * A muted tab that is not making sound shows nothing: mute is armed silently,
- * and the indicator only appears once there is audio to speak of.
- */
-function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
-  if (!overlay?.audible) return "none";
-  return overlay.audioMuted ? "muted" : "audible";
-}
-
-type SurfaceShortcutEvent = Pick<
-  KeyboardEvent,
-  "altKey" | "ctrlKey" | "defaultPrevented" | "isComposing" | "key" | "metaKey"
->;
-
-export function surfaceShortcutActionForKey<
-  const Action extends { available: boolean; shortcut: string },
->(actions: readonly Action[], event: SurfaceShortcutEvent): Action | null {
-  if (event.defaultPrevented || event.isComposing) return null;
-  if (event.metaKey || event.ctrlKey || event.altKey) return null;
-  return (
-    actions.find(
-      (action) => action.available && action.shortcut.toLowerCase() === event.key.toLowerCase(),
-    ) ?? null
-  );
-}
-
-type AddPanelSurfaceActionProps = Pick<
-  RightPanelTabsProps,
-  | "onAddBrowser"
-  | "onAddTerminal"
-  | "onAddDiff"
-  | "onAddFiles"
-  | "onAddSourceControl"
-  | "onAddPullRequest"
-  | "onAddAgents"
-  | "browserAvailable"
-  | "terminalAvailable"
-  | "diffAvailable"
-  | "filesAvailable"
-  | "sourceControlAvailable"
-  | "pullRequestAvailable"
-  | "agentsAvailable"
-  | "liveAgentCount"
->;
-
-export const ADD_SURFACE_EMPTY_STATE_ORDER: readonly AddPanelSurfaceId[] = [
-  "source-control",
-  "browser",
-  "terminal",
-  "files",
-  "diff",
-  "pull-request",
-  "agents",
-];
-
-export const ADD_SURFACE_MENU_ORDER: readonly AddPanelSurfaceId[] = [
-  "browser",
-  "terminal",
-  "files",
-  "diff",
-  "pull-request",
-  "agents",
-  "source-control",
-];
-
-function buildAddSurfaceActionMap(
-  props: AddPanelSurfaceActionProps,
-): Readonly<Record<AddPanelSurfaceId, AddPanelSurfaceAction>> {
-  return {
-    "source-control": {
-      id: "source-control",
-      label: "Version Control",
-      description: "Review repository changes and sync state.",
-      icon: GitBranch,
-      shortcut: "V",
-      available: props.sourceControlAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.sourceControl,
-      unavailableHint: SURFACE_UNAVAILABLE_HINTS.sourceControl,
-      onClick: props.onAddSourceControl,
-      badgeCount: 0,
-    },
-    browser: {
-      id: "browser",
-      label: "Browser",
-      description: "Open a local app or URL.",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.browser,
-      unavailableHint: SURFACE_UNAVAILABLE_HINTS.browser,
-      onClick: props.onAddBrowser,
-      badgeCount: 0,
-    },
-    terminal: {
-      id: "terminal",
-      label: "Terminal",
-      description: "Start a shell in this workspace.",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
-      unavailableHint: SURFACE_UNAVAILABLE_HINTS.terminal,
-      onClick: props.onAddTerminal,
-      badgeCount: 0,
-    },
-    files: {
-      id: "files",
-      label: "Files",
-      description: "Browse and read workspace files.",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.files,
-      unavailableHint: SURFACE_UNAVAILABLE_HINTS.files,
-      onClick: props.onAddFiles,
-      badgeCount: 0,
-    },
-    diff: {
-      id: "diff",
-      label: "Diff",
-      description: "Review changes in this thread.",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.diff,
-      unavailableHint: SURFACE_UNAVAILABLE_HINTS.diff,
-      onClick: props.onAddDiff,
-      badgeCount: 0,
-    },
-    "pull-request": {
-      id: "pull-request",
-      label: "Pull request",
-      description: "Open this branch's pull request.",
-      icon: GitPullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
-      unavailableHint: SURFACE_UNAVAILABLE_HINTS.pullRequest,
-      onClick: props.onAddPullRequest,
-      badgeCount: 0,
-    },
-    agents: {
-      id: "agents",
-      label: "Agents",
-      description: "Watch subagents and workflows run.",
-      icon: Bot,
-      shortcut: "A",
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.agents,
-      unavailableHint: SURFACE_UNAVAILABLE_HINTS.agents,
-      onClick: props.onAddAgents,
-      badgeCount: props.liveAgentCount,
-    },
-  };
-}
-
-export function buildAddSurfaceActions(
-  props: AddPanelSurfaceActionProps,
-  order: readonly AddPanelSurfaceId[] = ADD_SURFACE_EMPTY_STATE_ORDER,
-): readonly AddPanelSurfaceAction[] {
-  const actions = buildAddSurfaceActionMap(props);
-  return order.map((id) => actions[id]);
-}
 
 function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
   return (
@@ -687,7 +457,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const emptyStateActions = useMemo(
-    () => buildAddSurfaceActions(props, ADD_SURFACE_EMPTY_STATE_ORDER),
+    () => buildAddSurfaceActions(props, "empty-state"),
     [
       props.browserAvailable,
       props.diffAvailable,
@@ -707,7 +477,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     ],
   );
   const menuActions = useMemo(
-    () => buildAddSurfaceActions(props, ADD_SURFACE_MENU_ORDER),
+    () => buildAddSurfaceActions(props, "menu"),
     [
       props.browserAvailable,
       props.diffAvailable,
@@ -751,21 +521,23 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (surface.kind === "file") {
         items.push({ id: "copy-path", label: "Copy path" });
       }
-      const menuPreviewTabId = previewTabIdOf(surface, props.previewSessions);
+      const browserTab = resolveBrowserTabRuntimeState({
+        surface,
+        sessions: props.previewSessions,
+        desktopByTabId: props.desktopByTabId,
+        previewRuntimeTabId: props.previewRuntimeTabId,
+      });
       // Desktop overlay state only arrives once the preview manager has created
       // the tab. A server session id alone can still be ahead of that, and
       // muting then fails with PreviewTabNotFoundError that nobody surfaces.
-      const menuOverlay = menuPreviewTabId
-        ? (props.desktopByTabId[menuPreviewTabId] ?? null)
-        : null;
-      const menuMuted = menuOverlay?.audioMuted ?? false;
+      const menuMuted = browserTab.overlay?.audioMuted ?? false;
       if (surface.kind === "preview") {
         // Not gated on audibility: silencing a quiet tab ahead of time is the
         // point, so the item is offered whenever the tab is mutable at all.
         items.push({
           id: "toggle-mute",
-          ...tabMuteMenuItem({
-            overlay: menuOverlay,
+          ...browserTabMuteMenuItem({
+            overlay: browserTab.overlay,
             canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
           }),
         });
@@ -795,14 +567,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
           break;
         case "toggle-mute": {
-          // menuOverlay repeats the disabled gate above: the desktop tab must
+          // The overlay repeats the disabled gate above: the desktop tab must
           // exist before it can be addressed, however the menu was dismissed.
-          const runtimeTabId =
-            menuPreviewTabId && menuOverlay
-              ? (props.previewRuntimeTabId?.(menuPreviewTabId) ?? null)
-              : null;
-          if (runtimeTabId) {
-            void previewBridge?.setAudioMuted(runtimeTabId, !menuMuted).catch(() => undefined);
+          if (browserTab.runtimeTabId && browserTab.overlay) {
+            setBrowserTabAudioMuted(browserTab.runtimeTabId, !menuMuted);
           }
           break;
         }
@@ -874,15 +642,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
-              const previewTabId = previewTabIdOf(surface, props.previewSessions);
-              // Desktop state is keyed by the session id, but desktop actions
-              // must be addressed with the runtime id.
-              const audio = tabAudioState(
-                previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
-              );
-              const audioRuntimeTabId = previewTabId
-                ? (props.previewRuntimeTabId?.(previewTabId) ?? null)
-                : null;
+              const browserTab = resolveBrowserTabRuntimeState({
+                surface,
+                sessions: props.previewSessions,
+                desktopByTabId: props.desktopByTabId,
+                previewRuntimeTabId: props.previewRuntimeTabId,
+              });
+              const audioRuntimeTabId = browserTab.runtimeTabId;
               return (
                 <div
                   key={surface.id}
@@ -920,24 +686,27 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     </span>
                     <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
                   </button>
-                  {audio === "none" || !audioRuntimeTabId ? null : (
+                  {browserTab.audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger
                         render={
                           <button
                             type="button"
                             className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                            aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                            aria-label={
+                              browserTab.audio === "muted" ? `Unmute ${title}` : `Mute ${title}`
+                            }
                             onClick={(event) => {
                               // Sibling of the close button, inside a tab that
                               // activates on click: keep this to the toggle.
                               event.stopPropagation();
-                              void previewBridge
-                                ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
-                                .catch(() => undefined);
+                              setBrowserTabAudioMuted(
+                                audioRuntimeTabId,
+                                browserTab.audio !== "muted",
+                              );
                             }}
                           >
-                            {audio === "muted" ? (
+                            {browserTab.audio === "muted" ? (
                               <VolumeOff className="size-3" />
                             ) : (
                               <Volume2 className="size-3" />
@@ -945,7 +714,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           </button>
                         }
                       />
-                      <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+                      <TooltipPopup>
+                        {browserTab.audio === "muted" ? "Unmute tab" : "Mute tab"}
+                      </TooltipPopup>
                     </Tooltip>
                   )}
                   <Tooltip>

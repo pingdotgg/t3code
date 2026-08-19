@@ -1,6 +1,10 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
+import {
+  ChangeRequestState,
+  SourceControlProviderError,
+  SourceControlProviderInfo,
+} from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
@@ -42,9 +46,7 @@ const GitPushStepStatus = Schema.Literals([
 ]);
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
 const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
-const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
-const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
 export const GitRunStackedActionToastRunAction = Schema.Struct({
   kind: GitStackedAction,
@@ -97,7 +99,7 @@ const GitResolvedPullRequest = Schema.Struct({
   url: Schema.String,
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
-  state: GitPullRequestState,
+  state: ChangeRequestState,
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
@@ -200,7 +202,7 @@ const VcsStatusChangeRequest = Schema.Struct({
   url: Schema.String,
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
-  state: VcsStatusChangeRequestState,
+  state: ChangeRequestState,
   /**
    * Last provider-side activity (ISO). For a merged/closed change request
    * this bounds when it reached that state, so clients can tell a PR that

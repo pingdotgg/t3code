@@ -1,7 +1,8 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { ChangeRequestState, OrchestrationThreadShell } from "@t3tools/contracts";
+import { isTerminalChangeRequestState } from "@t3tools/shared/sourceControl";
 
-export type ChangeRequestStateLike = "open" | "closed" | "merged";
+export type ChangeRequestStateLike = ChangeRequestState;
 
 /**
  * The slice of a change request the settle rules need. `updatedAt` is the
@@ -57,8 +58,8 @@ export function changeRequestAutoSettles(
 ): boolean {
   if (changeRequest == null) return false;
   const terminal =
-    changeRequest.state === "closed" ||
-    (changeRequest.state === "merged" && options.autoSettleOnMerge !== false);
+    isTerminalChangeRequestState(changeRequest.state) &&
+    (changeRequest.state !== "merged" || options.autoSettleOnMerge !== false);
   if (!terminal) return false;
   if (changeRequest.updatedAt == null || options.thread == null) return true;
   const updatedAtMs = Date.parse(changeRequest.updatedAt);

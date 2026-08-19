@@ -1,4 +1,5 @@
 import type {
+  ChangeRequestState,
   SourceControlProviderInfo,
   SourceControlProviderKind,
   VcsPanelChangeGroup,
@@ -6,6 +7,12 @@ import type {
   VcsPanelSnapshotResult,
   VcsRef,
 } from "@t3tools/contracts";
+
+export function isTerminalChangeRequestState(
+  state: ChangeRequestState,
+): state is "closed" | "merged" {
+  return state === "closed" || state === "merged";
+}
 
 export type BranchSyncState = "fetch" | "pull" | "push" | "publish" | "diverged";
 

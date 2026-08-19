@@ -2,14 +2,9 @@ import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/con
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  ADD_SURFACE_EMPTY_STATE_ORDER,
-  ADD_SURFACE_MENU_ORDER,
-  buildAddSurfaceActions,
-  RightPanelTabs,
-  surfaceShortcutActionForKey,
-  tabMuteMenuItem,
-} from "./RightPanelTabs";
+import { RightPanelTabs } from "./RightPanelTabs";
+import { browserTabMuteMenuItem } from "./rightPanelBrowserTabState";
+import { buildAddSurfaceActions, surfaceShortcutActionForKey } from "./rightPanelSurfaceActions";
 
 function shortcutEvent(
   key: string,
@@ -171,19 +166,21 @@ function actionProps() {
 
 describe("RightPanelTabs add-surface actions", () => {
   it("keeps Version Control first and unique in the empty state", () => {
-    const actions = buildAddSurfaceActions(actionProps(), ADD_SURFACE_EMPTY_STATE_ORDER);
+    const actions = buildAddSurfaceActions(actionProps(), "empty-state");
     const sourceControlActions = actions.filter((action) => action.id === "source-control");
 
     expect(actions[0]?.id).toBe("source-control");
+    expect(actions[0]?.instancePolicy).toBe("singleton");
     expect(sourceControlActions).toHaveLength(1);
     expect(actions.some((action) => action.id === "pull-request")).toBe(true);
   });
 
   it("keeps Version Control last and unique in the add menu", () => {
-    const actions = buildAddSurfaceActions(actionProps(), ADD_SURFACE_MENU_ORDER);
+    const actions = buildAddSurfaceActions(actionProps(), "menu");
     const sourceControlActions = actions.filter((action) => action.id === "source-control");
 
     expect(actions.at(-1)?.id).toBe("source-control");
+    expect(actions.find((action) => action.id === "pull-request")?.instancePolicy).toBe("multiple");
     expect(sourceControlActions).toHaveLength(1);
     expect(actions.some((action) => action.id === "pull-request")).toBe(true);
   });
@@ -215,27 +212,29 @@ describe("RightPanelTabs add-surface actions", () => {
 });
 
 describe("surface shortcuts", () => {
-  const actions = [
-    { shortcut: "B", available: true, label: "Browser" },
-    { shortcut: "D", available: false, label: "Diff" },
-  ] as const;
-
   it("matches available surface shortcuts case-insensitively", () => {
-    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b"))).toBe(actions[0]);
-    expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
+    const actions = buildAddSurfaceActions(actionProps(), "menu");
+    const sourceControl = actions.find((action) => action.id === "source-control");
+
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("v"))).toBe(sourceControl);
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("V"))).toBe(sourceControl);
   });
 
   it("does not activate unavailable surfaces", () => {
+    const actions = buildAddSurfaceActions({ ...actionProps(), diffAvailable: false }, "menu");
+
     expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
   });
 
   it("leaves modified, composing, and already-handled key events alone", () => {
-    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b", { metaKey: true }))).toBeNull();
+    const actions = buildAddSurfaceActions(actionProps(), "menu");
+
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("v", { metaKey: true }))).toBeNull();
     expect(
-      surfaceShortcutActionForKey(actions, shortcutEvent("b", { isComposing: true })),
+      surfaceShortcutActionForKey(actions, shortcutEvent("v", { isComposing: true })),
     ).toBeNull();
     expect(
-      surfaceShortcutActionForKey(actions, shortcutEvent("b", { defaultPrevented: true })),
+      surfaceShortcutActionForKey(actions, shortcutEvent("v", { defaultPrevented: true })),
     ).toBeNull();
   });
 });
@@ -278,32 +277,35 @@ describe("RightPanelTabs audio indicator", () => {
   });
 });
 
-describe("tabMuteMenuItem", () => {
+describe("browserTabMuteMenuItem", () => {
   const overlay = (audioMuted: boolean) =>
-    ({ audioMuted, audible: false }) as Parameters<typeof tabMuteMenuItem>[0]["overlay"];
+    ({ audioMuted, audible: false }) as Parameters<typeof browserTabMuteMenuItem>[0]["overlay"];
 
   it("stays disabled until the desktop tab exists", () => {
     // The server session id resolves before the preview manager finishes
     // createTab. Muting in that window fails with an error nobody surfaces.
-    expect(tabMuteMenuItem({ overlay: null, canResolveRuntimeTabId: true })).toEqual({
+    expect(browserTabMuteMenuItem({ overlay: null, canResolveRuntimeTabId: true })).toEqual({
       label: "Mute tab",
       disabled: true,
     });
   });
 
   it("stays disabled when no runtime tab id can be resolved", () => {
-    expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: false })).toEqual({
-      label: "Mute tab",
-      disabled: true,
-    });
+    expect(
+      browserTabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: false }),
+    ).toEqual({ label: "Mute tab", disabled: true });
   });
 
   it("offers mute and unmute once the tab is addressable", () => {
-    expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: true })).toEqual({
+    expect(
+      browserTabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: true }),
+    ).toEqual({
       label: "Mute tab",
       disabled: false,
     });
-    expect(tabMuteMenuItem({ overlay: overlay(true), canResolveRuntimeTabId: true })).toEqual({
+    expect(
+      browserTabMuteMenuItem({ overlay: overlay(true), canResolveRuntimeTabId: true }),
+    ).toEqual({
       label: "Unmute tab",
       disabled: false,
     });

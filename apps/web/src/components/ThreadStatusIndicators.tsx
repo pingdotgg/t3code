@@ -4,6 +4,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { isTerminalChangeRequestState } from "@t3tools/shared/sourceControl";
 import { Atom } from "effect/unstable/reactivity";
 import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
@@ -141,12 +142,6 @@ export interface ThreadChangeRequestSnapshot {
 export const threadChangeRequestSnapshotsAtom = Atom.make<
   ReadonlyMap<string, ThreadChangeRequestSnapshot>
 >(new Map()).pipe(Atom.keepAlive, Atom.withLabel("sidebar:thread-change-request-snapshots"));
-
-function isTerminalChangeRequestState(
-  state: NonNullable<ThreadPr>["state"],
-): state is "merged" | "closed" {
-  return state === "merged" || state === "closed";
-}
 
 function sourceControlProvidersEqual(
   left: VcsStatusResult["sourceControlProvider"] | undefined,
