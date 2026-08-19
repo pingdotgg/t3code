@@ -2,6 +2,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   Combobox,
   ComboboxEmpty,
@@ -114,6 +115,7 @@ export function FontFamilyPicker({
   defaultFamily: string;
   /** Committed family name; empty string means the default is in use. */
   selectedFamily: string;
+  /** Probe the picked family and reject proportional faces (code, terminal). */
   requireMonospace?: boolean;
   /** Open the popup on mount — set when the control upgrades under focus. */
   initialOpen?: boolean;
@@ -138,10 +140,13 @@ export function FontFamilyPicker({
     if (nextOpen) setQuery("");
   };
 
-  const families = useMemo(() => {
-    if (enumeration.status !== "granted") return [];
-    return requireMonospace ? enumeration.families.filter(isMonospaceFamily) : enumeration.families;
-  }, [enumeration, requireMonospace]);
+  // The full catalog, always: classifying every installed family up front is
+  // an unbounded canvas measurement loop that freezes the renderer on large
+  // catalogs. Monospace enforcement happens on pick instead.
+  const families = useMemo(
+    () => (enumeration.status === "granted" ? enumeration.families : []),
+    [enumeration],
+  );
 
   const items = useMemo(() => {
     const trimmedQuery = query.trim().toLowerCase();
@@ -159,7 +164,24 @@ export function FontFamilyPicker({
 
   const handlePick = (value: string) => {
     setOpen(false);
-    onSelect(value === DEFAULT_FONT_VALUE ? "" : value);
+    if (value === DEFAULT_FONT_VALUE) {
+      onSelect("");
+      return;
+    }
+    // One bounded probe for the picked family only (cached). A proportional
+    // face never commits silently: the terminal would fall back to its
+    // default while the row claimed the font took.
+    if (requireMonospace && !isMonospaceFamily(value)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `“${value}” isn’t monospace`,
+          description: "Code and terminal need a fixed-width font, so the current font was kept.",
+        }),
+      );
+      return;
+    }
+    onSelect(value);
   };
 
   const renderItem = (item: string, index: number) => {
