@@ -1057,10 +1057,9 @@ struct FeatureThreadRow: View {
     }
 
     private func accessibilityValue(at now: Date) -> String {
-        var status = thread.homeStatusLabel ?? "Ready"
-        if let duration = thread.homeDoneAccessibilityDuration(at: now) {
-            status += " for \(duration)"
-        }
+        let status = thread.homeDoneAccessibilityLabel(at: now)
+            ?? thread.homeStatusLabel
+            ?? "Ready"
         var values = [status, "Project \(context.projectName)"]
         values.append("Harness \(context.providerName)")
         if let duration = thread.homeWorkingDuration(at: now) {

@@ -161,18 +161,27 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
-    func completedRowsSayHowLongTheyHaveBeenDone() {
-        let thread = completedThread(completedAtOffset: -300)
+    func completedRowsShowABareAgeMeasuredFromCompletion() {
+        let thread = FeatureThread(
+            id: "completed",
+            projectID: "project",
+            title: "Done task",
+            updatedAt: now.addingTimeInterval(-60),
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-9_360)
+        )
 
-        #expect(thread.homeDoneDuration(at: now) == "5m")
-        #expect(thread.homeRowStatusLabel(at: now) == "Done for 5m")
+        // The age comes from the completion time, not the newer last activity.
+        #expect(thread.homeDoneDuration(at: now) == "2h 36m")
+        #expect(thread.homeRowStatusLabel(at: now) == "2h 36m")
+        #expect(!thread.homeRowStatusLabel(at: now).contains("Done"))
     }
 
     @Test
     func doneDurationsAreMinuteGranularAndClampFutureCompletions() {
-        #expect(doneDuration(completedAtOffset: 30) == "<1m")
-        #expect(doneDuration(completedAtOffset: -30) == "<1m")
-        #expect(doneDuration(completedAtOffset: -59) == "<1m")
+        #expect(doneDuration(completedAtOffset: 30) == "now")
+        #expect(doneDuration(completedAtOffset: -30) == "now")
+        #expect(doneDuration(completedAtOffset: -59) == "now")
         #expect(doneDuration(completedAtOffset: -60) == "1m")
         #expect(doneDuration(completedAtOffset: -3_600) == "1h 0m")
         #expect(doneDuration(completedAtOffset: -5_465) == "1h 31m")
@@ -181,14 +190,18 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
-    func doneAccessibilityDurationsSpellOutUnits() {
-        #expect(doneAccessibilityDuration(completedAtOffset: -30) == "less than a minute")
-        #expect(doneAccessibilityDuration(completedAtOffset: -60) == "1 minute")
-        #expect(doneAccessibilityDuration(completedAtOffset: -120) == "2 minutes")
-        #expect(doneAccessibilityDuration(completedAtOffset: -3_600) == "1 hour")
-        #expect(doneAccessibilityDuration(completedAtOffset: -5_465) == "1 hour, 31 minutes")
-        #expect(doneAccessibilityDuration(completedAtOffset: -86_400) == "1 day")
-        #expect(doneAccessibilityDuration(completedAtOffset: -273_600) == "3 days, 4 hours")
+    func doneAccessibilityLabelsSpeakTheAgeInWords() {
+        #expect(doneAccessibilityLabel(completedAtOffset: -30) == "Completed just now")
+        #expect(doneAccessibilityLabel(completedAtOffset: -60) == "Completed 1 minute ago")
+        #expect(doneAccessibilityLabel(completedAtOffset: -120) == "Completed 2 minutes ago")
+        #expect(doneAccessibilityLabel(completedAtOffset: -3_600) == "Completed 1 hour ago")
+        #expect(
+            doneAccessibilityLabel(completedAtOffset: -9_360) == "Completed 2 hours, 36 minutes ago"
+        )
+        #expect(doneAccessibilityLabel(completedAtOffset: -86_400) == "Completed 1 day ago")
+        #expect(
+            doneAccessibilityLabel(completedAtOffset: -273_600) == "Completed 3 days, 4 hours ago"
+        )
     }
 
     @Test
@@ -209,7 +222,7 @@ struct HomeThreadMetadataTests {
         )
 
         #expect(completedWithoutTime.homeDoneDuration(at: now) == nil)
-        #expect(completedWithoutTime.homeDoneAccessibilityDuration(at: now) == nil)
+        #expect(completedWithoutTime.homeDoneAccessibilityLabel(at: now) == nil)
         #expect(completedWithoutTime.homeRowStatusLabel(at: now) == "2m")
         #expect(working.homeDoneDuration(at: now) == nil)
         #expect(working.homeRowStatusLabel(at: now) == "Working")
@@ -219,9 +232,9 @@ struct HomeThreadMetadataTests {
         completedThread(completedAtOffset: completedAtOffset).homeDoneDuration(at: now)
     }
 
-    private func doneAccessibilityDuration(completedAtOffset: TimeInterval) -> String? {
+    private func doneAccessibilityLabel(completedAtOffset: TimeInterval) -> String? {
         completedThread(completedAtOffset: completedAtOffset)
-            .homeDoneAccessibilityDuration(at: now)
+            .homeDoneAccessibilityLabel(at: now)
     }
 
     private func completedThread(completedAtOffset: TimeInterval) -> FeatureThread {

@@ -330,10 +330,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             _ thread: FeatureThread,
             context: HomeThreadRowContext
         ) -> String {
-            var status = thread.homeStatusLabel ?? "Ready"
-            if let duration = thread.homeDoneAccessibilityDuration(at: .now) {
-                status += " for \(duration)"
-            }
+            let status = thread.homeDoneAccessibilityLabel(at: .now)
+                ?? thread.homeStatusLabel
+                ?? "Ready"
             var values = [status, "Project \(context.projectName)"]
             values.append("Harness \(context.providerName)")
             if let duration = thread.homeWorkingDuration(at: .now) {
