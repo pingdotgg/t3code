@@ -1,10 +1,12 @@
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceConfig,
   PreviewViewportSetting,
   ProviderInstanceId,
+  ServerProvider,
   ServerSettings,
   SidebarProjectGroupingMode,
   UnifiedSettings,
@@ -330,4 +332,29 @@ export function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
+}
+
+export function resolveGeneralSettingsEnvironmentId(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly serverConfig?: {
+      readonly providers?: ReadonlyArray<Pick<ServerProvider, "installed" | "models">> | null;
+    } | null;
+  }>,
+  primaryEnvironmentId: EnvironmentId | null,
+): EnvironmentId | null {
+  const hasModels = (env?: (typeof environments)[number]) =>
+    env?.serverConfig?.providers?.some((p) => Boolean(p.installed && p.models?.length)) ?? false;
+
+  const primary = environments.find((env) => env.environmentId === primaryEnvironmentId);
+  if (hasModels(primary)) {
+    return primaryEnvironmentId;
+  }
+
+  return (
+    environments.find(hasModels)?.environmentId ??
+    primaryEnvironmentId ??
+    environments[0]?.environmentId ??
+    null
+  );
 }

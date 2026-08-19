@@ -1,9 +1,11 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
@@ -19,6 +21,7 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  resolveGeneralSettingsEnvironmentId,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -293,5 +296,55 @@ describe("isSamePreviewViewport", () => {
         { _tag: "preset", width: 390, height: 844, presetId: "iphone-12-pro" },
       ),
     ).toBe(false);
+  });
+});
+
+describe("resolveGeneralSettingsEnvironmentId", () => {
+  const primaryEnvId = EnvironmentId.make("primary");
+  const wslEnvId = EnvironmentId.make("wsl");
+  const remoteEnvId = EnvironmentId.make("remote");
+  const mockModel: ServerProviderModel = {
+    slug: "model-1",
+    name: "Model 1",
+    isCustom: false,
+    capabilities: null,
+  };
+  const env = (id: EnvironmentId, hasModels = true) => ({
+    environmentId: id,
+    serverConfig: {
+      providers: [{ installed: hasModels, models: hasModels ? [mockModel] : [] }],
+    },
+  });
+
+  it("returns primary environment when primary has installed models", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId([env(primaryEnvId), env(wslEnvId)], primaryEnvId),
+    ).toBe(primaryEnvId);
+  });
+
+  it("falls back to connected environment with models when primary environment has no models", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, false), env(wslEnvId, true)],
+        primaryEnvId,
+      ),
+    ).toBe(wslEnvId);
+  });
+
+  it("returns remote environment with models in a remote-only setup", () => {
+    expect(resolveGeneralSettingsEnvironmentId([env(remoteEnvId, true)], null)).toBe(remoteEnvId);
+  });
+
+  it("falls back to primary or first environment when no models exist in any environment", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, false), { environmentId: wslEnvId, serverConfig: null }],
+        primaryEnvId,
+      ),
+    ).toBe(primaryEnvId);
+
+    expect(resolveGeneralSettingsEnvironmentId([env(wslEnvId, false)], null)).toBe(wslEnvId);
+
+    expect(resolveGeneralSettingsEnvironmentId([], null)).toBe(null);
   });
 });
