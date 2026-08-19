@@ -264,6 +264,30 @@ describe("mergeUsage", () => {
     expect(merged.hourly).toHaveLength(0);
   });
 
+  it("omits providers with no sessions or usage", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [],
+            [
+              {
+                provider: "claude",
+                hostId: "mac",
+                homePath: "/a/.claude",
+                distinctSessions: 0,
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.providers).toEqual([]);
+  });
+
   it("derives hourly totals without losing the daily rollup", () => {
     const merged = mergeUsage(
       [

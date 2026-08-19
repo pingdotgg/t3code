@@ -268,6 +268,7 @@ export function mergeUsage(
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
       sessions += providerSessions;
+      if (providerSessions === 0) continue;
       const provider = providerAccumulator.get(providerKind) ?? {
         costUsd: 0,
         totalTokens: 0,
