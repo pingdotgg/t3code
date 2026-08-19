@@ -4769,9 +4769,6 @@ export function makeClaudeAdapterV2(
             wakeInput.nativeThreadId,
           );
           if (failedWakeTaskIds !== undefined) {
-            if (message.type === "result") {
-              return;
-            }
             const messageTaskId =
               message.type === "system" &&
               (message.subtype === "task_started" ||
@@ -5339,10 +5336,19 @@ export function makeClaudeAdapterV2(
               nativeThreadId: context.nativeThreadId,
               toolUseId: toolResult.tool_use_id,
             });
+            const registeredByTaskId =
+              resultTaskId === undefined
+                ? undefined
+                : yield* resolveSessionSubagent({
+                    nativeThreadId: context.nativeThreadId,
+                    taskId: resultTaskId,
+                  });
             if (
               resultTaskId !== undefined &&
               failedWakeTaskIds?.has(resultTaskId) === true &&
-              (isKnownAgentLaunch || existingToolCall?.subagentTaskId != null)
+              (isKnownAgentLaunch ||
+                existingToolCall?.subagentTaskId != null ||
+                registeredByTaskId?.subagent.launchToolUseId === toolResult.tool_use_id)
             ) {
               continue;
             }
