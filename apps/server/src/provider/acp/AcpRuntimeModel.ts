@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import type { ServerProviderSlashCommand, ToolLifecycleItemType } from "@t3tools/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -90,6 +90,22 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ModeChanged";
       readonly modeId: string;
+    }
+  | {
+      readonly _tag: "AvailableCommandsChanged";
+      readonly commands: ReadonlyArray<ServerProviderSlashCommand>;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "ConfigOptionsChanged";
+      readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "SessionInfoChanged";
+      readonly title: string | undefined;
+      readonly updatedAt: string | undefined;
+      readonly rawPayload: unknown;
     }
   | {
       readonly _tag: "AssistantItemStarted";
@@ -541,6 +557,39 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
   let modeId: string | undefined;
 
   switch (upd.sessionUpdate) {
+    case "available_commands_update": {
+      const commands: Array<ServerProviderSlashCommand> = [];
+      const seenNames = new Set<string>();
+      for (const availableCommand of upd.availableCommands) {
+        const name = availableCommand.name.trim().replace(/^\/+/, "");
+        const normalizedName = name.toLowerCase();
+        if (!name || seenNames.has(normalizedName)) {
+          continue;
+        }
+        seenNames.add(normalizedName);
+        const description = availableCommand.description.trim() || undefined;
+        const inputHint = availableCommand.input?.hint.trim() || undefined;
+        commands.push({
+          name,
+          ...(description ? { description } : {}),
+          ...(inputHint ? { input: { hint: inputHint } } : {}),
+        });
+      }
+      events.push({
+        _tag: "AvailableCommandsChanged",
+        commands,
+        rawPayload: params,
+      });
+      break;
+    }
+    case "config_option_update": {
+      events.push({
+        _tag: "ConfigOptionsChanged",
+        configOptions: upd.configOptions,
+        rawPayload: params,
+      });
+      break;
+    }
     case "current_mode_update": {
       modeId = upd.currentModeId.trim();
       if (modeId) {
@@ -549,6 +598,15 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           modeId,
         });
       }
+      break;
+    }
+    case "session_info_update": {
+      events.push({
+        _tag: "SessionInfoChanged",
+        title: upd.title?.trim() || undefined,
+        updatedAt: upd.updatedAt?.trim() || undefined,
+        rawPayload: params,
+      });
       break;
     }
     case "plan": {

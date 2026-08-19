@@ -116,6 +116,40 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("retains root-session command updates emitted while session/new is starting", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const started = yield* runtime.start();
+      expect(started.sessionId).toBe("mock-session-1");
+
+      const events = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 1)));
+      expect(events).toEqual([
+        expect.objectContaining({
+          _tag: "AvailableCommandsChanged",
+          commands: [
+            { name: "compact", description: "Compact the conversation" },
+            { name: "context", description: "Show context usage" },
+          ],
+        }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_EMIT_STARTUP_COMMANDS: "1" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("keeps assistant item IDs unique when a provider session restarts", () => {
     const collectFirstAssistantItemId = Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -537,8 +571,9 @@ describe("AcpSessionRuntime", () => {
       yield* runtime.prompt({
         prompt: [{ type: "text", text: "hi" }],
       });
-      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 4)));
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 5)));
       expect(notes.map((note) => note._tag)).toEqual([
+        "AvailableCommandsChanged",
         "PlanUpdated",
         "AssistantItemStarted",
         "ContentDelta",
@@ -554,6 +589,7 @@ describe("AcpSessionRuntime", () => {
             args: mockAgentArgs,
             env: {
               T3_ACP_EMIT_LOAD_REPLAY: "1",
+              T3_ACP_EMIT_STARTUP_COMMANDS: "1",
             },
           },
           cwd: process.cwd(),
@@ -723,6 +759,143 @@ describe("AcpSessionRuntime", () => {
           cwd: process.cwd(),
           clientInfo: { name: "t3-test", version: "0.0.0" },
           authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("uses an existing agent profile across fresh sessions without repeated auth", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    const advertisedAuthMethods = JSON.stringify([{ id: "test", name: "Test" }]);
+    const startFreshSession = Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      return yield* runtime.start();
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHODS: advertisedAuthMethods,
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          authenticationMode: "on-demand",
+          isAuthenticationFailure: () => false,
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+    );
+
+    return Effect.gen(function* () {
+      const first = yield* startFreshSession;
+      const second = yield* startFreshSession;
+
+      expect(first.sessionId.length).toBeGreaterThan(0);
+      expect(second.sessionId.length).toBeGreaterThan(0);
+      expect(requestEvents.some((event) => event.method === "authenticate")).toBe(false);
+      expect(
+        requestEvents.filter(
+          (event) => event.method === "initialize" && event.status === "succeeded",
+        ),
+      ).toHaveLength(2);
+      expect(
+        requestEvents.filter(
+          (event) => event.method === "session/new" && event.status === "succeeded",
+        ),
+      ).toHaveLength(2);
+    }).pipe(Effect.provide(NodeServices.layer));
+  });
+
+  it.effect("authenticates and retries once after an on-demand prompt auth failure", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    const advertisedAuthMethods = JSON.stringify([{ id: "test", name: "Test" }]);
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      expect(requestEvents.some((event) => event.method === "authenticate")).toBe(false);
+
+      const result = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hello" }],
+      });
+      expect(result.stopReason).toBe("end_turn");
+
+      const lifecycle = requestEvents.map((event) => `${event.method}:${event.status}`);
+      expect(lifecycle).toContain("session/prompt:failed");
+      expect(lifecycle).toContain("authenticate:succeeded");
+      expect(lifecycle.filter((entry) => entry === "session/prompt:started")).toHaveLength(2);
+      expect(lifecycle.at(-1)).toBe("session/prompt:succeeded");
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHODS: advertisedAuthMethods,
+              T3_ACP_REQUIRE_AUTHENTICATION_FOR_PROMPT: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          authenticationMode: "on-demand",
+          isAuthenticationFailure: (error) =>
+            error._tag === "AcpRequestError" && /authenticate to continue/i.test(error.message),
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("does not authenticate for a non-auth prompt failure", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    const advertisedAuthMethods = JSON.stringify([{ id: "test", name: "Test" }]);
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+      const error = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hello" }] })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("Mock prompt failure");
+      expect(requestEvents.some((event) => event.method === "authenticate")).toBe(false);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHODS: advertisedAuthMethods,
+              T3_ACP_FAIL_PROMPT: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          authenticationMode: "on-demand",
+          isAuthenticationFailure: (error) =>
+            error._tag === "AcpRequestError" && /authenticate to continue/i.test(error.message),
           requestLogger: (event) =>
             Effect.sync(() => {
               requestEvents.push(event);
