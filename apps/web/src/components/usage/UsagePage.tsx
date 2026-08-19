@@ -29,7 +29,8 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
-import { WorkspacePageContainer, WorkspacePageHeader } from "../WorkspacePageContainer";
+import { WorkspacePageContainer } from "../WorkspacePageContainer";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
