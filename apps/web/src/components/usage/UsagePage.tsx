@@ -159,7 +159,7 @@ export function UsagePage() {
           >
             <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
           </SelectTrigger>
-          <SelectPopup align="end">
+          <SelectPopup align="end" alignItemWithTrigger={false}>
             <SelectItem value="cost">Cost</SelectItem>
             <SelectItem value="tokens">Tokens</SelectItem>
           </SelectPopup>
@@ -175,7 +175,7 @@ export function UsagePage() {
               {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
             </SelectValue>
           </SelectTrigger>
-          <SelectPopup align="end">
+          <SelectPopup align="end" alignItemWithTrigger={false}>
             {WINDOW_OPTIONS.map((option) => (
               <SelectItem key={option.days} value={String(option.days)}>
                 {option.label}
