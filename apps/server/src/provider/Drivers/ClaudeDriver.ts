@@ -184,6 +184,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         initialSnapshot: (settings) =>
           makePendingClaudeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
+        beforeRefresh: Cache.invalidate(capabilitiesProbeCache, capabilitiesCacheKey),
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,

@@ -2,6 +2,8 @@ import {
   type ClaudeSettings,
   type ModelCapabilities,
   type ModelSelection,
+  type ServerProviderClaudeRateLimitWindow,
+  type ServerProviderClaudeStatus,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -22,6 +24,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
+  type SDKControlGetUsageResponse,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
   type SDKUserMessage,
@@ -583,6 +586,7 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const CLAUDE_USAGE_LOOKUP_TIMEOUT_MS = 5_000;
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -641,8 +645,84 @@ type ClaudeCapabilitiesProbe = {
    * the subscription/token fields are absent and auth is external AWS creds.
    */
   readonly apiProvider: string | undefined;
+  readonly claudeStatus?: ServerProviderClaudeStatus;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
+
+type ClaudeUsageRateLimitWindow = NonNullable<
+  NonNullable<SDKControlGetUsageResponse["rate_limits"]>["five_hour"]
+>;
+
+type ClaudeRateLimitPromoNotice = {
+  readonly bar?: unknown;
+  readonly text?: unknown;
+};
+
+const readClaudeRateLimitPromo = (environment: NodeJS.ProcessEnv) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const configDirectories = [environment.CLAUDE_CONFIG_DIR, environment.HOME].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+
+    for (const directory of configDirectories) {
+      const configContents = yield* fs
+        .readFileString(path.join(directory, ".claude.json"))
+        .pipe(Effect.option);
+      if (Option.isNone(configContents)) continue;
+
+      try {
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - optional local Claude cache.
+        const config = JSON.parse(configContents.value) as {
+          readonly cachedGrowthBookFeatures?: Record<string, unknown>;
+        };
+        const notices = config.cachedGrowthBookFeatures?.tengu_rate_limit_promo_notices;
+        if (!Array.isArray(notices)) continue;
+        const notice = notices.find((entry): entry is ClaudeRateLimitPromoNotice => {
+          if (!entry || typeof entry !== "object") return false;
+          const candidate = entry as ClaudeRateLimitPromoNotice;
+          return candidate.bar === "seven_day" && typeof candidate.text === "string";
+        });
+        if (typeof notice?.text === "string" && notice.text.trim()) return notice.text.trim();
+      } catch {
+        // The promotion is optional; an unavailable local cache must not fail status.
+      }
+    }
+    return undefined;
+  });
+
+function mapClaudeUsageRateLimitWindow(
+  window: ClaudeUsageRateLimitWindow | null | undefined,
+): ServerProviderClaudeRateLimitWindow | undefined {
+  if (!window || typeof window.utilization !== "number" || !Number.isFinite(window.utilization)) {
+    return undefined;
+  }
+
+  return {
+    usedPercent: Math.max(0, Math.min(100, Math.floor(window.utilization))),
+    ...(window.resets_at != null ? { resetsAt: window.resets_at } : {}),
+  };
+}
+
+export function mapClaudeUsageToStatus(
+  usage: SDKControlGetUsageResponse,
+  promo?: string,
+): ServerProviderClaudeStatus | undefined {
+  if (!usage.rate_limits_available || usage.rate_limits == null) return undefined;
+
+  const currentSession = mapClaudeUsageRateLimitWindow(usage.rate_limits.five_hour);
+  const currentWeek = mapClaudeUsageRateLimitWindow(usage.rate_limits.seven_day);
+  if (!currentSession && !currentWeek) return undefined;
+
+  return {
+    rateLimits: {
+      ...(currentSession ? { currentSession } : {}),
+      ...(currentWeek ? { currentWeek } : {}),
+      ...(currentWeek && promo ? { currentWeekPromo: promo } : {}),
+    },
+  };
+}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -741,6 +821,7 @@ const probeClaudeCapabilities = (
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
+    const claudePromo = yield* readClaudeRateLimitPromo(claudeEnvironment);
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -756,7 +837,24 @@ const probeClaudeCapabilities = (
           cwd,
         }),
       });
-      const init = await q.initializationResult();
+      const init = await Promise.race([
+        q.initializationResult(),
+        new Promise<undefined>((resolve) => {
+          // @effect-diagnostics-next-line globalTimers:off - Promise.race needs a native timer.
+          globalThis.setTimeout(resolve, CAPABILITIES_PROBE_TIMEOUT_MS);
+        }),
+      ]);
+      if (!init) return undefined;
+      const claudeStatus = await Promise.race([
+        q
+          .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+          .then((usage) => mapClaudeUsageToStatus(usage, claudePromo))
+          .catch(() => undefined),
+        new Promise<undefined>((resolve) => {
+          // @effect-diagnostics-next-line globalTimers:off - Promise.race needs a native timer.
+          globalThis.setTimeout(resolve, CLAUDE_USAGE_LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
       const account = init.account as
         | {
             readonly email?: string;
@@ -770,6 +868,7 @@ const probeClaudeCapabilities = (
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
+        ...(claudeStatus ? { claudeStatus } : {}),
         slashCommands: parseClaudeInitializationCommands(init.commands),
       } satisfies ClaudeCapabilitiesProbe;
     });
@@ -779,7 +878,7 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS + CLAUDE_USAGE_LOOKUP_TIMEOUT_MS + 2_000),
     Effect.result,
     Effect.map((result) => {
       if (Result.isFailure(result)) return undefined;
@@ -969,6 +1068,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
+      ...(capabilities.claudeStatus ? { claudeStatus: capabilities.claudeStatus } : {}),
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
     },
   });
