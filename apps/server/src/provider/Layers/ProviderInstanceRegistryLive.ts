@@ -34,6 +34,7 @@
  */
 import {
   defaultInstanceIdForDriver,
+  providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
@@ -93,12 +94,20 @@ interface RegistryState {
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
 
-const decodedConfigEnabled = (config: unknown): boolean | undefined => {
-  if (!config || typeof config !== "object" || globalThis.Array.isArray(config)) {
-    return undefined;
+/**
+ * Resolve an entry's enabled state. An explicit false on either the
+ * envelope or the raw config blob wins (most restrictive) — old settings
+ * files can carry both flags with conflicting values, and a user's disable
+ * must never be silently undone. Otherwise the envelope flag wins, then the
+ * decoded config's flag (which carries the driver schema's default for
+ * built-ins and forks alike), then enabled by default.
+ */
+const resolveEntryEnabled = (entry: ProviderInstanceConfig, typedConfig: unknown): boolean => {
+  const rawConfigEnabled = providerInstanceConfigEnabledFlag(entry.config);
+  if (entry.enabled === false || rawConfigEnabled === false) {
+    return false;
   }
-  const enabled = (config as { readonly enabled?: unknown }).enabled;
-  return typeof enabled === "boolean" ? enabled : undefined;
+  return entry.enabled ?? providerInstanceConfigEnabledFlag(typedConfig) ?? true;
 };
 
 /**
@@ -171,7 +180,7 @@ const buildEntry = <R>(input: {
         displayName: entry.displayName,
         accentColor: entry.accentColor,
         environment: entry.environment ?? [],
-        enabled: entry.enabled ?? decodedConfigEnabled(typedConfig) ?? true,
+        enabled: resolveEntryEnabled(entry, typedConfig),
         config: typedConfig,
       })
       .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);
