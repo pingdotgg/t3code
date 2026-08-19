@@ -47,7 +47,7 @@ describe("mobile model options", () => {
         providerKey: "codex",
         providerLabel: "Codex",
         models: [
-          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", subtitle: "", isLegacy: false },
+          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", subtitle: "Codex", isLegacy: false },
           { key: "codex:gpt-5.4", label: "GPT-5.4", isLegacy: true },
         ],
       },
@@ -89,8 +89,8 @@ describe("mobile model options", () => {
     expect(options).toMatchObject(
       sources.map((source) => ({
         key: `opencode_work:${source.id}/claude-fable-5`,
-        label: "Claude Fable 5",
-        subtitle: source.label,
+        label: `Claude Fable 5 · ${source.label}`,
+        subtitle: "OpenCode Work",
         providerLabel: "OpenCode Work",
         selection: {
           instanceId: "opencode_work",
