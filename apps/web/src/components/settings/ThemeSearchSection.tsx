@@ -1,6 +1,6 @@
 import {
-  DownloadIcon,
   ExternalLinkIcon,
+  PackagePlusIcon,
   PaletteIcon,
   RefreshCwIcon,
   SearchIcon,
@@ -354,7 +354,7 @@ export function ThemeSearchSection({
                       ) : isInstalled ? (
                         <RefreshCwIcon />
                       ) : (
-                        <DownloadIcon />
+                        <PackagePlusIcon />
                       )}
                       {isInstalling ? `${progressAction}...` : action}
                     </Button>
