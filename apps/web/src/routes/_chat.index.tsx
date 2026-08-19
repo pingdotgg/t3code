@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -8,6 +8,7 @@ import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
   useAllEnvironmentShellsBootstrapped,
@@ -41,6 +42,7 @@ function IndexDraftLanding() {
   const threads = useThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
+  const navigate = useNavigate();
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
@@ -53,7 +55,35 @@ function IndexDraftLanding() {
   );
 
   useEffect(() => {
-    if (mostRecentProject === null || startingRef.current) {
+    if (!bootstrapped || startingRef.current) {
+      return;
+    }
+    // Coming back to "/" should resume an in-progress draft the user already
+    // started typing, rather than dropping them on a blank composer in
+    // whichever project happens to be most recently active. Explicit new-thread
+    // surfaces (the "+" buttons, hotkeys, palette) still mint fresh; this is the
+    // "return home" path, where losing unsent work is the real complaint.
+    const resumeDraft = useComposerDraftStore.getState().getMostRecentDraftSessionWithContent();
+    const resumeProjectExists =
+      resumeDraft !== null &&
+      projects.some(
+        (project) =>
+          project.id === resumeDraft.projectId &&
+          project.environmentId === resumeDraft.environmentId,
+      );
+    if (resumeDraft && resumeProjectExists) {
+      startingRef.current = true;
+      void navigate({
+        to: "/draft/$draftId",
+        params: { draftId: resumeDraft.draftId },
+        replace: true,
+      }).catch(() => {
+        startingRef.current = false;
+        setStartState((state) => ({ ...state, failed: true }));
+      });
+      return;
+    }
+    if (mostRecentProject === null) {
       return;
     }
     startingRef.current = true;
@@ -63,7 +93,14 @@ function IndexDraftLanding() {
       startingRef.current = false;
       setStartState((state) => ({ ...state, failed: true }));
     });
-  }, [handleNewThread, mostRecentProject, startState.retryRequest]);
+  }, [
+    bootstrapped,
+    handleNewThread,
+    mostRecentProject,
+    navigate,
+    projects,
+    startState.retryRequest,
+  ]);
 
   if (!bootstrapped) {
     return null;

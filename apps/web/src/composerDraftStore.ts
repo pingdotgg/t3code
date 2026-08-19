@@ -363,6 +363,12 @@ interface ComposerDraftStoreState {
   getDraftSessionByLogicalProjectKey: (logicalProjectKey: string) => ProjectDraftSession | null;
   getDraftThreadByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
   getDraftSessionByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
+  /**
+   * Most-recently-created, non-promoted draft session (across every project)
+   * that the user has actually invested content in. The index landing uses
+   * this to resume an in-progress draft instead of minting a blank one.
+   */
+  getMostRecentDraftSessionWithContent: () => ProjectDraftSession | null;
   /** Reads mutable draft-session metadata by `DraftId`. */
   getDraftSession: (draftId: DraftId) => DraftSessionState | null;
   /** Resolves a server-thread ref back to a matching draft session when one exists. */
@@ -2311,6 +2317,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
           }
           return null;
+        },
+        getMostRecentDraftSessionWithContent: () => {
+          const state = get();
+          let best: { draftId: string; draftThread: DraftThreadState } | null = null;
+          for (const [draftId, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
+            if (isDraftThreadPromoting(draftThread)) {
+              continue;
+            }
+            if (!composerDraftHasUserContent(state.draftsByThreadKey[draftId])) {
+              continue;
+            }
+            if (best === null || draftThread.createdAt > best.draftThread.createdAt) {
+              best = { draftId, draftThread };
+            }
+          }
+          return best ? toProjectDraftSession(DraftId.make(best.draftId), best.draftThread) : null;
         },
         getDraftSession: (draftId) => get().draftThreadsByThreadKey[draftId] ?? null,
         getDraftSessionByRef: (threadRef) => {

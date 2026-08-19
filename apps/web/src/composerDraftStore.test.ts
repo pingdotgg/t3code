@@ -922,6 +922,36 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)?.prompt).toBe("keep me around");
   });
 
+  it("resumes the most recent invested draft across projects and ignores empty ones", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    store.setPrompt(draftId, "older work in progress");
+    store.setProjectDraftThreadId(otherProjectRef, otherDraftId, {
+      threadId: otherThreadId,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    store.setPrompt(otherDraftId, "newer work in progress");
+    // A newer session with no typed content must never win over invested work.
+    store.setProjectDraftThreadId(remoteProjectRef, sharedDraftId, {
+      threadId: ThreadId.make("thread-empty"),
+      createdAt: "2026-01-03T00:00:00.000Z",
+    });
+
+    expect(useComposerDraftStore.getState().getMostRecentDraftSessionWithContent()?.draftId).toBe(
+      otherDraftId,
+    );
+  });
+
+  it("returns no resumable draft when none has user content", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+
+    expect(useComposerDraftStore.getState().getMostRecentDraftSessionWithContent()).toBeNull();
+  });
+
   it("clears every session for a project, including unmapped invested drafts", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
