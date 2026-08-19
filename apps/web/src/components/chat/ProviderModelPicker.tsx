@@ -271,7 +271,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             >
               <span className="min-w-0 truncate">{props.triggerLabel ?? multipleLabel ?? triggerTitle}</span>
               {triggerSubProvider && !selectedEntries && props.triggerLabel === undefined ? (
-                <span className="shrink-0 text-muted-foreground">· {triggerSubProvider}</span>
+                <span
+                  className={cn(
+                    "text-muted-foreground",
+                    props.compact ? "min-w-0 truncate" : "shrink-0",
+                  )}
+                >
+                  · {triggerSubProvider}
+                </span>
               ) : null}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
