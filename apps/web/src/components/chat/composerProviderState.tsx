@@ -10,6 +10,7 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
+  normalizeModelSlug,
 } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 
@@ -55,6 +56,9 @@ export function getComposerPromptInjectionState(prompt: string): ComposerPromptI
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {
   const { provider, model, models, modelOptions, promptInjectionState = "none" } = input;
   const caps = getProviderModelCapabilities(models, model, provider);
+  const modelIsAvailable = models.some(
+    (candidate) => candidate.slug === normalizeModelSlug(model, provider),
+  );
   const descriptors = getProviderOptionDescriptors({ caps, selections: modelOptions });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
@@ -69,7 +73,9 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   return {
     provider,
     promptEffort,
-    modelOptionsForDispatch: buildProviderOptionSelectionsFromDescriptors(descriptors),
+    modelOptionsForDispatch: modelIsAvailable
+      ? buildProviderOptionSelectionsFromDescriptors(descriptors)
+      : (modelOptions ?? undefined),
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",

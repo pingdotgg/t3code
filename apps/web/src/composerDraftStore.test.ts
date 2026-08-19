@@ -14,7 +14,9 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 
 // The composer draft's `modelSelectionByProvider` and
@@ -27,6 +29,8 @@ const CURSOR_INSTANCE = ProviderInstanceId.make("cursor");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const OPENCODE_INSTANCE = ProviderInstanceId.make("opencode");
+const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 
 type ProviderOptionSelectionBag = ReadonlyArray<ProviderOptionSelection>;
 type ProviderOptionSelectionsByProvider = Partial<Record<string, ProviderOptionSelectionBag>>;
@@ -60,6 +64,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -148,6 +153,31 @@ function providerModelOptions(
   return selectionsByProvider(options);
 }
 
+function readyProvider(
+  instanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  models: ReadonlyArray<string>,
+): ServerProvider {
+  return {
+    instanceId,
+    driver,
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-08-16T00:00:00.000Z",
+    models: models.map((slug) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: null,
+    })),
+    slashCommands: [],
+    skills: [],
+  };
+}
+
 const TEST_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const OTHER_TEST_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const LEGACY_TEST_ENVIRONMENT_ID = EnvironmentId.make("__legacy__");
@@ -170,6 +200,65 @@ function draftFor(threadId: ThreadId, environmentId: EnvironmentId = LEGACY_TEST
 function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
+
+describe("deriveEffectiveComposerModelState", () => {
+  const availableFallback = "opencode/gpt-5";
+  const temporarilyMissingModel = "vercel/moonshotai/kimi-k3";
+  const providers = [readyProvider(OPENCODE_INSTANCE, OPENCODE_DRIVER, [availableFallback])];
+  const threadModelSelection = createModelSelection(OPENCODE_INSTANCE, temporarilyMissingModel, [
+    { id: "agent", value: "build" },
+  ]);
+
+  it("keeps an existing thread model when live discovery temporarily omits it", () => {
+    const result = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: OPENCODE_DRIVER,
+      selectedInstanceId: OPENCODE_INSTANCE,
+      preserveExistingThreadModel: true,
+      threadModelSelection,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(result.selectedModel).toBe(temporarilyMissingModel);
+  });
+
+  it("keeps an existing thread's explicit draft selection across the same catalog gap", () => {
+    const result = deriveEffectiveComposerModelState({
+      draft: {
+        activeProvider: OPENCODE_INSTANCE,
+        modelSelectionByProvider: {
+          [OPENCODE_INSTANCE]: threadModelSelection,
+        },
+      },
+      providers,
+      selectedProvider: OPENCODE_DRIVER,
+      selectedInstanceId: OPENCODE_INSTANCE,
+      preserveExistingThreadModel: true,
+      threadModelSelection,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(result.selectedModel).toBe(temporarilyMissingModel);
+  });
+
+  it("still falls back from missing models for new threads", () => {
+    const result = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: OPENCODE_DRIVER,
+      selectedInstanceId: OPENCODE_INSTANCE,
+      preserveExistingThreadModel: false,
+      threadModelSelection,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(result.selectedModel).toBe(availableFallback);
+  });
+});
 
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.make("thread-dedupe");

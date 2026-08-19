@@ -180,6 +180,22 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("preserves dispatch options while the selected model is missing from discovery", () => {
+    const modelOptions = selections(["agent", "build"]);
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: [],
+      modelOptions,
+    });
+
+    expect(state).toEqual({
+      provider: PROVIDER,
+      promptEffort: null,
+      modelOptionsForDispatch: modelOptions,
+    });
+  });
+
   it("adds ultrathink class names when the prompt triggers a promptInjectedValues descriptor", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
