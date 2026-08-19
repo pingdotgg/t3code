@@ -29,6 +29,23 @@ export const make = Effect.gen(function* () {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const context = yield* Effect.context<ElectronApp.ElectronApp | DesktopWindow.DesktopWindow>();
   const runPromise = Effect.runPromiseWith(context);
+  const runTrayEffect = <E>(
+    action: string,
+    effect: Effect.Effect<void, E, ElectronApp.ElectronApp | DesktopWindow.DesktopWindow>,
+  ) => {
+    return runPromise(
+      effect.pipe(
+        Effect.annotateLogs({ action }),
+        Effect.withSpan("desktop.tray.action"),
+        Effect.catchCause((cause) =>
+          logTrayWarning("Windows tray action failed", {
+            action,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+    );
+  };
 
   const configure = Effect.gen(function* () {
     if (environment.platform !== "win32") return;
@@ -43,10 +60,10 @@ export const make = Effect.gen(function* () {
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         const open = () => {
-          void runPromise(desktopWindow.activate);
+          return runTrayEffect("open", desktopWindow.activate);
         };
         const quit = () => {
-          void runPromise(electronApp.quit);
+          return runTrayEffect("quit", electronApp.quit);
         };
         const tray = new Electron.Tray(iconPath);
         try {

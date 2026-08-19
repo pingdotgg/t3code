@@ -9,11 +9,11 @@ import { vi } from "vite-plus/test";
 const electronMocks = vi.hoisted(() => {
   interface FakeTray {
     iconPath: string;
-    listeners: Map<string, () => void>;
+    listeners: Map<string, () => Promise<void>>;
     setContextMenu: ReturnType<typeof vi.fn>;
     setToolTip: ReturnType<typeof vi.fn>;
     destroy: ReturnType<typeof vi.fn>;
-    on: (eventName: string, listener: () => void) => void;
+    on: (eventName: string, listener: () => Promise<void>) => void;
   }
 
   const trays: FakeTray[] = [];
@@ -51,14 +51,17 @@ function makeLayer(input: {
   readonly backgroundModeChanges: boolean[];
   readonly activations: string[];
   readonly quits: string[];
+  readonly activate?: Effect.Effect<void, DesktopWindow.DesktopWindowError>;
 }) {
   const window = {
     createMain: Effect.die("unexpected createMain"),
     ensureMain: Effect.die("unexpected ensureMain"),
     revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
-    activate: Effect.sync(() => {
-      input.activations.push("activate");
-    }),
+    activate:
+      input.activate ??
+      Effect.sync(() => {
+        input.activations.push("activate");
+      }),
     createMainIfBackendReady: Effect.void,
     showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
@@ -146,6 +149,29 @@ describe("DesktopTray", () => {
           assert.equal(electronMocks.trays.at(-1)?.destroy.mock.calls.length, 1);
         }),
       ),
+    );
+  });
+
+  it.effect("contains failures from tray activation callbacks", () => {
+    const layer = makeLayer({
+      iconPath: Option.some("C:\\T3 Code\\icon.ico"),
+      backgroundModeChanges: [],
+      activations: [],
+      quits: [],
+      activate: Effect.die("activation failed"),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const trayService = yield* DesktopTray.DesktopTray;
+        yield* trayService.configure;
+
+        const tray = electronMocks.trays.at(-1);
+        assert.isDefined(tray);
+        const activation = tray.listeners.get("click")?.();
+        assert.isDefined(activation);
+        yield* Effect.promise(() => activation);
+      }).pipe(Effect.provide(layer)),
     );
   });
 });
