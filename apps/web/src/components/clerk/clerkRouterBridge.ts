@@ -32,15 +32,22 @@ const CLERK_VIRTUAL_PATH_MARKER = "CLERK-ROUTER/VIRTUAL/";
  * unmounted history that clerk-js can still push/replace freely, while a
  * real path goes through the app's own history as a normal SPA transition.
  *
- * A real destination can still carry a leading "#" here: the app's own
- * redirect-target construction (authRedirect.ts) builds Electron redirect
- * URLs as t3code://app/#/current-page, and clerk-js hands this bridge
- * everything after the origin, hash included. Electron's history is a hash
- * history, so pushing that string unmodified would double the hash
+ * A real destination can still carry a leading "#" here on Electron: the
+ * app's own redirect-target construction (authRedirect.ts) builds Electron
+ * redirect URLs as t3code://app/#/current-page, and clerk-js hands this
+ * bridge everything after the origin, hash included. Electron's history is
+ * a hash history, so pushing that string unmodified would double the hash
  * (history.createHref would read back as "/#/#/current-page"). The part
  * after the first "#" is the actual in-app path the hash history expects.
+ * This only applies when the real history is hash-based: on browser history
+ * a "#" is a genuine fragment (e.g. "/settings/profile#section"), and
+ * stripping everything before it would push just "section" instead of the
+ * real path.
  */
-export function createClerkRouterBridge(history: RouterHistory): {
+export function createClerkRouterBridge(
+  history: RouterHistory,
+  isHashHistory: boolean,
+): {
   routerPush: ClerkRouterFn;
   routerReplace: ClerkRouterFn;
 } {
@@ -49,6 +56,9 @@ export function createClerkRouterBridge(history: RouterHistory): {
   function resolveDestination(to: string): { target: RouterHistory; path: string } {
     if (to.includes(CLERK_VIRTUAL_PATH_MARKER)) {
       return { target: virtualHistory, path: to };
+    }
+    if (!isHashHistory) {
+      return { target: history, path: to };
     }
     const hashIndex = to.indexOf("#");
     const path = hashIndex === -1 ? to : to.slice(hashIndex + 1) || "/";

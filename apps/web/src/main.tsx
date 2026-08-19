@@ -23,7 +23,7 @@ import { createClerkRouterBridge } from "./components/clerk/clerkRouterBridge";
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
-const clerkRouter = createClerkRouterBridge(history);
+const clerkRouter = createClerkRouterBridge(history, isElectron);
 
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);
