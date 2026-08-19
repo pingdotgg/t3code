@@ -4,6 +4,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -377,7 +378,15 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               completed: false,
             } satisfies PendingHttpResponse;
             pendingHttp.set(streamId, pending);
-            yield* requestConnector.send(requestStartFrame);
+            yield* requestConnector
+              .send(requestStartFrame)
+              .pipe(
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit)
+                    ? Effect.sync(() => pendingHttp.delete(streamId))
+                    : Effect.void,
+                ),
+              );
             let requestBodyBytes = 0;
             let oversized = false;
             if (request.method !== "GET" && request.method !== "HEAD") {

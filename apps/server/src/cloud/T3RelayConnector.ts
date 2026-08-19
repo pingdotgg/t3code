@@ -12,6 +12,7 @@ import {
   encodeRelayTransportMessageFrames,
   normalizeRelayWebSocketCloseCode,
   RelayConnectorTicketResponse,
+  RELAY_TRANSPORT_MAX_BUFFERED_MESSAGE_BYTES,
   RELAY_TRANSPORT_MAX_FRAME_PAYLOAD_BYTES,
   RELAY_TRANSPORT_MAX_HTTP_REQUEST_BYTES,
   RELAY_TRANSPORT_MAX_MESSAGE_BYTES,
@@ -76,8 +77,15 @@ interface RelayResponseWindow {
   readonly waiters: Set<() => void>;
 }
 
-const CONNECT_ATTEMPT_TIMEOUT_MILLIS = 15_000;
+interface PendingLocalWebSocketMessage {
+  readonly text: boolean;
+  readonly payload: Uint8Array;
+}
 
+const CONNECT_ATTEMPT_TIMEOUT_MILLIS = 15_000;
+const MAX_PENDING_LOCAL_WEBSOCKET_MESSAGES = 1_024;
+
+const CONNECTING = 0;
 const OPEN = 1;
 const decodeConnectorTicketResponse = Schema.decodeUnknownSync(RelayConnectorTicketResponse);
 
@@ -147,10 +155,13 @@ export class T3RelayConnectorSession {
   readonly #fetch: RelayConnectorFetch;
   readonly #observer: T3RelayConnectorObserver;
   readonly #localSockets = new Map<number, RelayConnectorSocket>();
+  readonly #pendingLocalMessages = new Map<number, Array<PendingLocalWebSocketMessage>>();
   readonly #httpRequests = new Map<number, PendingHttpRequest>();
   readonly #httpAbortControllers = new Map<number, AbortController>();
   readonly #responseWindows = new Map<number, RelayResponseWindow>();
   readonly #edgeMessages = new RelayTransportMessageAssembler();
+  #pendingLocalMessageBytes = 0;
+  #pendingLocalMessageCount = 0;
   #edgeSocket: RelayConnectorSocket | null = null;
   #edgeReady = false;
   #stopped = true;
@@ -268,6 +279,7 @@ export class T3RelayConnectorSession {
           closeSocket(local, 1012, "Relay edge disconnected");
         }
         this.#localSockets.clear();
+        this.#clearPendingLocalMessages();
         this.#edgeMessages.clear();
         this.#httpRequests.clear();
         for (const controller of this.#httpAbortControllers.values()) controller.abort();
@@ -306,6 +318,7 @@ export class T3RelayConnectorSession {
       closeSocket(local, 1001, "Connector stopped");
     }
     this.#localSockets.clear();
+    this.#clearPendingLocalMessages();
     this.#edgeMessages.clear();
     this.#httpRequests.clear();
     for (const controller of this.#httpAbortControllers.values()) controller.abort();
@@ -324,6 +337,50 @@ export class T3RelayConnectorSession {
       for (const wake of window.waiters) wake();
     }
     this.#responseWindows.clear();
+  }
+
+  #deletePendingLocalMessages(streamId: number): void {
+    const messages = this.#pendingLocalMessages.get(streamId);
+    if (messages === undefined) return;
+    for (const message of messages) this.#pendingLocalMessageBytes -= message.payload.byteLength;
+    this.#pendingLocalMessageCount -= messages.length;
+    this.#pendingLocalMessages.delete(streamId);
+  }
+
+  #clearPendingLocalMessages(): void {
+    this.#pendingLocalMessages.clear();
+    this.#pendingLocalMessageBytes = 0;
+    this.#pendingLocalMessageCount = 0;
+  }
+
+  #bufferPendingLocalMessage(streamId: number, message: PendingLocalWebSocketMessage): boolean {
+    if (
+      this.#pendingLocalMessageBytes + message.payload.byteLength >
+        RELAY_TRANSPORT_MAX_BUFFERED_MESSAGE_BYTES ||
+      this.#pendingLocalMessageCount >= MAX_PENDING_LOCAL_WEBSOCKET_MESSAGES
+    ) {
+      return false;
+    }
+    const messages = this.#pendingLocalMessages.get(streamId) ?? [];
+    messages.push(message);
+    this.#pendingLocalMessages.set(streamId, messages);
+    this.#pendingLocalMessageBytes += message.payload.byteLength;
+    this.#pendingLocalMessageCount += 1;
+    return true;
+  }
+
+  #sendLocalMessage(local: RelayConnectorSocket, message: PendingLocalWebSocketMessage): void {
+    local.send(message.text ? new TextDecoder().decode(message.payload) : message.payload);
+  }
+
+  #flushPendingLocalMessages(streamId: number, local: RelayConnectorSocket): void {
+    const messages = this.#pendingLocalMessages.get(streamId) ?? [];
+    this.#deletePendingLocalMessages(streamId);
+    try {
+      for (const message of messages) this.#sendLocalMessage(local, message);
+    } catch {
+      closeSocket(local, 1011, "Failed to forward buffered WebSocket messages");
+    }
   }
 
   async #takeResponseCredit(
@@ -375,7 +432,9 @@ export class T3RelayConnectorSession {
     local.binaryType = "arraybuffer";
     this.#localSockets.set(streamId, local);
     local.addEventListener("open", () => {
+      if (this.#localSockets.get(streamId) !== local) return;
       this.#sendEdge(encodeRelayTransportControlFrame(streamId, { type: "websocket_accept" }));
+      this.#flushPendingLocalMessages(streamId, local);
     });
     local.addEventListener("message", (event) => {
       const text = typeof event.data === "string";
@@ -397,6 +456,7 @@ export class T3RelayConnectorSession {
     local.addEventListener("close", (event) => {
       if (this.#localSockets.get(streamId) !== local) return;
       this.#localSockets.delete(streamId);
+      this.#deletePendingLocalMessages(streamId);
       this.#edgeMessages.delete(streamId);
       this.#sendEdge(
         encodeRelayTransportControlFrame(streamId, {
@@ -521,6 +581,7 @@ export class T3RelayConnectorSession {
       } else if (control.success.type === "websocket_close") {
         const local = this.#localSockets.get(frame.streamId);
         this.#localSockets.delete(frame.streamId);
+        this.#deletePendingLocalMessages(frame.streamId);
         this.#edgeMessages.delete(frame.streamId);
         closeSocket(local ?? null, control.success.code, control.success.reason);
       } else if (control.success.type === "http_request_start") {
@@ -574,24 +635,31 @@ export class T3RelayConnectorSession {
       return false;
     }
 
-    const local = this.#localSockets.get(frame.streamId);
-    if (local?.readyState !== OPEN) {
-      return false;
-    }
     if (
       frame.kind === RelayTransportFrameKind.websocketText ||
       frame.kind === RelayTransportFrameKind.websocketBinary
     ) {
+      const local = this.#localSockets.get(frame.streamId);
+      if (local === undefined) return false;
       try {
         const message = this.#edgeMessages.append(frame);
         if (message === null) return false;
-        if (message.kind === RelayTransportFrameKind.websocketText) {
-          local.send(new TextDecoder().decode(message.payload));
-        } else {
-          local.send(message.payload);
+        const pending = {
+          text: message.kind === RelayTransportFrameKind.websocketText,
+          payload: message.payload,
+        } satisfies PendingLocalWebSocketMessage;
+        if (local.readyState === OPEN) {
+          this.#sendLocalMessage(local, pending);
+        } else if (
+          local.readyState === CONNECTING &&
+          !this.#bufferPendingLocalMessage(frame.streamId, pending)
+        ) {
+          this.#deletePendingLocalMessages(frame.streamId);
+          closeSocket(local, 1009, "Buffered WebSocket messages exceed the relay limit");
         }
       } catch {
         this.#edgeMessages.delete(frame.streamId);
+        this.#deletePendingLocalMessages(frame.streamId);
         closeSocket(local, 1009, "Invalid fragmented relay message");
       }
     }

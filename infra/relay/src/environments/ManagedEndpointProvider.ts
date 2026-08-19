@@ -29,14 +29,18 @@ import { T3RelayEndpointControl } from "../transport/T3RelayEndpointControl.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
+const ManagedEndpointConfigurationRequirement = Schema.Literals([
+  "managedEndpointBaseDomain",
+  "managedEndpointNamespace",
+  "t3RelayEndpointControl",
+]);
+
 export class ManagedEndpointProvisioningNotConfigured extends Schema.TaggedErrorClass<ManagedEndpointProvisioningNotConfigured>()(
   "ManagedEndpointProvisioningNotConfigured",
   {
     userId: Schema.String,
     environmentId: Schema.String,
-    missingSettings: Schema.Array(
-      Schema.Literals(["managedEndpointBaseDomain", "managedEndpointNamespace"]),
-    ),
+    missingSettings: Schema.Array(ManagedEndpointConfigurationRequirement),
   },
 ) {
   override get message(): string {
@@ -56,6 +60,7 @@ const ManagedEndpointProvisioningStage = Schema.Literals([
   "record-dns",
   "get-tunnel-token",
   "mark-allocation-ready",
+  "validate-relay-connector-lease",
   "configure-relay-endpoint",
 ]);
 
@@ -97,7 +102,8 @@ export class ManagedEndpointDeprovisioningFailed extends Schema.TaggedErrorClass
     environmentId: Schema.String,
     tunnelId: Schema.optionalKey(Schema.String),
     dnsRecordId: Schema.optionalKey(Schema.String),
-    cause: Schema.Defect(),
+    missingSettings: Schema.optionalKey(Schema.Array(ManagedEndpointConfigurationRequirement)),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -474,26 +480,25 @@ export const make = Effect.gen(function* () {
     if (input.connectorLeaseId === undefined) {
       return false;
     }
-    if (
-      !config.managedEndpointBaseDomain ||
-      !config.managedEndpointNamespace ||
-      Option.isNone(t3RelayControl)
-    ) {
+    const baseDomain = config.managedEndpointBaseDomain;
+    const namespace = config.managedEndpointNamespace;
+    if (!baseDomain || !namespace || Option.isNone(t3RelayControl)) {
+      const missingSettings = [
+        ...(baseDomain ? [] : (["managedEndpointBaseDomain"] as const)),
+        ...(namespace ? [] : (["managedEndpointNamespace"] as const)),
+        ...(Option.isSome(t3RelayControl) ? [] : (["t3RelayEndpointControl"] as const)),
+      ];
       return yield* new ManagedEndpointDeprovisioningFailed({
         ...input,
         stage: "revoke-relay-endpoint",
-        cause: new Error("T3 relay endpoint control is not configured."),
+        missingSettings,
       });
     }
     const environmentHash = yield* crypto
       .digest(
         "SHA-256",
         new TextEncoder().encode(
-          managedEndpointDigestInput(
-            config.managedEndpointNamespace,
-            input.userId,
-            input.environmentId,
-          ),
+          managedEndpointDigestInput(namespace, input.userId, input.environmentId),
         ),
       )
       .pipe(
@@ -714,19 +719,17 @@ export const make = Effect.gen(function* () {
         );
       if (input.providerKind === "t3_relay") {
         if (Option.isNone(t3RelayControl)) {
-          return yield* new ManagedEndpointProvisioningFailed({
+          return yield* new ManagedEndpointProvisioningNotConfigured({
             userId: input.userId,
             environmentId: input.environmentId,
-            stage: "configure-relay-endpoint",
-            cause: "T3 relay endpoint control is not configured",
+            missingSettings: ["t3RelayEndpointControl"],
           });
         }
         if (input.connectorLeaseId === undefined) {
           return yield* new ManagedEndpointProvisioningFailed({
             userId: input.userId,
             environmentId: input.environmentId,
-            stage: "configure-relay-endpoint",
-            cause: "T3 relay connector lease is missing",
+            stage: "validate-relay-connector-lease",
           });
         }
         const hostname = relayEdgeEndpointHostname(cf.namespace, cf.baseDomain, environmentHash);

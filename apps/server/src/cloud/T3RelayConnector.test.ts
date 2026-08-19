@@ -388,6 +388,47 @@ describe("T3RelayConnectorSession", () => {
     expect(Result.isSuccess(response) && [...response.success.payload]).toEqual([1, 2, 3]);
   });
 
+  it("buffers edge messages until the loopback WebSocket opens", async () => {
+    const sockets: Array<TestSocket> = [];
+    const session = new T3RelayConnectorSession(
+      {
+        connectorUrl: "wss://endpoint.edge.test/.well-known/t3-relay/connect",
+        connectorToken: "token",
+        originUrl: "http://localhost:7331/",
+      },
+      () => {
+        const socket = new TestSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      connectorTicketResponse,
+    );
+    session.start();
+    await waitForConnector();
+    readyConnector(sockets[0]!);
+    sockets[0]!.message(
+      encodeRelayTransportControlFrame(14, {
+        type: "websocket_open",
+        url: "wss://endpoint.edge.test/ws",
+        headers: [],
+        protocols: [],
+      }),
+    );
+    sockets[0]!.message(
+      encodeRelayTransportFrame({
+        kind: RelayTransportFrameKind.websocketText,
+        streamId: 14,
+        endOfMessage: true,
+        payload: new TextEncoder().encode("sent from the public open handler"),
+      }),
+    );
+
+    expect(sockets[1]!.sent).toEqual([]);
+    sockets[1]!.open();
+    expect(sockets[1]!.sent).toEqual(["sent from the public open handler"]);
+    expect(decodedControl(sockets[0]!.sent.at(-1)!)).toEqual({ type: "websocket_accept" });
+  });
+
   it("preserves local WebSocket close details without echoing edge-initiated closes", async () => {
     const sockets: Array<TestSocket> = [];
     const session = new T3RelayConnectorSession(

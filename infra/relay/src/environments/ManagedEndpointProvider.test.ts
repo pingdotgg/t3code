@@ -275,13 +275,13 @@ function providerLayer(
   dnsClient = makeDnsClient(),
   allocations = makeAllocations(),
   tunnelLimits = makeTunnelLimits(),
-  t3RelayEndpointControl = T3RelayEndpointControl.of({
+  t3RelayEndpointControl: T3RelayEndpointControl["Service"] | null = T3RelayEndpointControl.of({
     configure: () => Effect.void,
     revoke: () => Effect.succeed(true),
   }),
   relayConfig = config,
 ) {
-  return ManagedEndpointProvider.layer.pipe(
+  const base = ManagedEndpointProvider.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(RelayConfiguration.layer(relayConfig)),
     Layer.provide(ManagedEndpointProvider.layerTunnelClient(tunnelClient)),
@@ -290,8 +290,10 @@ function providerLayer(
       Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, allocations),
     ),
     Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, tunnelLimits)),
-    Layer.provide(Layer.succeed(T3RelayEndpointControl, t3RelayEndpointControl)),
   );
+  return t3RelayEndpointControl === null
+    ? base
+    : base.pipe(Layer.provide(Layer.succeed(T3RelayEndpointControl, t3RelayEndpointControl)));
 }
 
 function expectedManagedHostname(environmentId: string, userId = "user_ABC"): string {
@@ -490,6 +492,56 @@ describe("ManagedEndpointProvider", () => {
         ),
       ),
     );
+  });
+
+  it.effect("reports missing T3 endpoint control as configuration", () => {
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_EDGE",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          providerKind: "t3_relay",
+          connectorLeaseId: "lease-edge-1",
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningNotConfigured",
+        missingSettings: ["t3RelayEndpointControl"],
+      });
+    }).pipe(
+      Effect.provide(
+        providerLayer(
+          makeTunnelClient(),
+          makeDnsClient(),
+          makeAllocations(),
+          makeTunnelLimits(),
+          null,
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports a missing T3 connector lease as a validation stage", () => {
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_EDGE",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          providerKind: "t3_relay",
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "validate-relay-connector-lease",
+      });
+      expect("cause" in error).toBe(false);
+    }).pipe(Effect.provide(providerLayer()));
   });
 
   it.effect("checks the managed tunnel limit before reserving an allocation", () => {
@@ -1143,6 +1195,8 @@ describe("ManagedEndpointProvider", () => {
       );
 
       expect(error.stage).toBe("revoke-relay-endpoint");
+      expect(error.missingSettings).toEqual(["managedEndpointBaseDomain"]);
+      expect("cause" in error).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
