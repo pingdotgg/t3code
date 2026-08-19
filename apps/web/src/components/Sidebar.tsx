@@ -3148,7 +3148,13 @@ export default function Sidebar() {
         event.preventDefault();
         event.stopPropagation();
         if (isSearchingThreads) clearThreadSearch();
-        if (projectScopeKey !== null) setProjectScopeKey(null);
+        if (
+          projectScopeKey !== null &&
+          (scopedProjectKeys === null ||
+            !scopedProjectKeys.has(`${activeThread.environmentId}:${activeThread.projectId}`))
+        ) {
+          setProjectScopeKey(null);
+        }
         startThreadRename(
           scopeThreadRef(activeThread.environmentId, activeThread.id),
           activeThread.title,
@@ -3190,6 +3196,7 @@ export default function Sidebar() {
     projectScopeKey,
     routeTerminalOpen,
     routeThreadKey,
+    scopedProjectKeys,
     startThreadRename,
     threads,
     threadByKey,
