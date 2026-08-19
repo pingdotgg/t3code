@@ -391,46 +391,27 @@ const mobileEndorsementRows = [
 
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../lib/releases";
-  import { macArchFromGpuRenderer } from "../lib/macArch";
 
-  type Platform = { os: "mac" | "win" | "linux"; label: string; arch?: string };
-
-  // navigator.userAgent reports "Intel Mac OS X" on both Intel and Apple Silicon
-  // Macs, so probe the GPU renderer instead: Apple Silicon exposes an "Apple" GPU.
-  function detectMacArch(): "arm64" | "x64" {
-    try {
-      const canvas = document.createElement("canvas");
-      const gl = (canvas.getContext("webgl") ||
-        canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
-      const debugInfo = gl?.getExtension("WEBGL_debug_renderer_info");
-      if (gl && debugInfo) {
-        const renderer = String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) ?? "");
-        return macArchFromGpuRenderer(renderer);
-      }
-    } catch {
-      // fall through to the default below
-    }
-    return macArchFromGpuRenderer("");
-  }
+  type Platform = { os: "mac" | "win" | "linux"; label: string };
 
   function detectPlatform(): Platform | null {
     const ua = navigator.userAgent;
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
-    if (/Mac/i.test(ua)) {
-      return { os: "mac", label: "Download for macOS", arch: detectMacArch() };
-    }
+    if (/Mac/i.test(ua)) return { os: "mac", label: "Download for macOS" };
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
     return null;
   }
 
+  // Macs always get the arm64 build. Browsers cannot reliably tell Apple Silicon
+  // from Intel (the UA lies, GPU strings lie), and a wrong guess hands an Apple
+  // Silicon user a broken app. Intel users pick their build on /download.
+  // Do NOT add arch detection back here.
   function pickAsset(assets: ReleaseAsset[], platform: Platform): string | null {
     if (platform.os === "win") {
       return assets.find((a) => a.name.endsWith("-x64.exe"))?.browser_download_url ?? null;
     }
     if (platform.os === "mac") {
-      const preferred = assets.find((a) => a.name.endsWith(`-${platform.arch}.dmg`));
-      const fallback = assets.find((a) => a.name.endsWith(".dmg"));
-      return (preferred ?? fallback)?.browser_download_url ?? null;
+      return assets.find((a) => a.name.endsWith("-arm64.dmg"))?.browser_download_url ?? null;
     }
     if (platform.os === "linux") {
       return assets.find((a) => a.name.endsWith(".AppImage"))?.browser_download_url ?? null;

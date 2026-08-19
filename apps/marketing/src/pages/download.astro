@@ -24,11 +24,10 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
           <span class="card-arch">Apple Silicon (arm64)</span>
           <span class="card-format">.dmg</span>
         </a>
-        <a class="download-card" data-asset="x64.dmg" href={RELEASES_URL}>
-          <span class="card-arch">Intel (x64)</span>
-          <span class="card-format">.dmg</span>
-        </a>
       </div>
+      <p class="intel-note">
+        On an Intel Mac? <a data-asset="x64.dmg" href={RELEASES_URL}>Download the x64 build</a>.
+      </p>
     </section>
 
     <!-- Windows -->
@@ -92,8 +91,8 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
 
   async function init() {
     const versionLabel = document.getElementById("version-label");
-    // Only release-asset cards; mobile store cards have no data-asset and keep their href.
-    const cards = document.querySelectorAll<HTMLAnchorElement>(".download-card[data-asset]");
+    // Only release-asset links; mobile store cards have no data-asset and keep their href.
+    const cards = document.querySelectorAll<HTMLAnchorElement>("a[data-asset]");
 
     try {
       const release = await fetchLatestRelease();
@@ -255,6 +254,24 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
   .card-format {
     font-size: 0.8rem;
     color: var(--fg-dim);
+  }
+
+  .intel-note {
+    font-size: 0.8rem;
+    color: var(--fg-dim);
+  }
+
+  .intel-note a {
+    color: var(--fg-muted);
+    text-decoration: underline;
+    text-decoration-color: rgba(161, 161, 170, 0.4);
+    text-underline-offset: 3px;
+    transition: color 0.3s ease, text-decoration-color 0.3s ease;
+  }
+
+  .intel-note a:hover {
+    color: var(--fg);
+    text-decoration-color: var(--fg);
   }
 
   /* ── Releases link ── */
