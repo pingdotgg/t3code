@@ -942,6 +942,9 @@ export const makeCodexSessionRuntime = (
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
+    // Raw notification order stays reliable even when the client handlers
+    // update session state concurrently with the notification queue.
+    const currentRootTurnIdRef = yield* Ref.make<TurnId | undefined>(undefined);
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
@@ -1086,8 +1089,9 @@ export const makeCodexSessionRuntime = (
             const session = yield* Ref.get(sessionRef);
             const rootProviderThreadId = currentProviderThreadId(session);
             const parentTurnId =
-              (yield* Ref.get(collabReceiverTurnsRef)).get(item.senderThreadId) ??
-              session.activeTurnId;
+              (yield* Ref.get(currentRootTurnIdRef)) ??
+              session.activeTurnId ??
+              (yield* Ref.get(collabReceiverTurnsRef)).get(item.senderThreadId);
             const nickname = readCollabSpawnTitle(item.prompt);
             const parentThreadId =
               item.senderThreadId !== rootProviderThreadId ? item.senderThreadId : undefined;
@@ -1411,12 +1415,18 @@ export const makeCodexSessionRuntime = (
 
         const payload = notification.params;
         const route = readRouteFields(notification);
+        const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        const notificationThreadId = readNotificationThreadId(notification);
+        if (notificationThreadId === rootProviderThreadId) {
+          if (notification.method === "turn/started") {
+            yield* Ref.set(currentRootTurnIdRef, route.turnId);
+          } else if (notification.method === "turn/completed") {
+            yield* Ref.set(currentRootTurnIdRef, undefined);
+          }
+        }
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
         const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return providerConversationId
-            ? collabReceiverTurns.get(providerConversationId)
-            : undefined;
+          return notificationThreadId ? collabReceiverTurns.get(notificationThreadId) : undefined;
         })();
 
         rememberCollabReceiverTurns(collabReceiverTurns, notification, route.turnId);
@@ -1437,7 +1447,7 @@ export const makeCodexSessionRuntime = (
         // lifecycle must not reach the parent path, where the adapter maps
         // thread/* onto parent session state. Root-id-known guard keeps the
         // root's own early notifications flowing during session open.
-        const suppressRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        const suppressRootId = rootProviderThreadId;
         const foreignConversation = (() => {
           const providerConversationId = readNotificationThreadId(notification);
           return (

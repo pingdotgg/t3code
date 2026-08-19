@@ -58,7 +58,9 @@ rl.on("line", (line) => {
         params: { threadId: rootThreadId, turn },
       });
     }
-    for (const notification of script.notifications) {
+    const notifications =
+      script.notificationsByTurn?.[turnStartCount - 1] ?? script.notifications ?? [];
+    for (const notification of notifications) {
       write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
     }
     if (script.holdTurnOpen !== true) {

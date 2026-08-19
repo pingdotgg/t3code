@@ -408,6 +408,103 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("stamps nested spawns with the current parent turn", () =>
+    Effect.gen(function* () {
+      const firstTurnId = "root-parent-turn-1";
+      const secondTurnId = "root-parent-turn-2";
+      const receiverBookkeeping = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: firstTurnId,
+          completedAtMs: 1785898349265,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_receiver_bookkeeping",
+            tool: "wait",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            agentsStates: {},
+          },
+        },
+      };
+      const nestedSpawn = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: secondTurnId,
+          completedAtMs: 1785898349266,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_nested_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: CHILD_A,
+            receiverThreadIds: [CHILD_B],
+            agentsStates: {
+              [CHILD_B]: { message: null, status: "running" },
+            },
+            prompt: "Inspect this nested task",
+          },
+        },
+      };
+
+      NodeFS.writeFileSync(
+        scriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          rootThreadId: ROOT,
+          turnIds: [firstTurnId, secondTurnId],
+          notificationsByTurn: [[receiverBookkeeping], [nestedSpawn]],
+        }),
+        "utf8",
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-nested-spawn"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const firstEventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.method === "turn/completed" && event.turnId === firstTurnId,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "record the first parent turn" });
+      yield* Fiber.join(firstEventsFiber);
+
+      const secondEventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.method === "turn/completed" && event.turnId === secondTurnId,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.sendTurn({ input: "spawn from the nested agent" });
+
+      const secondEvents = Array.from(yield* Fiber.join(secondEventsFiber));
+      const started = secondEvents.find(
+        (event) =>
+          event.method === "collabAgent/started" &&
+          (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
+      );
+      assert.isDefined(started);
+      assert.equal(started.turnId, secondTurnId);
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   // it.live: the runtime talks to a real child process; under it.effect's
   // TestClock the internal timers freeze and the join never completes.
   it.live("Stop interrupts every live child regardless of registration timing", () =>
