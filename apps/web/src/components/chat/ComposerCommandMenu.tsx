@@ -92,6 +92,7 @@ function groupCommandItems(
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
+  const skillItems = items.filter((item) => item.type === "skill");
 
   const groups: ComposerCommandGroup[] = [];
   if (builtInItems.length > 0) {
@@ -99,6 +100,9 @@ function groupCommandItems(
   }
   if (providerItems.length > 0) {
     groups.push({ id: "provider", label: "Provider", items: providerItems });
+  }
+  if (skillItems.length > 0) {
+    groups.push({ id: "skills", label: "Skills", items: skillItems });
   }
   return groups;
 }
