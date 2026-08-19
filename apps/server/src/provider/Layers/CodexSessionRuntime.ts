@@ -652,19 +652,17 @@ function readRouteFields(notification: CodexServerNotification): {
 /**
  * Native collab child-agent tracking (multi-agent v2). Under v2 subagents are
  * full app-server threads: identity arrives on `thread/started` with
- * source.subAgent.thread_spawn, lifecycle on `subAgentActivity` items and the
- * child thread's own turn/status/tokenUsage notifications. The runtime
- * registers children from those explicit signals, intercepts their
- * notifications before parent-timeline mapping, and re-emits them as
- * synthetic `collabAgent/*` provider events the adapter turns into task.*
- * runtime events (timelineBypass keeps them out of the parent chat).
+ * source.subAgent.thread_spawn, on parent `subAgentActivity` items, or on
+ * `collabAgentToolCall` spawnAgent items. Lifecycle comes from the child
+ * thread's own turn/status/tokenUsage notifications. The runtime registers
+ * children from those explicit signals, intercepts their notifications before
+ * parent-timeline mapping, and re-emits them as synthetic `collabAgent/*`
+ * provider events the adapter turns into task.* runtime events
+ * (timelineBypass keeps them out of the parent chat).
  *
- * WIP, probe-gated: registration is deliberately explicit-signals-only. The
- * spec's "provisionally treat unknown foreign thread ids as v2 children" rule
- * needs a live wire capture of the packaged binary before it lands — blind
- * capture risks eating unrelated traffic. Until then a child whose first
- * notification precedes registration passes through as today (no regression
- * vs main, which passes everything through).
+ * Registration is deliberately explicit-signals-only. A foreign thread id is
+ * not treated as a child unless one of those signals names it, so unrelated
+ * traffic cannot be swallowed by the child-agent projection.
  */
 interface CollabChildAgentState {
   readonly agentThreadId: string;
@@ -734,6 +732,40 @@ function rememberCollabReceiverTurns(
   for (const receiverThreadId of notification.params.item.receiverThreadIds) {
     collabReceiverTurns.set(receiverThreadId, parentTurnId);
   }
+}
+
+type CodexCollabAgentToolCall =
+  | Extract<
+      CodexRpc.ServerNotificationParamsByMethod["item/started"]["item"],
+      { readonly type: "collabAgentToolCall" }
+    >
+  | Extract<
+      CodexRpc.ServerNotificationParamsByMethod["item/completed"]["item"],
+      { readonly type: "collabAgentToolCall" }
+    >;
+
+function readCollabSpawnChildThreadIds(item: CodexCollabAgentToolCall): ReadonlyArray<string> {
+  if (item.tool !== "spawnAgent") {
+    return [];
+  }
+
+  return Array.from(new Set([...item.receiverThreadIds, ...Object.keys(item.agentsStates)]));
+}
+
+function readCollabSpawnTitle(prompt: string | null | undefined): string | undefined {
+  if (typeof prompt !== "string") {
+    return undefined;
+  }
+
+  const firstLine = prompt
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!firstLine) {
+    return undefined;
+  }
+
+  return firstLine.length <= 120 ? firstLine : `${firstLine.slice(0, 117)}...`;
 }
 
 function shouldSuppressChildConversationNotification(
@@ -1031,6 +1063,72 @@ export const makeCodexSessionRuntime = (
      */
     const interceptCollabChildNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
+        // Some Codex builds do not emit thread_spawn metadata or
+        // subAgentActivity. The native collab tool item still identifies
+        // freshly spawned children through receiverThreadIds and
+        // agentsStates. Register those ids before their first child
+        // notification arrives so the Agents surface sees the same task.*
+        // lifecycle as the metadata-rich wire shape.
+        if (
+          (notification.method === "item/started" || notification.method === "item/completed") &&
+          notification.params.item.type === "collabAgentToolCall"
+        ) {
+          const item = notification.params.item;
+          const childThreadIds = readCollabSpawnChildThreadIds(item);
+          if (childThreadIds.length > 0) {
+            const session = yield* Ref.get(sessionRef);
+            const rootProviderThreadId = currentProviderThreadId(session);
+            const parentTurnId =
+              (yield* Ref.get(collabReceiverTurnsRef)).get(item.senderThreadId) ??
+              session.activeTurnId;
+            const nickname = readCollabSpawnTitle(item.prompt);
+            const parentThreadId =
+              item.senderThreadId !== rootProviderThreadId ? item.senderThreadId : undefined;
+
+            for (const agentThreadId of childThreadIds) {
+              if (agentThreadId.length === 0 || agentThreadId === rootProviderThreadId) {
+                continue;
+              }
+
+              const existingChild = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
+              const state: CollabChildAgentState = {
+                agentThreadId,
+                nickname: existingChild?.nickname ?? nickname,
+                role: existingChild?.role,
+                agentPath: existingChild?.agentPath,
+                depth: existingChild?.depth,
+                parentThreadId: existingChild?.parentThreadId ?? parentThreadId,
+                spawnTurnId: existingChild?.spawnTurnId ?? parentTurnId,
+              };
+              yield* Ref.update(collabChildAgentsRef, (current) => {
+                const next = new Map(current);
+                next.set(agentThreadId, state);
+                return next;
+              });
+
+              // The same child appears on item/started and item/completed.
+              // Emit one task.started row and let the child's own lifecycle
+              // notifications carry subsequent status changes.
+              if (!existingChild) {
+                yield* emitEvent({
+                  kind: "notification",
+                  threadId: options.threadId,
+                  ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
+                  method: "collabAgent/started",
+                  payload: {
+                    agentThreadId: state.agentThreadId,
+                    ...(state.nickname ? { nickname: state.nickname } : {}),
+                    ...(state.role ? { role: state.role } : {}),
+                    ...(state.agentPath ? { agentPath: state.agentPath } : {}),
+                    ...(state.depth !== undefined ? { depth: state.depth } : {}),
+                    ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
+                  },
+                });
+              }
+            }
+          }
+        }
+
         // Registration path 1: child thread announces itself with a
         // subAgent thread_spawn source.
         if (notification.method === "thread/started") {
