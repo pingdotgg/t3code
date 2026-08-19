@@ -1139,7 +1139,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (settings) => settings.sidebarThreadPreviewCount,
   );
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, open, openMobile, setOpen, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
@@ -2022,8 +2022,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (!activeThread) return;
       event.preventDefault();
       event.stopPropagation();
-      if (!isThreadListExpanded && hasOverflowingThreads) {
+      const activeRowRendered = renderedThreads.some(
+        (thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeRouteThreadKey,
+      );
+      if (!activeRowRendered) {
         expandThreadListForProject(project.projectKey);
+      }
+      if (isMobile ? !openMobile : !open) {
+        if (isMobile) {
+          setOpenMobile(true);
+        } else {
+          setOpen(true);
+        }
       }
       startThreadRename(activeRouteThreadKey, activeThread.title);
     };
@@ -2032,11 +2043,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   }, [
     activeRouteThreadKey,
     expandThreadListForProject,
-    hasOverflowingThreads,
-    isThreadListExpanded,
+    isMobile,
     keybindings,
+    open,
+    openMobile,
     project.projectKey,
+    renderedThreads,
     routeTerminalOpen,
+    setOpen,
+    setOpenMobile,
     sidebarThreadByKey,
     startThreadRename,
   ]);

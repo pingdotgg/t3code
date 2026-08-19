@@ -1596,7 +1596,7 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, open, openMobile, setOpen, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
@@ -3148,17 +3148,18 @@ export default function Sidebar() {
         event.preventDefault();
         event.stopPropagation();
         if (isSearchingThreads) clearThreadSearch();
-        if (
-          projectScopeKey !== null &&
-          (scopedProjectKeys === null ||
-            !scopedProjectKeys.has(`${activeThread.environmentId}:${activeThread.projectId}`))
-        ) {
+        const activeThreadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+        if (projectScopeKey !== null && !threadByKey.has(scopedThreadKey(activeThreadRef))) {
           setProjectScopeKey(null);
         }
-        startThreadRename(
-          scopeThreadRef(activeThread.environmentId, activeThread.id),
-          activeThread.title,
-        );
+        if (isMobile ? !openMobile : !open) {
+          if (isMobile) {
+            setOpenMobile(true);
+          } else {
+            setOpen(true);
+          }
+        }
+        startThreadRename(activeThreadRef, activeThread.title);
         return;
       }
       const navigateToThreadKey = (targetThreadKey: string | null) => {
@@ -3191,12 +3192,16 @@ export default function Sidebar() {
     keybindings,
     clearThreadSearch,
     isSearchingThreads,
+    isMobile,
     navigateToThread,
     orderedThreadKeys,
+    open,
+    openMobile,
     projectScopeKey,
     routeTerminalOpen,
     routeThreadKey,
-    scopedProjectKeys,
+    setOpen,
+    setOpenMobile,
     startThreadRename,
     threads,
     threadByKey,
