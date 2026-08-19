@@ -240,7 +240,9 @@ export const triageCommand = Command.make("triage", {
       } else if (installed.length === 1) {
         selected = installed[0];
       } else if (installed.length > 1) {
-        if (!process.stdin.isTTY) {
+        // Both streams must be terminals: with stdout redirected the picker
+        // prompt is invisible and the command would hang waiting on it.
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
           return yield* new TriageAgentChoiceRequiredError();
         }
         selected = yield* pickAgent(installed);

@@ -38,9 +38,10 @@ cache directory named in the context file, one subdirectory per commit hash:
 
 If the tag does not exist (nightly builds), clone `main` instead, and treat file
 and line references as approximate: the user's build may not match `main`
-exactly. Before cloning,
-delete other entries in the source cache directory, but only entries whose git
-state is clean (no uncommitted changes, no unpushed commits).
+exactly. If the target directory already exists from an earlier triage run,
+reuse it instead of cloning again. Before cloning, delete other entries in the
+source cache directory, but only entries whose git state is clean (no
+uncommitted changes, no unpushed commits).
 
 Use the clone to map stack traces, log lines, and error messages to real code.
 Diagnosis grounded in source beats guessing.
