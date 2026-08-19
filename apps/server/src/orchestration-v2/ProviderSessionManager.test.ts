@@ -13,6 +13,7 @@ import {
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -92,7 +93,7 @@ interface TestProviderRuntimeState {
   readonly closeCount: number;
   readonly interruptCount: number;
   readonly resumeCount: number;
-  readonly eventQueues: ReadonlyMap<string, Queue.Queue<ProviderAdapterV2Event>>;
+  readonly eventQueues: ReadonlyMap<string, Queue.Queue<ProviderAdapterV2Event, Cause.Done>>;
 }
 
 const emptyState: TestProviderRuntimeState = {
@@ -257,7 +258,7 @@ function makeProviderAdapter(
           ]);
         }
         const now = yield* DateTime.now;
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
         const session = makeProviderSession({
           providerSessionId: input.providerSessionId,
           now,
@@ -1910,6 +1911,58 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
         }),
       ),
     );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 ends subscribers cleanly after a provider-announced Stop", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-stopped-stream");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const subscription = yield* runtime.subscribeEvents!;
+      const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterEvents);
+      yield* Queue.offer(adapterEvents!, {
+        type: "provider_session.updated",
+        driver: CODEX_DRIVER,
+        providerSession: {
+          ...runtime.providerSession,
+          status: "stopped",
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* Queue.end(adapterEvents!);
+
+      const events = yield* subscription.events.pipe(Stream.runCollect);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(events.length, 1);
+      assert.equal(events[0]?.type, "provider_session.updated");
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal(projection.providerSessions.at(-1)?.status, "stopped");
+      assert.equal(projection.providerSessions.at(-1)?.lastError, null);
+    });
+
+    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
   }),
 );
 

@@ -1,4 +1,8 @@
-import type { OrchestrationV2TurnItem, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ProviderThread,
+  OrchestrationV2TurnItem,
+  ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 function asFiniteNumber(value: unknown): number | null {
@@ -18,33 +22,49 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Map a provider driver kind to a user-facing display name. */
-export function formatProviderDisplayName(provider: string | null | undefined): string {
-  if (!provider) return "This agent";
-  switch (provider) {
-    case "claudeAgent":
-    case "claude":
-      return "Claude";
-    case "codex":
-      return "Codex";
-    case "cursor":
-      return "Cursor";
-    case "opencode":
-      return "OpenCode";
-    default: {
-      // Title-case unknown driver kinds so they read reasonably.
-      const trimmed = provider.replace(/Agent$/i, "").trim();
-      if (trimmed.length === 0) return provider;
-      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-    }
-  }
-}
-
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
     readonly item: OrchestrationV2TurnItem;
   }>,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
 ): ContextWindowSnapshot | null {
+  const providerUsage = providerThread?.contextUsage;
+  const providerUpdatedAt = providerThread?.updatedAt;
+  if (providerUsage !== null && providerUsage !== undefined && providerUpdatedAt !== undefined) {
+    const usedTokens = asFiniteNumber(providerUsage.usedTokens);
+    const maxTokens = asFiniteNumber(providerUsage.maxTokens);
+    if (usedTokens !== null && usedTokens >= 0) {
+      const usedPercentage =
+        maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+      const remainingTokens =
+        maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
+      const remainingPercentage =
+        usedPercentage === null ? null : Math.max(0, 100 - usedPercentage);
+
+      return {
+        usedTokens,
+        totalProcessedTokens: asFiniteNumber(providerUsage.totalProcessedTokens),
+        maxTokens,
+        remainingTokens,
+        usedPercentage,
+        remainingPercentage,
+        inputTokens: asFiniteNumber(providerUsage.inputTokens),
+        cachedInputTokens: asFiniteNumber(providerUsage.cachedInputTokens),
+        outputTokens: asFiniteNumber(providerUsage.outputTokens),
+        reasoningOutputTokens: asFiniteNumber(providerUsage.reasoningOutputTokens),
+        lastUsedTokens: asFiniteNumber(providerUsage.lastUsedTokens),
+        lastInputTokens: asFiniteNumber(providerUsage.lastInputTokens),
+        lastCachedInputTokens: asFiniteNumber(providerUsage.lastCachedInputTokens),
+        lastOutputTokens: asFiniteNumber(providerUsage.lastOutputTokens),
+        lastReasoningOutputTokens: asFiniteNumber(providerUsage.lastReasoningOutputTokens),
+        toolUses: asFiniteNumber(providerUsage.toolUses),
+        durationMs: asFiniteNumber(providerUsage.durationMs),
+        compactsAutomatically: providerUsage.compactsAutomatically ?? null,
+        updatedAt: DateTime.formatIso(providerUpdatedAt),
+      };
+    }
+  }
+
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (!entry || entry.item.type !== "compaction") {
