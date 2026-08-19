@@ -18,7 +18,9 @@ const testDoubles = vi.hoisted(() => ({
   buttonClicks: new Map<string, CapturedButtonClick[]>(),
   archiveState: {
     snapshots: [] as ReadonlyArray<unknown>,
+    error: null as string | null,
     isLoading: false,
+    refresh: vi.fn(),
   },
 }));
 
@@ -113,9 +115,9 @@ vi.mock("../../state/environments", () => ({
 vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({
     snapshots: testDoubles.archiveState.snapshots,
-    error: null,
+    error: testDoubles.archiveState.error,
     isLoading: testDoubles.archiveState.isLoading,
-    refresh: vi.fn(),
+    refresh: testDoubles.archiveState.refresh,
   }),
 }));
 
@@ -133,7 +135,9 @@ afterEach(() => {
   testDoubles.toastAdd.mockReset();
   testDoubles.buttonClicks.clear();
   testDoubles.archiveState.snapshots = [];
+  testDoubles.archiveState.error = null;
   testDoubles.archiveState.isLoading = false;
+  testDoubles.archiveState.refresh.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -261,6 +265,21 @@ describe("ArchivedThreadsPanel", () => {
       });
     },
   );
+
+  it("shows partial archive failures above loaded groups and retries them", () => {
+    testDoubles.archiveState.snapshots = populatedArchiveSnapshots;
+    testDoubles.archiveState.error = "Remote archive unavailable";
+
+    const markup = renderToStaticMarkup(<ArchivedThreadsPanel />);
+
+    expect(markup).toContain("Could not load every archive");
+    expect(markup).toContain("Remote archive unavailable");
+    expect(markup).toContain("Archive project");
+
+    clickCapturedButton("Try loading archives again");
+
+    expect(testDoubles.archiveState.refresh).toHaveBeenCalledOnce();
+  });
 
   it("requests a destructive confirmation for a single archived-thread delete", async () => {
     // Searching expands the project so its row actions are rendered.

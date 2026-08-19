@@ -590,6 +590,24 @@ export function ArchivedThreadsPanel() {
         query={archiveSearchQuery}
         onQueryChange={setArchiveSearchQuery}
       />
+      {archiveError && archivedGroups.length > 0 ? (
+        <div
+          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          role="alert"
+        >
+          <p className="font-medium">Could not load every archive</p>
+          <p className="mt-1 text-muted-foreground">{archiveError}</p>
+          <Button
+            className="mt-2"
+            size="xs"
+            variant="outline"
+            aria-label="Try loading archives again"
+            onClick={refreshArchivedThreads}
+          >
+            Try again
+          </Button>
+        </div>
+      ) : null}
       {archivedGroups.length === 0 ? (
         <SettingsSection title={archiveSetting.title}>
           <SettingsRow
