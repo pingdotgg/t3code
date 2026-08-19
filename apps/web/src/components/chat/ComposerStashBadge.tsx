@@ -4,8 +4,9 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 
 /**
- * Bookmark tab tucked behind the composer's top-right shoulder. Shows the
- * stash count and doubles as the click target for opening the stash menu.
+ * Bookmark control that shows the stash count and opens the stash menu. It
+ * sits behind the composer's shoulder unless another drawer needs that space,
+ * then moves into the composer's existing controls.
  *
  * On save the badge gives one quiet acknowledgement: it lifts to full
  * opacity and the count ticks over. `pulseKey` changes per stash, remounting
@@ -14,11 +15,13 @@ import { cn } from "~/lib/utils";
 export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
   menuOpen: boolean;
+  placement?: "inline" | "tab";
   pulseKey: number;
   pulsing: boolean;
   onToggleMenu: () => void;
 }) {
   if (props.count === 0) return null;
+  const inline = props.placement === "inline";
 
   return (
     <button
@@ -27,9 +30,12 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       aria-label={`Stashed prompts: ${props.count}. Open stash.`}
       aria-expanded={props.menuOpen}
       className={cn(
-        "chat-composer-stash-tab absolute -top-7 right-4 z-0 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-t-xl border border-b-0 px-3 pb-1 text-xs leading-none",
+        "inline-flex cursor-pointer items-center leading-none",
+        inline
+          ? "h-6 shrink-0 gap-1 rounded-md px-1.5 text-[11px] hover:bg-accent/40"
+          : "chat-composer-stash-tab absolute -top-7 right-4 z-0 h-8 gap-1.5 rounded-t-xl border border-b-0 px-3 pb-1 text-xs",
         "transition-[color,border-color] duration-200",
-        props.menuOpen && "pointer-events-none",
+        props.menuOpen && !inline && "pointer-events-none",
         props.menuOpen || props.pulsing
           ? "text-foreground"
           : "text-muted-foreground hover:text-foreground",
@@ -41,7 +47,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       onClick={props.onToggleMenu}
     >
       <BookmarkIcon className="size-3 shrink-0" aria-hidden="true" />
-      Stash
+      {inline ? null : "Stash"}
       <span
         key={props.pulseKey}
         className={cn(

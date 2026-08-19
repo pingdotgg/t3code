@@ -2292,6 +2292,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const toggleStashMenu = useCallback(() => {
     setIsStashMenuOpen((open) => !open);
   }, []);
+  const toggleInlineStashMenu = useCallback(() => {
+    if (isComposerCollapsedMobile) {
+      expandMobileComposer();
+      setIsStashMenuOpen(true);
+      return;
+    }
+    toggleStashMenu();
+  }, [expandMobileComposer, isComposerCollapsedMobile, toggleStashMenu]);
+  const showInlineStashBadge =
+    stashQueue.length > 0 &&
+    !isComposerApprovalState &&
+    (props.externalDrawerAttached || showComposerTopDrawer || isComposerCollapsedMobile);
+  const inlineStashBadge = showInlineStashBadge ? (
+    <ComposerStashBadge
+      count={stashQueue.length}
+      menuOpen={isStashMenuOpen}
+      placement="inline"
+      pulseKey={stashPulse.key}
+      pulsing={stashPulse.active}
+      onToggleMenu={toggleInlineStashMenu}
+    />
+  ) : null;
 
   // Close the stash menu whenever the trigger-driven command menu opens so
   // the two popovers never stack in the same layer, and when the user
@@ -2811,6 +2833,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {activePendingProgress?.customAnswer || "Write custom answer"}
                   </button>
+                  {inlineStashBadge}
                   {activePendingProgress?.activeQuestion?.multiSelect ? (
                     <ComposerPrimaryActions
                       compact
@@ -2888,6 +2911,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     : prompt.trim() ||
                       (noProviderAvailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
+                {inlineStashBadge}
                 <button
                   type="button"
                   className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-30"
@@ -3112,8 +3136,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {showMobilePendingAnswerActions ? (
                   <div
                     data-chat-composer-mobile-pending-actions="true"
-                    className="absolute bottom-0 right-0 flex justify-end"
+                    className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
                   >
+                    {inlineStashBadge}
                     <ComposerPrimaryActions
                       compact
                       pendingAction={pendingPrimaryAction}
@@ -3237,6 +3262,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {showMobilePendingAnswerActions ? null : inlineStashBadge}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
