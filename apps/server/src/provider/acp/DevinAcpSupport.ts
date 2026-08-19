@@ -244,11 +244,14 @@ export function applyDevinAcpModelSelection<E>(input: {
       ? undefined
       : requested.reasoningValue;
 
-  const needsModelSwitch = !current || requested.familySlug !== current.familySlug;
-  const needsReasoningSwitch =
-    reasoningConfigId !== undefined &&
-    (requestedReasoningDefault ||
-      (requestedReasoning !== undefined && requestedReasoning !== current?.reasoningValue));
+  const reasoningChanged =
+    requestedReasoningDefault ||
+    (requestedReasoning !== undefined && requestedReasoning !== current?.reasoningValue);
+  const needsReasoningSwitch = reasoningConfigId !== undefined && reasoningChanged;
+  const needsModelSwitch =
+    !current ||
+    requested.familySlug !== current.familySlug ||
+    (reasoningConfigId === undefined && reasoningChanged);
 
   if (!needsModelSwitch && !needsReasoningSwitch) {
     return Effect.succeed(current);

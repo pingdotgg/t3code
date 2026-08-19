@@ -356,7 +356,7 @@ function writeDevinUsageTranscriptLine(
     Effect.catch((error) =>
       Effect.logWarning("Failed to append Devin usage transcript", {
         filePath: filePath ?? "[unknown]",
-        error: error.message,
+        errorTag: error._tag,
       }).pipe(Effect.as(false)),
     ),
     Effect.catchCause(() => Effect.succeed(false)),

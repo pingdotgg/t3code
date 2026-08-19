@@ -463,6 +463,70 @@ describe("applyDevinAcpModelSelection", () => {
         });
       }),
   );
+
+  it.effect("switches model variants for reasoning-only changes without a reasoning config", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: { familySlug: "claude-opus-5", reasoningValue: undefined },
+        requested: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-5",
+            options: [
+              { value: "claude-opus-5", name: "Claude Opus 5" },
+              { value: "claude-opus-5-high", name: "Claude Opus 5 High" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).toHaveBeenCalledWith("claude-opus-5-high");
+      expect(setConfigOption).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("does not switch a model variant when reasoning is unchanged", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      const result = yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        requested: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-5-high",
+            options: [
+              { value: "claude-opus-5", name: "Claude Opus 5" },
+              { value: "claude-opus-5-high", name: "Claude Opus 5 High" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).not.toHaveBeenCalled();
+      expect(setConfigOption).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        familySlug: "claude-opus-5",
+        reasoningValue: "high",
+      });
+    }),
+  );
 });
 
 describe("Devin reasoning variant synonyms", () => {
