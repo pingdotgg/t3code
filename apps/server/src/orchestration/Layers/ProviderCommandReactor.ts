@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  isCorrectionMessage,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
@@ -102,10 +103,16 @@ type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system";
   readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly correction?:
+    | {
+        readonly targetMessageId: string;
+        readonly replacementText: string;
+      }
+    | undefined;
 };
 
 function formatThreadTitleSection(message: ThreadTitleMessage): string | undefined {
-  if (message.role === "system") {
+  if (message.role === "system" || isCorrectionMessage(message)) {
     return undefined;
   }
   const text = message.text.trim();
@@ -1084,7 +1091,8 @@ const make = Effect.gen(function* () {
     }
 
     const isFirstUserMessageTurn =
-      thread.messages.filter((entry) => entry.role === "user").length === 1;
+      thread.messages.filter((entry) => entry.role === "user" && !isCorrectionMessage(entry))
+        .length === 1 && !isCorrectionMessage(message);
     if (isFirstUserMessageTurn) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =

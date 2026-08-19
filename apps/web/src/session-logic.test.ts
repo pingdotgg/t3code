@@ -1524,6 +1524,40 @@ describe("deriveWorkLogEntries", () => {
 });
 
 describe("deriveTimelineEntries", () => {
+  it("omits hidden correction prompts from the transcript", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("visible-user"),
+          role: "user",
+          text: "Corrected wording",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          turnId: null,
+          updatedAt: "2026-02-23T00:00:02.000Z",
+          streaming: false,
+          originalText: "Original wording",
+        },
+        {
+          id: MessageId.make("hidden-correction"),
+          role: "user",
+          text: "Provider correction prompt",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          turnId: null,
+          updatedAt: "2026-02-23T00:00:02.000Z",
+          streaming: false,
+          correction: {
+            targetMessageId: MessageId.make("visible-user"),
+            replacementText: "Corrected wording",
+          },
+        },
+      ],
+      [],
+      [],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([MessageId.make("visible-user")]);
+  });
+
   it("includes proposed plans alongside messages and work entries in chronological order", () => {
     const entries = deriveTimelineEntries(
       [

@@ -7,7 +7,14 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  getThreadMessageCorrectionEligibility,
+  MessageId,
+  ThreadId,
+  type ProjectScript,
+} from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -27,6 +34,7 @@ import {
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 
@@ -50,6 +58,7 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
+import { deriveMobileEditableMessageId } from "./message-correction";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -98,6 +107,10 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 
 function OpeningThreadLoadingScreen() {
   return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+}
+
+function correctionFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unable to edit this message.";
 }
 
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
@@ -214,6 +227,18 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const correctThreadMessage = useAtomCommand(threadEnvironment.correctMessage, {
+    reportFailure: false,
+  });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+    reportFailure: false,
+  });
+  const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -294,6 +319,107 @@ function ThreadRouteContent(
           }
         : null,
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
+  );
+  const editableMessageId = useMemo(() => {
+    return deriveMobileEditableMessageId({
+      connected: routeConnectionState === "connected",
+      correctionSupported:
+        routeEnvironmentRuntime?.serverConfig?.environment.capabilities.threadMessageCorrection ===
+        true,
+      thread: selectedThreadDetail,
+      occurredAt: new Date().toISOString(),
+    });
+  }, [routeConnectionState, routeEnvironmentRuntime?.serverConfig, selectedThreadDetail]);
+  const handleCorrectMessage = useCallback(
+    async (input: {
+      readonly targetMessageId: MessageId;
+      readonly sourceText: string;
+      readonly replacementText: string;
+    }): Promise<string | null> => {
+      if (
+        routeConnectionState !== "connected" ||
+        editableMessageId !== input.targetMessageId ||
+        selectedThreadDetail === null ||
+        selectedThreadWithDraftSettings === null
+      ) {
+        return "Reconnect and wait for the thread to become idle before editing.";
+      }
+      const target = selectedThreadDetail.messages.find(
+        (message) => message.id === input.targetMessageId,
+      );
+      if (!target || target.text !== input.sourceText) {
+        return "This message changed on another client. Review the latest wording and try again.";
+      }
+      const createdAt = new Date().toISOString();
+      const eligibility = getThreadMessageCorrectionEligibility({
+        thread: selectedThreadDetail,
+        targetMessageId: input.targetMessageId,
+        occurredAt: createdAt,
+        replacementText: input.replacementText,
+      });
+      if (!eligibility.eligible) return eligibility.detail;
+
+      const currentThread = selectedThreadDetail;
+      const nextThread = selectedThreadWithDraftSettings;
+      if (
+        JSON.stringify(currentThread.modelSelection) !== JSON.stringify(nextThread.modelSelection)
+      ) {
+        const result = await updateThreadMetadata({
+          environmentId: nextThread.environmentId,
+          input: { threadId: currentThread.id, modelSelection: nextThread.modelSelection },
+        });
+        if (result._tag === "Failure") {
+          return correctionFailureMessage(squashAtomCommandFailure(result));
+        }
+      }
+      if (currentThread.runtimeMode !== nextThread.runtimeMode) {
+        const result = await setThreadRuntimeMode({
+          environmentId: nextThread.environmentId,
+          input: { threadId: currentThread.id, runtimeMode: nextThread.runtimeMode, createdAt },
+        });
+        if (result._tag === "Failure") {
+          return correctionFailureMessage(squashAtomCommandFailure(result));
+        }
+      }
+      if (currentThread.interactionMode !== nextThread.interactionMode) {
+        const result = await setThreadInteractionMode({
+          environmentId: nextThread.environmentId,
+          input: {
+            threadId: currentThread.id,
+            interactionMode: nextThread.interactionMode,
+            createdAt,
+          },
+        });
+        if (result._tag === "Failure") {
+          return correctionFailureMessage(squashAtomCommandFailure(result));
+        }
+      }
+      const result = await correctThreadMessage({
+        environmentId: nextThread.environmentId,
+        input: {
+          threadId: currentThread.id,
+          targetMessageId: input.targetMessageId,
+          correctionMessageId: MessageId.make(uuidv4()),
+          expectedText: input.sourceText,
+          replacementText: input.replacementText,
+          modelSelection: nextThread.modelSelection,
+          createdAt,
+        },
+      });
+      return result._tag === "Failure"
+        ? correctionFailureMessage(squashAtomCommandFailure(result))
+        : null;
+    },
+    [
+      correctThreadMessage,
+      editableMessageId,
+      routeConnectionState,
+      selectedThreadDetail,
+      selectedThreadWithDraftSettings,
+      setThreadInteractionMode,
+      setThreadRuntimeMode,
+      updateThreadMetadata,
+    ],
   );
 
   /* ─── Native header theming ──────────────────────────────────────── */
@@ -789,6 +915,7 @@ function ThreadRouteContent(
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
+          editableMessageId={editableMessageId}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}
@@ -799,6 +926,7 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
+          onCorrectMessage={handleCorrectMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}

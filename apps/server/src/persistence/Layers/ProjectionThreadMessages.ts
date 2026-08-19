@@ -33,6 +33,9 @@ function toProjectionThreadMessage(
     turnId: row.turnId,
     role: row.role,
     text: row.text,
+    originalText: row.originalText,
+    correctionTargetMessageId: row.correctionTargetMessageId,
+    correctionReplacementText: row.correctionReplacementText,
     isStreaming: row.isStreaming === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -56,6 +59,9 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json,
+          original_text,
+          correction_target_message_id,
+          correction_replacement_text,
           is_streaming,
           created_at,
           updated_at
@@ -74,6 +80,9 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
               WHERE message_id = ${row.messageId}
             )
           ),
+          ${row.originalText},
+          ${row.correctionTargetMessageId},
+          ${row.correctionReplacementText},
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -88,6 +97,9 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             excluded.attachments_json,
             projection_thread_messages.attachments_json
           ),
+          original_text = excluded.original_text,
+          correction_target_message_id = excluded.correction_target_message_id,
+          correction_replacement_text = excluded.correction_replacement_text,
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
@@ -107,6 +119,9 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          original_text AS "originalText",
+          correction_target_message_id AS "correctionTargetMessageId",
+          correction_replacement_text AS "correctionReplacementText",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -128,6 +143,9 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          original_text AS "originalText",
+          correction_target_message_id AS "correctionTargetMessageId",
+          correction_replacement_text AS "correctionReplacementText",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"

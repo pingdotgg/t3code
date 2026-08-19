@@ -3,6 +3,7 @@ import * as Arr from "effect/Array";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   ApprovalRequestId,
+  isCorrectionMessage,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
@@ -1665,12 +1666,14 @@ export function deriveTimelineEntries(
   workEntries: ReadonlyArray<WorkLogEntry>,
   turnPlans: ReadonlyArray<TurnPlanEntry> = [],
 ): TimelineEntry[] {
-  const messageRows: TimelineEntry[] = messages.map((message) => ({
-    id: message.id,
-    kind: "message",
-    createdAt: message.createdAt,
-    message,
-  }));
+  const messageRows: TimelineEntry[] = messages
+    .filter((message) => !isCorrectionMessage(message))
+    .map((message) => ({
+      id: message.id,
+      kind: "message",
+      createdAt: message.createdAt,
+      message,
+    }));
   const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
     id: proposedPlan.id,
     kind: "proposed-plan",

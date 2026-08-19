@@ -1,9 +1,12 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
+  applyThreadMessageCorrection,
+  isCorrectionMessage,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  reconcileThreadMessageCorrections,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -20,6 +23,7 @@ import {
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
+  ThreadMessageCorrectedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadSettledPayload,
@@ -89,6 +93,7 @@ function decodeForEvent<A>(
 
 function retainThreadMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
+  checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
 ): ReadonlyArray<OrchestrationMessage> {
@@ -103,8 +108,44 @@ function retainThreadMessagesAfterRevert(
     }
   }
 
+  const firstRemovedCheckpoint = checkpoints
+    .filter((checkpoint) => checkpoint.checkpointTurnCount > turnCount)
+    .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)[0];
+  const removedAssistant = firstRemovedCheckpoint?.assistantMessageId
+    ? messages.find((message) => message.id === firstRemovedCheckpoint.assistantMessageId)
+    : undefined;
+  const removedPendingMessage = removedAssistant
+    ? messages
+        .filter(
+          (message) =>
+            message.role === "user" &&
+            (message.createdAt < removedAssistant.createdAt ||
+              (message.createdAt === removedAssistant.createdAt &&
+                message.id < removedAssistant.id)),
+        )
+        .toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        )
+        .at(-1)
+    : undefined;
+  if (removedPendingMessage && isCorrectionMessage(removedPendingMessage)) {
+    for (const message of messages) {
+      if (
+        message.createdAt < removedPendingMessage.createdAt ||
+        (message.createdAt === removedPendingMessage.createdAt &&
+          message.id < removedPendingMessage.id)
+      ) {
+        retainedMessageIds.add(message.id);
+      }
+    }
+  }
+
   const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.id),
+    (message) =>
+      message.role === "user" &&
+      !isCorrectionMessage(message) &&
+      retainedMessageIds.has(message.id),
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
@@ -112,6 +153,7 @@ function retainThreadMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "user" &&
+          !isCorrectionMessage(message) &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -549,6 +591,28 @@ export function projectEvent(
         };
       });
 
+    case "thread.message-corrected":
+      return decodeForEvent(
+        ThreadMessageCorrectedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              messages: applyThreadMessageCorrection(thread.messages, payload).slice(
+                -MAX_THREAD_MESSAGES,
+              ),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
     case "thread.session-set":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -732,10 +796,13 @@ export function projectEvent(
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
             .slice(-MAX_THREAD_CHECKPOINTS);
           const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
-          const messages = retainThreadMessagesAfterRevert(
-            thread.messages,
-            retainedTurnIds,
-            payload.turnCount,
+          const messages = reconcileThreadMessageCorrections(
+            retainThreadMessagesAfterRevert(
+              thread.messages,
+              thread.checkpoints,
+              retainedTurnIds,
+              payload.turnCount,
+            ),
           ).slice(-MAX_THREAD_MESSAGES);
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,

@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
   CheckpointRef,
   CommandId,
@@ -22,7 +27,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  SqlitePersistenceMemory,
+  makeSqlitePersistenceLive,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
@@ -46,10 +54,14 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-async function createOrchestrationSystem() {
+async function createOrchestrationSystem(options?: { readonly dbPath?: string }) {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
+  const persistenceLayer =
+    options?.dbPath === undefined
+      ? SqlitePersistenceMemory
+      : makeSqlitePersistenceLive(options.dbPath).pipe(Layer.provide(NodeServices.layer));
   const orchestrationLayer = Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -62,7 +74,7 @@ async function createOrchestrationSystem() {
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(persistenceLayer),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -153,7 +165,17 @@ describe("OrchestrationEngine", () => {
           settledOverride: null,
           settledAt: null,
           deletedAt: null,
-          messages: [],
+          messages: [
+            {
+              id: asMessageId("message-bootstrap"),
+              role: "user" as const,
+              text: "Original request",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-03-03T00:00:03.000Z",
+              updatedAt: "2026-03-03T00:00:03.000Z",
+            },
+          ],
           proposedPlans: [],
           activities: [],
           checkpoints: [],
@@ -172,6 +194,8 @@ describe("OrchestrationEngine", () => {
       })),
     };
     let fullSnapshotReadCount = 0;
+    let targetedThreadReadCount = 0;
+    let failTargetedThreadRead = true;
 
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
@@ -205,7 +229,23 @@ describe("OrchestrationEngine", () => {
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
-          getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: (threadId) => {
+            targetedThreadReadCount += 1;
+            if (failTargetedThreadRead) {
+              failTargetedThreadRead = false;
+              return Effect.fail(
+                new PersistenceSqlError({
+                  operation: "test.getThreadDetailById",
+                  detail: "temporary thread detail read failure",
+                }),
+              );
+            }
+            return Effect.succeed(
+              Option.fromUndefinedOr(
+                projectionSnapshot.threads.find((thread) => thread.id === threadId),
+              ),
+            );
+          },
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           searchThreads: () => Effect.succeed({ matches: [] }),
         }),
@@ -237,6 +277,29 @@ describe("OrchestrationEngine", () => {
 
     expect(result.sequence).toBe(8);
     expect(await runtime.runPromise(engine.latestSequence)).toBe(8);
+    expect(fullSnapshotReadCount).toBe(0);
+
+    const correctionCommand = {
+      type: "thread.message.correct" as const,
+      commandId: CommandId.make("cmd-bootstrap-message-correct"),
+      threadId: ThreadId.make("thread-bootstrap"),
+      targetMessageId: asMessageId("message-bootstrap"),
+      correctionMessageId: asMessageId("message-bootstrap-correction"),
+      expectedText: "Original request",
+      replacementText: "Corrected request",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      createdAt: "2026-03-03T00:10:00.000Z",
+    };
+    await expect(runtime.runPromise(engine.dispatch(correctionCommand))).rejects.toThrow(
+      "temporary thread detail read failure",
+    );
+    const correction = await runtime.runPromise(engine.dispatch(correctionCommand));
+
+    expect(correction.sequence).toBe(10);
+    expect(targetedThreadReadCount).toBe(2);
     expect(fullSnapshotReadCount).toBe(0);
 
     await runtime.dispose();
@@ -300,6 +363,98 @@ describe("OrchestrationEngine", () => {
     const readModelB = await system.readModel();
     expect(readModelB).toEqual(readModelA);
     await system.dispose();
+  });
+
+  it("hydrates persisted thread detail before correcting a message", async () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-correction-restart-"));
+    const dbPath = NodePath.join(tempDir, "state.sqlite");
+    const threadId = ThreadId.make("thread-correction-detail");
+    const targetMessageId = asMessageId("message-correction-target");
+    try {
+      const firstSystem = await createOrchestrationSystem({ dbPath });
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-correction-project-create"),
+          projectId: asProjectId("project-correction-detail"),
+          title: "Correction Project",
+          workspaceRoot: "/tmp/project-correction-detail",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt: "2026-03-03T00:00:00.000Z",
+        }),
+      );
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-correction-thread-create"),
+          threadId,
+          projectId: asProjectId("project-correction-detail"),
+          title: "Correction Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-03-03T00:00:01.000Z",
+        }),
+      );
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-correction-turn-start"),
+          threadId,
+          message: {
+            messageId: targetMessageId,
+            role: "user",
+            text: "Original request",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          createdAt: "2026-03-03T00:00:02.000Z",
+        }),
+      );
+      await firstSystem.dispose();
+
+      const restartedSystem = await createOrchestrationSystem({ dbPath });
+      const correction = await restartedSystem.run(
+        restartedSystem.engine.dispatch({
+          type: "thread.message.correct",
+          commandId: CommandId.make("cmd-correction-message-correct"),
+          threadId,
+          targetMessageId,
+          correctionMessageId: asMessageId("message-correction-follow-up"),
+          expectedText: "Original request",
+          replacementText: "Corrected request",
+          createdAt: "2026-03-03T00:10:00.000Z",
+        }),
+      );
+
+      expect(correction.sequence).toBe(6);
+      const thread = (await restartedSystem.readModel()).threads.find(
+        (candidate) => candidate.id === threadId,
+      );
+      expect(thread?.messages).toHaveLength(2);
+      expect(thread?.messages[0]).toMatchObject({
+        id: targetMessageId,
+        text: "Corrected request",
+        originalText: "Original request",
+      });
+      expect(thread?.messages[1]?.correction).toEqual({
+        targetMessageId,
+        replacementText: "Corrected request",
+      });
+
+      await restartedSystem.dispose();
+    } finally {
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("archives and unarchives threads through orchestration commands", async () => {

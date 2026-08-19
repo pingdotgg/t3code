@@ -17,6 +17,7 @@ import {
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
+  deriveChatIsWorking,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
@@ -28,11 +29,97 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  replaceEditableUserText,
   scheduleEnvironmentReconnectWarning,
+  splitEditableUserMessage,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("deriveChatIsWorking", () => {
+  it("treats a checkpoint revert as working until it finishes", () => {
+    expect(
+      deriveChatIsWorking({
+        phase: "ready",
+        isSendBusy: false,
+        isConnecting: false,
+        isRevertingCheckpoint: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("editable user message text", () => {
+  it("replaces only user prose while preserving every T3-owned byte", () => {
+    const suffix = [
+      "",
+      "",
+      "<terminal_context>",
+      "- Terminal 1:",
+      "  $ pnpm test",
+      "</terminal_context>",
+      "",
+      "<preview_annotation>",
+      "Id: preview-1",
+      "<element_context>",
+      "- button:",
+      "  Save",
+      "</element_context>",
+      "</preview_annotation>",
+      "",
+      '<review_comment sectionId="file:a.ts">',
+      "Keep this exact.",
+      "</review_comment>",
+    ].join("\n");
+    const message = `Ultrathink:\nFix the old wording.${suffix}`;
+
+    expect(splitEditableUserMessage(message)).toEqual({
+      prefix: "Ultrathink:\n",
+      editableText: "Fix the old wording.",
+      suffix,
+    });
+    expect(replaceEditableUserText(message, "  Use the corrected wording.  ")).toBe(
+      `Ultrathink:\nUse the corrected wording.${suffix}`,
+    );
+  });
+
+  it("keeps ordinary messages simple and permits structured-looking inline prose", () => {
+    expect(splitEditableUserMessage("Discuss <element_context> as plain text.")).toEqual({
+      prefix: "",
+      editableText: "Discuss <element_context> as plain text.",
+      suffix: "",
+    });
+    expect(replaceEditableUserText("Original", "Replacement")).toBe("Replacement");
+  });
+
+  it("preserves structured context when the message has no prose", () => {
+    const contextOnly = "<terminal_context>\ncommand output\n</terminal_context>";
+    expect(splitEditableUserMessage(contextOnly)).toEqual({
+      prefix: "",
+      editableText: "",
+      suffix: contextOnly,
+    });
+    expect(replaceEditableUserText(contextOnly, "Add an explanation.")).toBe(
+      `Add an explanation.\n\n${contextOnly}`,
+    );
+  });
+
+  it("edits a leading review request while preserving its diff context", () => {
+    const opening = '<review_comment sectionId="file:a.ts" filePath="a.ts">\n';
+    const suffix = "\n```diff\n-old\n+new\n```\n</review_comment>";
+    const message = `${opening}Keep the old request.${suffix}`;
+
+    expect(splitEditableUserMessage(message)).toEqual({
+      prefix: opening,
+      editableText: "Keep the old request.",
+      suffix,
+    });
+    expect(replaceEditableUserText(message, "Use the corrected request.")).toBe(
+      `${opening}Use the corrected request.${suffix}`,
+    );
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");

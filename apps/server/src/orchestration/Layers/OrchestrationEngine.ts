@@ -28,7 +28,7 @@ import {
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
-import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { PersistenceDecodeError, toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -167,9 +167,48 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        let decisionReadModel = commandReadModel;
+        if (envelope.command.type === "thread.message.correct") {
+          const correctionCommand = envelope.command;
+          decisionReadModel = yield* Effect.gen(function* () {
+            const commandThread = commandReadModel.threads.find(
+              (thread) => thread.id === correctionCommand.threadId,
+            );
+            if (commandThread === undefined) {
+              return commandReadModel;
+            }
+            if (commandThread.archivedAt !== null || commandThread.deletedAt !== null) {
+              return commandReadModel;
+            }
+
+            // The bootstrap command model deliberately omits messages and activities.
+            // Correction is the only command that needs both, so hydrate just its thread.
+            // This full read also preserves repeated edits when hidden correction turns
+            // have moved the original visible target outside the newest turn window. The
+            // serial engine worker is the sole projection writer, so prior commands have
+            // finished projection before this non-transactional detail read begins.
+            const threadDetail = yield* projectionSnapshotQuery.getThreadDetailById(
+              correctionCommand.threadId,
+            );
+            if (Option.isNone(threadDetail)) {
+              return yield* new PersistenceDecodeError({
+                operation: "OrchestrationEngine.hydrateMessageCorrectionThread",
+                issue: "MissingActiveThreadDetail",
+                correlation: { threadId: correctionCommand.threadId },
+              });
+            }
+            return {
+              ...commandReadModel,
+              threads: commandReadModel.threads.map((candidate) =>
+                candidate.id === threadDetail.value.id ? threadDetail.value : candidate,
+              ),
+            };
+          });
+        }
+
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
-          readModel: commandReadModel,
+          readModel: decisionReadModel,
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>

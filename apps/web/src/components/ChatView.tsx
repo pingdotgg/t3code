@@ -16,6 +16,8 @@ import {
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
+  getLastVisibleMessage,
+  getThreadMessageCorrectionEligibility,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   ProviderDriverKind,
@@ -308,6 +310,7 @@ import {
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
+  deriveChatIsWorking,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
@@ -328,6 +331,8 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  replaceEditableUserText,
+  splitEditableUserMessage,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   waitForStartedServerThread,
@@ -1239,6 +1244,9 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const correctThreadMessage = useAtomCommand(threadEnvironment.correctMessage, {
+    reportFailure: false,
+  });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -1354,6 +1362,18 @@ function ChatViewContent(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [messageEdit, setMessageEdit] = useState<{
+    readonly threadKey: string;
+    readonly messageId: MessageId;
+    readonly sourceText: string;
+    readonly draft: string;
+    readonly saving: boolean;
+  } | null>(null);
+  const [optimisticMessageCorrection, setOptimisticMessageCorrection] = useState<{
+    readonly messageId: MessageId;
+    readonly replacementText: string;
+    readonly sourceUpdatedAt: string;
+  } | null>(null);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -1374,6 +1394,8 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     setIsWorkspaceFileDragActive(false);
+    setMessageEdit(null);
+    setOptimisticMessageCorrection(null);
   }, [draftId, routeThreadKey]);
 
   useEffect(() => {
@@ -1533,6 +1555,8 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  const latestActiveThreadRef = useRef(activeThread);
+  latestActiveThreadRef.current = activeThread;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -2040,6 +2064,8 @@ function ChatViewContent(props: ChatViewProps) {
     : (primaryEnvironment?.serverConfig ?? null);
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsThreadMessageCorrection =
+    serverConfig?.environment.capabilities.threadMessageCorrection === true;
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -2335,7 +2361,12 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isWorking = deriveChatIsWorking({
+    phase,
+    isSendBusy,
+    isConnecting,
+    isRevertingCheckpoint,
+  });
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -2531,13 +2562,24 @@ function ChatViewContent(props: ChatViewProps) {
   }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, displayServerMessages]);
   const timelineMessages = useMemo(() => {
     const messages = displayServerMessages;
+    const serverMessagesWithCorrectionOverlay = optimisticMessageCorrection
+      ? messages.map((message) =>
+          message.id === optimisticMessageCorrection.messageId
+            ? {
+                ...message,
+                text: optimisticMessageCorrection.replacementText,
+                originalText: message.originalText ?? message.text,
+              }
+            : message,
+        )
+      : messages;
     const serverMessagesWithPreviewHandoff =
       Object.keys(attachmentPreviewHandoffByMessageId).length === 0
-        ? messages
+        ? serverMessagesWithCorrectionOverlay
         : // Spread only fires for the few messages that actually changed;
           // unchanged ones early-return their original reference.
           // In-place mutation would break React's immutable state contract.
-          messages.map((message) => {
+          serverMessagesWithCorrectionOverlay.map((message) => {
             if (
               message.role !== "user" ||
               !message.attachments ||
@@ -2580,7 +2622,24 @@ function ChatViewContent(props: ChatViewProps) {
       return serverMessagesWithPreviewHandoff;
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  }, [
+    attachmentPreviewHandoffByMessageId,
+    displayServerMessages,
+    optimisticMessageCorrection,
+    optimisticUserMessages,
+  ]);
+  useEffect(() => {
+    if (optimisticMessageCorrection === null) return;
+    const serverTarget = displayServerMessages.find(
+      (message) => message.id === optimisticMessageCorrection.messageId,
+    );
+    if (
+      serverTarget !== undefined &&
+      serverTarget.updatedAt !== optimisticMessageCorrection.sourceUpdatedAt
+    ) {
+      setOptimisticMessageCorrection(null);
+    }
+  }, [displayServerMessages, optimisticMessageCorrection]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(
@@ -2631,6 +2690,9 @@ function ChatViewContent(props: ChatViewProps) {
         if (!summary) {
           continue;
         }
+        if (summary.status !== "ready" || summary.checkpointRef === null) {
+          continue;
+        }
         const turnCount =
           summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
         if (typeof turnCount !== "number") {
@@ -2643,6 +2705,42 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const lastVisibleMessage = useMemo(
+    () => (activeThread ? getLastVisibleMessage(activeThread.messages) : undefined),
+    [activeThread],
+  );
+  const editableMessageId = useMemo(() => {
+    if (
+      !supportsThreadMessageCorrection ||
+      !isServerThread ||
+      !activeThread ||
+      lastVisibleMessage?.role !== "user" ||
+      optimisticUserMessages.length > 0 ||
+      activeEnvironmentUnavailable ||
+      threadDetailLoading
+    ) {
+      return null;
+    }
+    return getThreadMessageCorrectionEligibility({
+      thread: activeThread,
+      targetMessageId: lastVisibleMessage.id,
+      occurredAt: new Date().toISOString(),
+    }).eligible
+      ? lastVisibleMessage.id
+      : null;
+  }, [
+    activeEnvironmentUnavailable,
+    activeThread,
+    isServerThread,
+    lastVisibleMessage,
+    optimisticUserMessages.length,
+    supportsThreadMessageCorrection,
+    threadDetailLoading,
+  ]);
+  const activeMessageEdit = messageEdit?.threadKey === activeThreadKey ? messageEdit : null;
+  const editingMessageId = activeMessageEdit?.messageId ?? null;
+  const editingMessageSourceText = activeMessageEdit?.sourceText ?? null;
+  const editingMessageSaving = activeMessageEdit?.saving ?? false;
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -2821,6 +2919,44 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
+  useEffect(() => {
+    setMessageEdit(null);
+    setOptimisticMessageCorrection(null);
+  }, [activeThreadKey]);
+  useEffect(() => {
+    if (editingMessageId === null || editingMessageSaving || !activeThread || threadDetailLoading) {
+      return;
+    }
+    const currentTarget = activeThread.messages.find((message) => message.id === editingMessageId);
+    if (!currentTarget) {
+      setMessageEdit((current) =>
+        current?.threadKey === activeThreadKey && current.messageId === editingMessageId
+          ? null
+          : current,
+      );
+      setOptimisticMessageCorrection((current) =>
+        current?.messageId === editingMessageId ? null : current,
+      );
+      return;
+    }
+    if (currentTarget.text === editingMessageSourceText) return;
+    setMessageEdit((current) => (current?.messageId === currentTarget.id ? null : current));
+    setOptimisticMessageCorrection((current) =>
+      current?.messageId === currentTarget.id ? null : current,
+    );
+    setThreadError(
+      activeThread.id,
+      "This message changed on another client. Review the latest wording and try again.",
+    );
+  }, [
+    activeThread,
+    activeThreadKey,
+    editingMessageId,
+    editingMessageSaving,
+    editingMessageSourceText,
+    setThreadError,
+    threadDetailLoading,
+  ]);
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -3731,6 +3867,168 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadRuntimeMode,
       updateThreadMetadata,
     ],
+  );
+
+  const editableMessageIdRef = useRef(editableMessageId);
+  editableMessageIdRef.current = editableMessageId;
+  const setThreadErrorRef = useRef(setThreadError);
+  setThreadErrorRef.current = setThreadError;
+  const beginMessageEdit = useCallback(
+    (messageId: MessageId) => {
+      const currentThread = latestActiveThreadRef.current;
+      if (messageId !== editableMessageIdRef.current || !currentThread || !activeThreadKey) return;
+      const message = currentThread.messages.find((candidate) => candidate.id === messageId);
+      if (!message) return;
+      setThreadErrorRef.current(currentThread.id, null);
+      setMessageEdit({
+        threadKey: activeThreadKey,
+        messageId,
+        sourceText: message.text,
+        draft: splitEditableUserMessage(message.text).editableText,
+        saving: false,
+      });
+    },
+    [activeThreadKey],
+  );
+  const cancelMessageEdit = useCallback(() => {
+    setMessageEdit(null);
+    setOptimisticMessageCorrection(null);
+  }, []);
+  const saveMessageEdit = useCallback(
+    async (draft: string) => {
+      if (
+        !activeMessageEdit ||
+        !activeThread ||
+        !isServerThread ||
+        activeMessageEdit.saving ||
+        isWorking ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const currentTarget = activeThread.messages.find(
+        (message) => message.id === activeMessageEdit.messageId,
+      );
+      if (!currentTarget || currentTarget.text !== activeMessageEdit.sourceText) {
+        setMessageEdit((current) =>
+          current?.threadKey === activeMessageEdit.threadKey &&
+          current.messageId === activeMessageEdit.messageId
+            ? null
+            : current,
+        );
+        setOptimisticMessageCorrection((current) =>
+          current?.messageId === activeMessageEdit.messageId ? null : current,
+        );
+        setThreadError(
+          activeThread.id,
+          "This message changed on another client. Review the latest wording and try again.",
+        );
+        return;
+      }
+
+      const requestThreadId = activeThread.id;
+      const requestMessageId = activeMessageEdit.messageId;
+      const requestThreadKey = activeMessageEdit.threadKey;
+      const createdAt = new Date().toISOString();
+      const replacementText = replaceEditableUserText(currentTarget.text, draft);
+      const eligibility = getThreadMessageCorrectionEligibility({
+        thread: activeThread,
+        targetMessageId: activeMessageEdit.messageId,
+        occurredAt: createdAt,
+        replacementText,
+      });
+      if (!eligibility.eligible) {
+        setThreadError(activeThread.id, eligibility.detail);
+        return;
+      }
+      if (activeEnvironmentUnavailable) {
+        setThreadError(activeThread.id, "Reconnect to the environment before editing a message.");
+        return;
+      }
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setMessageEdit((current) => (current ? { ...current, saving: true } : null));
+      setOptimisticMessageCorrection({
+        messageId: activeMessageEdit.messageId,
+        replacementText,
+        sourceUpdatedAt: currentTarget.updatedAt,
+      });
+      const selectedModelSelection =
+        composerRef.current?.getSendContext().selectedModelSelection ?? activeThread.modelSelection;
+      let failure = await persistThreadSettingsForNextTurn({
+        threadId: activeThread.id,
+        createdAt,
+        modelSelection: selectedModelSelection,
+        runtimeMode,
+        interactionMode,
+      });
+      if (failure._tag !== "Failure") {
+        failure = mapAtomCommandResult(
+          await correctThreadMessage({
+            environmentId,
+            input: {
+              threadId: activeThread.id,
+              targetMessageId: activeMessageEdit.messageId,
+              correctionMessageId: newMessageId(),
+              expectedText: activeMessageEdit.sourceText,
+              replacementText,
+              modelSelection: selectedModelSelection,
+              createdAt,
+            },
+          }),
+          () => undefined,
+        );
+      }
+
+      if (failure._tag === "Failure") {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        setOptimisticMessageCorrection((current) =>
+          current?.messageId === requestMessageId ? null : current,
+        );
+        setMessageEdit((current) =>
+          current?.threadKey === requestThreadKey && current.messageId === requestMessageId
+            ? { ...current, saving: false }
+            : current,
+        );
+        if (latestActiveThreadRef.current?.id === requestThreadId) {
+          setThreadError(
+            requestThreadId,
+            chatActionErrorMessage(squashAtomCommandFailure(failure)),
+          );
+        }
+        return;
+      }
+      sendInFlightRef.current = false;
+      if (latestActiveThreadRef.current?.id === requestThreadId) {
+        setThreadError(requestThreadId, null);
+      }
+      setMessageEdit((current) =>
+        current?.threadKey === requestThreadKey && current.messageId === requestMessageId
+          ? null
+          : current,
+      );
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeThread,
+      beginLocalDispatch,
+      correctThreadMessage,
+      environmentId,
+      interactionMode,
+      isServerThread,
+      isWorking,
+      activeMessageEdit,
+      persistThreadSettingsForNextTurn,
+      resetLocalDispatch,
+      runtimeMode,
+      setThreadError,
+    ],
+  );
+  const handleSaveMessageEdit = useCallback(
+    (draft: string) => void saveMessageEdit(draft),
+    [saveMessageEdit],
   );
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
@@ -6397,7 +6695,13 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
-                isRevertingCheckpoint={isRevertingCheckpoint}
+                editableMessageId={editableMessageId}
+                editingMessageId={activeMessageEdit?.messageId ?? null}
+                editingDraft={activeMessageEdit?.draft ?? ""}
+                isSavingMessageEdit={activeMessageEdit?.saving ?? false}
+                onBeginMessageEdit={beginMessageEdit}
+                onCancelMessageEdit={cancelMessageEdit}
+                onSaveMessageEdit={handleSaveMessageEdit}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}

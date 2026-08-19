@@ -1,5 +1,9 @@
 import {
+  buildThreadMessageCorrectionProviderText,
   EventId,
+  getThreadMessageCorrectionEligibility,
+  threadHasOpenBlockingRequest as hasOpenBlockingRequest,
+  threadHasQueuedTurnStart,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -23,124 +27,6 @@ import {
 import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-
-// Session adoption takes seconds; a user message still unadopted after this
-// window is a failed/stale start, not pending work. Mirrors the client's
-// QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
-const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
-
-/**
- * Blocked-on-you work derived from the thread's retained activities: an
- * approval or user-input request with no later resolution for the same
- * requestId. The server-side twin of the shell's hasPendingApprovals /
- * hasPendingUserInput flags, which the decider read model does not carry.
- * The clearing rules MUST match ProjectionPipeline's pending accounting —
- * resolved activities always clear, respond.failed clears only when the
- * failure detail marks the request stale/unknown — or settle would be
- * rejected on threads whose shell flags read as clear.
- */
-function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): boolean {
-  const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
-  if (detail === null) return false;
-  return (
-    detail.includes("stale pending approval request") ||
-    detail.includes("unknown pending approval request") ||
-    detail.includes("unknown pending permission request") ||
-    detail.includes("stale pending user-input request") ||
-    detail.includes("unknown pending user-input request") ||
-    detail.includes("unknown pending user input request") ||
-    detail.includes("unknown pending codex user input request")
-  );
-}
-
-// Scans the read model's activities, which the projector caps at the most
-// recent 500. That bound is safe here: an OPEN approval/user-input request
-// blocks its turn, so the thread cannot accumulate hundreds of later
-// activities while one is outstanding — a request that has scrolled out of
-// the window is one whose turn kept running, i.e. it was resolved or went
-// stale. (The projection pipeline's pendingApprovalCount reads the same
-// capped stream and stays consistent with this view.)
-function hasOpenBlockingRequest(thread: {
-  readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
-}): boolean {
-  const openRequestIds = new Set<string>();
-  for (const activity of thread.activities) {
-    const payload =
-      typeof activity.payload === "object" && activity.payload !== null
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
-    if (requestId === null) continue;
-    if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
-      openRequestIds.add(requestId);
-    } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
-      openRequestIds.delete(requestId);
-    } else if (
-      (activity.kind === "provider.approval.respond.failed" ||
-        activity.kind === "provider.user-input.respond.failed") &&
-      isStaleRequestFailureDetail(payload)
-    ) {
-      openRequestIds.delete(requestId);
-    }
-  }
-  return openRequestIds.size > 0;
-}
-
-/**
- * A queued turn start — a user message no turn has picked up yet — is work
- * in flight even though session is still null (turn.start emits
- * message-sent + turn-start-requested; the session arrives later). Detection
- * mirrors the client's hasQueuedTurnStart: the newest user message is
- * strictly newer than every latestTurn timestamp (adoption stamps the new
- * turn's requestedAt with the message time, clearing this), and only within
- * the adoption grace window — historical threads whose last user message
- * postdates their turn timestamps (older-server data, mid-turn messages)
- * must not be blocked forever. A failed session start (status "error")
- * clears the block immediately.
- *
- * The age check is bounded on BOTH sides: message timestamps are
- * client-supplied, so a client clock ahead of the server yields a negative
- * age. Without the lower bound that negative age satisfies `<= grace` for
- * as long as the skew lasts, extending the block far past the intended two
- * minutes.
- */
-function threadHasQueuedTurnStart(
-  thread: {
-    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
-    readonly latestTurn: {
-      readonly requestedAt: string;
-      readonly startedAt: string | null;
-      readonly completedAt: string | null;
-    } | null;
-    readonly session: { readonly status: string } | null;
-  },
-  occurredAt: string,
-): boolean {
-  const latestUserMessageAtMs = thread.messages.reduce(
-    (latest, message) =>
-      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-    Number.NEGATIVE_INFINITY,
-  );
-  const latestTurnAtMs =
-    thread.latestTurn === null
-      ? Number.NEGATIVE_INFINITY
-      : Math.max(
-          ...[
-            thread.latestTurn.requestedAt,
-            thread.latestTurn.startedAt,
-            thread.latestTurn.completedAt,
-          ].map((candidate) =>
-            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-          ),
-        );
-  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-  return (
-    thread.session?.status !== "error" &&
-    Number.isFinite(latestUserMessageAtMs) &&
-    latestUserMessageAtMs > latestTurnAtMs &&
-    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
-  );
-}
 
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
@@ -1034,6 +920,114 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.message.correct": {
+      const targetThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const eligibility = getThreadMessageCorrectionEligibility({
+        thread: targetThread,
+        targetMessageId: command.targetMessageId,
+        occurredAt: command.createdAt,
+        replacementText: command.replacementText,
+      });
+      if (!eligibility.eligible) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: eligibility.detail,
+        });
+      }
+      if (targetThread.messages.some((message) => message.id === command.correctionMessageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The correction message ID is already in use.",
+        });
+      }
+      const targetMessage = targetThread.messages.find(
+        (message) => message.id === command.targetMessageId,
+      );
+      if (targetMessage?.text !== command.expectedText) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The target message changed before the correction was saved.",
+        });
+      }
+
+      const correctionEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.message-corrected",
+        payload: {
+          threadId: command.threadId,
+          targetMessageId: command.targetMessageId,
+          correctionMessageId: command.correctionMessageId,
+          replacementText: command.replacementText,
+          providerText: buildThreadMessageCorrectionProviderText(command.replacementText),
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        causationEventId: correctionEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.correctionMessageId,
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
+            : {}),
+          runtimeMode: targetThread.runtimeMode,
+          interactionMode: targetThread.interactionMode,
+          createdAt: command.createdAt,
+        },
+      };
+      const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (targetThread.settledOverride !== null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      if (targetThread.snoozedUntil != null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      return [...lifecycleResetEvents, correctionEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {

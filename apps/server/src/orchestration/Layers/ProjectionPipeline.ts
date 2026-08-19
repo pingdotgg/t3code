@@ -238,8 +238,36 @@ function retainProjectionMessagesAfterRevert(
     }
   }
 
+  const firstRemovedTurn = turns
+    .filter((turn) => turn.checkpointTurnCount !== null && turn.checkpointTurnCount > turnCount)
+    .toSorted(
+      (left, right) =>
+        (left.checkpointTurnCount ?? Number.MAX_SAFE_INTEGER) -
+        (right.checkpointTurnCount ?? Number.MAX_SAFE_INTEGER),
+    )[0];
+  const removedPendingMessage = firstRemovedTurn?.pendingMessageId
+    ? messages.find((message) => message.messageId === firstRemovedTurn.pendingMessageId)
+    : undefined;
+  if (
+    removedPendingMessage !== undefined &&
+    removedPendingMessage.correctionTargetMessageId !== null
+  ) {
+    for (const message of messages) {
+      if (
+        message.createdAt < removedPendingMessage.createdAt ||
+        (message.createdAt === removedPendingMessage.createdAt &&
+          message.messageId < removedPendingMessage.messageId)
+      ) {
+        retainedMessageIds.add(message.messageId);
+      }
+    }
+  }
+
   const retainedUserCount = messages.filter(
-    (message) => message.role === "user" && retainedMessageIds.has(message.messageId),
+    (message) =>
+      message.role === "user" &&
+      message.correctionTargetMessageId === null &&
+      retainedMessageIds.has(message.messageId),
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
@@ -247,6 +275,7 @@ function retainProjectionMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "user" &&
+          message.correctionTargetMessageId === null &&
           !retainedMessageIds.has(message.messageId) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -285,6 +314,42 @@ function retainProjectionMessagesAfterRevert(
   }
 
   return messages.filter((message) => retainedMessageIds.has(message.messageId));
+}
+
+function reconcileProjectionMessageCorrections(
+  messages: ReadonlyArray<ProjectionThreadMessage>,
+): ReadonlyArray<ProjectionThreadMessage> {
+  const latestCorrectionByTarget = new Map<string, ProjectionThreadMessage>();
+  for (const message of messages) {
+    if (message.correctionTargetMessageId === null || message.correctionReplacementText === null) {
+      continue;
+    }
+    const existing = latestCorrectionByTarget.get(message.correctionTargetMessageId);
+    if (
+      existing === undefined ||
+      existing.createdAt < message.createdAt ||
+      (existing.createdAt === message.createdAt && existing.messageId < message.messageId)
+    ) {
+      latestCorrectionByTarget.set(message.correctionTargetMessageId, message);
+    }
+  }
+  return messages.map((message) => {
+    if (message.originalText === null) return message;
+    const latestCorrection = latestCorrectionByTarget.get(message.messageId);
+    return latestCorrection?.correctionReplacementText !== null &&
+      latestCorrection?.correctionReplacementText !== undefined
+      ? {
+          ...message,
+          text: latestCorrection.correctionReplacementText,
+          updatedAt: latestCorrection.updatedAt,
+        }
+      : {
+          ...message,
+          text: message.originalText,
+          originalText: null,
+          updatedAt: message.createdAt,
+        };
+  });
 }
 
 function retainProjectionActivitiesAfterRevert(
@@ -851,6 +916,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.message-sent":
+        case "thread.message-corrected":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended":
         case "thread.approval-response-requested":
@@ -979,8 +1045,38 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             role: event.payload.role,
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
+            originalText: previousMessage?.originalText ?? null,
+            correctionTargetMessageId: previousMessage?.correctionTargetMessageId ?? null,
+            correctionReplacementText: previousMessage?.correctionReplacementText ?? null,
             isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.message-corrected": {
+          const target = yield* projectionThreadMessageRepository.getByMessageId({
+            messageId: event.payload.targetMessageId,
+          });
+          if (Option.isNone(target)) return;
+          yield* projectionThreadMessageRepository.upsert({
+            ...target.value,
+            text: event.payload.replacementText,
+            originalText: target.value.originalText ?? target.value.text,
+            updatedAt: event.payload.updatedAt,
+          });
+          yield* projectionThreadMessageRepository.upsert({
+            messageId: event.payload.correctionMessageId,
+            threadId: event.payload.threadId,
+            turnId: null,
+            role: "user",
+            text: event.payload.providerText,
+            originalText: null,
+            correctionTargetMessageId: event.payload.targetMessageId,
+            correctionReplacementText: event.payload.replacementText,
+            isStreaming: false,
+            createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -997,12 +1093,26 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingTurns = yield* projectionTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const keptRows = retainProjectionMessagesAfterRevert(
-            existingRows,
-            existingTurns,
-            event.payload.turnCount,
+          const keptRows = reconcileProjectionMessageCorrections(
+            retainProjectionMessagesAfterRevert(
+              existingRows,
+              existingTurns,
+              event.payload.turnCount,
+            ),
           );
-          if (keptRows.length === existingRows.length) {
+          const rowsChanged =
+            keptRows.length !== existingRows.length ||
+            keptRows.some((row, index) => {
+              const existing = existingRows[index];
+              return (
+                existing === undefined ||
+                row.messageId !== existing.messageId ||
+                row.text !== existing.text ||
+                row.originalText !== existing.originalText ||
+                row.updatedAt !== existing.updatedAt
+              );
+            });
+          if (!rowsChanged) {
             return;
           }
 
