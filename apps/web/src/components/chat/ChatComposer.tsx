@@ -979,6 +979,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuOpenRef = useRef(false);
   const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
   const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
+  const focusStashMenuCloseOnOpenRef = useRef(false);
   const composerBlurFrameRef = useRef<number | null>(null);
   const mobileComposerExpandFrameRef = useRef<number | null>(null);
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
@@ -1145,6 +1146,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const isComposerApprovalState = activePendingApproval !== null;
+  const stashControlsAvailable = !composerMenuOpen && !isComposerApprovalState;
+  const isStashMenuVisible = isStashMenuOpen && stashControlsAvailable;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const hasComposerHeader =
     isComposerApprovalState ||
@@ -1983,6 +1986,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }, 1200);
   }, []);
 
+  const closeStashMenu = useCallback(() => {
+    const restoreComposerFocus = focusStashMenuCloseOnOpenRef.current;
+    focusStashMenuCloseOnOpenRef.current = false;
+    setIsStashMenuOpen(false);
+    if (restoreComposerFocus) scheduleComposerFocus();
+  }, [scheduleComposerFocus]);
+
   const restoreStashEntry = useCallback(
     (entry: PromptStashEntry) => {
       // Remove first so a double activation (click + Enter) can't restore twice.
@@ -1997,6 +2007,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data: { hideCopyButton: true },
         });
       }
+      const restoreComposerFocus = focusStashMenuCloseOnOpenRef.current;
+      focusStashMenuCloseOnOpenRef.current = false;
       setIsStashMenuOpen(false);
 
       const currentPrompt = promptRef.current;
@@ -2080,9 +2092,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
 
-      // Only yank the caret to the end when text was actually inserted;
-      // restoring images alone should leave the user where they were typing.
-      if (promptChanged) {
+      // Pointer-opened image restores leave the caret alone. Keyboard-opened
+      // restores return focus to the composer after the menu unmounts.
+      if (promptChanged || restoreComposerFocus) {
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAtEnd();
         });
@@ -2120,7 +2132,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
     const images = [...composerImagesRef.current];
     if (prompt.length === 0 && images.length === 0) {
-      setIsStashMenuOpen((open) => !open);
+      if (isStashMenuOpen) {
+        closeStashMenu();
+        return;
+      }
+      focusStashMenuCloseOnOpenRef.current = false;
+      setIsStashMenuOpen(true);
       return;
     }
     // A repeat ⌘S on the *same* still-unencoded snapshot would stash it
@@ -2263,27 +2280,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   }, [
     clearComposerDraftPromptAndImages,
+    closeStashMenu,
     composerDraftTarget,
     composerImagesRef,
     finalizeStashEntryImages,
     promptRef,
     pulseStashBadge,
     stashEntryToQueue,
+    isStashMenuOpen,
   ]);
 
-  const toggleStashMenu = useCallback(() => {
-    setIsStashMenuOpen((open) => !open);
+  const openStashMenu = useCallback((focusCloseButton: boolean) => {
+    focusStashMenuCloseOnOpenRef.current = focusCloseButton;
+    setIsStashMenuOpen(true);
   }, []);
 
-  // Close the stash menu whenever the trigger-driven command menu opens so
-  // the two popovers never stack in the same layer, and when the user
-  // resumes typing (the menu is a transient picker, not a panel).
+  // Close the stash menu when another composer state takes over its layer.
+  // This also prevents a hidden menu from reappearing after approval ends.
   useEffect(() => {
-    if (composerMenuOpen) {
+    if (composerMenuOpen || isComposerApprovalState) {
+      focusStashMenuCloseOnOpenRef.current = false;
       setIsStashMenuOpen(false);
     }
-  }, [composerMenuOpen]);
+  }, [composerMenuOpen, isComposerApprovalState]);
+  // The menu is a transient picker, not a panel, so typing dismisses it.
   useEffect(() => {
+    focusStashMenuCloseOnOpenRef.current = false;
     setIsStashMenuOpen(false);
   }, [prompt]);
 
@@ -2886,21 +2908,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               isComposerCollapsedMobile && "hidden",
             )}
           >
-            <ComposerStashBadge
-              count={stashQueue.length}
-              pulseKey={stashPulse.key}
-              pulsing={stashPulse.active}
-              menuOpen={isStashMenuOpen}
-              onToggleMenu={toggleStashMenu}
-            />
+            {stashControlsAvailable && !isStashMenuVisible && (
+              <ComposerStashBadge
+                count={stashQueue.length}
+                pulseKey={stashPulse.key}
+                pulsing={stashPulse.active}
+                onOpenMenu={openStashMenu}
+              />
+            )}
 
-            {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
+            {isStashMenuVisible && (
               <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                 <ComposerStashMenu
                   entries={stashQueue}
                   onRestore={restoreStashEntry}
                   onDelete={deleteStashEntry}
-                  onClose={() => setIsStashMenuOpen(false)}
+                  onClose={closeStashMenu}
+                  focusCloseOnMount={focusStashMenuCloseOnOpenRef.current}
                 />
               </ComposerCommandMenuLayer>
             )}
