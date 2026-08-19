@@ -1,5 +1,5 @@
 const INTEL_GPU_PATTERN = /intel|amd|radeon|nvidia|geforce/i;
-const APPLE_SILICON_GPU_PATTERN = /\bapple\s+m\d/i;
+const APPLE_SILICON_GPU_PATTERN = /\bapple\s+(?:m\d|gpu)\b/i;
 
 export function macArchFromGpuRenderer(renderer: string): "arm64" | "x64" {
   if (INTEL_GPU_PATTERN.test(renderer)) {
@@ -9,8 +9,6 @@ export function macArchFromGpuRenderer(renderer: string): "arm64" | "x64" {
     return "arm64";
   }
 
-  // Generic "Apple GPU" renderers are ambiguous on Safari. x64 is the safe
-  // fallback because Apple Silicon can run it through Rosetta, while Intel
-  // Macs cannot run an arm64 build.
+  // Keep the fallback compatible with Intel Macs when WebGL is unavailable.
   return "x64";
 }

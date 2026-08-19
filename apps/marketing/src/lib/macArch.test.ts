@@ -13,8 +13,11 @@ describe("macArchFromGpuRenderer", () => {
     );
   });
 
-  it("uses x64 for ambiguous Safari and unavailable renderer values", () => {
-    expect(macArchFromGpuRenderer("Apple GPU")).toBe("x64");
+  it("detects Safari's generic Apple Silicon renderer", () => {
+    expect(macArchFromGpuRenderer("Apple GPU")).toBe("arm64");
+  });
+
+  it("uses x64 when the renderer is unavailable", () => {
     expect(macArchFromGpuRenderer("")).toBe("x64");
   });
 });
