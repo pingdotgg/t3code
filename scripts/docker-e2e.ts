@@ -164,8 +164,6 @@ async function main(): Promise<void> {
     T3_IMAGE: imageName,
     T3_PORT: String(port),
     T3_WORKSPACE_PATH: workspace,
-    T3CODE_INSTALL_CURSOR: "0",
-    T3CODE_INSTALL_PROVIDERS: "0",
   } satisfies NodeJS.ProcessEnv;
   const compose = (args: ReadonlyArray<string>, options: CommandOptions = {}) =>
     run("docker", ["compose", "-f", composeFile, "-p", projectName, ...args], {
@@ -196,7 +194,7 @@ async function main(): Promise<void> {
     await run("docker", ["compose", "version"]);
     await compose(["config", "--quiet"]);
 
-    console.log("Building the server-only Docker image...");
+    console.log("Building the default Docker image...");
     await compose(["build"], { inherit: true });
 
     const imageInspection = JSON.parse(
@@ -231,6 +229,17 @@ async function main(): Promise<void> {
         "test ! -e /home/node/.cursor/cli-config.json",
         "test ! -e /home/node/.config/opencode/auth.json",
       ].join(" && "),
+    ]);
+    await run("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "sh",
+      imageName,
+      "-lc",
+      ["codex", "claude", "opencode", "cursor-agent", "agent"]
+        .map((binary) => `command -v ${binary} > /dev/null`)
+        .join(" && "),
     ]);
 
     console.log("Starting the Compose service...");

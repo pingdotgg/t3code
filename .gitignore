@@ -36,6 +36,7 @@ node_modules/
 *.log
 .env*
 !.env.example
+.docker-e2e-canary/
 
 # Machine-local credentials. Project configuration under .codex, .claude, and
 # .cursor may be tracked, but provider login state must never enter the repo.

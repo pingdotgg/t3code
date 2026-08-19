@@ -9,6 +9,8 @@ on:
       - compose.yaml
       - package.json
       - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - patches/**
       - apps/server/**
       - apps/web/**
       - packages/**
@@ -25,6 +27,8 @@ on:
       - compose.yaml
       - package.json
       - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - patches/**
       - apps/server/**
       - apps/web/**
       - packages/**

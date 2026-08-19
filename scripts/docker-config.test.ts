@@ -39,6 +39,7 @@ describe("Docker distribution", () => {
   it("keeps machine-local provider logins out of git", () => {
     const gitignore = readRepositoryFile(".gitignore");
     for (const pattern of [
+      ".docker-e2e-canary/",
       "/.codex/auth.json",
       "/.claude.json",
       "/.claude/.credentials.json",
@@ -49,6 +50,21 @@ describe("Docker distribution", () => {
     ]) {
       expect(gitignore).toContain(pattern);
     }
+  });
+
+  it("runs Docker E2E when direct build inputs change", () => {
+    const workflow = readRepositoryFile(".github/workflows/docker.yml");
+
+    expect(workflow.match(/- pnpm-workspace\.yaml/gu)).toHaveLength(2);
+    expect(workflow.match(/- patches\/\*\*/gu)).toHaveLength(2);
+  });
+
+  it("exercises the default provider-enabled image", () => {
+    const e2e = readRepositoryFile("scripts/docker-e2e.ts");
+
+    expect(e2e).not.toContain('T3CODE_INSTALL_CURSOR: "0"');
+    expect(e2e).not.toContain('T3CODE_INSTALL_PROVIDERS: "0"');
+    expect(e2e).toContain('["codex", "claude", "opencode", "cursor-agent", "agent"]');
   });
 
   it("builds a non-root runtime without secret-valued build arguments", () => {
