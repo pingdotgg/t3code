@@ -132,6 +132,10 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
+  fileSurfacePathForLocation,
+  resolveRightPanelFileLocation,
+} from "../rightPanelFileLocation";
+import {
   isPreviewSupportedInRuntime,
   setActivePreviewTab,
   useThreadPreviewState,
@@ -1757,11 +1761,10 @@ function ChatViewContent(props: ChatViewProps) {
     ? (pendingFileSurfaceIdsByProject.get(activeProjectKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS)
     : EMPTY_PENDING_FILE_SURFACE_IDS;
   const handleFilePendingChange = useCallback(
-    (relativePath: string, pending: boolean) => {
+    (surfaceId: string, pending: boolean) => {
       if (!activeProjectKey) return;
       setPendingFileSurfaceIdsByProject((currentByProject) => {
         const current = currentByProject.get(activeProjectKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS;
-        const surfaceId = `file:${relativePath}`;
         if (current.has(surfaceId) === pending) return currentByProject;
         const next = new Set(current);
         if (pending) next.add(surfaceId);
@@ -6111,6 +6114,10 @@ function ChatViewContent(props: ChatViewProps) {
       {panelToggleControls}
     </div>
   );
+  const activeFileLocation =
+    activeFileSurface && activeWorkspaceRoot
+      ? resolveRightPanelFileLocation(activeWorkspaceRoot, activeFileSurface.relativePath)
+      : null;
   const rightPanelContent = activeThreadRef ? (
     activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
@@ -6204,21 +6211,32 @@ function ChatViewContent(props: ChatViewProps) {
       activeWorkspaceRoot ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
-          key={`${activeProject.environmentId}:${activeWorkspaceRoot}`}
+          key={`${activeProject.environmentId}:${activeFileLocation?.cwd ?? activeWorkspaceRoot}`}
           environmentId={activeProject.environmentId}
-          cwd={activeWorkspaceRoot}
-          projectName={activeProject.title}
+          cwd={activeFileLocation?.cwd ?? activeWorkspaceRoot}
+          projectName={activeFileLocation?.rootLabel ?? activeProject.title}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
           availableEditors={availableEditors}
           relativePath={
-            activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.relativePath : null
+            activeRightPanelSurface.kind === "file"
+              ? (activeFileLocation?.relativePath ?? activeRightPanelSurface.relativePath)
+              : null
           }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
-          onOpenFile={openFileSurface}
-          onPendingChange={handleFilePendingChange}
+          onOpenFile={(relativePath) => {
+            openFileSurface(
+              activeFileLocation
+                ? fileSurfacePathForLocation(activeFileLocation, relativePath)
+                : relativePath,
+            );
+          }}
+          onPendingChange={(_relativePath, pending) => {
+            if (activeRightPanelSurface.kind !== "file") return;
+            handleFilePendingChange(activeRightPanelSurface.id, pending);
+          }}
         />
       </Suspense>
     ) : null

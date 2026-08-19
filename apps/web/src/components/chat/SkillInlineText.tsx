@@ -1,5 +1,5 @@
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import {
@@ -9,12 +9,17 @@ import {
   SKILL_CHIP_ICON_SVG,
 } from "../composerInlineChip";
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
-type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
+type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName" | "path">;
 
-export function SkillInlineText(props: { text: string; skills: ReadonlyArray<InlineSkill> }) {
+export function SkillInlineText(props: {
+  text: string;
+  skills: ReadonlyArray<InlineSkill>;
+  threadRef?: ScopedThreadRef | undefined;
+}) {
   const nodes: ReactNode[] = [];
   let cursor = 0;
 
@@ -31,7 +36,14 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
     if (start > cursor) {
       nodes.push(props.text.slice(cursor, start));
     }
-    nodes.push(<SkillChip key={`${start}:${name}`} skill={skill} rawText={rawText} />);
+    nodes.push(
+      <SkillChip
+        key={`${start}:${name}`}
+        skill={skill}
+        rawText={rawText}
+        threadRef={props.threadRef}
+      />,
+    );
     cursor = start + rawText.length;
   }
 
@@ -47,10 +59,11 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
 export function renderSkillInlineMarkdownChildren(
   children: ReactNode,
   skills: ReadonlyArray<InlineSkill>,
+  threadRef?: ScopedThreadRef | undefined,
 ): ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
-      return <SkillInlineText text={child} skills={skills} />;
+      return <SkillInlineText text={child} skills={skills} threadRef={threadRef} />;
     }
     if (!isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(child)) {
       return child;
@@ -67,29 +80,53 @@ export function renderSkillInlineMarkdownChildren(
     return cloneElement(
       child,
       undefined,
-      renderSkillInlineMarkdownChildren(child.props.children, skills),
+      renderSkillInlineMarkdownChildren(child.props.children, skills, threadRef),
     );
   });
 }
 
-function SkillChip(props: { skill: InlineSkill; rawText: string }) {
+function SkillChip(props: {
+  skill: InlineSkill;
+  rawText: string;
+  threadRef?: ScopedThreadRef | undefined;
+}) {
+  const threadRef = props.threadRef;
+  const chipContents = (
+    <>
+      <span
+        aria-hidden="true"
+        className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+        dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+      />
+      <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
+        {formatProviderSkillDisplayName(props.skill)}
+      </span>
+    </>
+  );
+  const className = cn(
+    CHAT_INLINE_CHIP_CLASS_NAME,
+    "border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
+  );
+
   return (
     <span className="inline-flex align-middle leading-none" data-markdown-copy={props.rawText}>
-      <span
-        className={cn(
-          CHAT_INLINE_CHIP_CLASS_NAME,
-          "border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
-        )}
-      >
-        <span
-          aria-hidden="true"
-          className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-          dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-        />
-        <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
-          {formatProviderSkillDisplayName(props.skill)}
-        </span>
-      </span>
+      {threadRef ? (
+        <button
+          type="button"
+          className={cn(
+            className,
+            "cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:hover:brightness-110",
+          )}
+          aria-label={`Open ${formatProviderSkillDisplayName(props.skill)} skill`}
+          onClick={() => {
+            useRightPanelStore.getState().openFile(threadRef, props.skill.path);
+          }}
+        >
+          {chipContents}
+        </button>
+      ) : (
+        <span className={className}>{chipContents}</span>
+      )}
     </span>
   );
 }

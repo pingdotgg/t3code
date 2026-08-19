@@ -486,8 +486,13 @@ function surfaceTitle(
       return "Diff";
     case "files":
       return "Files";
-    case "file":
-      return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
+    case "file": {
+      const separatorIndex = Math.max(
+        surface.relativePath.lastIndexOf("/"),
+        surface.relativePath.lastIndexOf("\\"),
+      );
+      return surface.relativePath.slice(separatorIndex + 1);
+    }
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??
