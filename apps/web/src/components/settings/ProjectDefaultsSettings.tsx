@@ -184,7 +184,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     instanceEntries={entries}
                     modelOptionsByInstance={modelOptions}
                     triggerVariant="outline"
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    triggerClassName="min-w-0 max-w-80 shrink text-foreground/90 hover:text-foreground"
                     {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
                     getModelDisabledReason={modelDisabledReason}
                     onOpenProviderSetup={(instanceId) => {
