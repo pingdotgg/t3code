@@ -2030,11 +2030,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         expandThreadListForProject(project.projectKey);
       }
       if (isMobile ? !openMobile : !open) {
-        if (isMobile) {
-          setOpenMobile(true);
-        } else {
-          setOpen(true);
-        }
+        (isMobile ? setOpenMobile : setOpen)(true);
       }
       startThreadRename(activeRouteThreadKey, activeThread.title);
     };

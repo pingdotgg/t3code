@@ -3153,11 +3153,7 @@ export default function Sidebar() {
           setProjectScopeKey(null);
         }
         if (isMobile ? !openMobile : !open) {
-          if (isMobile) {
-            setOpenMobile(true);
-          } else {
-            setOpen(true);
-          }
+          (isMobile ? setOpenMobile : setOpen)(true);
         }
         startThreadRename(activeThreadRef, activeThread.title);
         return;
