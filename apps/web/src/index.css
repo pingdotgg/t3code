@@ -2237,7 +2237,7 @@ code {
   padding: 0.75rem 0.85rem 0.9rem;
   overflow-x: auto;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: 0.75rem;
+  font-size: var(--font-size-code, 0.75rem);
   line-height: 1.45;
   color: color-mix(in srgb, var(--foreground) 78%, transparent);
 }
