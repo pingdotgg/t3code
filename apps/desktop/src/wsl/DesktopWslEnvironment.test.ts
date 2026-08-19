@@ -187,6 +187,18 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('[ -f "$candidate/.t3code-wsl-runtime-ready" ] || continue');
     expect(script).toContain('rm -rf -- "$candidate"');
   });
+
+  it("sweeps orphaned install scratch directories the ready-marker loops cannot see", () => {
+    const script = buildWslRuntimePruneScript("1.2.3/x64");
+
+    // Dot-prefixed, so `"$runtime_parent"/*` never matches them, and they carry
+    // no ready marker either; without this pass a killed install leaks forever.
+    expect(script).toContain(
+      "find \"$runtime_parent\" -maxdepth 1 -type d \\( -name '.*.tmp.*' -o -name '.*.stale.*' \\)",
+    );
+    // Age guard: a scratch directory younger than this belongs to a live install.
+    expect(script).toContain("-mmin +120 -exec rm -rf -- {} +");
+  });
 });
 
 describe("parseToolchainReport", () => {

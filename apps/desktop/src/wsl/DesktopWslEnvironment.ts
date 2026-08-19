@@ -303,6 +303,11 @@ export const buildWslRuntimeInstallScript = (
   ].join("\n");
 };
 
+// An interrupted install leaves a dot-prefixed scratch directory behind. A cold
+// install extracts a few hundred MB inside the distro, so two hours is far past
+// any live install while still bounding how long an orphan survives.
+const ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES = 120;
+
 export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
@@ -326,6 +331,13 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || continue`,
     '  rm -rf -- "$candidate"',
     "done",
+    // Both loops skip dot entries and require the ready marker, so scratch
+    // directories left by installs that died before promotion (SIGKILL,
+    // `wsl --shutdown`, power loss) are invisible to them, and nothing else ever
+    // removes them. Sweep the ones too old to belong to a live install. Prune
+    // failures are only logged, so a distro without findutils keeps the previous
+    // behavior instead of failing a launch.
+    `find "$runtime_parent" -maxdepth 1 -type d \\( -name '.*.tmp.*' -o -name '.*.stale.*' \\) -mmin +${String(ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES)} -exec rm -rf -- {} +`,
   ].join("\n");
 };
 
