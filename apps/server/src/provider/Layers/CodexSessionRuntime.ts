@@ -745,11 +745,18 @@ type CodexCollabAgentToolCall =
     >;
 
 function readCollabSpawnChildThreadIds(item: CodexCollabAgentToolCall): ReadonlyArray<string> {
-  if (item.tool !== "spawnAgent") {
+  if (item.tool !== "spawnAgent" || item.status === "failed") {
     return [];
   }
 
-  return Array.from(new Set([...item.receiverThreadIds, ...Object.keys(item.agentsStates)]));
+  // These terminal failure states have no child lifecycle that can settle a
+  // task.started row.
+  return Array.from(new Set([...item.receiverThreadIds, ...Object.keys(item.agentsStates)])).filter(
+    (threadId) => {
+      const status = item.agentsStates[threadId]?.status;
+      return status !== "errored" && status !== "notFound";
+    },
+  );
 }
 
 function readCollabSpawnTitle(prompt: string | null | undefined): string | undefined {
@@ -1163,20 +1170,22 @@ export const makeCodexSessionRuntime = (
             next.set(thread.id, state);
             return next;
           });
-          yield* emitEvent({
-            kind: "notification",
-            threadId: options.threadId,
-            method: "collabAgent/started",
-            ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
-            payload: {
-              agentThreadId: state.agentThreadId,
-              ...(state.nickname ? { nickname: state.nickname } : {}),
-              ...(state.role ? { role: state.role } : {}),
-              ...(state.agentPath ? { agentPath: state.agentPath } : {}),
-              ...(state.depth !== undefined ? { depth: state.depth } : {}),
-              ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
-            },
-          });
+          if (!existingChild) {
+            yield* emitEvent({
+              kind: "notification",
+              threadId: options.threadId,
+              method: "collabAgent/started",
+              ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
+              payload: {
+                agentThreadId: state.agentThreadId,
+                ...(state.nickname ? { nickname: state.nickname } : {}),
+                ...(state.role ? { role: state.role } : {}),
+                ...(state.agentPath ? { agentPath: state.agentPath } : {}),
+                ...(state.depth !== undefined ? { depth: state.depth } : {}),
+                ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
+              },
+            });
+          }
           return true;
         }
 

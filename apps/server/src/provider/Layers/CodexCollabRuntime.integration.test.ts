@@ -167,6 +167,34 @@ describe("CodexSessionRuntime collab integration", () => {
         const item = (entry.params as { readonly item?: { readonly type?: unknown } }).item;
         return item?.type !== "subAgentActivity";
       });
+      const rootThreadStarted = wireFixture.notifications.find(
+        (entry) => entry.method === "thread/started",
+      );
+      assert.isDefined(rootThreadStarted);
+      const childThreadStarted = {
+        ...rootThreadStarted,
+        params: {
+          thread: {
+            ...rootThreadStarted.params.thread,
+            id: CHILD_A,
+            sessionId: CHILD_A,
+            parentThreadId: ROOT,
+            source: {
+              subAgent: {
+                thread_spawn: {
+                  agent_path: "/root/alpha",
+                  agent_nickname: "alpha",
+                  agent_role: "reviewer",
+                  depth: 1,
+                  parent_thread_id: ROOT,
+                },
+              },
+            },
+            agentNickname: "alpha",
+            agentRole: "reviewer",
+          },
+        },
+      };
       const spawn = {
         method: "item/completed",
         params: {
@@ -216,7 +244,12 @@ describe("CodexSessionRuntime collab integration", () => {
         // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.stringify({
           rootThreadId: ROOT,
-          notifications: [spawn, ...childTrafficWithoutRegistration, childBCompleted],
+          notifications: [
+            spawn,
+            childThreadStarted,
+            ...childTrafficWithoutRegistration,
+            childBCompleted,
+          ],
         }),
         "utf8",
       );
@@ -248,6 +281,7 @@ describe("CodexSessionRuntime collab integration", () => {
           .filter((agentThreadId): agentThreadId is string => agentThreadId !== undefined),
       );
       assert.deepEqual(startedChildIds, new Set([CHILD_A, CHILD_B]));
+      assert.equal(events.filter((event) => event.method === "collabAgent/started").length, 2);
       assert.isAtLeast(
         events.filter((event) => event.method === "collabAgent/turnStarted").length,
         2,
@@ -256,6 +290,119 @@ describe("CodexSessionRuntime collab integration", () => {
         events.filter((event) => event.method === "collabAgent/turnCompleted").length,
         2,
       );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not register failed spawnAgent attempts", () =>
+    Effect.gen(function* () {
+      const childTraffic = wireFixture.notifications.filter((entry) => {
+        const params = entry.params as { readonly threadId?: unknown };
+        return params.threadId === CHILD_B;
+      });
+      const childTrafficWithoutRegistration = childTraffic.filter((entry) => {
+        const item = (entry.params as { readonly item?: { readonly type?: unknown } }).item;
+        return item?.type !== "subAgentActivity";
+      });
+      const failedSpawn = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: "root-failed-spawn-turn",
+          completedAtMs: 1785898349265,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_failed_spawn",
+            tool: "spawnAgent",
+            status: "failed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            agentsStates: {
+              [CHILD_A]: { message: "spawn failed", status: "errored" },
+            },
+            prompt: "Audit this work",
+          },
+        },
+      };
+      const partiallyFailedSpawn = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: "root-partial-spawn-turn",
+          completedAtMs: 1785898349266,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_partial_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A, CHILD_B],
+            agentsStates: {
+              [CHILD_A]: { message: "agent failed", status: "errored" },
+              [CHILD_B]: { message: null, status: "running" },
+            },
+            prompt: "Audit this work in parallel",
+          },
+        },
+      };
+      const childBCompleted = {
+        method: "turn/completed",
+        params: {
+          threadId: CHILD_B,
+          turn: {
+            id: "019fcfd6-2f29-79e3-aa6a-c5836a519d3f",
+            items: [],
+            itemsView: "notLoaded",
+            status: "completed",
+            error: null,
+            startedAt: 1785898348,
+            completedAt: 1785898350,
+            durationMs: 3792,
+          },
+        },
+      };
+
+      NodeFS.writeFileSync(
+        scriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          rootThreadId: ROOT,
+          notifications: [
+            failedSpawn,
+            partiallyFailedSpawn,
+            ...childTrafficWithoutRegistration,
+            childBCompleted,
+          ],
+        }),
+        "utf8",
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-failed-spawn"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "handle failed spawns" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const startedChildIds = events
+        .filter((event) => event.method === "collabAgent/started")
+        .map((event) => (event.payload as { agentThreadId?: string }).agentThreadId)
+        .filter((agentThreadId): agentThreadId is string => agentThreadId !== undefined);
+      assert.deepEqual(startedChildIds, [CHILD_B]);
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
