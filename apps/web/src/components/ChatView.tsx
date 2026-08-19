@@ -6427,7 +6427,11 @@ function ChatViewContent(props: ChatViewProps) {
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
-                    <ThreadSyncStatusPill phase={threadSyncPhase} />
+                    <ThreadSyncStatusPill
+                      key={activeThread.id}
+                      phase={threadSyncPhase}
+                      raised={showScrollToBottom}
+                    />
                   ) : null}
                   <div
                     className="relative"
