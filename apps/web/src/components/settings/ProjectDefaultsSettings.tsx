@@ -176,7 +176,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             }
             control={
               selection && activeEntry ? (
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:max-w-[26rem]">
                   <ProviderModelPicker
                     activeInstanceId={selection.instanceId}
                     model={selection.model}
@@ -184,7 +184,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     instanceEntries={entries}
                     modelOptionsByInstance={modelOptions}
                     triggerVariant="outline"
-                    triggerClassName="min-w-0 max-w-80 shrink text-foreground/90 hover:text-foreground"
+                    triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
                     {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
                     getModelDisabledReason={modelDisabledReason}
                     onOpenProviderSetup={(instanceId) => {
