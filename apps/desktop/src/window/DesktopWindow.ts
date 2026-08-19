@@ -99,6 +99,10 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
+    // These switches are synchronous because Electron's native close event must
+    // be accepted or cancelled before its listener returns.
+    readonly setBackgroundModeEnabled: (enabled: boolean) => void;
+    readonly prepareForQuit: () => void;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
@@ -287,6 +291,8 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  let backgroundModeEnabled = false;
+  let quitPrepared = false;
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -592,8 +598,12 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
+    window.on("close", (event) => {
       runFork(flushBoundsPersist);
+      if (environment.platform === "win32" && backgroundModeEnabled && !quitPrepared) {
+        event.preventDefault();
+        window.hide();
+      }
     });
 
     if (environment.platform === "darwin") {
@@ -871,6 +881,12 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
+    setBackgroundModeEnabled: (enabled) => {
+      backgroundModeEnabled = enabled;
+    },
+    prepareForQuit: () => {
+      quitPrepared = true;
+    },
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
       const existingWindow = yield* focusedMainWindow;

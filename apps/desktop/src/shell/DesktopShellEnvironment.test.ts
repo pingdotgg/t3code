@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
@@ -69,11 +70,18 @@ function runShellEnvironment(input: {
   readonly platform: NodeJS.Platform;
   readonly handler: (command: ChildProcess.Command) => string;
   readonly failure?: PlatformError.PlatformError;
+  readonly stateDir?: string;
 }) {
   const environmentLayer = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
     DesktopEnvironment.DesktopEnvironment.of({
       platform: input.platform,
+      ...(input.stateDir === undefined
+        ? {}
+        : {
+            stateDir: input.stateDir,
+            path: { join: (directory: string, fileName: string) => `${directory}\\${fileName}` },
+          }),
     } as DesktopEnvironment.DesktopEnvironment["Service"]),
   );
   const spawnerLayer = Layer.succeed(
@@ -345,6 +353,50 @@ describe("DesktopShellEnvironment", () => {
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
     }),
+  );
+
+  it.effect("reuses a fresh Windows shell environment cache on the next launch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const stateDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-windows-shell-environment-test-",
+        });
+        const makeEnv = (): NodeJS.ProcessEnv => ({
+          PATH: "C:\\Windows\\System32",
+          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+          LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+          USERPROFILE: "C:\\Users\\testuser",
+        });
+        let commandCount = 0;
+        const handler = (command: ChildProcess.Command) => {
+          commandCount += 1;
+          if (command._tag !== "StandardCommand") return "";
+          return command.args.includes("-NoProfile")
+            ? envOutput({ PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" })
+            : envOutput({ PATH: "C:\\Profile\\Node;C:\\Windows\\System32" });
+        };
+
+        const firstEnv = makeEnv();
+        yield* runShellEnvironment({
+          env: firstEnv,
+          platform: "win32",
+          stateDir,
+          handler,
+        });
+        assert.equal(commandCount, 2);
+
+        const secondEnv = makeEnv();
+        yield* runShellEnvironment({
+          env: secondEnv,
+          platform: "win32",
+          stateDir,
+          handler,
+        });
+        assert.equal(commandCount, 2);
+        assert.equal(secondEnv.PATH, firstEnv.PATH);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prefers login-shell desktop session hints over inherited values on linux", () =>
