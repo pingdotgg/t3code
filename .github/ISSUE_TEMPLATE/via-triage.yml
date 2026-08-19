@@ -1,0 +1,78 @@
+name: Triage report
+description: Filed with `npx t3 triage`, where a coding agent investigated the machine. For hand-written reports use the bug report template instead.
+labels:
+  - via-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This structure is what `t3 triage` agents follow. Keep one problem per issue
+        and redact secrets and home directory paths from anything you paste.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The problem in the user's own words.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnosis
+    attributes:
+      label: Diagnosis
+      description: What the investigation found, grounded in logs and source.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, deterministic repro if one was found.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Installed t3 version or commit.
+      placeholder: 0.0.33
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, agent CLI versions if relevant.
+      placeholder: macOS 15.3, Node 22.6, claude 2.1.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: The most relevant log lines, trace entries, or stack traces only. Redacted.
+      render: shell
+
+  - type: input
+    id: related
+    attributes:
+      label: Related issues
+      description: Existing issues that look similar, and why this is not a duplicate.
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Fix applied or workaround
+      description: Anything that was run on the machine to unblock the user.
+
+  - type: input
+    id: agent
+    attributes:
+      label: Filed by
+      description: Which agent and model produced this report.
+      placeholder: claude (opus-5) via t3 triage
