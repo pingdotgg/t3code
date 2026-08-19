@@ -53,7 +53,7 @@ Provider authentication happens inside the container and remains in the `t3-home
 ```bash
 docker compose exec t3 codex login --device-auth
 docker compose exec t3 claude auth login
-docker compose exec t3 cursor-agent login
+docker compose exec t3 agent login
 docker compose exec t3 opencode auth login
 ```
 
