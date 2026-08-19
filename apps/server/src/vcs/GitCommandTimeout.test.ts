@@ -37,5 +37,6 @@ describe("resolveGitCommandTimeoutMs", () => {
 
   it("preserves an explicit operation timeout", () => {
     assert.strictEqual(resolveGitCommandTimeoutMs(["fetch", "origin"], 5_000), 5_000);
+    assert.isNull(resolveGitCommandTimeoutMs(["fetch", "origin"], null));
   });
 });

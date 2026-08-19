@@ -92,7 +92,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
-      separator: false,
+      ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
     };
 
     if (sourceItem.children) {
@@ -161,25 +161,30 @@ export const make = Effect.gen(function* () {
   ): Electron.MenuItemConstructorOptions[] => {
     const template: Electron.MenuItemConstructorOptions[] = [];
     let hasInsertedDestructiveSeparator = false;
-    let lastWasSeparator = false;
+    let sectionStartedByExplicitSeparator = false;
+    const appendSeparator = () => {
+      if (template.length === 0 || template.at(-1)?.type === "separator") return;
+      template.push({ type: "separator" });
+    };
 
     for (const item of entries) {
       if (item.separator === true) {
-        if (template.length > 0 && !lastWasSeparator) {
-          template.push({ type: "separator" });
-          lastWasSeparator = true;
-        }
+        appendSeparator();
+        sectionStartedByExplicitSeparator = true;
         continue;
       }
-
-      if (item.destructive && !hasInsertedDestructiveSeparator) {
-        if (template.length > 0) {
-          if (!lastWasSeparator) {
-            template.push({ type: "separator" });
-            lastWasSeparator = true;
-          }
-          hasInsertedDestructiveSeparator = true;
-        }
+      if (item.separatorBefore) {
+        appendSeparator();
+        sectionStartedByExplicitSeparator = true;
+      }
+      if (
+        item.destructive &&
+        !hasInsertedDestructiveSeparator &&
+        !sectionStartedByExplicitSeparator &&
+        template.length > 0
+      ) {
+        appendSeparator();
+        hasInsertedDestructiveSeparator = true;
       }
 
       const itemOption: Electron.MenuItemConstructorOptions = {
@@ -199,7 +204,6 @@ export const make = Effect.gen(function* () {
       }
 
       template.push(itemOption);
-      lastWasSeparator = false;
     }
 
     return template;

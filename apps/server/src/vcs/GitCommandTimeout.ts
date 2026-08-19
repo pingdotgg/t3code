@@ -29,7 +29,16 @@ function gitSubcommand(args: readonly string[]): string | null {
   return null;
 }
 
-export function resolveGitCommandTimeoutMs(args: readonly string[], timeoutMs?: number): number {
+export function resolveGitCommandTimeoutMs(args: readonly string[], timeoutMs?: number): number;
+export function resolveGitCommandTimeoutMs(args: readonly string[], timeoutMs: null): null;
+export function resolveGitCommandTimeoutMs(
+  args: readonly string[],
+  timeoutMs: number | null | undefined,
+): number | null;
+export function resolveGitCommandTimeoutMs(
+  args: readonly string[],
+  timeoutMs?: number | null,
+): number | null {
   if (timeoutMs !== undefined) return timeoutMs;
   const subcommand = gitSubcommand(args);
   if (subcommand === "commit") return GIT_COMMAND_TIMEOUT_MS.commit;
