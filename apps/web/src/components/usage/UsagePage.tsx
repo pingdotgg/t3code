@@ -351,7 +351,7 @@ export function UsagePage() {
                           merged.models.map((model) => (
                             <tr
                               key={`${model.provider}:${model.model}`}
-                              className="hover:bg-muted/20"
+                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
                             >
                               <td className="py-2 text-foreground">
                                 <span className="flex items-center gap-2">
@@ -398,7 +398,7 @@ export function UsagePage() {
                           breakdownPeriods.map((period) => (
                             <tr
                               key={"hourStart" in period ? period.hourStart : period.day}
-                              className="hover:bg-muted/20"
+                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
                             >
                               <td className="py-2 text-foreground">
                                 {"hourStart" in period
