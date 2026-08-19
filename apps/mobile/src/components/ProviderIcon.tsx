@@ -1,4 +1,4 @@
-import { Path, Svg } from "react-native-svg";
+import { Circle, Path, Svg } from "react-native-svg";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
 type ProviderIconProps = {
@@ -35,6 +35,19 @@ export function ProviderIcon(props: ProviderIconProps) {
           fill={fill}
           d="M7.62249 16.7237C4.83113 14.0422 5.3124 9.89222 7.69417 7.49905C9.45541 5.72786 12.341 5.00497 14.86 6.06768L17.5653 4.81138C17.0779 4.45714 16.4533 4.07613 15.7365 3.80839C12.4966 2.46764 8.6178 3.13492 5.98413 5.78141C3.45081 8.32904 2.65415 12.2463 4.02219 15.5889C5.04412 18.0871 3.36889 19.8541 1.68137 21.6377C1.08337 22.2699 0.483318 22.9022 0 23.5716L7.62045 16.7257"
         />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "kimi") {
+    const fill = isDarkMode ? "#F5F5F5" : "#0F0F0F";
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        {/* Stylized "K" mark matching the web KimiIcon: upright stem plus two
+            angled strokes, with the upper arm ending in Kimi's dot accent. */}
+        <Path fill={fill} d="M4 3h3.6v18H4z" />
+        <Path fill={fill} d="M9.4 13.2 16.6 21h4.6l-8.9-9.7 2.5-2.7-2.4-2.6-8.5 9.2h4.9z" />
+        <Circle fill={fill} cx="18.8" cy="5.2" r="2.2" />
       </Svg>
     );
   }

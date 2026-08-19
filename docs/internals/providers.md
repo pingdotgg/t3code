@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with five entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
 
 | Driver kind   | Driver source                           |
 | ------------- | --------------------------------------- |
@@ -15,7 +15,13 @@ orchestration layer does not know which one is behind a thread.
 | `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]     |
 | `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
 | `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
+| `kimi`        | [`Drivers/KimiDriver.ts`][kimi]         |
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
+
+The Kimi driver wraps the official Kimi CLI (`kimi acp`) over ACP, like Grok and Cursor. Its
+sign-in is unusual: the CLI's ACP `authenticate` only validates the stored OAuth token, so T3 Code
+also ships a server-side device flow (`kimiAuth.signIn`, [`kimi/KimiOAuth.ts`][kimioauth]) that
+writes the credential file the CLI expects and leaves refreshes to the CLI.
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -80,6 +86,8 @@ when a request opens (approval) or user input is requested, via
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
+[kimi]: ../../apps/server/src/provider/Drivers/KimiDriver.ts
+[kimioauth]: ../../apps/server/src/provider/kimi/KimiOAuth.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts

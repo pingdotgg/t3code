@@ -3,8 +3,10 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -48,6 +50,8 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -59,7 +63,12 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+} from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -79,6 +88,7 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as KimiOAuth from "./provider/kimi/KimiOAuth.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -399,6 +409,11 @@ const makeWsRpcLayer = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      // Captured for the Kimi sign-in stream, which runs the OAuth device
+      // flow over HTTP and writes the CLI credential file.
+      const kimiSignInHttpClient = yield* HttpClient.HttpClient;
+      const kimiSignInFileSystem = yield* FileSystem.FileSystem;
+      const kimiSignInPath = yield* Path.Path;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -1642,6 +1657,32 @@ const makeWsRpcLayer = (
                   ),
             ),
             { "rpc.aggregate": "cloud" },
+          ),
+        [WS_METHODS.kimiAuthSignIn]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.kimiAuthSignIn,
+            Effect.gen(function* () {
+              const settings = yield* serverSettings.getSettings.pipe(
+                Effect.orElseSucceed(() => undefined),
+              );
+              const homePath = KimiOAuth.resolveKimiSignInHomePath(settings, input.instanceId);
+              const refreshInstanceId =
+                input.instanceId ?? defaultInstanceIdForDriver(ProviderDriverKind.make("kimi"));
+              return KimiOAuth.signInWithKimi({ homePath }).pipe(
+                // A fresh credential flips the probe to authenticated; refresh
+                // eagerly so the UI reflects the sign-in without waiting for
+                // the periodic health check.
+                Stream.tap((event) =>
+                  event.type === "completed"
+                    ? providerRegistry.refreshInstance(refreshInstanceId).pipe(Effect.ignore)
+                    : Effect.void,
+                ),
+                Stream.provideService(HttpClient.HttpClient, kimiSignInHttpClient),
+                Stream.provideService(FileSystem.FileSystem, kimiSignInFileSystem),
+                Stream.provideService(Path.Path, kimiSignInPath),
+              );
+            }),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.pullRequestsList]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {

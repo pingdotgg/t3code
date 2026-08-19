@@ -52,6 +52,7 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import { KimiAuthError, KimiAuthSignInEvent, KimiAuthSignInInput } from "./kimiAuth.ts";
 import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
@@ -278,6 +279,9 @@ export const WS_METHODS = {
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
+  // Kimi in-app sign-in (OAuth device flow)
+  kimiAuthSignIn: "kimiAuth.signIn",
+
   // Pull request methods
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
@@ -468,6 +472,19 @@ export const WsServerGetBackgroundPolicyRpc = Rpc.make(WS_METHODS.serverGetBackg
   payload: Schema.Struct({}),
   success: BackgroundPolicySnapshot,
   error: EnvironmentAuthorizationError,
+});
+
+/**
+ * One call per sign-in attempt: emits a `verification` event as soon as the
+ * device authorization exists, then polls Moonshot's token endpoint until the
+ * user approves, and ends with a `completed` event. Cancelling the stream
+ * abandons the attempt; no server-side session state outlives the call.
+ */
+export const WsKimiAuthSignInRpc = Rpc.make(WS_METHODS.kimiAuthSignIn, {
+  payload: KimiAuthSignInInput,
+  success: KimiAuthSignInEvent,
+  error: Schema.Union([KimiAuthError, EnvironmentAuthorizationError]),
+  stream: true,
 });
 
 const PullRequestRpcError = Schema.Union([
@@ -1006,6 +1023,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  WsKimiAuthSignInRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsDetailRpc,
