@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { findThreadHandoffs } from "@t3tools/client-runtime/state/thread-handoff";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -33,6 +34,7 @@ import {
   mergeComposerDraftContent,
   removeComposerDraftAttachment,
   setComposerDraftText,
+  seedComposerDraftHandoffPrompt,
   updateComposerDraftSettings,
   useComposerDraft,
 } from "./use-composer-drafts";
@@ -100,6 +102,22 @@ export function useThreadComposerState() {
   const draftAttachments = selectedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
+
+  useEffect(() => {
+    if (!selectedThreadDetail || !selectedThreadShell) {
+      return;
+    }
+    const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
+    for (const handoff of findThreadHandoffs(selectedThreadDetail)) {
+      if (
+        handoff.state === "accepted" &&
+        handoff.targetThreadId === selectedThreadDetail.id &&
+        handoff.sourceThreadId !== selectedThreadDetail.id
+      ) {
+        seedComposerDraftHandoffPrompt(threadKey, handoff.handoffId, handoff.prompt);
+      }
+    }
+  }, [selectedThreadDetail, selectedThreadShell]);
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;

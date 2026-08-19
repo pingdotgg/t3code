@@ -1860,3 +1860,27 @@ describe("createDebouncedStorage", () => {
     expect(base.setItem).toHaveBeenCalledWith("key", "v2");
   });
 });
+
+describe("composer handoff prompt seeding", () => {
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("seeds a server-backed target once and preserves an intentional clear", () => {
+    const target = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("handoff-target"));
+    const store = useComposerDraftStore.getState();
+
+    store.seedHandoffPrompt(target, "handoff-1", "Implement the prepared work.");
+    expect(draftFor(target.threadId, target.environmentId)).toMatchObject({
+      prompt: "Implement the prepared work.",
+      seededHandoffIds: ["handoff-1"],
+    });
+
+    store.setPrompt(target, "");
+    store.seedHandoffPrompt(target, "handoff-1", "Do not put this back.");
+    expect(draftFor(target.threadId, target.environmentId)).toMatchObject({
+      prompt: "",
+      seededHandoffIds: ["handoff-1"],
+    });
+  });
+});

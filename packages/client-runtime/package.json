@@ -143,6 +143,10 @@
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
     },
+    "./state/thread-handoff": {
+      "types": "./src/state/threadHandoff.ts",
+      "default": "./src/state/threadHandoff.ts"
+    },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"

@@ -51,6 +51,9 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type RequestThreadHandoffInput = CommandInput<"thread.handoff.request">;
+export type DismissThreadHandoffInput = CommandInput<"thread.handoff.dismiss">;
+export type AcceptThreadHandoffInput = CommandInput<"thread.handoff.accept">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -327,6 +330,42 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
   return yield* dispatch({
     ...input,
     type: "thread.session.stop",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const requestThreadHandoff: (input: RequestThreadHandoffInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.requestThreadHandoff",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.handoff.request",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const dismissThreadHandoff: (input: DismissThreadHandoffInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.dismissThreadHandoff",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.handoff.dismiss",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const acceptThreadHandoff: (input: AcceptThreadHandoffInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.acceptThreadHandoff",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.handoff.accept",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

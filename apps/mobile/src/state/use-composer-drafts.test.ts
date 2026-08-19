@@ -11,6 +11,8 @@ import {
   mergeComposerDraftContentState,
   removeComposerDraftsForEnvironment,
   restoreComposerDraftSnapshotState,
+  seedComposerDraftHandoffPrompt,
+  setComposerDraftText,
 } from "./use-composer-drafts";
 
 const DRAFT: ComposerDraft = {
@@ -23,6 +25,23 @@ afterEach(() => {
 });
 
 describe("mobile composer drafts", () => {
+  it("seeds a handoff target exactly once after the user clears it", () => {
+    const draftKey = "environment-1:handoff-target";
+
+    seedComposerDraftHandoffPrompt(draftKey, "handoff-1", "Implement the prepared work.");
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "Implement the prepared work.",
+      seededHandoffIds: ["handoff-1"],
+    });
+
+    setComposerDraftText(draftKey, "");
+    seedComposerDraftHandoffPrompt(draftKey, "handoff-1", "Do not put this back.");
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "",
+      seededHandoffIds: ["handoff-1"],
+    });
+  });
+
   it("hydrates selector state even when the message content is empty", () => {
     expect(
       decodePersistedComposerDrafts({

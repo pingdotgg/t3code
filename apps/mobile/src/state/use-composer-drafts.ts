@@ -45,6 +45,8 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
+  /** Receipts prevent an intentionally cleared handoff prompt from returning. */
+  readonly seededHandoffIds?: ReadonlyArray<string>;
 }
 
 export interface ComposerDraftContent {
@@ -80,6 +82,7 @@ const ComposerDraftSchema = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
+  seededHandoffIds: Schema.optional(Schema.Array(Schema.String)),
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -131,7 +134,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    (draft.seededHandoffIds?.length ?? 0) === 0
   );
 }
 
@@ -272,6 +276,28 @@ export function setComposerDraftText(draftKey: string, value: string): void {
     return {
       ...current,
       [draftKey]: draft,
+    };
+  });
+}
+
+export function seedComposerDraftHandoffPrompt(
+  draftKey: string,
+  handoffId: string,
+  prompt: string,
+): void {
+  updateComposerDrafts((current) => {
+    const existing = normalizeDraft(current[draftKey]);
+    const seededHandoffIds = existing.seededHandoffIds ?? [];
+    if (seededHandoffIds.includes(handoffId)) {
+      return current;
+    }
+    return {
+      ...current,
+      [draftKey]: {
+        ...existing,
+        text: existing.text.length === 0 ? prompt : existing.text,
+        seededHandoffIds: [...seededHandoffIds, handoffId],
+      },
     };
   });
 }

@@ -21,6 +21,7 @@ import {
   ProviderItemId,
   type ServerSettings,
   ThreadId,
+  ThreadHandoffId,
   TurnId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -53,6 +54,7 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { findThreadHandoff } from "../threadHandoff.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
@@ -362,6 +364,49 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("settles a pending agent-requested handoff when its provider turn completes", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-handoff");
+    const handoffId = ThreadHandoffId.make("handoff-1");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-handoff"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+    await harness.dispatch({
+      type: "thread.handoff.request",
+      commandId: CommandId.make("cmd-handoff-request"),
+      threadId: asThreadId("thread-1"),
+      handoffId,
+      title: "Implementation",
+      prompt: "Implement docs/spec.md",
+      artifactReferences: ["docs/spec.md"],
+      createdAt: now,
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-handoff"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => findThreadHandoff(entry, handoffId)?.state === "available",
+    );
+    expect(findThreadHandoff(thread, handoffId)?.state).toBe("available");
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

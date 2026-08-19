@@ -1,5 +1,7 @@
 import {
   EventId,
+  type ThreadId,
+  type TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -21,6 +23,7 @@ import {
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import { findThreadHandoff, findThreadHandoffs } from "./threadHandoff.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -177,6 +180,72 @@ type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
+
+const HANDOFF_ACTIVITY_KINDS = [
+  "thread-handoff.requested",
+  "thread-handoff.available",
+  "thread-handoff.dismissed",
+  "thread-handoff.cancelled",
+  "thread-handoff.accepted",
+  "thread-handoff.source",
+] as const;
+
+type HandoffActivityKind = (typeof HANDOFF_ACTIVITY_KINDS)[number];
+
+function handoffActivitySummary(kind: HandoffActivityKind) {
+  switch (kind) {
+    case "thread-handoff.requested":
+      return "Thread handoff requested";
+    case "thread-handoff.available":
+      return "Thread handoff ready";
+    case "thread-handoff.dismissed":
+      return "Thread handoff dismissed";
+    case "thread-handoff.cancelled":
+      return "Thread handoff cancelled";
+    case "thread-handoff.accepted":
+      return "Thread handoff accepted";
+    case "thread-handoff.source":
+      return "Thread started from handoff";
+  }
+}
+
+function handoffActivityEvent(input: {
+  readonly command: Pick<OrchestrationCommand, "commandId">;
+  readonly threadId: ThreadId;
+  readonly occurredAt: string;
+  readonly kind: HandoffActivityKind;
+  readonly payload: unknown;
+  readonly turnId: TurnId | null;
+}): Effect.Effect<
+  Omit<Extract<OrchestrationEvent, { type: "thread.activity-appended" }>, "sequence">,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  return Effect.gen(function* () {
+    const base = yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: input.threadId,
+      occurredAt: input.occurredAt,
+      commandId: input.command.commandId,
+    });
+    return {
+      ...base,
+      type: "thread.activity-appended" as const,
+      payload: {
+        threadId: input.threadId,
+        activity: {
+          id: base.eventId,
+          tone: "info" as const,
+          kind: input.kind,
+          summary: handoffActivitySummary(input.kind),
+          payload: input.payload,
+          turnId: input.turnId,
+          createdAt: input.occurredAt,
+        },
+      },
+    };
+  });
+}
 
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
@@ -1160,6 +1229,211 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.handoff.request": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const requestingTurnId = command.requestingTurnId ?? thread.session?.activeTurnId;
+      if (requestingTurnId === undefined || requestingTurnId === null) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has no active turn to request a handoff from`,
+          }),
+        );
+      }
+      if (
+        command.availableImmediately === true &&
+        (thread.latestTurn?.turnId !== requestingTurnId || thread.latestTurn.state !== "completed")
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} handoff can only be immediately available after its completed source turn`,
+          }),
+        );
+      }
+      if (
+        findThreadHandoffs(thread).some((handoff) => handoff.requestingTurnId === requestingTurnId)
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} already has a handoff request for turn ${requestingTurnId}`,
+          }),
+        );
+      }
+
+      const request = {
+        handoffId: command.handoffId,
+        requestingTurnId,
+        title: command.title,
+        prompt: command.prompt,
+        artifactReferences: command.artifactReferences,
+        requestedAt: command.createdAt,
+      };
+      const requested = yield* handoffActivityEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        kind: "thread-handoff.requested",
+        payload: request,
+        turnId: requestingTurnId,
+      });
+      if (command.availableImmediately !== true) return requested;
+
+      const available = yield* handoffActivityEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        kind: "thread-handoff.available",
+        payload: {
+          handoffId: command.handoffId,
+          resolvedAt: command.createdAt,
+        },
+        turnId: requestingTurnId,
+      });
+      return [requested, available];
+    }
+
+    case "thread.handoff.turn-settle": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const handoff = findThreadHandoffs(thread).find(
+        (candidate) =>
+          candidate.requestingTurnId === command.turnId && candidate.state === "pending",
+      );
+      if (handoff === undefined) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has no pending handoff for turn ${command.turnId}`,
+          }),
+        );
+      }
+      const completed = command.outcome === "completed";
+      return yield* handoffActivityEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        kind: completed ? "thread-handoff.available" : "thread-handoff.cancelled",
+        payload: {
+          handoffId: handoff.handoffId,
+          resolvedAt: command.createdAt,
+        },
+        turnId: command.turnId,
+      });
+    }
+
+    case "thread.handoff.dismiss": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const handoff = findThreadHandoff(thread, command.handoffId);
+      if (handoff?.state !== "available") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} handoff ${command.handoffId} is not available to dismiss`,
+          }),
+        );
+      }
+      return yield* handoffActivityEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        kind: "thread-handoff.dismissed",
+        payload: {
+          handoffId: handoff.handoffId,
+          resolvedAt: command.createdAt,
+        },
+        turnId: handoff.requestingTurnId,
+      });
+    }
+
+    case "thread.handoff.accept": {
+      const source = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.targetThreadId,
+      });
+      const handoff = findThreadHandoff(source, command.handoffId);
+      if (handoff?.state !== "available") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} handoff ${command.handoffId} is not available to accept`,
+          }),
+        );
+      }
+
+      const sourceAccepted = yield* handoffActivityEvent({
+        command,
+        threadId: source.id,
+        occurredAt: command.createdAt,
+        kind: "thread-handoff.accepted",
+        payload: {
+          handoffId: handoff.handoffId,
+          resolvedAt: command.createdAt,
+          targetThreadId: command.targetThreadId,
+        },
+        turnId: handoff.requestingTurnId,
+      });
+      const targetCreated: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.targetThreadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created",
+        payload: {
+          threadId: command.targetThreadId,
+          projectId: source.projectId,
+          title: handoff.title,
+          modelSelection: source.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: source.interactionMode,
+          branch: source.branch,
+          worktreePath: source.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const targetSource = yield* handoffActivityEvent({
+        command,
+        threadId: command.targetThreadId,
+        occurredAt: command.createdAt,
+        kind: "thread-handoff.source",
+        payload: {
+          sourceThreadId: source.id,
+          handoff: {
+            handoffId: handoff.handoffId,
+            requestingTurnId: handoff.requestingTurnId,
+            title: handoff.title,
+            prompt: handoff.prompt,
+            artifactReferences: handoff.artifactReferences,
+            requestedAt: handoff.requestedAt,
+          },
+          acceptedAt: command.createdAt,
+        },
+        turnId: null,
+      });
+      return [sourceAccepted, targetCreated, targetSource];
     }
 
     case "thread.session.set": {

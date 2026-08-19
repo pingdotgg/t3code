@@ -14,6 +14,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
   ThreadId,
+  ThreadHandoff,
   UserInputQuestion,
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
@@ -77,6 +78,7 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { ThreadHandoffCard } from "./ThreadHandoffCard";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
@@ -136,6 +138,10 @@ export interface ThreadDetailScreenProps {
   ) => void;
   readonly onSubmitUserInput: () => Promise<unknown>;
   readonly showContent?: boolean;
+  readonly availableHandoffs?: ReadonlyArray<ThreadHandoff>;
+  readonly handoffActionId?: string | null;
+  readonly onOpenHandoff?: (handoff: ThreadHandoff) => void;
+  readonly onDismissHandoff?: (handoff: ThreadHandoff) => void;
 }
 
 function latestStreamingAssistantMessage(
@@ -581,6 +587,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           onTouchEnd={handleFeedTouchEnd}
           onTouchCancel={handleFeedTouchCancel}
         >
+          {props.availableHandoffs?.map((handoff) => (
+            <ThreadHandoffCard
+              key={handoff.handoffId}
+              handoff={handoff}
+              busy={props.handoffActionId !== null && props.handoffActionId !== undefined}
+              onOpen={() => props.onOpenHandoff?.(handoff)}
+              onDismiss={() => props.onDismissHandoff?.(handoff)}
+            />
+          ))}
           <ThreadFeed
             key={props.selectedThread.id}
             environmentId={props.environmentId}

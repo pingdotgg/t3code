@@ -266,6 +266,56 @@ export const OrchestrationProposedPlan = Schema.Struct({
 });
 export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
 
+export const ThreadHandoffId = TrimmedNonEmptyString;
+export type ThreadHandoffId = typeof ThreadHandoffId.Type;
+
+export const ThreadHandoffState = Schema.Literals([
+  "pending",
+  "available",
+  "dismissed",
+  "cancelled",
+  "accepted",
+]);
+export type ThreadHandoffState = typeof ThreadHandoffState.Type;
+
+export const ThreadHandoffRequest = Schema.Struct({
+  handoffId: ThreadHandoffId,
+  requestingTurnId: TurnId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  artifactReferences: Schema.Array(TrimmedNonEmptyString),
+  requestedAt: IsoDateTime,
+});
+export type ThreadHandoffRequest = typeof ThreadHandoffRequest.Type;
+
+export const ThreadHandoffResolution = Schema.Struct({
+  handoffId: ThreadHandoffId,
+  resolvedAt: IsoDateTime,
+  targetThreadId: Schema.optional(ThreadId),
+});
+export type ThreadHandoffResolution = typeof ThreadHandoffResolution.Type;
+
+export const ThreadHandoffSource = Schema.Struct({
+  sourceThreadId: ThreadId,
+  handoff: ThreadHandoffRequest,
+  acceptedAt: IsoDateTime,
+});
+export type ThreadHandoffSource = typeof ThreadHandoffSource.Type;
+
+export const ThreadHandoff = Schema.Struct({
+  sourceThreadId: ThreadId,
+  handoffId: ThreadHandoffId,
+  requestingTurnId: TurnId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  artifactReferences: Schema.Array(TrimmedNonEmptyString),
+  state: ThreadHandoffState,
+  targetThreadId: Schema.NullOr(ThreadId),
+  requestedAt: IsoDateTime,
+  resolvedAt: Schema.NullOr(IsoDateTime),
+});
+export type ThreadHandoff = typeof ThreadHandoff.Type;
+
 const SourceProposedPlanReference = Schema.Struct({
   threadId: ThreadId,
   planId: OrchestrationProposedPlanId,
@@ -895,6 +945,47 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+const ThreadHandoffRequestCommand = Schema.Struct({
+  type: Schema.Literal("thread.handoff.request"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  handoffId: ThreadHandoffId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  artifactReferences: Schema.Array(TrimmedNonEmptyString),
+  /** Only clients creating an already-completed Plan handoff provide this. */
+  requestingTurnId: Schema.optional(TurnId),
+  /** An agent request starts pending; a completed Plan handoff starts available. */
+  availableImmediately: Schema.optional(Schema.Literal(true)),
+  createdAt: IsoDateTime,
+});
+
+const ThreadHandoffDismissCommand = Schema.Struct({
+  type: Schema.Literal("thread.handoff.dismiss"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  handoffId: ThreadHandoffId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadHandoffAcceptCommand = Schema.Struct({
+  type: Schema.Literal("thread.handoff.accept"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  handoffId: ThreadHandoffId,
+  targetThreadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadHandoffTurnSettleCommand = Schema.Struct({
+  type: Schema.Literal("thread.handoff.turn-settle"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  outcome: Schema.Literals(["completed", "failed", "interrupted", "cancelled"]),
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -919,6 +1010,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadHandoffRequestCommand,
+  ThreadHandoffDismissCommand,
+  ThreadHandoffAcceptCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -947,6 +1041,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadHandoffRequestCommand,
+  ThreadHandoffDismissCommand,
+  ThreadHandoffAcceptCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1032,6 +1129,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  ThreadHandoffTurnSettleCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 

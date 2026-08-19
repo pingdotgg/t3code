@@ -148,6 +148,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  seededHandoffIds: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -276,6 +277,8 @@ export interface ComposerThreadDraftState {
   activeProvider: ProviderInstanceId | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  /** Durable seed receipts prevent an intentionally cleared handoff prompt from returning. */
+  seededHandoffIds: ReadonlyArray<string>;
 }
 
 /**
@@ -428,6 +431,7 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
+  seedHandoffPrompt: (threadRef: ComposerThreadTarget, handoffId: string, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
     threadRef: ComposerThreadTarget,
@@ -635,6 +639,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  seededHandoffIds: EMPTY_IDS,
 });
 
 /**
@@ -657,6 +662,7 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    seededHandoffIds: [],
   };
 }
 
@@ -729,7 +735,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.seededHandoffIds.length === 0
   );
 }
 
@@ -1708,6 +1715,12 @@ function normalizePersistedDraftsByThreadId(
     const reviewComments = Array.isArray(draftCandidate.reviewComments)
       ? draftCandidate.reviewComments.filter(isReviewCommentContext)
       : [];
+    const seededHandoffIds = Array.isArray(draftCandidate.seededHandoffIds)
+      ? draftCandidate.seededHandoffIds.filter(
+          (handoffId): handoffId is string =>
+            typeof handoffId === "string" && handoffId.trim().length > 0,
+        )
+      : [];
     const runtimeMode = isRuntimeMode(draftCandidate.runtimeMode)
       ? draftCandidate.runtimeMode
       : null;
@@ -1775,7 +1788,8 @@ function normalizePersistedDraftsByThreadId(
       reviewComments.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      seededHandoffIds.length === 0
     ) {
       continue;
     }
@@ -1805,6 +1819,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(seededHandoffIds.length > 0 ? { seededHandoffIds } : {}),
     };
   }
 
@@ -1907,7 +1922,8 @@ function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.seededHandoffIds.length === 0
     ) {
       continue;
     }
@@ -1966,6 +1982,9 @@ function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.seededHandoffIds.length > 0
+        ? { seededHandoffIds: [...draft.seededHandoffIds] }
+        : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2212,6 +2231,7 @@ function toHydratedThreadDraft(
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    seededHandoffIds: persistedDraft.seededHandoffIds ?? [],
   };
 }
 
@@ -2683,6 +2703,29 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        seedHandoffPrompt: (threadRef, handoffId, prompt) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            if (existing.seededHandoffIds.includes(handoffId)) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...existing,
+              prompt: existing.prompt.length === 0 ? prompt : existing.prompt,
+              seededHandoffIds: [...existing.seededHandoffIds, handoffId],
+            };
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: nextDraft,
+              },
+            };
           });
         },
         setTerminalContexts: (threadRef, contexts) => {

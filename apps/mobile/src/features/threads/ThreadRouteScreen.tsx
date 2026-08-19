@@ -12,8 +12,13 @@ import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import { findThreadHandoffs } from "@t3tools/client-runtime/state/thread-handoff";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -27,6 +32,7 @@ import {
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 
@@ -62,6 +68,7 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { seedComposerDraftHandoffPrompt } from "../../state/use-composer-drafts";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -214,7 +221,14 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const acceptThreadHandoff = useAtomCommand(threadEnvironment.acceptHandoff, {
+    reportFailure: false,
+  });
+  const dismissThreadHandoff = useAtomCommand(threadEnvironment.dismissHandoff, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
+  const [handoffActionId, setHandoffActionId] = useState<string | null>(null);
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
@@ -294,6 +308,15 @@ function ThreadRouteContent(
           }
         : null,
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
+  );
+  const availableThreadHandoffs = useMemo(
+    () =>
+      selectedThreadDetail
+        ? findThreadHandoffs(selectedThreadDetail).filter(
+            (handoff) => handoff.state === "available",
+          )
+        : [],
+    [selectedThreadDetail],
   );
 
   /* ─── Native header theming ──────────────────────────────────────── */
@@ -496,6 +519,69 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+  const handleOpenHandoff = useCallback(
+    async (handoff: ReturnType<typeof findThreadHandoffs>[number]) => {
+      if (!selectedThread || handoffActionId !== null) {
+        return;
+      }
+      const targetThreadId = ThreadId.make(uuidv4());
+      setHandoffActionId(handoff.handoffId);
+      const result = await acceptThreadHandoff({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          handoffId: handoff.handoffId,
+          targetThreadId,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          Alert.alert(
+            "Could not open handoff thread",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
+        setHandoffActionId(null);
+        return;
+      }
+      seedComposerDraftHandoffPrompt(
+        scopedThreadKey(selectedThread.environmentId, targetThreadId),
+        handoff.handoffId,
+        handoff.prompt,
+      );
+      navigation.navigate("Thread", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(targetThreadId),
+      });
+      setHandoffActionId(null);
+    },
+    [acceptThreadHandoff, handoffActionId, navigation, selectedThread],
+  );
+  const handleDismissHandoff = useCallback(
+    async (handoff: ReturnType<typeof findThreadHandoffs>[number]) => {
+      if (!selectedThread || handoffActionId !== null) {
+        return;
+      }
+      setHandoffActionId(handoff.handoffId);
+      const result = await dismissThreadHandoff({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          handoffId: handoff.handoffId,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not dismiss handoff",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
+      setHandoffActionId(null);
+    },
+    [dismissThreadHandoff, handoffActionId, selectedThread],
+  );
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -808,6 +894,10 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
+          availableHandoffs={availableThreadHandoffs}
+          handoffActionId={handoffActionId}
+          onOpenHandoff={handleOpenHandoff}
+          onDismissHandoff={handleDismissHandoff}
         />
       </View>
     </>

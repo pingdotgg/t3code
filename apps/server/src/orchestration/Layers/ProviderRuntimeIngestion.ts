@@ -43,6 +43,7 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { findThreadHandoffs } from "../threadHandoff.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -1854,6 +1855,44 @@ const make = Effect.gen(function* () {
             planId: proposedPlanIdForTurn(thread.id, turnId),
             turnId,
             updatedAt: now,
+          });
+
+          const pendingHandoff =
+            shouldApplyThreadLifecycle && detailedThread !== null
+              ? findThreadHandoffs(detailedThread).find(
+                  (handoff) => handoff.requestingTurnId === turnId && handoff.state === "pending",
+                )
+              : undefined;
+          if (pendingHandoff !== undefined) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.handoff.turn-settle",
+              commandId: yield* providerCommandId(event, "thread-handoff-turn-settle"),
+              threadId: thread.id,
+              turnId,
+              outcome: normalizeRuntimeTurnState(event.payload.state),
+              createdAt: now,
+            });
+          }
+        }
+      }
+
+      if (event.type === "turn.aborted") {
+        const turnId = toTurnId(event.turnId);
+        const detailedThread = yield* getLoadedThreadDetail();
+        const pendingHandoff =
+          shouldApplyThreadLifecycle && turnId && detailedThread !== null
+            ? findThreadHandoffs(detailedThread).find(
+                (handoff) => handoff.requestingTurnId === turnId && handoff.state === "pending",
+              )
+            : undefined;
+        if (turnId !== undefined && pendingHandoff !== undefined) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.handoff.turn-settle",
+            commandId: yield* providerCommandId(event, "thread-handoff-turn-aborted"),
+            threadId: thread.id,
+            turnId,
+            outcome: "cancelled",
+            createdAt: now,
           });
         }
       }

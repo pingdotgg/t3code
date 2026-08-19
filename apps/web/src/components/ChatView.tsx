@@ -13,6 +13,8 @@ import {
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  ThreadHandoffId,
+  type ThreadHandoff,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -37,6 +39,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { findThreadHandoffs } from "@t3tools/client-runtime/state/thread-handoff";
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
@@ -176,7 +179,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newDraftId, newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
@@ -249,6 +252,7 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { ThreadHandoffCard } from "./chat/ThreadHandoffCard";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -1210,8 +1214,15 @@ function ChatViewContent(props: ChatViewProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
-  const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
-  const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
+  const requestThreadHandoff = useAtomCommand(threadEnvironment.requestHandoff, {
+    reportFailure: false,
+  });
+  const acceptThreadHandoff = useAtomCommand(threadEnvironment.acceptHandoff, {
+    reportFailure: false,
+  });
+  const dismissThreadHandoff = useAtomCommand(threadEnvironment.dismissHandoff, {
+    reportFailure: false,
+  });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -1303,6 +1314,7 @@ function ChatViewContent(props: ChatViewProps) {
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const seedHandoffPrompt = useComposerDraftStore((store) => store.seedHandoffPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
@@ -1337,6 +1349,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [handoffActionId, setHandoffActionId] = useState<string | null>(null);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -1505,6 +1518,21 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+
+  useEffect(() => {
+    if (!activeServerThread) {
+      return;
+    }
+    for (const handoff of findThreadHandoffs(activeServerThread)) {
+      if (
+        handoff.state === "accepted" &&
+        handoff.targetThreadId === activeServerThread.id &&
+        handoff.sourceThreadId !== activeServerThread.id
+      ) {
+        seedHandoffPrompt(routeThreadRef, handoff.handoffId, handoff.prompt);
+      }
+    }
+  }, [activeServerThread, routeThreadRef, seedHandoffPrompt]);
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -2253,6 +2281,13 @@ function ChatViewContent(props: ChatViewProps) {
       activeLatestTurn?.turnId ?? null,
     );
   }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
+  const availableThreadHandoffs = useMemo(
+    () =>
+      activeServerThread
+        ? findThreadHandoffs(activeServerThread).filter((handoff) => handoff.state === "available")
+        : [],
+    [activeServerThread],
+  );
   const activePlan = useMemo(
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -5664,8 +5699,8 @@ function ChatViewContent(props: ChatViewProps) {
   const onImplementPlanInNewThread = useCallback(async () => {
     if (
       !activeThread ||
-      !activeProject ||
       !activeProposedPlan ||
+      !activeProposedPlan.turnId ||
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
@@ -5684,11 +5719,8 @@ function ChatViewContent(props: ChatViewProps) {
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
-      selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
 
-    const createdAt = new Date().toISOString();
-    const nextThreadId = newThreadId();
     const planMarkdown = activeProposedPlan.planMarkdown;
     const implementationPrompt = buildPlanImplementationPrompt(planMarkdown);
     const outgoingImplementationPrompt = formatOutgoingPrompt({
@@ -5699,65 +5731,49 @@ function ChatViewContent(props: ChatViewProps) {
       text: implementationPrompt,
     });
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+    const handoffId = ThreadHandoffId.make(randomUUID());
+    const nextThreadId = newThreadId();
 
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: false });
     const finish = () => {
       sendInFlightRef.current = false;
-      resetLocalDispatch();
     };
 
-    const createResult = await createThread({
+    setHandoffActionId(handoffId);
+    const requestResult = await requestThreadHandoff({
       environmentId,
       input: {
-        threadId: nextThreadId,
-        projectId: activeProject.id,
+        threadId: activeThread.id,
+        handoffId,
         title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
-        runtimeMode,
-        interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
+        prompt: outgoingImplementationPrompt,
+        artifactReferences: [],
+        ...(activeProposedPlan.turnId
+          ? { requestingTurnId: activeProposedPlan.turnId, availableImmediately: true as const }
+          : {}),
       },
     });
     let failure: AtomCommandResult<unknown, unknown> | null =
-      createResult._tag === "Failure" ? createResult : null;
+      requestResult._tag === "Failure" ? requestResult : null;
 
     if (failure === null) {
-      const startResult = await startThreadTurn({
+      const acceptResult = await acceptThreadHandoff({
         environmentId,
         input: {
-          threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingImplementationPrompt,
-            attachments: [],
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: nextThreadTitle,
-          runtimeMode,
-          interactionMode: "default",
-          sourceProposedPlan: {
-            threadId: activeThread.id,
-            planId: activeProposedPlan.id,
-          },
-          createdAt,
+          threadId: activeThread.id,
+          handoffId,
+          targetThreadId: nextThreadId,
         },
       });
-      failure = startResult._tag === "Failure" ? startResult : null;
+      failure = acceptResult._tag === "Failure" ? acceptResult : null;
     }
 
     if (failure === null) {
-      const startedResult = await settlePromise(() =>
-        waitForStartedServerThread(scopeThreadRef(activeThread.environmentId, nextThreadId)),
+      seedHandoffPrompt(
+        scopeThreadRef(activeThread.environmentId, nextThreadId),
+        handoffId,
+        outgoingImplementationPrompt,
       );
-      failure = startedResult._tag === "Failure" ? startedResult : null;
-    }
-
-    if (failure === null) {
       const navigateResult = await settlePromise(() =>
         navigate({
           to: "/$environmentId/$threadId",
@@ -5771,52 +5787,120 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      const cleanupResult = await deleteThread({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-        },
-      });
-      if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
-        console.warn(
-          "Failed to clean up implementation thread after start failure.",
-          squashAtomCommandFailure(cleanupResult),
-        );
-      }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not start implementation thread",
+            title: "Could not create implementation draft",
             description:
               error instanceof Error
                 ? error.message
-                : "An error occurred while creating the new thread.",
+                : "An error occurred while preparing the new thread.",
           }),
         );
       }
     }
+    setHandoffActionId(null);
     finish();
   }, [
-    activeProject,
     activeProposedPlan,
-    activeThreadBranch,
     activeThread,
-    beginLocalDispatch,
+    acceptThreadHandoff,
     activeEnvironmentUnavailable,
-    createThread,
-    deleteThread,
     isConnecting,
     isSendBusy,
     isServerThread,
     navigate,
-    resetLocalDispatch,
-    runtimeMode,
-    startThreadTurn,
+    requestThreadHandoff,
+    seedHandoffPrompt,
     environmentId,
     composerRef,
   ]);
+
+  const onOpenThreadHandoff = useCallback(
+    async (handoff: ThreadHandoff) => {
+      if (!activeServerThread || handoffActionId !== null) {
+        return;
+      }
+      const targetThreadId = newThreadId();
+      setHandoffActionId(handoff.handoffId);
+      const accepted = await acceptThreadHandoff({
+        environmentId: activeServerThread.environmentId,
+        input: {
+          threadId: activeServerThread.id,
+          handoffId: handoff.handoffId,
+          targetThreadId,
+        },
+      });
+      if (accepted._tag === "Failure") {
+        if (!isAtomCommandInterrupted(accepted)) {
+          const error = squashAtomCommandFailure(accepted);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not open handoff thread",
+              description: error instanceof Error ? error.message : "Please try again.",
+            }),
+          );
+        }
+        setHandoffActionId(null);
+        return;
+      }
+      const targetRef = scopeThreadRef(activeServerThread.environmentId, targetThreadId);
+      seedHandoffPrompt(targetRef, handoff.handoffId, handoff.prompt);
+      const navigated = await settlePromise(() =>
+        navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: activeServerThread.environmentId,
+            threadId: targetThreadId,
+          },
+        }),
+      );
+      if (navigated._tag === "Failure" && !isAtomCommandInterrupted(navigated)) {
+        const error = squashAtomCommandFailure(navigated);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Handoff draft created",
+            description:
+              error instanceof Error ? error.message : "Open the new draft from the thread list.",
+          }),
+        );
+      }
+      setHandoffActionId(null);
+    },
+    [acceptThreadHandoff, activeServerThread, handoffActionId, navigate, seedHandoffPrompt],
+  );
+
+  const onDismissThreadHandoff = useCallback(
+    async (handoff: ThreadHandoff) => {
+      if (!activeServerThread || handoffActionId !== null) {
+        return;
+      }
+      setHandoffActionId(handoff.handoffId);
+      const dismissed = await dismissThreadHandoff({
+        environmentId: activeServerThread.environmentId,
+        input: {
+          threadId: activeServerThread.id,
+          handoffId: handoff.handoffId,
+        },
+      });
+      if (dismissed._tag === "Failure" && !isAtomCommandInterrupted(dismissed)) {
+        const error = squashAtomCommandFailure(dismissed);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not dismiss handoff",
+            description: error instanceof Error ? error.message : "Please try again.",
+          }),
+        );
+      }
+      setHandoffActionId(null);
+    },
+    [activeServerThread, dismissThreadHandoff, handoffActionId],
+  );
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -6202,6 +6286,15 @@ function ChatViewContent(props: ChatViewProps) {
             setThreadErrorBannerDismissTick((tick) => tick + 1);
           }}
         />
+        {availableThreadHandoffs.map((handoff) => (
+          <ThreadHandoffCard
+            key={handoff.handoffId}
+            handoff={handoff}
+            busy={handoffActionId !== null}
+            onOpen={() => void onOpenThreadHandoff(handoff)}
+            onDismiss={() => void onDismissThreadHandoff(handoff)}
+          />
+        ))}
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
