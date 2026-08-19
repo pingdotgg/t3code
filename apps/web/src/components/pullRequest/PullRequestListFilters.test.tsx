@@ -42,6 +42,57 @@ function findLabeledGroup(node: ReactNode, label: string): ReactNode {
   return undefined;
 }
 
+interface CheckboxItemProps {
+  readonly checked?: boolean;
+  readonly onCheckedChange?: (checked: boolean) => void;
+  readonly onClick?: () => void;
+  readonly onKeyDown?: (event: unknown) => void;
+  readonly children?: ReactNode;
+}
+
+/** The project rows, in the order the menu lists them: "All projects" first, then the projects. */
+function findCheckboxItems(node: ReactNode): ReadonlyArray<CheckboxItemProps> {
+  const found: CheckboxItemProps[] = [];
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    const props = child.props as CheckboxItemProps;
+    if (typeof props.checked === "boolean") found.push(props);
+    found.push(...findCheckboxItems(props.children));
+  }
+  return found;
+}
+
+/** The per-row "Only" buttons, in the same order as the rows that carry them. */
+function findOnlyButtons(
+  node: ReactNode,
+): ReadonlyArray<{ readonly onClick: (event: unknown) => void }> {
+  const found: Array<{ readonly onClick: (event: unknown) => void }> = [];
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    const props = child.props as {
+      readonly children?: ReactNode;
+      readonly onClick?: (event: unknown) => void;
+    };
+    if (child.type === "button" && props.onClick) found.push({ onClick: props.onClick });
+    found.push(...findOnlyButtons(props.children));
+  }
+  return found;
+}
+
+/** Enough of a click for the handler, which only ever stops the row from swallowing it. */
+const clickEvent = () => ({ preventDefault: () => undefined, stopPropagation: () => undefined });
+
+/**
+ * Enough of a key press for the row handler. `preventBaseUIHandler` is the one the menu reads:
+ * a handler that only prevents the default still lets the row toggle after it.
+ */
+const keyEvent = (key: string, shiftKey: boolean) => ({
+  key,
+  shiftKey,
+  preventDefault: () => undefined,
+  preventBaseUIHandler: vi.fn(),
+});
+
 function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) {
   return PullRequestFiltersMenu({
     state: "open",
@@ -58,6 +109,8 @@ function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) 
     host: undefined,
     hostOptions: [],
     onHost: () => undefined,
+    hiddenProjectKeys: [],
+    onProjectSelection: () => undefined,
     server: undefined,
     serverOptions: [],
     onServer: () => undefined,
@@ -65,12 +118,34 @@ function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) 
     projectId: undefined,
     projectEnvironmentId: undefined,
     unavailable: new Map(),
-    onProject: () => undefined,
     ...overrides,
   });
 }
 
 describe("pull request filters menu", () => {
+  const projectOne = {
+    id: "project-1" as ProjectId,
+    environmentId: "env-1" as EnvironmentId,
+    title: "T3 Code",
+    workspaceRoot: "/work/t3code",
+    hideKey: "repository:github.com/acme/t3code",
+  };
+  const projectTwo = {
+    id: "project-2" as ProjectId,
+    environmentId: "env-1" as EnvironmentId,
+    title: "Popular OSS",
+    workspaceRoot: "/work/popular",
+    hideKey: "repository:github.com/acme/popular",
+  };
+  const keyTwo = projectTwo.hideKey;
+  /** The same repository held by a second server, so both rows share one hidden state. */
+  const projectTwoElsewhere = {
+    ...projectTwo,
+    id: "project-9" as ProjectId,
+    environmentId: "env-2" as EnvironmentId,
+    title: "Popular OSS · other",
+  };
+
   it("does not emit a change when the selected state is chosen again", () => {
     const onState = vi.fn();
     const group = findValueChange(findLabeledGroup(menu({ onState }), "State"));
@@ -109,60 +184,203 @@ describe("pull request filters menu", () => {
     expect(onFilters).toHaveBeenCalledWith({ checks: "failing" });
   });
 
-  it("does not emit a change when the selected project is chosen again", () => {
-    const projectId = "project-1" as ProjectId;
-    const environmentId = "env-1" as EnvironmentId;
-    const onProject = vi.fn();
-    const view = menu({
-      projects: [
-        {
-          id: projectId,
-          environmentId,
-          title: "T3 Code",
-          workspaceRoot: "/work/t3code",
-        },
-      ],
-      projectId,
-      projectEnvironmentId: environmentId,
-      onProject,
+  it("hides a project when its row is unchecked", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.checked)).toEqual([true, true, true]);
+
+    rows[2]?.onCheckedChange?.(false);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [keyTwo],
     });
-    const radioGroup = findValueChange(view);
-    expect(radioGroup).toBeDefined();
-
-    radioGroup?.props.onValueChange(pullRequestProjectKey({ id: projectId, environmentId }));
-    expect(onProject).not.toHaveBeenCalled();
-
-    radioGroup?.props.onValueChange("all");
-    expect(onProject).toHaveBeenCalledWith(undefined, undefined);
   });
 
-  it("passes the environment along so a duplicate project id on another server is told apart", () => {
-    const projectId = "project-1" as ProjectId;
-    const onProject = vi.fn();
-    const view = menu({
-      projects: [
-        {
-          id: projectId,
-          environmentId: "env-1" as EnvironmentId,
-          title: "T3 Code · one",
-          workspaceRoot: "/work/t3code-1",
-        },
-        {
-          id: projectId,
-          environmentId: "env-2" as EnvironmentId,
-          title: "T3 Code · two",
-          workspaceRoot: "/work/t3code-2",
-        },
-      ],
-      onProject,
-    });
-    const radioGroup = findValueChange(view);
-    expect(radioGroup).toBeDefined();
-
-    radioGroup?.props.onValueChange(
-      pullRequestProjectKey({ id: projectId, environmentId: "env-2" as EnvironmentId }),
+  it("brings a hidden project back when its row is checked again", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        hiddenProjectKeys: [keyTwo],
+        onProjectSelection,
+      }),
     );
-    expect(onProject).toHaveBeenCalledWith(projectId, "env-2");
+    expect(rows.map((row) => row.checked)).toEqual([false, true, false]);
+
+    rows[2]?.onCheckedChange?.(true);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [],
+    });
+  });
+
+  it("reads a one-project scope as that project alone being listed", () => {
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+      }),
+    );
+    expect(rows.map((row) => row.checked)).toEqual([false, true, false]);
+  });
+
+  it("drops a one-project scope and its hidden set in one selection", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+        onProjectSelection,
+      }),
+    );
+
+    rows[2]?.onCheckedChange?.(true);
+    // One call, never a scope change followed by a hidden change: two updates would each rebuild
+    // the URL from the committed one and the second would put the scope back.
+    expect(onProjectSelection).toHaveBeenCalledOnce();
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [],
+    });
+  });
+
+  it("carries a one-project scope into the hidden set rather than discarding it", () => {
+    const onProjectSelection = vi.fn();
+    const third = {
+      ...projectTwo,
+      id: "project-3" as ProjectId,
+      title: "Third",
+      hideKey: "repository:github.com/acme/third",
+    };
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo, third],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+        onProjectSelection,
+      }),
+    );
+
+    rows[2]?.onCheckedChange?.(true);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [third.hideKey],
+    });
+  });
+
+  it("clears both the scope and the hidden set when all projects is chosen", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectOne, projectTwo],
+        projectId: projectOne.id,
+        projectEnvironmentId: projectOne.environmentId,
+        hiddenProjectKeys: [keyTwo],
+        onProjectSelection,
+      }),
+    );
+
+    rows[0]?.onClick?.();
+    expect(onProjectSelection).toHaveBeenCalledOnce();
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [],
+    });
+  });
+
+  it("does not emit a selection when nothing about it would change", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
+    );
+
+    rows[0]?.onClick?.();
+    expect(onProjectSelection).not.toHaveBeenCalled();
+  });
+
+  it("narrows to one project from its own row, environment and all", () => {
+    const onProjectSelection = vi.fn();
+    const duplicate = {
+      ...projectTwo,
+      id: projectOne.id,
+      environmentId: "env-2" as EnvironmentId,
+      hideKey: "repository:github.com/acme/other",
+    };
+    const buttons = findOnlyButtons(
+      menu({ projects: [projectOne, duplicate], onProjectSelection }),
+    );
+    expect(buttons).toHaveLength(2);
+
+    buttons[1]?.onClick(clickEvent());
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: projectOne.id,
+      environmentId: "env-2",
+      hiddenKeys: [],
+    });
+  });
+
+  it("narrows to one project from the keyboard", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
+    );
+
+    // Arrow keys reach the row but never the button inside it, so the row carries the action.
+    const event = keyEvent("Enter", true);
+    rows[2]?.onKeyDown?.(event);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: projectTwo.id,
+      environmentId: projectTwo.environmentId,
+      hiddenKeys: [],
+    });
+    // Without this the row toggles as well and the later of the two selections is what sticks.
+    expect(event.preventBaseUIHandler).toHaveBeenCalled();
+  });
+
+  it("leaves a plain enter to the row's own checkbox", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectOne, projectTwo], onProjectSelection }),
+    );
+
+    rows[2]?.onKeyDown?.(keyEvent("Enter", false));
+    rows[2]?.onKeyDown?.(keyEvent("o", false));
+    expect(onProjectSelection).not.toHaveBeenCalled();
+  });
+
+  it("hides both copies of a repository two servers share", () => {
+    const onProjectSelection = vi.fn();
+    const rows = findCheckboxItems(
+      menu({ projects: [projectTwo, projectTwoElsewhere], onProjectSelection }),
+    );
+    expect(rows.map((row) => row.checked)).toEqual([true, true, true]);
+
+    rows[1]?.onCheckedChange?.(false);
+    expect(onProjectSelection).toHaveBeenCalledWith({
+      projectId: undefined,
+      environmentId: undefined,
+      hiddenKeys: [projectTwo.hideKey],
+    });
+  });
+
+  it("reads both copies of a shared repository as hidden from the one key", () => {
+    const rows = findCheckboxItems(
+      menu({
+        projects: [projectTwo, projectTwoElsewhere],
+        hiddenProjectKeys: [projectTwo.hideKey],
+      }),
+    );
+    expect(rows.map((row) => row.checked)).toEqual([false, false, false]);
   });
 
   it("does not collide when environment and project ids contain spaces", () => {

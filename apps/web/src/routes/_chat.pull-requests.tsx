@@ -54,7 +54,10 @@ import {
   type PullRequestDiffStats,
   type PullRequestPartitionsSnapshot,
 } from "../components/pullRequest/pullRequestList.logic";
-import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
+import {
+  assignProjectsToEnvironments,
+  pullRequestProjectHideKey,
+} from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
   PullRequestFiltersMenu,
@@ -100,6 +103,7 @@ import {
 import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
+import { useUiStateStore } from "~/uiStateStore";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 export interface PullRequestsSearch {
@@ -293,6 +297,7 @@ function PullRequestsRouteView() {
       .map((project) => ({
         id: project.id,
         environmentId: project.environmentId,
+        hideKey: pullRequestProjectHideKey(project),
         title:
           (titleCounts.get(project.title) ?? 0) > 1
             ? `${project.title} · ${environmentLabels.get(project.environmentId) ?? project.environmentId}`
@@ -306,6 +311,46 @@ function PullRequestsRouteView() {
     () => resolveProjectScope(search.projectId, projects, projectsKnown),
     [projects, projectsKnown, search.projectId],
   );
+  const hiddenProjectKeys = useUiStateStore((state) => state.hiddenPullRequestProjectKeys);
+  const setHiddenProjectKeys = useUiStateStore((state) => state.setHiddenPullRequestProjectKeys);
+  /** Null until the projects have arrived, when nothing can be said about which keys are live. */
+  const liveHideKeys = useMemo(
+    () => (projectsKnown ? new Set(projects.map(pullRequestProjectHideKey)) : null),
+    [projects, projectsKnown],
+  );
+  /**
+   * The hidden keys that name a project this page can currently see. A key is kept in storage
+   * even while it names nothing — a server is disconnected, not gone, and its repositories should
+   * still be hidden when it comes back — but a key nothing answers to must not light the filter
+   * indicator or leave "All projects" reading unchecked over a list that holds every project.
+   */
+  const activeHiddenProjectKeys = useMemo(
+    () =>
+      liveHideKeys === null
+        ? hiddenProjectKeys
+        : hiddenProjectKeys.filter((key) => liveHideKeys.has(key)),
+    [hiddenProjectKeys, liveHideKeys],
+  );
+  const hideKeysByProject = useMemo(
+    () =>
+      new Map(
+        projects.map(
+          (project) =>
+            [pullRequestProjectKey(project), pullRequestProjectHideKey(project)] as const,
+        ),
+      ),
+    [projects],
+  );
+  const isHiddenEntry = useMemo(() => {
+    const hidden = new Set(activeHiddenProjectKeys);
+    if (hidden.size === 0) return null;
+    return (entry: { readonly projectId: ProjectId; readonly environmentId: EnvironmentId }) => {
+      const hideKey = hideKeysByProject.get(
+        pullRequestProjectKey({ id: entry.projectId, environmentId: entry.environmentId }),
+      );
+      return hideKey !== undefined && hidden.has(hideKey);
+    };
+  }, [activeHiddenProjectKeys, hideKeysByProject]);
   const scopedProject = useMemo(
     () => findScopedProject(projects, scopedEnvironmentId, scopedProjectId),
     [projects, scopedEnvironmentId, scopedProjectId],
@@ -527,15 +572,32 @@ function PullRequestsRouteView() {
     for (const project of projects) {
       totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
     }
+    const hidden = new Set(activeHiddenProjectKeys);
     return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
+      const assigned = assignment.get(environmentId);
+      if (assigned === undefined) return [];
+      const projectIds =
+        hidden.size === 0
+          ? assigned
+          : assigned.filter((id) => {
+              const hideKey = hideKeysByProject.get(pullRequestProjectKey({ id, environmentId }));
+              return hideKey === undefined || !hidden.has(hideKey);
+            });
+      // Every project it was going to be asked about is hidden, so it is not read at all.
+      if (projectIds.length === 0) return [];
       // It lists everything it holds anyway, so the filter is left off and a one-server workspace
       // asks exactly the question it asked before.
       if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
       return [{ environmentId, projectIds }];
     });
-  }, [projects, projectsKnown, queryEnvironmentIds, scopedProjectId]);
+  }, [
+    activeHiddenProjectKeys,
+    hideKeysByProject,
+    projects,
+    projectsKnown,
+    queryEnvironmentIds,
+    scopedProjectId,
+  ]);
   // Part of the scope, since a different split is a different question and its answers must not
   // be filed under the same page state.
   const assignmentKey = useMemo(
@@ -993,7 +1055,11 @@ function PullRequestsRouteView() {
   );
 
   const entries = useMemo(() => {
-    const known = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
+    const read = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
+    // The request is narrowed too, but not every listing on screen came from a narrowed one: rows
+    // carried over from the previous filters, and the first read of a session taken before the
+    // projects were known, both arrive holding repositories the reader has hidden.
+    const known = isHiddenEntry === null ? read : read.filter((entry) => !isHiddenEntry(entry));
     const involvementEntries = filterPullRequestsByInvolvement(known, viewers, search.involvement);
     // The hosts search more than the row shows — a body, a review, a commit message — so once
     // their answer is in, narrowing it again here would throw away matches the reader asked for.
@@ -1025,6 +1091,7 @@ function PullRequestsRouteView() {
   }, [
     filterKey,
     hasLocalFilters,
+    isHiddenEntry,
     localFilters,
     listData,
     ordered,
@@ -1104,12 +1171,18 @@ function PullRequestsRouteView() {
     // The priority reads answer the same question the feed does, so they take the same local
     // narrowing: a host that cannot filter for itself would otherwise put rows into Authored
     // that the filters above just took out of the feed.
-    const narrow = (rows: ReadonlyArray<EnvironmentPullRequestEntry> | undefined) =>
-      rows === undefined || !hasLocalFilters
-        ? rows
-        : rows.filter((entry) =>
+    // The priority reads are their own listings, so a hidden repository has to leave them the way
+    // it leaves the feed: they carry rows the feed has not paged to, and a snapshot of them
+    // predates the hiding entirely.
+    const narrow = (rows: ReadonlyArray<EnvironmentPullRequestEntry> | undefined) => {
+      if (rows === undefined) return rows;
+      const shown = isHiddenEntry === null ? rows : rows.filter((entry) => !isHiddenEntry(entry));
+      return hasLocalFilters
+        ? shown.filter((entry) =>
             matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
-          );
+          )
+        : shown;
+    };
     const authored = narrow(
       partitionsWanted ? (authoredQuery.data?.entries ?? held?.authored) : undefined,
     );
@@ -1122,6 +1195,7 @@ function PullRequestsRouteView() {
     return partitionPullRequestsWithPriority(entries, authored, reviewing);
   }, [
     hasLocalFilters,
+    isHiddenEntry,
     localFilters,
     authoredQuery.data?.entries,
     entries,
@@ -1346,6 +1420,7 @@ function PullRequestsRouteView() {
             search.state !== "open" ||
             search.involvement !== "all" ||
             scopedProjectId !== undefined ||
+            activeHiddenProjectKeys.length > 0 ||
             search.host !== undefined
           }
           searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
@@ -1469,12 +1544,19 @@ function PullRequestsRouteView() {
       projectId={scopedProjectId}
       projectEnvironmentId={scopedProject?.environmentId}
       unavailable={unavailableProjects}
-      // The environment comes along with the project it belongs to, so a duplicate id on
-      // another server never gets narrowed to by mistake; picking "All projects" leaves the
-      // server scope as it was rather than clearing it.
-      onProject={(projectId, environmentId) =>
-        updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId })
-      }
+      hiddenProjectKeys={activeHiddenProjectKeys}
+      // One navigation for the whole selection. Keys naming a project this page cannot currently
+      // see are carried through untouched: the menu never showed them, so its answer does not
+      // speak for them. `updateListScope` closes a detail panel and clears a selection whose row
+      // may have just left the list.
+      onProjectSelection={({ projectId, environmentId, hiddenKeys }) => {
+        setHiddenProjectKeys(
+          liveHideKeys === null
+            ? hiddenKeys
+            : [...hiddenKeys, ...hiddenProjectKeys.filter((key) => !liveHideKeys.has(key))],
+        );
+        updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId });
+      }}
     />
   );
   const columnProps = {

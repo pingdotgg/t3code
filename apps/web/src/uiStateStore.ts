@@ -27,6 +27,7 @@ export interface PersistedUiState {
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpansionVersion?: typeof THREAD_CHANGED_FILES_EXPANSION_VERSION;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  hiddenPullRequestProjectKeys?: string[];
 }
 
 export interface UiProjectState {
@@ -43,7 +44,12 @@ export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
 
-export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+export interface UiPullRequestState {
+  hiddenPullRequestProjectKeys: string[];
+}
+
+export interface UiState
+  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
@@ -51,6 +57,7 @@ const initialState: UiState = {
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
+  hiddenPullRequestProjectKeys: [],
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -135,6 +142,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       parsed.defaultAdvertisedEndpointKey.length > 0
         ? parsed.defaultAdvertisedEndpointKey
         : null,
+    hiddenPullRequestProjectKeys: sanitizeStringArray(parsed.hiddenPullRequestProjectKeys),
   };
 }
 
@@ -207,6 +215,7 @@ export function persistState(state: UiState): void {
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+        hiddenPullRequestProjectKeys: state.hiddenPullRequestProjectKeys,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -381,12 +390,22 @@ export function reorderProjects(
   };
 }
 
+export function setHiddenPullRequestProjectKeys(state: UiState, keys: readonly string[]): UiState {
+  const next = [...new Set(keys)].sort();
+  const held = state.hiddenPullRequestProjectKeys;
+  if (next.length === held.length && next.every((key, index) => key === held[index])) {
+    return state;
+  }
+  return { ...state, hiddenPullRequestProjectKeys: next };
+}
+
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  setHiddenPullRequestProjectKeys: (keys: readonly string[]) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -406,6 +425,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  setHiddenPullRequestProjectKeys: (keys) =>
+    set((state) => setHiddenPullRequestProjectKeys(state, keys)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

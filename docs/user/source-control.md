@@ -44,6 +44,10 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in T3 Code
 - Check out a teammate's branch to review code locally
+- Leave a repository out of the list from the filter menu's **Project** section — useful when a
+  busy repository you cloned to read buries your own reviews. Uncheck as many as you like; the
+  choice is remembered the next time you open the page, and **All projects** brings them back
+- Pick out a single repository with **Only**, on its row in that same section
 
 **Fix what you wrote, in place**
 
