@@ -122,6 +122,35 @@ describe("runtimeEventToActivities tool streaming persistence", () => {
     expect(JSON.stringify(data).length).toBeLessThan(1_000);
   });
 
+  it("persists the full payload on a late terminal tool.updated", () => {
+    const event = {
+      ...base,
+      type: "item.updated",
+      eventId: EventId.make("evt-tool-late-updated"),
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Grep",
+        data: {
+          toolName: "Grep",
+          input: { pattern: "foo" },
+          result: { type: "tool_result", tool_use_id: "tool-late-1", content: "src/a.ts:1:foo" },
+        },
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const activities = runtimeEventToActivities(event);
+
+    expect(activities).toHaveLength(1);
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    expect(payload.status).toBe("completed");
+    expect(payload.data).toEqual({
+      toolName: "Grep",
+      input: { pattern: "foo" },
+      result: { type: "tool_result", tool_use_id: "tool-late-1", content: "src/a.ts:1:foo" },
+    });
+  });
+
   it("persists the full terminal payload on tool.completed", () => {
     const event = {
       ...base,

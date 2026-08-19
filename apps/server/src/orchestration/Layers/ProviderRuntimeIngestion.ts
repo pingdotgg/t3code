@@ -792,29 +792,32 @@ export function runtimeEventToActivities(
       // per chunk, so persisting `data` verbatim writes O(N²) bytes per tool
       // call into both the event store and the projection table. No reader
       // needs it: ws.ts and http.ts apply `projectActivityPayload` before any
-      // payload reaches a client. Persist the projected form for non-terminal
-      // updates; `item.completed` below still persists the full payload.
-      return [
-        projectActivityPayload({
-          id: event.eventId,
-          createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.updated",
-          summary: event.payload.title ?? "Tool updated",
-          payload: {
-            itemType: event.payload.itemType,
-            ...(event.payload.status ? { status: event.payload.status } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
-            ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
-            ...(event.payload.parentToolUseId
-              ? { parentToolUseId: event.payload.parentToolUseId }
-              : {}),
-          },
-          turnId: toTurnId(event.turnId) ?? null,
-          ...maybeSequence,
-        }),
-      ];
+      // payload reaches a client. Persist the projected form for in-progress
+      // updates. A late terminal `item.updated` (status completed/failed after
+      // `completeTurn` already force-completed the item) is the only place the
+      // result exists — persist that payload in full, like `item.completed`.
+      const activity = {
+        id: event.eventId,
+        createdAt: event.createdAt,
+        tone: "tool" as const,
+        kind: "tool.updated" as const,
+        summary: event.payload.title ?? "Tool updated",
+        payload: {
+          itemType: event.payload.itemType,
+          ...(event.payload.status ? { status: event.payload.status } : {}),
+          ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+          ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+          ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
+          ...(event.payload.parentToolUseId
+            ? { parentToolUseId: event.payload.parentToolUseId }
+            : {}),
+        },
+        turnId: toTurnId(event.turnId) ?? null,
+        ...maybeSequence,
+      };
+      const isTerminalUpdate =
+        event.payload.status === "completed" || event.payload.status === "failed";
+      return [isTerminalUpdate ? activity : projectActivityPayload(activity)];
     }
 
     case "item.completed": {

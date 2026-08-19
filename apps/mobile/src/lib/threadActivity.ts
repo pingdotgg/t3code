@@ -80,6 +80,7 @@ interface WorkLogEntry {
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
+  toolCallId?: string;
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
 }
@@ -426,6 +427,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (requestKind) {
     entry.requestKind = requestKind;
   }
+  const toolCallId = extractToolCallId(payload);
+  if (toolCallId) {
+    entry.toolCallId = toolCallId;
+  }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
     toolLifecycleStatus = "completed";
@@ -447,6 +452,7 @@ function collapseDerivedWorkLogEntries(
   // Subagent rows collapse by identity, not adjacency (quiet-timeline
   // guarantee; mirrors web's session-logic).
   const taskRowIndex = new Map<string, number>();
+  const toolRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
       entry.taskId !== undefined &&
@@ -463,12 +469,38 @@ function collapseDerivedWorkLogEntries(
       collapsed.push(entry);
       continue;
     }
+    // Late tool_result after completeTurn force-completes every in-flight
+    // tool is not adjacent to its row. Merge by toolCallId, not adjacency.
+    const toolCallId =
+      entry.activityKind === "tool.updated" || entry.activityKind === "tool.completed"
+        ? entry.toolCallId
+        : undefined;
+    if (toolCallId !== undefined) {
+      const existingIndex = toolRowIndex.get(toolCallId);
+      if (existingIndex !== undefined) {
+        const existing = collapsed[existingIndex]!;
+        // Keep the first row's createdAt so a late result does not sort
+        // past intervening tools or the assistant reply.
+        collapsed[existingIndex] = {
+          ...mergeDerivedWorkLogEntries(existing, entry),
+          createdAt: existing.createdAt,
+        };
+        continue;
+      }
+    }
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+      const merged = mergeDerivedWorkLogEntries(previous, entry);
+      collapsed[collapsed.length - 1] = merged;
+      if (merged.toolCallId !== undefined) {
+        toolRowIndex.set(merged.toolCallId, collapsed.length - 1);
+      }
       continue;
     }
     collapsed.push(entry);
+    if (toolCallId !== undefined) {
+      toolRowIndex.set(toolCallId, collapsed.length - 1);
+    }
   }
   return collapsed;
 }
@@ -484,7 +516,8 @@ function shouldCollapseToolLifecycleEntries(
     return false;
   }
   if (previous.activityKind === "tool.completed") {
-    return false;
+    // Same toolCallId after complete is a late result amendment, not a new call.
+    return previous.toolCallId !== undefined && previous.toolCallId === next.toolCallId;
   }
   return previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey;
 }
@@ -533,6 +566,9 @@ function mergeChangedFiles(
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
+  }
+  if (entry.toolCallId) {
+    return `tool:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -913,6 +949,11 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
+}
+
+function extractToolCallId(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  return asTrimmedString(data?.toolCallId);
 }
 
 function extractWorkLogToolLifecycleStatus(
