@@ -21,13 +21,15 @@ describe("resolveHostedBrowserWebviewPresentation", () => {
     expect(
       resolveHostedBrowserWebviewPresentation({
         backgroundCaptureRequested: true,
-        hasRect: true,
+        rect: { x: -20, y: -10, width: 800, height: 600 },
+        rendererViewport: { width: 640, height: 480 },
         selected: false,
         surfaceVisible: true,
       }),
     ).toEqual({
       active: false,
       backgroundCapture: true,
+      rect: { x: 0, y: 0, width: 640, height: 480 },
     });
   });
 
@@ -35,13 +37,15 @@ describe("resolveHostedBrowserWebviewPresentation", () => {
     expect(
       resolveHostedBrowserWebviewPresentation({
         backgroundCaptureRequested: true,
-        hasRect: true,
+        rect: { x: -20, y: -10, width: 800, height: 600 },
+        rendererViewport: { width: 640, height: 480 },
         selected: true,
         surfaceVisible: true,
       }),
     ).toEqual({
       active: true,
       backgroundCapture: false,
+      rect: { x: -20, y: -10, width: 800, height: 600 },
     });
   });
 });

@@ -1774,7 +1774,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("re-reads color-scheme state after a bounded CDP mutation settles", () =>
+  effectIt.effect("serializes bounded and unbounded color-scheme mutations", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         let attached = false;
@@ -1822,13 +1822,24 @@ describe("PreviewManager", () => {
           .setColorScheme("tab_scheme_reread", "dark", 1_000)
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
-        yield* manager.setColorScheme("tab_scheme_reread", "light");
-        expect(states.at(-1)?.colorScheme).toBe("light");
+        const unboundedLight = yield* manager
+          .setColorScheme("tab_scheme_reread", "light")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(states.at(-1)?.colorScheme).toBe("dark");
+        expect(
+          sendCommand.mock.calls.some(
+            ([method, parameters]) =>
+              method === "Emulation.setEmulatedMedia" &&
+              parameters?.features?.[0]?.value === "light",
+          ),
+        ).toBe(false);
 
         finishBoundedDark?.();
         yield* Fiber.join(boundedDark);
+        yield* Fiber.join(unboundedLight);
 
-        expect(states.at(-1)?.colorScheme).toBe("dark");
+        expect(states.at(-1)?.colorScheme).toBe("light");
       }),
     ),
   );
@@ -2488,6 +2499,49 @@ describe("PreviewManager", () => {
 
         yield* manager.stopRecording("tab_capture_throttling_2");
         expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("bounds recording-start cleanup when a capture finalizer stalls", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const releaseCaptureFinalizer = yield* Deferred.make<void>();
+        const image = {
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        };
+        const capturePage = vi.fn(async () => image);
+        capturePage.mockImplementationOnce(() => new Promise(() => undefined));
+        fromId.mockReturnValue(makeTestPreviewWebContents({ capturePage }));
+
+        yield* manager.subscribeRecordingFrames(() =>
+          Deferred.await(releaseCaptureFinalizer).pipe(Effect.uninterruptible),
+        );
+        yield* manager.createTab("tab_recording_start_cleanup_timeout");
+        yield* manager.registerWebview("tab_recording_start_cleanup_timeout", 42);
+
+        const start = yield* manager
+          .startRecording("tab_recording_start_cleanup_timeout", 1_000)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(100);
+        expect(capturePage).toHaveBeenCalledTimes(2);
+
+        yield* TestClock.adjust(650);
+        yield* TestClock.adjust(250);
+        const exit = yield* Fiber.await(start);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationTimeoutError",
+            tabId: "tab_recording_start_cleanup_timeout",
+            timeoutMs: 1_000,
+          });
+        }
+
+        yield* Deferred.succeed(releaseCaptureFinalizer, undefined);
+        yield* Effect.yieldNow;
       }),
     ),
   );

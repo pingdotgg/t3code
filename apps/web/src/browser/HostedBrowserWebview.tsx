@@ -10,11 +10,7 @@ import { cn } from "~/lib/utils";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
-import {
-  resolveBrowserSurfaceBackgroundCaptureRect,
-  selectBrowserSurfaceRenderState,
-  useBrowserSurfaceStore,
-} from "./browserSurfaceStore";
+import { selectBrowserSurfaceRenderState, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import {
   browserViewportSettingKey,
   resolveBrowserViewportLayout,
@@ -83,12 +79,7 @@ export function HostedBrowserWebview(props: {
     cornerRadius: surface.cornerRadius,
     fitSourceContent: surface.fitSourceContent,
     fittedSourceContent: surface.fittedSourceContent,
-    rect: surface.backgroundCapture
-      ? resolveBrowserSurfaceBackgroundCaptureRect(surface.rect, {
-          width: window.innerWidth,
-          height: window.innerHeight,
-        })
-      : surface.rect,
+    rect: surface.rect,
     visible: surface.visible,
   };
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
@@ -167,13 +158,18 @@ export function HostedBrowserWebview(props: {
     };
   }, [config, initialSrc, runtimeTabId, webviewGeneration]);
 
-  const { active, backgroundCapture } = resolveHostedBrowserWebviewPresentation({
+  const {
+    active,
+    backgroundCapture,
+    rect: presentationRect,
+  } = resolveHostedBrowserWebviewPresentation({
     backgroundCaptureRequested: presentation.backgroundCapture,
-    hasRect: presentation.rect !== null,
+    rect: presentation.rect,
+    rendererViewport: { width: window.innerWidth, height: window.innerHeight },
     selected: selectedInRightPanel || selectedInMiniPlayer,
     surfaceVisible: presentation.visible,
   });
-  const lastRect = presentation.rect;
+  const lastRect = presentationRect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;

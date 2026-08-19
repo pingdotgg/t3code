@@ -552,6 +552,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  const colorSchemeMutationLocks = new Map<
+    string,
+    { readonly semaphore: Semaphore.Semaphore; users: number }
+  >();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -599,6 +603,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             lifecycle.users -= 1;
             if (lifecycle.users === 0 && tabLifecycleLocks.get(tabId) === lifecycle) {
               tabLifecycleLocks.delete(tabId);
+            }
+          }),
+        ),
+      );
+    });
+  const withColorSchemeMutationLock = <A, E, R>(
+    tabId: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.suspend(() => {
+      const mutation = colorSchemeMutationLocks.get(tabId) ?? {
+        semaphore: Semaphore.makeUnsafe(1),
+        users: 0,
+      };
+      mutation.users += 1;
+      colorSchemeMutationLocks.set(tabId, mutation);
+      return mutation.semaphore.withPermit(effect).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            mutation.users -= 1;
+            if (mutation.users === 0 && colorSchemeMutationLocks.get(tabId) === mutation) {
+              colorSchemeMutationLocks.delete(tabId);
             }
           }),
         ),
@@ -2501,22 +2527,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     },
   );
 
-  const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
+  const setColorSchemeUnlocked = Effect.fn("PreviewManager.setColorSchemeUnlocked")(function* (
     tabId: string,
     colorScheme: DesktopPreviewColorScheme,
-    timeoutMs?: number,
+    deadline?: { readonly expiresAt: number; readonly timeoutMs: number },
   ) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
     if (!tab) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
-    if (timeoutMs !== undefined) {
-      const deadline = (yield* currentMillis) + timeoutMs;
+    if (deadline !== undefined) {
       let target = yield* requireWebContents(tabId);
       while (true) {
-        const remainingTimeoutMs = deadline - (yield* currentMillis);
+        const remainingTimeoutMs = deadline.expiresAt - (yield* currentMillis);
         if (remainingTimeoutMs <= 0) {
-          return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
+          return yield* new PreviewAutomationTimeoutError({
+            tabId,
+            timeoutMs: deadline.timeoutMs,
+          });
         }
         const commandExit = yield* withControlSession(
           tabId,
@@ -2568,6 +2596,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) return;
     yield* applyColorScheme(tabId, wc, colorScheme);
+  });
+
+  const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
+    tabId: string,
+    colorScheme: DesktopPreviewColorScheme,
+    timeoutMs?: number,
+  ) {
+    const deadline =
+      timeoutMs === undefined
+        ? undefined
+        : { expiresAt: (yield* currentMillis) + timeoutMs, timeoutMs };
+    const mutation = withColorSchemeMutationLock(
+      tabId,
+      setColorSchemeUnlocked(tabId, colorScheme, deadline),
+    );
+    if (timeoutMs === undefined) return yield* mutation;
+    const result = yield* mutation.pipe(Effect.timeoutOption(timeoutMs));
+    if (Option.isSome(result)) return;
+    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
   });
 
   const setAudioMuted = Effect.fn("PreviewManager.setAudioMuted")(function* (
@@ -3149,7 +3196,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const result = yield* start.pipe(Effect.timeoutOption(automationExecutionBudget(timeoutMs)));
     if (Option.isSome(result)) return;
-    yield* stopFrameCapture(tabId, "recording").pipe(Effect.ignore);
+    const cleanupFiber = yield* Effect.forkIn(
+      stopFrameCapture(tabId, "recording").pipe(Effect.ignore),
+      parentScope,
+    );
+    const cleanupBudgetMs = timeoutMs - automationExecutionBudget(timeoutMs);
+    if (cleanupBudgetMs > 0) {
+      // Observe cleanup only inside the response grace. The cleanup remains
+      // scoped to the manager if an uninterruptible capture finalizer is still
+      // settling, while the IPC caller receives its bounded timeout response.
+      yield* Fiber.await(cleanupFiber).pipe(Effect.timeoutOption(cleanupBudgetMs));
+    }
     return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
   });
 

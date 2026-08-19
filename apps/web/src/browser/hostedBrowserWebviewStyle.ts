@@ -1,4 +1,7 @@
-import type { BrowserSurfaceRect } from "./browserSurfaceStore";
+import {
+  resolveBrowserSurfaceBackgroundCaptureRect,
+  type BrowserSurfaceRect,
+} from "./browserSurfaceStore";
 
 export interface HostedBrowserWebviewSize {
   readonly width: number;
@@ -27,17 +30,23 @@ export function resolveHostedBrowserWebviewAriaHidden(active: boolean): true | u
 
 export function resolveHostedBrowserWebviewPresentation(input: {
   readonly backgroundCaptureRequested: boolean;
-  readonly hasRect: boolean;
+  readonly rect: BrowserSurfaceRect | null;
+  readonly rendererViewport: HostedBrowserWebviewSize;
   readonly selected: boolean;
   readonly surfaceVisible: boolean;
 }): {
   readonly active: boolean;
   readonly backgroundCapture: boolean;
+  readonly rect: BrowserSurfaceRect | null;
 } {
-  const active = input.selected && input.surfaceVisible && input.hasRect;
+  const active = input.selected && input.surfaceVisible && input.rect !== null;
+  const backgroundCapture = !active && input.backgroundCaptureRequested && input.rect !== null;
   return {
     active,
-    backgroundCapture: !active && input.backgroundCaptureRequested && input.hasRect,
+    backgroundCapture,
+    rect: backgroundCapture
+      ? resolveBrowserSurfaceBackgroundCaptureRect(input.rect, input.rendererViewport)
+      : input.rect,
   };
 }
 
