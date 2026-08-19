@@ -1,8 +1,15 @@
-import { DevinSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  DevinSettings,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerProviderSlashCommand,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -19,6 +26,7 @@ import {
   buildInitialDevinProviderSnapshot,
   checkDevinProviderStatus,
   enrichDevinSnapshot,
+  mergeDevinSlashCommands,
 } from "../Layers/DevinProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -26,8 +34,8 @@ import { type ProviderDriver, type ProviderInstance } from "../ProviderDriver.ts
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
-  makeManualOnlyProviderMaintenanceCapabilities,
-  makeStaticProviderMaintenanceResolver,
+  makeProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilitiesResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -39,12 +47,16 @@ import {
 const decodeDevinSettings = Schema.decodeSync(DevinSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("devin");
-const UPDATE = makeStaticProviderMaintenanceResolver(
-  makeManualOnlyProviderMaintenanceCapabilities({
-    provider: DRIVER_KIND,
-    packageName: null,
-  }),
-);
+const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
+  resolve: (options) =>
+    makeProviderMaintenanceCapabilities({
+      provider: DRIVER_KIND,
+      packageName: null,
+      updateExecutable: options?.binaryPath?.trim() || "devin",
+      updateArgs: ["update"],
+      updateLockKey: "devin-native",
+    }),
+};
 
 export type DevinDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
@@ -111,6 +123,32 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
         enabled,
         binaryPath: resolvedBinary,
       } satisfies DevinSettings;
+      const sessionCommandsRef = yield* Ref.make(
+        new Map<ThreadId, ReadonlyArray<ServerProviderSlashCommand>>(),
+      );
+      const refreshCommandsSnapshotRef = yield* Ref.make<Effect.Effect<void, never>>(Effect.void);
+      const updateSessionCommands = (input: {
+        readonly threadId: ThreadId;
+        readonly commands: ReadonlyArray<ServerProviderSlashCommand>;
+      }) =>
+        Effect.gen(function* () {
+          const changed = yield* Ref.modify(sessionCommandsRef, (current) => {
+            const previousCommands = current.get(input.threadId) ?? [];
+            if (JSON.stringify(previousCommands) === JSON.stringify(input.commands)) {
+              return [false, current] as const;
+            }
+            const next = new Map(current);
+            if (input.commands.length === 0) {
+              next.delete(input.threadId);
+            } else {
+              next.set(input.threadId, input.commands);
+            }
+            return [true, next] as const;
+          });
+          if (changed) {
+            yield* Ref.get(refreshCommandsSnapshotRef).pipe(Effect.flatten);
+          }
+        });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -120,10 +158,22 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
         environment: devinEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        onAvailableCommandsChanged: updateSessionCommands,
       });
       const textGeneration = yield* makeDevinTextGeneration(effectiveConfig, devinEnv);
 
       const checkProvider = checkDevinProviderStatus(effectiveConfig, devinEnv).pipe(
+        Effect.flatMap((provider) =>
+          Ref.get(sessionCommandsRef).pipe(
+            Effect.map((sessionCommands) => ({
+              ...provider,
+              slashCommands: mergeDevinSlashCommands(
+                provider.slashCommands,
+                ...sessionCommands.values(),
+              ),
+            })),
+          ),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -159,6 +209,8 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
             }),
         ),
       );
+
+      yield* Ref.set(refreshCommandsSnapshotRef, snapshot.refresh.pipe(Effect.asVoid));
 
       return {
         instanceId,
