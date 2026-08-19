@@ -431,7 +431,7 @@ function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
 
-function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
+function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
@@ -507,6 +507,9 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       data-expanded={expanded ? "true" : "false"}
     >
       <ScrollArea
+        // Direction lives on the scroll viewport, not just the table, so an overflowing
+        // RTL table opens scrolled to its first (rightmost) column.
+        dir={dir}
         chainVerticalScroll
         scrollFade
         hideScrollbars
@@ -1662,7 +1665,12 @@ function ChatMarkdown({
         // text under a colored title — which is how the host renders it.
         return (
           <div role="note" dir="auto" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
-            <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
+            {/* dir="ltr" on the label excludes it from the container's dir="auto" resolution
+                (elements with their own dir are skipped), so the body text decides the side. */}
+            <p
+              dir="ltr"
+              className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
+            >
               <alert.Icon aria-hidden className="size-3.5 shrink-0" />
               {alert.label}
             </p>
