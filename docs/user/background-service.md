@@ -49,7 +49,7 @@ equivalent of Linux lingering for user agents. For a Mac that should stay reacha
 turn on automatic login (System Settings → Users & Groups; unavailable while FileVault is on) and
 keep the Mac from sleeping.
 
-Two more macOS notes:
+A few more macOS notes:
 
 - Installing over SSH needs someone logged in at the Mac's screen to start the agent right away.
   Without that, the install command reports an error at the final start step, but the agent is
