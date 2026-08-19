@@ -414,6 +414,18 @@ function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platfor
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+// `"` is not a legal character in a Windows path, but cmd.exe reads one in PATH
+// as opening a quoted region: an unbalanced quote swallows every `;` after it,
+// so no directory past that entry ever resolves. PowerShell, bash, and
+// where.exe split on `;` literally, which is why the damage only surfaces once
+// a child cmd.exe runs - an npm lifecycle script, a `.cmd` shim - and reports
+// `'"node"' is not recognized`. Strip the quotes instead of dropping the entry
+// so a correctly quoted "C:\Program Files\nodejs" still resolves. POSIX paths
+// may legitimately contain a quote, so this is Windows-only.
+export function sanitizePathEntry(entry: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? entry.replaceAll('"', "") : entry;
+}
+
 export function mergePathValues(
   preferredPath: string | undefined,
   inheritedPath: string | undefined,
@@ -427,14 +439,14 @@ export function mergePathValues(
     if (!rawValue) continue;
 
     for (const entry of rawValue.split(delimiter)) {
-      const trimmed = entry.trim();
-      if (trimmed.length === 0) continue;
+      const sanitized = sanitizePathEntry(entry.trim(), platform);
+      if (sanitized.length === 0) continue;
 
-      const normalized = normalizePathEntryForComparison(trimmed, platform);
+      const normalized = normalizePathEntryForComparison(sanitized, platform);
       if (normalized.length === 0 || seen.has(normalized)) continue;
 
       seen.add(normalized);
-      merged.push(trimmed);
+      merged.push(sanitized);
     }
   }
 

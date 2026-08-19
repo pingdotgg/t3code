@@ -20,6 +20,7 @@ import {
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
+  sanitizePathEntry,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
   type WindowsShellEnvironmentReader,
@@ -312,7 +313,7 @@ describe("mergePathValues", () => {
         "win32",
       ),
     ).toBe(
-      'C:\\Users\\testuser\\AppData\\Roaming\\npm;"C:\\Program Files\\nodejs";C:\\Windows\\System32',
+      "C:\\Users\\testuser\\AppData\\Roaming\\npm;C:\\Program Files\\nodejs;C:\\Windows\\System32",
     );
   });
 
@@ -320,6 +321,39 @@ describe("mergePathValues", () => {
     expect(mergePathValues("/usr/local/bin:/usr/bin", "/usr/bin:/USR/BIN", "linux")).toBe(
       "/usr/local/bin:/usr/bin:/USR/BIN",
     );
+  });
+
+  // A stray quote makes cmd.exe stop resolving every later entry, so `node`
+  // disappears for npm lifecycle scripts and `.cmd` shims. See issue #7543.
+  it("strips a stray quote that would hide later Windows PATH entries", () => {
+    expect(
+      mergePathValues(undefined, 'C:\\cloudflared.exe;C:";C:\\Program Files\\nodejs', "win32"),
+    ).toBe("C:\\cloudflared.exe;C:;C:\\Program Files\\nodejs");
+  });
+
+  it("drops a Windows PATH entry that is nothing but quotes", () => {
+    expect(
+      mergePathValues(undefined, 'C:\\Windows\\System32;";;C:\\Program Files\\Git\\cmd', "win32"),
+    ).toBe("C:\\Windows\\System32;C:\\Program Files\\Git\\cmd");
+  });
+
+  it("keeps quotes on POSIX, where they are legal in a path", () => {
+    expect(mergePathValues(undefined, '/usr/bin:/opt/we"ird/bin', "linux")).toBe(
+      '/usr/bin:/opt/we"ird/bin',
+    );
+  });
+});
+
+describe("sanitizePathEntry", () => {
+  it("removes every quote from a Windows entry", () => {
+    expect(sanitizePathEntry('"C:\\Program Files\\nodejs"', "win32")).toBe(
+      "C:\\Program Files\\nodejs",
+    );
+    expect(sanitizePathEntry('C:"', "win32")).toBe("C:");
+  });
+
+  it("leaves POSIX entries untouched", () => {
+    expect(sanitizePathEntry('/opt/we"ird/bin', "linux")).toBe('/opt/we"ird/bin');
   });
 });
 
