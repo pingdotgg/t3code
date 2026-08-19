@@ -597,7 +597,14 @@ describe("composed ChatComposer traits lock source", () => {
     ).toBe(false);
   });
 
-  it("locks a custom Grok instance from committed metadata while runtime is loading", () => {
+  it("leaves options unlocked when a started thread has no provider session", () => {
+    expect(
+      resolveSessionLockedInstanceId({
+        hasStartedThread: true,
+        runtimeProviderInstanceId: null,
+        committedModelSelectionInstanceId: grokSecondary,
+      }),
+    ).toBeNull();
     expect(
       resolveTraitsOptionChangeBlocked({
         providers,
@@ -606,7 +613,7 @@ describe("composed ChatComposer traits lock source", () => {
         committedModelSelectionInstanceId: grokSecondary,
         selectedInstanceId: grokSecondary,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("swaps display options to committed while locked and draft while unlocked", () => {

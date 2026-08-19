@@ -501,7 +501,12 @@ export function resolveSessionLockedInstanceId(input: {
   if (!input.hasStartedThread) {
     return null;
   }
-  return input.runtimeProviderInstanceId ?? input.committedModelSelectionInstanceId ?? null;
+  // A failed first turn can leave itemCount > 0 without a provider session.
+  // Only lock when a live runtime session exists.
+  if (input.runtimeProviderInstanceId == null) {
+    return null;
+  }
+  return input.runtimeProviderInstanceId;
 }
 
 /**
