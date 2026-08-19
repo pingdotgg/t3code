@@ -169,7 +169,7 @@ import {
   PaperclipIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { cn, randomHex } from "~/lib/utils";
+import { cn, isMacPlatform, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -195,6 +195,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
+import { isPreviewFocused } from "../lib/previewFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   derivePhysicalProjectKey,
@@ -4728,6 +4729,29 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
+      const modKey = isMacPlatform(navigator.platform)
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
+      const activeBrowserTabId =
+        activeRightPanelSurface?.kind === "preview" ? activeRightPanelSurface.resourceId : null;
+      if (
+        activeRightPanelSurface &&
+        event.key.toLowerCase() === "w" &&
+        modKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        isPreviewFocused(activeBrowserTabId)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          document
+            .querySelector<HTMLElement>("[data-right-panel-surface-content]")
+            ?.focus({ preventScroll: true });
+          closeRightPanelSurface(activeRightPanelSurface);
+        }
+        return;
+      }
       if (event.defaultPrevented && terminalFocusOwner === null) {
         return;
       }
@@ -4862,6 +4886,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     closePanelTerminal,
+    closeRightPanelSurface,
     createNewTerminal,
     setTerminalOpen,
     runProjectScript,
