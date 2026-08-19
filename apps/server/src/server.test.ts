@@ -4606,6 +4606,36 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("lists, subscribes to, and invokes plugin commands over websocket rpc", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const listed = yield* client[WS_METHODS.pluginCommandsList]({});
+            const streamed = yield* client[WS_METHODS.subscribePluginCommands]({}).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+            const invoked = yield* client[WS_METHODS.pluginCommandsInvoke]({
+              generation: listed.generation,
+              id: "t3.plugin-runtime.status",
+            });
+            return { invoked, listed, streamed };
+          }),
+        ),
+      );
+
+      assert.deepEqual(result.streamed, result.listed);
+      assert.deepEqual(result.invoked, {
+        message: "Plugin runtime is active.",
+        tone: "success",
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
       const nextProviders = [

@@ -1,6 +1,9 @@
 import {
+  type EnvironmentId,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type PluginCommand,
+  type PluginCommandSurface,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
@@ -106,6 +109,32 @@ export interface CommandPaletteActionItem extends CommandPaletteItem {
   readonly keepOpen?: boolean;
   readonly run: () => Promise<void>;
 }
+
+export function buildPluginCommandActionItems(input: {
+  readonly commands: ReadonlyArray<PluginCommand>;
+  readonly icon: ReactNode;
+  readonly run: (command: PluginCommand) => Promise<void>;
+  readonly surface: PluginCommandSurface;
+}): CommandPaletteActionItem[] {
+  return input.commands
+    .filter((command) => command.surfaces.includes(input.surface))
+    .map((command) => ({
+      kind: "action",
+      value: `plugin-command:${command.id}`,
+      searchTerms: [command.label, command.description ?? "", command.id, "plugin"],
+      title: command.label,
+      ...(command.description === undefined ? {} : { description: command.description }),
+      icon: input.icon,
+      run: async () => input.run(command),
+    }));
+}
+
+export const resolvePluginCommandEnvironmentId = (input: {
+  readonly activeDraftEnvironmentId: EnvironmentId | null;
+  readonly activeThreadEnvironmentId: EnvironmentId | null;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+}): EnvironmentId | null =>
+  input.activeThreadEnvironmentId ?? input.activeDraftEnvironmentId ?? input.primaryEnvironmentId;
 
 export interface CommandPaletteSubmenuItem extends CommandPaletteItem {
   readonly kind: "submenu";

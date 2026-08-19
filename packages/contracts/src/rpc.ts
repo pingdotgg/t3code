@@ -68,6 +68,14 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  PluginCommandCatalog,
+  PluginCommandCatalogChangedError,
+  PluginCommandInvocationError,
+  PluginCommandInvocationResult,
+  PluginCommandInvokeInput,
+  PluginCommandNotFoundError,
+} from "./pluginCommands.ts";
+import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -274,6 +282,10 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
 
+  // Plugin command methods
+  pluginCommandsList: "pluginCommands.list",
+  pluginCommandsInvoke: "pluginCommands.invoke",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -313,6 +325,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribePluginCommands: "subscribePluginCommands",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -337,6 +350,23 @@ export const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginCommandsListRpc = Rpc.make(WS_METHODS.pluginCommandsList, {
+  payload: Schema.Struct({}),
+  success: PluginCommandCatalog,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsPluginCommandsInvokeRpc = Rpc.make(WS_METHODS.pluginCommandsInvoke, {
+  payload: PluginCommandInvokeInput,
+  success: PluginCommandInvocationResult,
+  error: Schema.Union([
+    PluginCommandCatalogChangedError,
+    PluginCommandInvocationError,
+    PluginCommandNotFoundError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
@@ -982,9 +1012,18 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+export const WsSubscribePluginCommandsRpc = Rpc.make(WS_METHODS.subscribePluginCommands, {
+  payload: Schema.Struct({}),
+  success: PluginCommandCatalog,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
+  WsPluginCommandsListRpc,
+  WsPluginCommandsInvokeRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsServerUpdateServerRpc,
@@ -1074,6 +1113,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsSubscribePluginCommandsRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,
   WsOrchestrationGetTurnDiffRpc,

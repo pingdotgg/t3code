@@ -1,5 +1,9 @@
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
-import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
+import type {
+  PluginCommand,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
 import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
@@ -37,6 +41,13 @@ export type ComposerCommandItem =
       readonly skill: ServerProviderSkill;
       readonly label: string;
       readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "plugin-command";
+      readonly command: PluginCommand;
+      readonly label: string;
+      readonly description: string;
     };
 
 interface ComposerCommandPopoverProps {
@@ -65,6 +76,7 @@ function itemIcon(item: ComposerCommandItem) {
   switch (item.type) {
     case "slash-command":
     case "provider-slash-command":
+    case "plugin-command":
       return "terminal" as const;
     case "skill":
       return "cube" as const;

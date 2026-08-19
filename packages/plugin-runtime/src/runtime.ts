@@ -6,13 +6,16 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Scheduler from "effect/Scheduler";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
 import type {
   Contribution,
+  ContributionData,
   PluginActivationContext,
   PluginDefinition,
+  PluginRuntimeContributionSnapshot,
   PluginRuntimeOptions,
   PluginRuntimeSnapshot,
 } from "./contract.ts";
@@ -23,26 +26,42 @@ import {
   type PluginPlanningError,
 } from "./planner.ts";
 
+interface LiveContribution {
+  readonly contribution: Contribution;
+  readonly value: unknown;
+}
+
 interface LivePlugin {
   readonly definition: PluginDefinition;
   readonly scope: Scope.Closeable;
-  readonly contributions: ReadonlyMap<string, ReadonlyArray<Contribution>>;
+  readonly contributions: ReadonlyMap<string, ReadonlyArray<LiveContribution>>;
   readonly cleanupErrors: Array<unknown>;
 }
 
 interface LiveComposition {
+  readonly generation: number;
   readonly plugins: ReadonlyArray<LivePlugin>;
   readonly snapshot: PluginRuntimeSnapshot;
 }
 
-type RuntimeOperation = "reconcile" | "dispose";
-type PluginCallback = "activate" | "finalizer";
+type RuntimeOperation = "reconcile" | "dispose" | "invoke";
+type PluginLifecycleCallback = "activate" | "finalizer";
+type PluginCallback = PluginLifecycleCallback | "contribution";
 
 interface PluginCallbackContext {
   active: boolean;
   readonly callback: PluginCallback;
   readonly pluginId: string;
 }
+
+interface PluginEffectCallbackContext extends PluginCallbackContext {
+  readonly runtime: object;
+}
+
+class PluginEffectCallback extends Context.Reference<PluginEffectCallbackContext | undefined>(
+  "@t3tools/plugin-runtime/runtime/PluginEffectCallback",
+  { defaultValue: () => undefined },
+) {}
 
 interface CleanupFailure {
   readonly error: unknown;
@@ -101,9 +120,23 @@ class PluginStagingError extends Schema.TaggedErrorClass<PluginStagingError>()(
   }
 }
 
+export class PluginDuplicateContributionError extends Schema.TaggedErrorClass<PluginDuplicateContributionError>()(
+  "PluginDuplicateContributionError",
+  {
+    firstPluginId: Schema.String,
+    id: Schema.String,
+    secondPluginId: Schema.String,
+    slot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Duplicate plugin contribution ${this.slot}/${this.id} from ${this.firstPluginId} and ${this.secondPluginId}`;
+  }
+}
+
 class PluginRuntimeDisposedError extends Schema.TaggedErrorClass<PluginRuntimeDisposedError>()(
   "PluginRuntimeDisposedError",
-  { operation: Schema.Literals(["reconcile", "dispose"]) },
+  { operation: Schema.Literals(["reconcile", "dispose", "invoke"]) },
 ) {
   override get message(): string {
     return `Plugin runtime is disposed; cannot ${this.operation}`;
@@ -113,8 +146,8 @@ class PluginRuntimeDisposedError extends Schema.TaggedErrorClass<PluginRuntimeDi
 class PluginRuntimeReentrancyError extends Schema.TaggedErrorClass<PluginRuntimeReentrancyError>()(
   "PluginRuntimeReentrancyError",
   {
-    callback: Schema.Literals(["activate", "finalizer"]),
-    operation: Schema.Literals(["reconcile", "dispose"]),
+    callback: Schema.Literals(["activate", "contribution", "finalizer"]),
+    operation: Schema.Literals(["reconcile", "dispose", "invoke"]),
     pluginId: Schema.String,
   },
 ) {
@@ -142,11 +175,46 @@ class PluginRuntimeCleanupError extends Schema.TaggedErrorClass<PluginRuntimeCle
 export type PluginRuntimeReconcileError =
   | PluginPlanningError
   | PluginCallbackError
+  | PluginDuplicateContributionError
   | PluginRuntimeDisposedError
   | PluginRuntimeReentrancyError
+  | PluginSnapshotValidationError
   | PluginStagingError;
 
+export class PluginSnapshotValidationError extends Schema.TaggedErrorClass<PluginSnapshotValidationError>()(
+  "PluginSnapshotValidationError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Plugin contribution snapshot validation failed";
+  }
+}
+
 export type PluginRuntimeDisposeError = PluginRuntimeCleanupError | PluginRuntimeReentrancyError;
+
+export class PluginContributionGenerationError extends Schema.TaggedErrorClass<PluginContributionGenerationError>()(
+  "PluginContributionGenerationError",
+  { actual: Schema.Int, expected: Schema.Int },
+) {
+  override get message(): string {
+    return `Plugin contribution generation changed from ${this.expected} to ${this.actual}`;
+  }
+}
+
+export class PluginContributionNotFoundError extends Schema.TaggedErrorClass<PluginContributionNotFoundError>()(
+  "PluginContributionNotFoundError",
+  { id: Schema.String, slot: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin contribution not found: ${this.slot}/${this.id}`;
+  }
+}
+
+export type PluginRuntimeContributionError =
+  | PluginContributionGenerationError
+  | PluginContributionNotFoundError
+  | PluginRuntimeDisposedError
+  | PluginRuntimeReentrancyError;
 
 export class PluginRuntime extends Context.Service<
   PluginRuntime,
@@ -155,12 +223,82 @@ export class PluginRuntime extends Context.Service<
       definitions: ReadonlyArray<PluginDefinition>,
     ) => Effect.Effect<PluginRuntimeSnapshot, PluginRuntimeReconcileError>;
     readonly snapshot: Effect.Effect<PluginRuntimeSnapshot>;
+    readonly contributions: (slot: string) => Effect.Effect<PluginRuntimeContributionSnapshot>;
+    readonly useContribution: <Value, Success, Failure, Requirements>(
+      slot: string,
+      id: string,
+      generation: number,
+      use: (value: Value) => Effect.Effect<Success, Failure, Requirements>,
+    ) => Effect.Effect<Success, Failure | PluginRuntimeContributionError, Requirements>;
     readonly dispose: Effect.Effect<void, PluginRuntimeDisposeError>;
   }
 >()("@t3tools/plugin-runtime/runtime/PluginRuntime") {}
 
 const createNullPrototypeRecord = <Value>(): Record<string, Value> =>
   Object.create(null) as Record<string, Value>;
+
+const sameStringRecord = (
+  left: Readonly<Partial<Record<string, string>>>,
+  right: Readonly<Partial<Record<string, string>>>,
+): boolean => {
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  return leftKeys.every((key) => left[key] === right[key]);
+};
+
+const cloneContributionData = (
+  value: ContributionData,
+  ancestors = new WeakSet<object>(),
+): ContributionData => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Contribution data numbers must be finite");
+    return value;
+  }
+  if (typeof value !== "object") {
+    throw new TypeError("Contribution data must contain only JSON-compatible values");
+  }
+  if (ancestors.has(value)) throw new TypeError("Contribution data cannot contain cycles");
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const clone: Array<ContributionData> = [];
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.hasOwn(value, index)) {
+          throw new TypeError("Contribution data arrays cannot contain holes");
+        }
+        clone.push(cloneContributionData(value[index]!, ancestors));
+      }
+      return Object.freeze(clone);
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("Contribution data objects must use a plain or null prototype");
+    }
+    const clone = createNullPrototypeRecord<ContributionData>();
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") {
+        throw new TypeError("Contribution data objects cannot use symbol keys");
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || descriptor.enumerable !== true || !("value" in descriptor)) {
+        throw new TypeError("Contribution data objects must use enumerable data properties");
+      }
+      clone[key] = cloneContributionData(descriptor.value as ContributionData, ancestors);
+    }
+    return Object.freeze(clone);
+  } finally {
+    ancestors.delete(value);
+  }
+};
+
+const detachContribution = (contribution: Contribution): Contribution =>
+  Object.freeze({
+    id: contribution.id,
+    label: contribution.label,
+    ...(contribution.data === undefined ? {} : { data: cloneContributionData(contribution.data) }),
+  });
 
 const snapshotDefinitions = (
   definitions: ReadonlyArray<PluginDefinition>,
@@ -198,9 +336,7 @@ const snapshotOf = (
       const values = contributions[slot] ?? [];
       contributions[slot] = Object.freeze([
         ...values,
-        ...registrations.map((registration) =>
-          Object.freeze({ id: registration.id, label: registration.label }),
-        ),
+        ...registrations.map((registration) => registration.contribution),
       ]);
     }
   }
@@ -211,11 +347,39 @@ const snapshotOf = (
   });
 };
 
+const validateUniqueContributions = (
+  plugins: ReadonlyArray<LivePlugin>,
+): Effect.Effect<void, PluginDuplicateContributionError> =>
+  Effect.gen(function* () {
+    const owners = new Map<string, Map<string, string>>();
+    for (const plugin of plugins) {
+      for (const [slot, registrations] of plugin.contributions) {
+        const slotOwners = owners.get(slot) ?? new Map<string, string>();
+        owners.set(slot, slotOwners);
+        for (const registration of registrations) {
+          const id = registration.contribution.id;
+          const firstPluginId = slotOwners.get(id);
+          if (firstPluginId !== undefined) {
+            return yield* new PluginDuplicateContributionError({
+              firstPluginId,
+              id,
+              secondPluginId: plugin.definition.id,
+              slot,
+            });
+          }
+          slotOwners.set(id, plugin.definition.id);
+        }
+      }
+    }
+  });
+
 export const make = (options: PluginRuntimeOptions = {}) =>
   Effect.gen(function* () {
     const parentScope = yield* Effect.scope;
     const transitionSemaphore = yield* Semaphore.make(1);
-    let current: LiveComposition = { plugins: [], snapshot: emptySnapshot() };
+    const baseScheduler = yield* Scheduler.Scheduler;
+    const runtimeIdentity = {};
+    let current: LiveComposition = { generation: 0, plugins: [], snapshot: emptySnapshot() };
     let disposalStarted = false;
     let disposed = false;
     const callbackContext = new NodeAsyncHooks.AsyncLocalStorage<PluginCallbackContext>();
@@ -275,7 +439,7 @@ export const make = (options: PluginRuntimeOptions = {}) =>
       });
 
     const invokePluginCallback = <Result>(
-      callback: PluginCallback,
+      callback: PluginLifecycleCallback,
       pluginId: string,
       invoke: () => Result | PromiseLike<Result>,
       onSettled?: () => void,
@@ -317,7 +481,7 @@ export const make = (options: PluginRuntimeOptions = {}) =>
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const scope = yield* Scope.fork(parentScope, "sequential");
-          const contributions = new Map<string, Array<Contribution>>();
+          const contributions = new Map<string, Array<LiveContribution>>();
           const cleanupErrors: Array<unknown> = [];
           const finalizers: Array<() => void | Promise<void>> = [];
           const plugin: LivePlugin = { definition, scope, contributions, cleanupErrors };
@@ -339,10 +503,18 @@ export const make = (options: PluginRuntimeOptions = {}) =>
               }
               return capabilities.get(capability) as Service;
             },
-            register: (slot, contribution) => {
+            register: (
+              slot: string,
+              contribution: Contribution,
+              ...registeredValues: [] | [unknown]
+            ) => {
               assertActivating("register");
               const values = contributions.get(slot) ?? [];
-              values.push(Object.freeze({ id: contribution.id, label: contribution.label }));
+              const detachedContribution = detachContribution(contribution);
+              values.push({
+                contribution: detachedContribution,
+                value: registeredValues.length === 0 ? detachedContribution : registeredValues[0],
+              });
               contributions.set(slot, values);
             },
             onDispose: (finalizer) => {
@@ -406,6 +578,9 @@ export const make = (options: PluginRuntimeOptions = {}) =>
           current.plugins.map((plugin) => plugin.definition),
           plan.definitions,
         );
+        if (affected.size === 0 && sameStringRecord(current.snapshot.blocked, plan.blocked)) {
+          return current.snapshot;
+        }
         const currentById = new Map(
           current.plugins.map((plugin) => [plugin.definition.id, plugin]),
         );
@@ -440,9 +615,16 @@ export const make = (options: PluginRuntimeOptions = {}) =>
                     }
                     nextPlugins.push(plugin);
                   }
+                  yield* validateUniqueContributions(nextPlugins);
+                  const snapshot = snapshotOf(nextPlugins, plan.blocked);
+                  yield* Effect.try({
+                    try: () => options.validateSnapshot?.(snapshot),
+                    catch: (cause) => new PluginSnapshotValidationError({ cause }),
+                  });
                   return {
+                    generation: current.generation + 1,
                     plugins: nextPlugins,
-                    snapshot: snapshotOf(nextPlugins, plan.blocked),
+                    snapshot,
                   };
                 }),
               ),
@@ -472,7 +654,11 @@ export const make = (options: PluginRuntimeOptions = {}) =>
           disposalStarted = true;
           const previous = current.plugins;
           const failures = [...(yield* closePlugins(previous, true))];
-          current = { plugins: [], snapshot: emptySnapshot() };
+          current = {
+            generation: current.generation + 1,
+            plugins: [],
+            snapshot: emptySnapshot(),
+          };
           disposed = true;
           if (failures.length > 0) {
             return yield* new PluginRuntimeCleanupError({
@@ -482,23 +668,100 @@ export const make = (options: PluginRuntimeOptions = {}) =>
         }),
       );
 
-    const runTransition = <Result, Failure>(
+    const runTransition = <Result, Failure, Requirements>(
       operation: RuntimeOperation,
-      effect: () => Effect.Effect<Result, Failure>,
-    ): Effect.Effect<Result, Failure | PluginRuntimeReentrancyError> =>
-      Effect.suspend<Result, Failure | PluginRuntimeReentrancyError, never>(() => {
-        const callback = callbackContext.getStore();
-        if (callback?.active === true) {
-          return Effect.fail(
-            new PluginRuntimeReentrancyError({
-              callback: callback.callback,
-              operation,
-              pluginId: callback.pluginId,
-            }),
-          );
-        }
-        return transitionSemaphore.withPermits(1)(effect());
+      effect: () => Effect.Effect<Result, Failure, Requirements>,
+    ): Effect.Effect<Result, Failure | PluginRuntimeReentrancyError, Requirements> =>
+      Effect.gen(function* () {
+        const effectCallback = yield* PluginEffectCallback;
+        return yield* Effect.suspend<Result, Failure | PluginRuntimeReentrancyError, Requirements>(
+          () => {
+            const asyncCallback = callbackContext.getStore();
+            const callback =
+              effectCallback?.runtime === runtimeIdentity ? effectCallback : asyncCallback;
+            if (callback?.active === true) {
+              return Effect.fail(
+                new PluginRuntimeReentrancyError({
+                  callback: callback.callback,
+                  operation,
+                  pluginId: callback.pluginId,
+                }),
+              );
+            }
+            return transitionSemaphore.withPermits(1)(effect());
+          },
+        );
       });
+
+    const useContribution = <Value, Success, Failure, Requirements>(
+      slot: string,
+      id: string,
+      generation: number,
+      use: (value: Value) => Effect.Effect<Success, Failure, Requirements>,
+    ): Effect.Effect<Success, Failure | PluginRuntimeContributionError, Requirements> =>
+      runTransition("invoke", () =>
+        Effect.suspend<
+          Success,
+          | Failure
+          | PluginContributionGenerationError
+          | PluginContributionNotFoundError
+          | PluginRuntimeDisposedError,
+          Requirements
+        >(() => {
+          if (disposalStarted) {
+            return Effect.fail(new PluginRuntimeDisposedError({ operation: "invoke" }));
+          }
+          if (current.generation !== generation) {
+            return Effect.fail(
+              new PluginContributionGenerationError({
+                actual: current.generation,
+                expected: generation,
+              }),
+            );
+          }
+          for (const plugin of current.plugins) {
+            const registration = (plugin.contributions.get(slot) ?? []).find(
+              (candidate) => candidate.contribution.id === id,
+            );
+            if (registration !== undefined) {
+              const contributionState: PluginEffectCallbackContext = {
+                active: true,
+                callback: "contribution",
+                pluginId: plugin.definition.id,
+                runtime: runtimeIdentity,
+              };
+              const contributionScheduler: Scheduler.Scheduler = {
+                executionMode: baseScheduler.executionMode,
+                shouldYield: (fiber) => baseScheduler.shouldYield(fiber),
+                makeDispatcher: () => {
+                  const dispatcher = baseScheduler.makeDispatcher();
+                  return {
+                    flush: () => dispatcher.flush(),
+                    scheduleTask: (task, priority) =>
+                      dispatcher.scheduleTask(
+                        () => callbackContext.run(contributionState, task),
+                        priority,
+                      ),
+                  };
+                },
+              };
+              return Effect.yieldNow.pipe(
+                Effect.andThen(Effect.suspend(() => use(registration.value as Value))),
+                Effect.provideService(PluginEffectCallback, contributionState),
+                Effect.provideService(Scheduler.Scheduler, contributionScheduler),
+                Effect.onExit((exit) =>
+                  Effect.sync(() => {
+                    if (!(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause))) {
+                      contributionState.active = false;
+                    }
+                  }),
+                ),
+              );
+            }
+          }
+          return Effect.fail(new PluginContributionNotFoundError({ id, slot }));
+        }),
+      );
 
     yield* Effect.addFinalizer(() =>
       runTransition("dispose", disposeEffect).pipe(
@@ -524,6 +787,20 @@ export const make = (options: PluginRuntimeOptions = {}) =>
         return runTransition("reconcile", () => reconcileEffect(desired));
       },
       snapshot: Effect.sync(() => current.snapshot),
+      contributions: (slot) =>
+        Effect.sync(() =>
+          Object.freeze({
+            generation: current.generation,
+            entries: Object.freeze(
+              current.plugins.flatMap((plugin) =>
+                (plugin.contributions.get(slot) ?? []).map(
+                  (registration) => registration.contribution,
+                ),
+              ),
+            ),
+          }),
+        ),
+      useContribution,
       dispose: runTransition("dispose", disposeEffect),
     } satisfies PluginRuntime["Service"];
   });

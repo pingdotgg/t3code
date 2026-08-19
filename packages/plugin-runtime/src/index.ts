@@ -2,6 +2,7 @@ export type {
   Contribution,
   PluginActivationContext,
   PluginDefinition,
+  PluginRuntimeContributionSnapshot,
   PluginRuntimeOptions,
   PluginRuntimeSnapshot,
 } from "./contract.ts";

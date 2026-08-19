@@ -702,6 +702,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.subscribeResourceTelemetry,
       idleTtlMs: 0,
     }),
+    pluginCommands: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:plugin-commands",
+      tag: WS_METHODS.subscribePluginCommands,
+      idleTtlMs: 0,
+    }),
     resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
@@ -728,6 +733,14 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRefreshProviders,
       concurrency: {
         mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    invokePluginCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:invoke-plugin-command",
+      tag: WS_METHODS.pluginCommandsInvoke,
+      concurrency: {
+        mode: "serial",
         key: ({ environmentId }) => environmentId,
       },
     }),

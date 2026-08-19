@@ -7,6 +7,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+
 import {
   detectComposerTrigger,
   replaceTextRange,
@@ -67,6 +68,8 @@ import {
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { buildMobilePluginCommandItems } from "./plugin-command-menu";
+import { useMobilePluginCommands } from "./use-mobile-plugin-commands";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -354,6 +357,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const { commands: pluginCommands, execute: executePluginCommand } = useMobilePluginCommands(
+    props.environmentId,
+  );
 
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
@@ -418,6 +424,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ];
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
+      const pluginCommandItems = buildMobilePluginCommandItems(pluginCommands, q);
+
       const providerCommands: ComposerCommandItem[] = [];
       for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
         if (!cmd.name.toLowerCase().includes(q)) continue;
@@ -430,7 +438,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         });
       }
 
-      return [...builtIn, ...providerCommands];
+      return [...builtIn, ...pluginCommandItems, ...providerCommands];
     }
 
     if (composerTrigger.kind === "skill") {
@@ -531,7 +539,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, pluginCommands, selectedProviderStatus]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -581,6 +589,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         return;
       }
 
+      if (item.type === "plugin-command") {
+        const command = item.command;
+        const result = replaceTextRange(
+          draftMessage,
+          composerTrigger.rangeStart,
+          composerTrigger.rangeEnd,
+          "",
+        );
+        setComposerSelection({ start: result.cursor, end: result.cursor });
+        onChangeDraftMessage(result.text);
+        void executePluginCommand(command);
+        return;
+      }
+
       let replacement = "";
       if (item.type === "path") {
         replacement = `${serializeComposerFileLink(item.path)} `;
@@ -601,7 +623,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       setComposerSelection({ start: result.cursor, end: result.cursor });
       onChangeDraftMessage(result.text);
     },
-    [composerTrigger, draftMessage, onChangeDraftMessage, onUpdateInteractionMode],
+    [
+      composerTrigger,
+      draftMessage,
+      executePluginCommand,
+      onChangeDraftMessage,
+      onUpdateInteractionMode,
+    ],
   );
 
   // ── Model menu ───────────────────────────────────────────

@@ -1,6 +1,15 @@
-export interface Contribution {
+export type ContributionData =
+  | null
+  | boolean
+  | number
+  | string
+  | ReadonlyArray<ContributionData>
+  | { readonly [key: string]: ContributionData };
+
+export interface Contribution<Data extends ContributionData = ContributionData> {
   readonly id: string;
   readonly label: string;
+  readonly data?: Data;
 }
 
 export interface PluginDefinition {
@@ -13,8 +22,16 @@ export interface PluginDefinition {
 
 export interface PluginActivationContext {
   readonly resolve: <Service>(capability: string) => Service;
-  readonly register: (slot: string, contribution: Contribution) => void;
+  readonly register: {
+    (slot: string, contribution: Contribution): void;
+    <Value>(slot: string, contribution: Contribution, value: Value): void;
+  };
   readonly onDispose: (finalizer: () => void | Promise<void>) => void;
+}
+
+export interface PluginRuntimeContributionSnapshot {
+  readonly generation: number;
+  readonly entries: ReadonlyArray<Contribution>;
 }
 
 export interface PluginRuntimeSnapshot {
@@ -24,6 +41,7 @@ export interface PluginRuntimeSnapshot {
 }
 
 export interface PluginRuntimeOptions {
+  readonly validateSnapshot?: (snapshot: PluginRuntimeSnapshot) => void;
   readonly onLifecycle?: (event: {
     readonly phase: "activate" | "deactivate";
     readonly pluginId: string;
