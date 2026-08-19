@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { CheckIcon, ChevronLeftIcon, CopyIcon, TerminalIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, TerminalIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
@@ -40,6 +40,7 @@ import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectLis
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { cn } from "../../lib/utils";
 
@@ -333,12 +334,15 @@ function ConnectMachinesStep({
               empty={null}
             />
           </div>
-          <details className="mt-4">
-            <summary className="cursor-pointer text-xs text-muted-foreground">
+          <Collapsible className="mt-4">
+            <CollapsibleTrigger className="group flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+              <ChevronRightIcon className="size-3.5 transition-transform duration-200 group-data-panel-open:rotate-90" />
               Add another machine
-            </summary>
-            <CommandBlock command={CONNECT_LOGIN_COMMAND} className="mt-2" />
-          </details>
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <CommandBlock command={CONNECT_LOGIN_COMMAND} className="mt-2" />
+            </CollapsiblePanel>
+          </Collapsible>
           <div className="mt-6 flex justify-end">
             <Button onClick={onContinue}>Continue</Button>
           </div>
