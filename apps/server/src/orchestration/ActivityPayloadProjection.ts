@@ -125,6 +125,9 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
 }
 
+/** Expanded Command-run rows render this; keep it bounded for the wire. */
+const MAX_PROJECTED_COMMAND_RESULT_CHARS = 32_768;
+
 function summarizeToolTextOutput(value: string): string | null {
   const lines: string[] = [];
   for (const rawLine of value.split(/\r?\n/u)) {
@@ -252,6 +255,41 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   return projectedData;
 }
 
+function isCommandLikeTool(
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+): boolean {
+  if (payload.itemType === "command_execution") {
+    return true;
+  }
+  const kind = asTrimmedString(data.kind)?.toLowerCase();
+  if (kind === "execute") {
+    return true;
+  }
+  const toolName = asTrimmedString(data.toolName)?.toLowerCase();
+  if (!toolName) {
+    return false;
+  }
+  return (
+    toolName.includes("bash") ||
+    toolName.includes("shell") ||
+    toolName.includes("terminal") ||
+    toolName.includes("command")
+  );
+}
+
+function projectCommandResult(result: unknown): Record<string, unknown> | undefined {
+  const text = extractMcpResultText(result);
+  if (!text) {
+    return undefined;
+  }
+  const content =
+    text.length > MAX_PROJECTED_COMMAND_RESULT_CHARS
+      ? `${text.slice(0, MAX_PROJECTED_COMMAND_RESULT_CHARS).trimEnd()}\n…`
+      : text;
+  return { content };
+}
+
 function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
   const direct = asTrimmedString(value);
   if (direct) {
@@ -341,6 +379,18 @@ export function projectActivityPayload(
   }
   if ("command" in data) {
     projectedData.command = data.command;
+  } else {
+    const inputCommand = asRecord(data.input)?.command;
+    if (inputCommand !== undefined) {
+      projectedData.command = inputCommand;
+    }
+  }
+
+  if (isCommandLikeTool(payload, data)) {
+    const commandResult = projectCommandResult(data.result);
+    if (commandResult) {
+      projectedData.result = commandResult;
+    }
   }
 
   const changedFiles: string[] = [];

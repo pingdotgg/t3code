@@ -151,6 +151,85 @@ describe("projectActivityPayload agent-field survival", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it("keeps Claude Bash result content for the expanded command-run row", () => {
+    const output = `hello from bash\n${"x".repeat(200)}`;
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          toolName: "Bash",
+          input: { command: "printf hello && cat huge.txt" },
+          result: {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            content: output,
+            is_error: false,
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.command).toBe("printf hello && cat huge.txt");
+    expect(data.result).toEqual({ content: output });
+    expect(data.toolName).toBeUndefined();
+  });
+
+  it("does not attach result bodies for Read/Grep dynamic tools", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: {
+          toolName: "Read",
+          input: { file_path: "README.md" },
+          result: {
+            type: "tool_result",
+            content: `file body\n${"x".repeat(10_000)}`,
+            is_error: false,
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.result).toBeUndefined();
+    expect(data.toolName).toBeUndefined();
+  });
+
+  it("still attaches Bash-like dynamic tool result content", () => {
+    const output = "hello from bash";
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: {
+          toolName: "Bash",
+          input: { command: "printf hello" },
+          result: { content: output, is_error: false },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.result).toEqual({ content: output });
+  });
+
+  it("bounds huge Claude Bash result content instead of dropping it", () => {
+    const output = `first line\n${"y".repeat(40_000)}`;
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          toolName: "Bash",
+          input: { command: "cat huge.txt" },
+          result: { content: output, is_error: false },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    const result = data.result as { content: string };
+    expect(result.content.startsWith("first line\n")).toBe(true);
+    expect(result.content.endsWith("…")).toBe(true);
+    expect(result.content.length).toBeLessThan(output.length);
+    expect(result.content.length).toBeGreaterThan(30_000);
+  });
+
   it("passes task lifecycle payloads (no data field) through untouched", () => {
     const source = activity({
       taskId: "task-9",

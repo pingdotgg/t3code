@@ -4,9 +4,29 @@ import {
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
+  presentExpandedToolOutput,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
+  TOOL_OUTPUT_PREVIEW_MAX_CHARS,
 } from "./MessagesTimeline.logic";
+
+describe("presentExpandedToolOutput", () => {
+  it("leaves short output intact and truncates huge output until expanded", () => {
+    expect(presentExpandedToolOutput("hello", false)).toEqual({
+      text: "hello",
+      truncated: false,
+    });
+
+    const huge = `${"x".repeat(TOOL_OUTPUT_PREVIEW_MAX_CHARS + 20)}\nmore`;
+    const collapsed = presentExpandedToolOutput(huge, false);
+    expect(collapsed.truncated).toBe(true);
+    expect(collapsed.text.length).toBeLessThan(huge.length);
+    expect(collapsed.text.endsWith("…")).toBe(true);
+
+    const expanded = presentExpandedToolOutput(huge, true);
+    expect(expanded).toEqual({ text: huge, truncated: true });
+  });
+});
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {
@@ -648,6 +668,99 @@ describe("deriveMessagesTimelineRows", () => {
     // User message (00:00:00) → trailing work entry (00:00:12).
     expect(foldRow?.turnId).toBe("turn-1");
     expect(foldRow?.label).toBe("Worked for 12s");
+  });
+
+  it("keeps a tool-only completed turn expandable and includes the tool activity", () => {
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "run it",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "work-entry-1",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:08Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:08Z",
+          turnId: "turn-1" as never,
+          label: "Command run",
+          command: "printf hello",
+          output: "hello",
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+        },
+      },
+    ];
+
+    const collapsedRows = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:12Z",
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(collapsedRows.map((row) => row.id)).toEqual(["user-entry", "turn-fold:turn-1"]);
+    const foldRow = collapsedRows.find(
+      (row): row is Extract<(typeof collapsedRows)[number], { kind: "turn-fold" }> =>
+        row.kind === "turn-fold",
+    );
+    expect(foldRow).toMatchObject({
+      turnId: "turn-1",
+      expanded: false,
+      label: "Worked for 12s",
+    });
+
+    const expandedRows = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:12Z",
+      },
+      expandedTurnIds: new Set(["turn-1" as never]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(expandedRows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "work-entry-1",
+    ]);
+    const workRow = expandedRows.find(
+      (row): row is Extract<(typeof expandedRows)[number], { kind: "work" }> => row.kind === "work",
+    );
+    expect(workRow?.groupedEntries).toEqual([
+      expect.objectContaining({
+        id: "work-1",
+        command: "printf hello",
+        output: "hello",
+      }),
+    ]);
+    expect(
+      expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
+    ).toBeDefined();
   });
 
   it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {
