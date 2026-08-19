@@ -1,12 +1,31 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  changeRequestRepositoryUrl,
   findProjectForChangeRequest,
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
+
+describe("changeRequestRepositoryUrl", () => {
+  it("preserves repository path casing", () => {
+    expect(
+      changeRequestRepositoryUrl(
+        "https://gitlab.example.test/Team/Platform/Repo/-/merge_requests/42/diffs#note_1",
+      ),
+    ).toBe("https://gitlab.example.test/Team/Platform/Repo");
+  });
+
+  it("keeps pull-like segments inside nested GitLab repository paths", () => {
+    expect(
+      changeRequestRepositoryUrl(
+        "https://gitlab.example.test/group/pull/123/repo/-/merge_requests/42",
+      ),
+    ).toBe("https://gitlab.example.test/group/pull/123/repo");
+  });
+});
 
 describe("openPullRequestLink", () => {
   it("opens the requested pull request URL", async () => {

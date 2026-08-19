@@ -6244,7 +6244,6 @@ function ChatViewContent(props: ChatViewProps) {
             ? "thread"
             : "page"
         }
-        chromeVariant="collapse"
         composerDraftTarget={composerDraftTarget}
         onStateChange={handlePullRequestTabStatusChange}
       />
