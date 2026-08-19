@@ -40,8 +40,10 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
+import { cn } from "~/lib/utils";
 
 interface BranchToolbarProps {
+  placement: "header" | "mobile-row";
   environmentId: EnvironmentId;
   threadId: ThreadId;
   showGitControls: boolean;
@@ -141,7 +143,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         {triggerContent}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
-      <MenuPopup align="start" side="top" className="w-64">
+      <MenuPopup align="start" side="bottom" className="w-64">
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>
@@ -374,6 +376,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
 }
 
 export const BranchToolbar = memo(function BranchToolbar({
+  placement,
   environmentId,
   threadId,
   showGitControls,
@@ -469,7 +472,12 @@ export const BranchToolbar = memo(function BranchToolbar({
     <div
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
-      className="chat-composer-context-strip group/composer-context -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 overflow-x-clip overflow-y-visible ps-1 pe-2 pt-5 pb-1"
+      className={cn(
+        "group/composer-context min-w-0 items-center overflow-x-clip overflow-y-visible text-muted-foreground",
+        placement === "header"
+          ? "flex max-w-80 shrink gap-1"
+          : "flex h-8 shrink-0 gap-2 border-border/40 border-b bg-background ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]",
+      )}
     >
       {isMobile && showGitControls ? (
         <MobileRunContextSelector
@@ -517,6 +525,10 @@ export const BranchToolbar = memo(function BranchToolbar({
           ) : null}
         </div>
       )}
+
+      {showGitControls && placement === "header" ? (
+        <Separator orientation="vertical" className="mx-0.5 h-4!" data-composer-context-control />
+      ) : null}
 
       {showGitControls ? (
         <BranchToolbarBranchSelector
