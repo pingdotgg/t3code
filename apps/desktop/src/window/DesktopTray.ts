@@ -43,7 +43,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         const open = () => {
-          void runPromise(desktopWindow.revealOrCreateMain);
+          void runPromise(desktopWindow.activate);
         };
         const quit = () => {
           void runPromise(electronApp.quit);

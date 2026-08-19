@@ -49,17 +49,16 @@ import * as DesktopWindow from "./DesktopWindow.ts";
 function makeLayer(input: {
   readonly iconPath: Option.Option<string>;
   readonly backgroundModeChanges: boolean[];
-  readonly opens: string[];
+  readonly activations: string[];
   readonly quits: string[];
 }) {
   const window = {
     createMain: Effect.die("unexpected createMain"),
     ensureMain: Effect.die("unexpected ensureMain"),
-    revealOrCreateMain: Effect.sync(() => {
-      input.opens.push("open");
-      return {} as Electron.BrowserWindow;
+    revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
+    activate: Effect.sync(() => {
+      input.activations.push("activate");
     }),
-    activate: Effect.void,
     createMainIfBackendReady: Effect.void,
     showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
@@ -101,14 +100,14 @@ function makeLayer(input: {
 }
 
 describe("DesktopTray", () => {
-  it.effect("keeps Windows background mode active for the tray lifetime", () => {
+  it.effect("routes Windows tray opens through the backend-ready activation gate", () => {
     const backgroundModeChanges: boolean[] = [];
-    const opens: string[] = [];
+    const activations: string[] = [];
     const quits: string[] = [];
     const layer = makeLayer({
       iconPath: Option.some("C:\\T3 Code\\icon.ico"),
       backgroundModeChanges,
-      opens,
+      activations,
       quits,
     });
 
@@ -124,14 +123,20 @@ describe("DesktopTray", () => {
 
         tray.listeners.get("click")?.();
         const template = electronMocks.buildFromTemplate.mock.calls.at(-1)?.[0];
+        const openItem = template?.find((item) => item.label === "Open T3 Code");
         const quitItem = template?.find((item) => item.label === "Quit T3 Code");
+        openItem?.click?.(
+          {} as Electron.MenuItem,
+          undefined as unknown as Electron.BaseWindow,
+          {} as Electron.KeyboardEvent,
+        );
         quitItem?.click?.(
           {} as Electron.MenuItem,
           undefined as unknown as Electron.BaseWindow,
           {} as Electron.KeyboardEvent,
         );
         yield* Effect.yieldNow;
-        assert.deepEqual(opens, ["open"]);
+        assert.deepEqual(activations, ["activate", "activate"]);
         assert.deepEqual(quits, ["quit"]);
       }).pipe(Effect.provide(layer)),
     ).pipe(
