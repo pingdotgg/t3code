@@ -42,6 +42,7 @@ import {
   type NodeKey,
   type Spread,
 } from "lexical";
+import { BoxIcon } from "lucide-react";
 import {
   createContext,
   use,
@@ -75,7 +76,6 @@ import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_LABEL_CLASS_NAME,
-  SKILL_CHIP_ICON_SVG,
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
@@ -252,10 +252,10 @@ function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: s
       spellCheck={false}
       data-composer-skill-chip="true"
     >
-      <span
+      <BoxIcon
         aria-hidden="true"
         className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-        dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+        strokeWidth={1.85}
       />
       <span className={COMPOSER_INLINE_SKILL_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
     </span>

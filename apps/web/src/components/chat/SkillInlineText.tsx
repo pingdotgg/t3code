@@ -1,12 +1,12 @@
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { BoxIcon } from "lucide-react";
 
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import {
   CHAT_INLINE_CHIP_CLASS_NAME,
   CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  SKILL_CHIP_ICON_SVG,
 } from "../composerInlineChip";
 import { cn } from "~/lib/utils";
 
@@ -81,10 +81,10 @@ function SkillChip(props: { skill: InlineSkill; rawText: string }) {
           "border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
         )}
       >
-        <span
+        <BoxIcon
           aria-hidden="true"
           className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-          dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+          strokeWidth={1.85}
         />
         <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
           {formatProviderSkillDisplayName(props.skill)}

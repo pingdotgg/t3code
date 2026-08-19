@@ -10,7 +10,6 @@ import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import Svg, { Circle, Path } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -50,26 +49,6 @@ function pullRequestTintColor(state: ThreadPr["state"], colorScheme: "light" | "
     case "closed":
       return dark ? "#a1a1aa" : "#71717a";
   }
-}
-
-function PullRequestIcon(props: { readonly size: number; readonly color: string }) {
-  return (
-    <Svg
-      width={props.size}
-      height={props.size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke={props.color}
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <Circle cx={18} cy={18} r={3} />
-      <Circle cx={6} cy={6} r={3} />
-      <Path d="M13 6h3a2 2 0 0 1 2 2v7" />
-      <Path d="M6 9v12" />
-    </Svg>
-  );
 }
 
 /* ─── Project group header ───────────────────────────────────────────── */
@@ -542,13 +521,15 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         ) : null}
         {pr !== null ? (
           <View className="flex-row items-center gap-0.5">
-            <PullRequestIcon
+            <SymbolView
+              name="arrow.triangle.pull"
               size={compact ? 13 : 11}
-              color={
+              tintColor={
                 selected
                   ? String(selectedForegroundColor)
                   : pullRequestTintColor(pr.state, colorScheme)
               }
+              type="monochrome"
             />
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${

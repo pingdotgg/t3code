@@ -38,6 +38,7 @@
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
     "lexical": "^0.41.0",
+    "lucide": "^0.564.0",
     "lucide-react": "^0.564.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",

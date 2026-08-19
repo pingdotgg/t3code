@@ -1,72 +1,32 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { Copy, createIcons, FolderTree, Pencil, Trash2 } from "lucide";
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-// Inline Lucide-style icon paths (stroke-based, viewBox 0 0 24 24, strokeWidth 2).
-const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<string, string> }>> = {
-  pencil: [
-    {
-      tag: "path",
-      attrs: {
-        d: "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
-      },
-    },
-    { tag: "path", attrs: { d: "m15 5 4 4" } },
-  ],
-  copy: [
-    { tag: "rect", attrs: { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" } },
-    { tag: "path", attrs: { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" } },
-  ],
-  "folder-tree": [
-    {
-      tag: "path",
-      attrs: {
-        d: "M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z",
-      },
-    },
-    {
-      tag: "path",
-      attrs: {
-        d: "M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z",
-      },
-    },
-    { tag: "path", attrs: { d: "M3 5a2 2 0 0 0 2 2h3" } },
-    { tag: "path", attrs: { d: "M3 3v13a2 2 0 0 0 2 2h3" } },
-  ],
-  trash: [
-    { tag: "path", attrs: { d: "M3 6h18" } },
-    { tag: "path", attrs: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" } },
-    { tag: "path", attrs: { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" } },
-    { tag: "line", attrs: { x1: "10", x2: "10", y1: "11", y2: "17" } },
-    { tag: "line", attrs: { x1: "14", x2: "14", y1: "11", y2: "17" } },
-  ],
+const LUCIDE_ICONS = { Copy, FolderTree, Pencil, Trash2 };
+const ICON_NAMES: Record<string, string> = {
+  pencil: "pencil",
+  copy: "copy",
+  "folder-tree": "folder-tree",
+  trash: "trash-2",
 };
 
 function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSVGElement | null {
-  const paths = ICON_PATHS[name];
-  if (!paths) {
+  const iconName = ICON_NAMES[name];
+  if (!iconName) {
     return null;
   }
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("xmlns", SVG_NS);
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  svg.setAttribute(
-    "class",
-    tone === "destructive" ? "size-3.5 shrink-0" : "size-3.5 shrink-0 text-muted-foreground",
-  );
-  for (const node of paths) {
-    const child = document.createElementNS(SVG_NS, node.tag);
-    for (const [key, value] of Object.entries(node.attrs)) {
-      child.setAttribute(key, value);
-    }
-    svg.appendChild(child);
-  }
-  return svg;
+  const host = document.createElement("span");
+  const icon = document.createElement("i");
+  icon.dataset.lucide = iconName;
+  host.appendChild(icon);
+  createIcons({
+    attrs: {
+      class:
+        tone === "destructive" ? "size-3.5 shrink-0" : "size-3.5 shrink-0 text-muted-foreground",
+    },
+    icons: LUCIDE_ICONS,
+    root: host,
+  });
+  return host.firstElementChild as SVGSVGElement | null;
 }
 
 function clampMenuPosition(menu: HTMLDivElement, preferredLeft: number, preferredTop: number) {
