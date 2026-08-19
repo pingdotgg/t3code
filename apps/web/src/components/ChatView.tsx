@@ -3464,7 +3464,7 @@ function ChatViewContent(props: ChatViewProps) {
   const requestCloseTerminal = useCallback(
     (terminalId: string) => {
       const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose(label).then((confirmed) => {
+      void confirmTerminalClose([label]).then((confirmed) => {
         if (confirmed) closeTerminal(terminalId);
       });
     },
@@ -3473,7 +3473,7 @@ function ChatViewContent(props: ChatViewProps) {
   const requestClosePanelTerminal = useCallback(
     (terminalId: string) => {
       const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose(label).then((confirmed) => {
+      void confirmTerminalClose([label]).then((confirmed) => {
         if (confirmed) closePanelTerminal(terminalId);
       });
     },
@@ -3562,10 +3562,15 @@ function ChatViewContent(props: ChatViewProps) {
         finishClose();
         return;
       }
-      const label =
+      const activeLabel =
         activeTerminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId);
-      void confirmTerminalClose(label).then((confirmed) => {
+      const otherLabels = surface.terminalIds
+        .filter((terminalId) => terminalId !== surface.activeTerminalId)
+        .map(
+          (terminalId) => activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
+        );
+      void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
         if (confirmed) finishClose();
       });
     },

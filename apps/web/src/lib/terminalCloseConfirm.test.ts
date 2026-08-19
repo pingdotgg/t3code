@@ -31,7 +31,7 @@ describe("terminal close confirmation", () => {
 
     expect(isTerminalCloseConfirmPending()).toBe(false);
 
-    const confirmation = confirmTerminalClose("Terminal 1");
+    const confirmation = confirmTerminalClose(["Terminal 1"]);
     expect(isTerminalCloseConfirmPending()).toBe(true);
 
     settle(true);
@@ -48,7 +48,7 @@ describe("terminal close confirmation", () => {
         }),
     );
 
-    const confirmation = confirmTerminalClose("Terminal 1");
+    const confirmation = confirmTerminalClose(["Terminal 1"]);
     expect(isTerminalCloseConfirmPending()).toBe(true);
 
     reject(new Error("dialog failed"));
@@ -56,10 +56,23 @@ describe("terminal close confirmation", () => {
     expect(isTerminalCloseConfirmPending()).toBe(false);
   });
 
+  it("names every terminal in a multi-terminal close", async () => {
+    confirmMock.mockResolvedValue(true);
+
+    await expect(confirmTerminalClose(["Terminal 1", "Development server"])).resolves.toBe(true);
+    expect(confirmMock).toHaveBeenCalledWith(
+      [
+        "Close 2 terminals?",
+        'This stops their running processes and clears their histories: "Terminal 1", "Development server".',
+      ].join("\n"),
+      { variant: "destructive" },
+    );
+  });
+
   it("closes without prompting when no local API is available", async () => {
     readLocalApiMock.mockReturnValue(undefined);
 
-    await expect(confirmTerminalClose("Terminal 1")).resolves.toBe(true);
+    await expect(confirmTerminalClose(["Terminal 1"])).resolves.toBe(true);
     expect(confirmMock).not.toHaveBeenCalled();
   });
 });

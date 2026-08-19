@@ -1277,7 +1277,7 @@ export default function ThreadTerminalDrawer({
   const confirmCloseTerminal = useCallback(
     (terminalId: string) => {
       const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose(label).then((confirmed) => {
+      void confirmTerminalClose([label]).then((confirmed) => {
         if (confirmed) onCloseTerminal(terminalId);
       });
     },
