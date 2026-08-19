@@ -68,8 +68,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               <Dialog.Title className="sr-only">Expanded image preview</Dialog.Title>
               <button
                 type="button"
+                aria-hidden
+                tabIndex={-1}
                 className="absolute inset-0 z-0 cursor-zoom-out"
-                aria-label="Close image preview"
                 onClick={() => onOpenChange(false)}
               />
               {preview.images.length > 1 && (
