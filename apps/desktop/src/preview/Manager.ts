@@ -527,6 +527,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
   let frameCaptureWindowOpen = true;
+  let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
@@ -1735,8 +1736,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           yield* setWindowBackgroundThrottling(window, false);
         }
         yield* Ref.set(mainWindowRef, Option.some(window));
+        currentMainWindow = window;
         frameCaptureWindowOpen = true;
         window.once("closed", () => {
+          if (currentMainWindow !== window) return;
+          currentMainWindow = undefined;
           frameCaptureWindowOpen = false;
           mainWindowCleanupFiber = runFork(
             Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {

@@ -1916,6 +1916,43 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("ignores close events from replaced main windows", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let closeFirstWindow: (() => void) | undefined;
+        const firstWindowThrottling = vi.fn();
+        const replacementWindowThrottling = vi.fn();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+
+        yield* manager.createTab("tab_replaced_window_close");
+        yield* manager.registerWebview("tab_replaced_window_close", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn((event: string, listener: () => void) => {
+            if (event === "closed") closeFirstWindow = listener;
+          }),
+          webContents: { setBackgroundThrottling: firstWindowThrottling },
+        } as never);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling: replacementWindowThrottling },
+        } as never);
+
+        closeFirstWindow?.();
+        yield* manager.startRecording("tab_replaced_window_close");
+        expect(firstWindowThrottling).not.toHaveBeenCalled();
+        expect(replacementWindowThrottling.mock.calls).toEqual([[false]]);
+        yield* manager.stopRecording("tab_replaced_window_close");
+        expect(replacementWindowThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
   effectIt.effect("releases frame capture when the main window closes", () =>
     withManager((manager) =>
       Effect.gen(function* () {
