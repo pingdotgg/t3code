@@ -106,6 +106,7 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+import { streamingMarkdownRenderDelay } from "./ChatMarkdown.logic";
 
 interface ChatMarkdownProps {
   text: string;
@@ -144,6 +145,33 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
+
+function useStreamingMarkdownText(text: string, isStreaming: boolean): string {
+  const [renderedText, setRenderedText] = useState(text);
+  const lastRenderedAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    if (!isStreaming) {
+      lastRenderedAtRef.current = Date.now();
+      setRenderedText((current) => (current === text ? current : text));
+      return;
+    }
+
+    const delay = streamingMarkdownRenderDelay({
+      lastRenderedAt: lastRenderedAtRef.current,
+      now: Date.now(),
+    });
+    const timeout = setTimeout(() => {
+      lastRenderedAtRef.current = Date.now();
+      setRenderedText(text);
+    }, delay);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [isStreaming, text]);
+
+  return isStreaming ? renderedText : text;
+}
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -1364,6 +1392,7 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
 }: ChatMarkdownProps) {
+  const renderedText = useStreamingMarkdownText(text, isStreaming);
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -1387,7 +1416,7 @@ function ChatMarkdown({
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(text)) {
+    for (const href of extractMarkdownLinkHrefs(renderedText)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
@@ -1396,10 +1425,10 @@ function ChatMarkdown({
       }
     }
     return metaByHref;
-  }, [cwd, text]);
+  }, [cwd, renderedText]);
   const inlineCodeFileLinkMetaByText = useMemo(() => {
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
-    for (const span of extractInlineCodeSpans(text)) {
+    for (const span of extractInlineCodeSpans(renderedText)) {
       if (metaByText.has(span)) continue;
       const meta = resolveInlineCodeFileLinkMeta(span, cwd);
       if (meta) {
@@ -1407,7 +1436,7 @@ function ChatMarkdown({
       }
     }
     return metaByText;
-  }, [cwd, text]);
+  }, [cwd, renderedText]);
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [
       ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
@@ -1589,7 +1618,9 @@ function ChatMarkdown({
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
         const markerOffset =
-          typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+          typeof listItemStart === "number"
+            ? findTaskListMarkerOffset(renderedText, listItemStart)
+            : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
             {renderSkillInlineMarkdownChildren(children, skills)}
@@ -1776,12 +1807,29 @@ function ChatMarkdown({
     openInPreferredEditor,
     openExternalLinkInPreview,
     openMarkdownFileInPreview,
+    renderedText,
     resolvedTheme,
     skills,
-    text,
     threadRef,
   ]);
   /* eslint-enable react/no-unstable-nested-components */
+
+  const renderedMarkdown = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={
+          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
+        }
+        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+        skipHtml={false}
+        components={markdownComponents}
+        urlTransform={markdownUrlTransform}
+      >
+        {renderedText}
+      </ReactMarkdown>
+    ),
+    [lineBreaks, markdownComponents, markdownUrlTransform, parseRawHtml, renderedText],
+  );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
@@ -1794,17 +1842,7 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
-        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
-        skipHtml={false}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      {renderedMarkdown}
     </div>
   );
 }
