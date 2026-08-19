@@ -165,6 +165,24 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("classifies HTTP 429 responses as rate limits", () =>
+    Effect.gen(function* () {
+      const providerStderr = "HTTP 429: Too Many Requests. request-id=secret-value";
+      const error = yield* run({
+        operation: "test.rate-limit",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", providerStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        detail: "API rate limit exceeded.",
+        failureKind: "rate-limited",
+      });
+      expect(error.message).not.toContain(providerStderr);
+    }).pipe(provideLive),
+  );
+
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";
