@@ -565,12 +565,12 @@ function UsageSkeleton() {
       <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <div className="h-8 w-36 rounded-sm bg-muted" />
-            <div className="h-3 w-32 rounded-sm bg-muted" />
+            <div className="h-10 w-36 rounded-sm bg-muted" />
+            <div className="h-4 w-32 rounded-sm bg-muted" />
           </div>
           {PROVIDER_ORDER.map((provider) => (
             <div key={provider} className="flex flex-col gap-1">
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
                   <span
                     aria-hidden
@@ -582,7 +582,7 @@ function UsageSkeleton() {
                 </span>
                 <div className="h-3.5 w-14 rounded-sm bg-muted" />
               </div>
-              <div className="h-3 w-36 rounded-sm bg-muted" />
+              <div className="h-4 w-36 rounded-sm bg-muted" />
             </div>
           ))}
         </div>
