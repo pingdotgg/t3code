@@ -9,6 +9,7 @@
 import type {
   EnvironmentId,
   UsageBucket,
+  UsagePricingStatus,
   UsageProviderKind,
   UsageSourceFingerprint,
   UsageSummary,
@@ -75,6 +76,11 @@ export interface MergedUsage {
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
+  /**
+   * Worst rate-table status among environments that contributed buckets.
+   * `unavailable` means dollar figures must not be shown as real zeros.
+   */
+  readonly pricingStatus: UsagePricingStatus;
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
@@ -184,10 +190,21 @@ const EMPTY_MERGED: MergedUsage = {
     unpricedShare: 0,
     cacheSavingsUsd: 0,
   },
+  pricingStatus: "fresh",
   duplicateSources: [],
   contributingEnvironments: [],
   staleEnvironments: [],
 };
+
+const PRICING_STATUS_RANK: Record<UsagePricingStatus, number> = {
+  fresh: 0,
+  cached: 1,
+  unavailable: 2,
+};
+
+function worsePricingStatus(a: UsagePricingStatus, b: UsagePricingStatus): UsagePricingStatus {
+  return PRICING_STATUS_RANK[a] >= PRICING_STATUS_RANK[b] ? a : b;
+}
 
 /**
  * Merges every connected environment's summary.
@@ -253,13 +270,17 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  let pricingStatus: UsagePricingStatus = "fresh";
 
   for (const environment of current) {
     const { buckets, sessions: environmentSessions } = ownedContribution(
       environment,
       ownerByFingerprint,
     );
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    if (buckets.length > 0) {
+      contributingEnvironments.push(environment.environmentId);
+      pricingStatus = worsePricingStatus(pricingStatus, environment.summary.pricing.status);
+    }
     sessions += environmentSessions;
 
     for (const bucket of buckets) {
@@ -391,6 +412,7 @@ export function mergeUsage(
         records === 0 ? 0 : (records - providerReportedRecords - unpricedRecords) / records,
       cacheSavingsUsd,
     },
+    pricingStatus,
     duplicateSources: duplicates,
     contributingEnvironments,
     staleEnvironments,

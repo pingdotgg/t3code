@@ -4,7 +4,12 @@
  *
  * @module usageFormat
  */
-import { UsageDay, type UsageResolution, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  UsageDay,
+  type UsagePricingStatus,
+  type UsageResolution,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -17,6 +22,15 @@ const INTEGER = new Intl.NumberFormat("en-US");
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);
+}
+
+/**
+ * Dollar column for the usage page. A missing rate table must not render as a
+ * real `$0.00`.
+ */
+export function formatUsageCost(status: UsagePricingStatus, costUsd: number): string {
+  if (status === "unavailable") return "Cost unavailable";
+  return formatUsd(costUsd);
 }
 
 export function formatCount(value: number): string {

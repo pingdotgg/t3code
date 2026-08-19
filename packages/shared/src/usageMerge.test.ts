@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
+  type UsagePricingStatus,
   type UsageProviderKind,
   type UsageSummary,
 } from "@t3tools/contracts";
@@ -42,6 +43,7 @@ function summary(
     distinctSessions?: number;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
+  pricingStatus: UsagePricingStatus = "fresh",
 ): UsageSummary {
   return {
     contractVersion,
@@ -64,7 +66,7 @@ function summary(
       distinctSessions: source.distinctSessions ?? 1,
       message: null,
     })),
-    pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
+    pricing: { status: pricingStatus, source: "litellm", fetchedAt: null, knownModels: 10 },
     scanDurationMs: 1,
   };
 }
@@ -253,8 +255,60 @@ describe("mergeUsage", () => {
   it("returns empty totals with no environments", () => {
     const merged = mergeUsage([], USAGE_CONTRACT_VERSION);
     expect(merged.costUsd).toBe(0);
+    expect(merged.pricingStatus).toBe("fresh");
     expect(merged.daily).toHaveLength(0);
     expect(merged.hourly).toHaveLength(0);
+  });
+
+  it("keeps the worst pricing status among environments that contributed buckets", () => {
+    const sourceA = { provider: "claude" as const, hostId: "mac", homePath: "/a/.claude" };
+    const sourceB = { provider: "claude" as const, hostId: "linux", homePath: "/b/.claude" };
+
+    const cachedAndFresh = mergeUsage(
+      [
+        environment("env-a", summary([bucket()], [sourceA], USAGE_CONTRACT_VERSION, "cached")),
+        environment("env-b", summary([bucket()], [sourceB], USAGE_CONTRACT_VERSION, "fresh")),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(cachedAndFresh.pricingStatus).toBe("cached");
+
+    const mixedUnavailable = mergeUsage(
+      [
+        environment("env-a", summary([bucket()], [sourceA], USAGE_CONTRACT_VERSION, "cached")),
+        environment("env-b", summary([bucket()], [sourceB], USAGE_CONTRACT_VERSION, "unavailable")),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(mixedUnavailable.pricingStatus).toBe("unavailable");
+  });
+
+  it("ignores pricing status from environments that contributed no buckets", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+            USAGE_CONTRACT_VERSION,
+            "fresh",
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [],
+            [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }],
+            USAGE_CONTRACT_VERSION,
+            "unavailable",
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.pricingStatus).toBe("fresh");
   });
 
   it("derives hourly totals without losing the daily rollup", () => {

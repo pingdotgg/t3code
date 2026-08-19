@@ -1,4 +1,4 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { UsagePricingStatus, UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -16,6 +16,7 @@ import {
   formatHourShort,
   formatPercent,
   formatTokens,
+  formatUsageCost,
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
@@ -68,13 +69,18 @@ export function UsagePage() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
+  const costUnavailable = merged.pricingStatus === "unavailable";
+  const formatCost = (value: number) => formatUsageCost(merged.pricingStatus, value);
+
   // Ranked by whatever the toggle is showing, so the bars always descend.
   const orderedProviders = useMemo(
     () =>
       merged.providers.toSorted((a, b) =>
-        metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
+        metric === "cost" && !costUnavailable
+          ? b.costUsd - a.costUsd
+          : b.totalTokens - a.totalTokens,
       ),
-    [merged.providers, metric],
+    [costUnavailable, merged.providers, metric],
   );
 
   const activePeriods = (isPast24Hours ? merged.hourly : merged.daily).filter(
@@ -181,6 +187,7 @@ export function UsagePage() {
                   environments={environments}
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
+                  pricingStatus={merged.pricingStatus}
                 />
 
                 {/* Cost first: the financial answer, then the provider split. */}
@@ -194,18 +201,25 @@ export function UsagePage() {
                       </span>
                       <span className="text-4xl font-semibold text-foreground tabular-nums">
                         {metric === "cost"
-                          ? `${formatUsd(merged.costUsd)}*`
+                          ? costUnavailable
+                            ? formatCost(merged.costUsd)
+                            : `${formatUsd(merged.costUsd)}*`
                           : formatTokens(merged.totalTokens)}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {metric === "cost"
-                          ? "* if billed at full API rate"
+                          ? costUnavailable
+                            ? "Token counts are still valid."
+                            : "* if billed at full API rate"
                           : `Input, cache reads and output across ${formatCount(merged.sessions)} sessions.`}
                       </span>
                     </div>
 
                     {orderedProviders.map((provider) => {
-                      const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+                      const share =
+                        metric === "cost" && !costUnavailable
+                          ? provider.costShare
+                          : provider.tokenShare;
                       return (
                         <div key={provider.provider} className="flex flex-col gap-1.5">
                           <div className="flex items-baseline justify-between">
@@ -215,7 +229,7 @@ export function UsagePage() {
                             </span>
                             <span className="text-sm text-foreground tabular-nums">
                               {metric === "cost"
-                                ? formatUsd(provider.costUsd)
+                                ? formatCost(provider.costUsd)
                                 : formatTokens(provider.totalTokens)}
                             </span>
                           </div>
@@ -230,8 +244,12 @@ export function UsagePage() {
                           </div>
                           <span className="text-xs text-muted-foreground">
                             {metric === "cost"
-                              ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                              : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                              ? costUnavailable
+                                ? `${formatTokens(provider.totalTokens)} tokens`
+                                : `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
+                              : costUnavailable
+                                ? `${formatPercent(share)} of tokens`
+                                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
                           </span>
                         </div>
                       );
@@ -265,16 +283,27 @@ export function UsagePage() {
                         <UsageChartLegend />
                       </div>
                     </div>
-                    <UsageProviderChart
-                      days={days}
-                      daily={merged.daily}
-                      hours={hours}
-                      hourly={merged.hourly}
-                      metric={metric}
-                      referenceTime={window.untilTime}
-                      resolution={isPast24Hours ? "hour" : "day"}
-                      timeZone={window.timeZone}
-                    />
+                    {metric === "cost" && costUnavailable ? (
+                      <div className="flex flex-col gap-1">
+                        <div className="flex h-56 items-center justify-center text-sm text-muted-foreground">
+                          Cost unavailable
+                        </div>
+                        <div className="flex justify-between pl-16 text-[10px] text-muted-foreground uppercase">
+                          <span>&nbsp;</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <UsageProviderChart
+                        days={days}
+                        daily={merged.daily}
+                        hours={hours}
+                        hourly={merged.hourly}
+                        metric={metric}
+                        referenceTime={window.untilTime}
+                        resolution={isPast24Hours ? "hour" : "day"}
+                        timeZone={window.timeZone}
+                      />
+                    )}
                   </div>
                 </section>
 
@@ -301,11 +330,13 @@ export function UsagePage() {
                   />
                   <Metric
                     label="Cache savings"
-                    value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+                    value={formatCost(merged.costQuality.cacheSavingsUsd)}
                     detail={
-                      merged.costUsd > 0
-                        ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw token cost`
-                        : "vs full input rates"
+                      costUnavailable
+                        ? "requires the rate table"
+                        : merged.costUsd > 0
+                          ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw token cost`
+                          : "vs full input rates"
                     }
                   />
                 </section>
@@ -367,10 +398,10 @@ export function UsagePage() {
                                 </span>
                               </td>
                               <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(model.costUsd)}
+                                {costUnavailable ? "—" : formatUsd(model.costUsd)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatPercent(model.costShare)}
+                                {costUnavailable ? "—" : formatPercent(model.costShare)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(model.totalTokens)}
@@ -417,11 +448,13 @@ export function UsagePage() {
                                   key={provider}
                                   className="py-2 text-right text-muted-foreground tabular-nums"
                                 >
-                                  {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
+                                  {costUnavailable
+                                    ? "—"
+                                    : formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
                                 </td>
                               ))}
                               <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(period.costUsd)}
+                                {costUnavailable ? "—" : formatUsd(period.costUsd)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(period.totalTokens)}
@@ -473,30 +506,44 @@ function Metric({
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are incomplete: an environment that failed,
+ * one whose transcripts another environment already reported, or a missing
+ * rate table. Environments that are still answering never reach this notice;
+ * the page shows the loading skeleton until every one is terminal.
  */
 function UsageCoverageNotice({
   environments,
   duplicateSources,
   staleEnvironments,
+  pricingStatus,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
+  readonly pricingStatus: UsagePricingStatus;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  const costUnavailable = pricingStatus === "unavailable";
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    !costUnavailable
+  ) {
     return null;
   }
 
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
+      {costUnavailable ? (
+        <span>
+          The model rate table could not be loaded, so costs are omitted. Token counts are still
+          valid.
+        </span>
+      ) : null}
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>
       ))}

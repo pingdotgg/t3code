@@ -8,6 +8,7 @@ import {
   formatHourShort,
   formatPercent,
   formatTokens,
+  formatUsageCost,
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
@@ -198,6 +199,7 @@ function ChartCard(props: {
   const { merged, metric } = props;
   const colors = useProviderColors();
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
+  const costUnavailable = merged.pricingStatus === "unavailable";
 
   return (
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
@@ -207,18 +209,28 @@ function ChartCard(props: {
             {metric === "cost" ? "Raw token cost" : "Processed tokens"}
           </Text>
           <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
-            {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
+            {metric === "cost"
+              ? costUnavailable
+                ? formatUsageCost(merged.pricingStatus, merged.costUsd)
+                : `${formatUsd(merged.costUsd)}*`
+              : formatTokens(merged.totalTokens)}
           </Text>
           <Text className="text-sm text-foreground-muted">
             {metric === "cost"
-              ? "* if billed at full API rate"
+              ? costUnavailable
+                ? "Token counts are still valid."
+                : "* if billed at full API rate"
               : `Across ${formatCount(merged.sessions)} sessions`}
           </Text>
         </View>
         <MetricToggle metric={metric} onChange={props.onMetricChange} />
       </View>
 
-      {hasActivity ? (
+      {metric === "cost" && costUnavailable ? (
+        <View style={{ height: CHART_HEIGHT }} className="items-center justify-center">
+          <Text className="text-base text-foreground-muted">Cost unavailable</Text>
+        </View>
+      ) : hasActivity ? (
         <UsageDailyChart
           days={props.days}
           daily={props.daily}
@@ -299,17 +311,19 @@ function ProviderSection(props: {
   const { merged, metric } = props;
   const colors = useProviderColors();
   if (merged.providers.length === 0) return null;
+  const costUnavailable = merged.pricingStatus === "unavailable";
 
   // Ranked by whatever the toggle is showing, so the rows always descend.
   // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
   const ordered = [...merged.providers].sort((a, b) =>
-    metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
+    metric === "cost" && !costUnavailable ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
   );
 
   return (
     <SettingsSection title="Providers" card>
       {ordered.map((provider, index) => {
-        const share = metric === "cost" ? provider.costShare : provider.tokenShare;
+        const share =
+          metric === "cost" && !costUnavailable ? provider.costShare : provider.tokenShare;
         return (
           <View
             key={provider.provider}
@@ -325,7 +339,7 @@ function ProviderSection(props: {
               </View>
               <Text className="text-lg tabular-nums text-foreground">
                 {metric === "cost"
-                  ? formatUsd(provider.costUsd)
+                  ? formatUsageCost(merged.pricingStatus, provider.costUsd)
                   : formatTokens(provider.totalTokens)}
               </Text>
             </View>
@@ -338,8 +352,12 @@ function ProviderSection(props: {
             </View>
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                ? costUnavailable
+                  ? `${formatTokens(provider.totalTokens)} tokens`
+                  : `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
+                : costUnavailable
+                  ? `${formatPercent(share)} of tokens`
+                  : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
             </Text>
           </View>
         );
@@ -367,11 +385,13 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
         />
         <MetricCell
           label="Cache savings"
-          value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+          value={formatUsageCost(merged.pricingStatus, merged.costQuality.cacheSavingsUsd)}
           detail={
-            merged.costUsd > 0
-              ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw cost`
-              : "vs full input rates"
+            merged.pricingStatus === "unavailable"
+              ? "requires the rate table"
+              : merged.costUsd > 0
+                ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw cost`
+                : "vs full input rates"
           }
         />
         <MetricCell
@@ -438,10 +458,14 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
               {model.model}
             </Text>
             <Text className="text-sm text-foreground-muted">
-              {formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens
+              {merged.pricingStatus === "unavailable"
+                ? formatTokens(model.totalTokens)
+                : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
             </Text>
           </View>
-          <Text className="text-base tabular-nums text-foreground">{formatUsd(model.costUsd)}</Text>
+          <Text className="text-base tabular-nums text-foreground">
+            {formatUsageCost(merged.pricingStatus, model.costUsd)}
+          </Text>
         </View>
       ))}
     </SettingsSection>
@@ -463,17 +487,25 @@ function UsageCoverageNotice(props: {
     props.merged.staleEnvironments.includes(environment.environmentId),
   );
   const duplicateSources = props.merged.duplicateSources;
+  const costUnavailable = props.merged.pricingStatus === "unavailable";
   if (
     failed.length === 0 &&
     stale.length === 0 &&
     duplicateSources.length === 0 &&
-    !props.isPartial
+    !props.isPartial &&
+    !costUnavailable
   ) {
     return null;
   }
 
   return (
     <View className="gap-1 rounded-[16px] border-continuous bg-card px-4 py-3">
+      {costUnavailable ? (
+        <Text className="text-sm text-foreground-muted">
+          The model rate table could not be loaded, so costs are omitted. Token counts are still
+          valid.
+        </Text>
+      ) : null}
       {props.isPartial ? (
         <Text className="text-sm text-foreground-muted">
           Some environments are still reporting. Totals are partial.
