@@ -61,19 +61,27 @@ export function activateCloudRelayAccount(
   });
 }
 
-function CloudAuthBridge(props: { readonly children: ReactNode }) {
+type CloudRelayAccountProvider = {
+  readonly userId: string;
+  readonly provider: () => Promise<string | null>;
+};
+
+function CloudAuthBridge(props: {
+  readonly children: ReactNode;
+  readonly previousTokenProviderRef: { current: CloudRelayAccountProvider | null };
+  readonly observedAccountRef: { current: string | null | undefined };
+  readonly accountTransitionRef: { current: Promise<void> | null };
+  readonly cleanupEpochRef: { current: number };
+}) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const removeRelayEnvironments = useAtomCommand(environmentCatalog.removeRelayEnvironments, {
     reportFailure: false,
     reportDefect: false,
   });
-  const previousTokenProviderRef = useRef<{
-    readonly userId: string;
-    readonly provider: () => Promise<string | null>;
-  } | null>(null);
-  const observedAccountRef = useRef<string | null | undefined>(undefined);
-  const accountTransitionRef = useRef<Promise<void> | null>(null);
-  const cleanupEpochRef = useRef(0);
+  const previousTokenProviderRef = props.previousTokenProviderRef;
+  const observedAccountRef = props.observedAccountRef;
+  const accountTransitionRef = props.accountTransitionRef;
+  const cleanupEpochRef = props.cleanupEpochRef;
 
   useEffect(() => {
     let cancelled = false;
@@ -184,12 +192,9 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
 
   useEffect(
     () => () => {
-      cleanupEpochRef.current += 1;
-      previousTokenProviderRef.current = null;
-      // Unmounting is not a sign-out: the user is usually still signed in, so
-      // detach the awareness token provider without ending the live T3 Connect
-      // session. A hung Clerk remount reuses that session; sign-out still goes
-      // through deactivateCloudRelayAccount.
+      // Unmounting is not a sign-out. Keep the account-transition refs on the
+      // parent so a Clerk remount does not discard in-flight cleanup or look like
+      // a cold start. Sign-out still goes through deactivateCloudRelayAccount.
       releaseAgentAwarenessRelayTokenProvider();
     },
     [],
@@ -252,12 +257,23 @@ export function CloudAuthProvider(props: { readonly children: ReactNode }) {
   const [recovery, setRecovery] = useState(initialClerkLoadRecoveryState);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const isLoadedRef = useRef(false);
+  const previousTokenProviderRef = useRef<CloudRelayAccountProvider | null>(null);
+  const observedAccountRef = useRef<string | null | undefined>(undefined);
+  const accountTransitionRef = useRef<Promise<void> | null>(null);
+  const cleanupEpochRef = useRef(0);
 
   useEffect(() => {
     if (!publishableKey || !relayUrl) {
       deactivateCloudRelayAccount();
     }
   }, [publishableKey, relayUrl]);
+
+  useEffect(
+    () => () => {
+      cleanupEpochRef.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -315,7 +331,14 @@ export function CloudAuthProvider(props: { readonly children: ReactNode }) {
           onLoadedChange={markLoadedChange}
           resumeEpoch={resumeEpoch}
         />
-        <CloudAuthBridge>{props.children}</CloudAuthBridge>
+        <CloudAuthBridge
+          previousTokenProviderRef={previousTokenProviderRef}
+          observedAccountRef={observedAccountRef}
+          accountTransitionRef={accountTransitionRef}
+          cleanupEpochRef={cleanupEpochRef}
+        >
+          {props.children}
+        </CloudAuthBridge>
       </ClerkProvider>
     </CloudAuthLoadContext.Provider>
   );
