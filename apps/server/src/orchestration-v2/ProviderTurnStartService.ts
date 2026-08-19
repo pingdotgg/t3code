@@ -726,9 +726,15 @@ export const layer: Layer.Layer<
         while (childThreadQueue.length > 0) {
           const childThreadId = childThreadQueue.shift();
           if (childThreadId === undefined) break;
-          const childResult = yield* Effect.result(
+          let childResult = yield* Effect.result(
             projectionStore.getThreadProjection(childThreadId),
           );
+          if (
+            childResult._tag === "Failure" &&
+            childResult.failure._tag !== "ProjectionStoreThreadNotFoundError"
+          ) {
+            childResult = yield* Effect.result(projectionStore.getThreadProjection(childThreadId));
+          }
           if (childResult._tag === "Failure") {
             // A child with no projection row has nothing to settle (soft-deleted
             // threads still project, so they sweep normally). Any other read

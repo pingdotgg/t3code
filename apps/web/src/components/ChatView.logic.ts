@@ -158,7 +158,7 @@ export function threadRuntimeErrorDismissalKey(input: {
   readonly runtimeError: string | null;
   readonly runtimeErrorAt: string | null;
 }): string | null {
-  if (input.localError !== null || input.runtimeError === null || input.runtimeErrorAt === null) {
+  if (input.runtimeError === null || input.runtimeErrorAt === null) {
     return null;
   }
   return JSON.stringify([input.runtimeErrorAt, input.runtimeError]);

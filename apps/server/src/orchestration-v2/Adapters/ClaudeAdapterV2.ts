@@ -2159,6 +2159,7 @@ export function makeClaudeAdapterV2(
         const turnFrameCounts = yield* Ref.make(
           new Map<OrchestrationV2ProviderTurn["id"], number>(),
         );
+        const finalizingTurnIds = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
@@ -3412,6 +3413,11 @@ export function makeClaudeAdapterV2(
           if (!claimed) {
             return;
           }
+          yield* Ref.update(finalizingTurnIds, (current) => {
+            const next = new Set(current);
+            next.add(input.context.providerTurnId);
+            return next;
+          });
 
           for (const toolCall of input.context.toolCalls.values()) {
             const artifacts = buildToolCallArtifacts({
@@ -3614,6 +3620,11 @@ export function makeClaudeAdapterV2(
           });
           yield* Ref.update(turnFrameCounts, (current) => {
             const next = new Map(current);
+            next.delete(input.context.providerTurnId);
+            return next;
+          });
+          yield* Ref.update(finalizingTurnIds, (current) => {
+            const next = new Set(current);
             next.delete(input.context.providerTurnId);
             return next;
           });
@@ -4094,11 +4105,13 @@ export function makeClaudeAdapterV2(
             return;
           }
 
-          yield* Ref.update(turnFrameCounts, (current) => {
-            const updated = new Map(current);
-            updated.set(context.providerTurnId, (updated.get(context.providerTurnId) ?? 0) + 1);
-            return updated;
-          });
+          if (message.type === "assistant" || message.type === "result") {
+            yield* Ref.update(turnFrameCounts, (current) => {
+              const updated = new Map(current);
+              updated.set(context.providerTurnId, (updated.get(context.providerTurnId) ?? 0) + 1);
+              return updated;
+            });
+          }
 
           if (message.type === "assistant") {
             context.nativeMessageCursor = message.uuid;
@@ -4682,6 +4695,13 @@ export function makeClaudeAdapterV2(
               return yield* new ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${currentTurn.providerTurnId} is still active.`,
+              });
+            }
+            const finalizing = yield* Ref.get(finalizingTurnIds);
+            if (finalizing.size > 0) {
+              return yield* new ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude provider turn is still finalizing.",
               });
             }
             yield* Ref.update(lastTurnRouteByNativeThread, (current) => {

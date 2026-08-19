@@ -180,14 +180,14 @@ describe("threadRuntimeErrorDismissalKey", () => {
     ).toBe('["2026-08-11T12:00:00Z","event stream stalled"]');
   });
 
-  it("does not dismiss a runtime failure hidden beneath a local error", () => {
+  it("still identifies the runtime occurrence when a local error is also showing", () => {
     expect(
       threadRuntimeErrorDismissalKey({
         localError: "send failed",
         runtimeError: "event stream stalled",
         runtimeErrorAt: "2026-08-11T12:00:00Z",
       }),
-    ).toBeNull();
+    ).toBe('["2026-08-11T12:00:00Z","event stream stalled"]');
   });
 
   it("does not invent an occurrence when the runtime has no error timestamp", () => {
