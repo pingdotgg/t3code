@@ -2,14 +2,15 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-Remote server updates use one stable systemd launcher. Foreground CLI processes do not self-update,
-and a running server never edits its systemd unit or durable service state.
+Remote server updates use one stable launcher selected by the platform service manager (systemd on
+Linux, launchd on macOS). Foreground CLI processes do not self-update, and a running server never
+edits its service definition or durable service state.
 
 ## Ownership
 
 The service files under `<baseDir>/runtime` are:
 
-- `service-launcher.mjs`, the stable process selected by systemd;
+- `service-launcher.mjs`, the stable process selected by the service manager;
 - `service-state.json`, the launcher's durable selection state;
 - `versions/<version>`, immutable exact-version npm installs.
 
@@ -22,7 +23,7 @@ The state contains one active version and, at most, one update record:
 - `pending A → B` selects B as a retryable trial;
 - `committed A → B` selects B for ordinary restarts;
 - `rolled-back A → B` or `failed A → B` selects A;
-- invalid state fails closed so systemd cannot guess at a runtime.
+- invalid state fails closed so the service manager cannot guess at a runtime.
 
 Every write uses same-directory replacement plus file and directory fsync.
 
@@ -50,8 +51,8 @@ operations. It only opens prepared gates and publishes prepared lifecycle state.
 The launcher serializes child exits, IPC messages, and timers. A trial must report prepared within
 120 seconds. If the trial exits or times out before prepared, the launcher stops it, restores the
 snapshot, records rollback, and starts A. A durable restore marker makes an interrupted restore
-resume before either version can boot. After commit, B is active and normal systemd restart policy
-applies.
+resume before either version can boot. After commit, B is active and the service manager's normal
+restart policy applies.
 
 ## Database Rollback
 

@@ -317,7 +317,9 @@ export class Launcher {
     // This must happen synchronously at signal receipt. A queued update
     // transition may already be terminating the active child, and that child
     // needs to see the marker in its shutdown finalizer. KillMode=mixed also
-    // ensures systemd signals the launcher before the rest of the cgroup.
+    // ensures systemd signals the launcher before the rest of the cgroup, and
+    // launchd signals only the job's main process (this launcher), so the
+    // marker lands before the child sees any signal on both platforms.
     try {
       NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
     } catch {
