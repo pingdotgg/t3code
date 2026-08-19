@@ -5328,9 +5328,6 @@ export function makeClaudeAdapterV2(
             output,
           } of claudeToolResultEntriesFromMessage(message)) {
             const resultTaskId = claudeSubagentTaskIdFromToolOutput(output);
-            if (resultTaskId !== undefined && failedWakeTaskIds?.has(resultTaskId) === true) {
-              continue;
-            }
             const existingToolCall = context.toolCalls.get(toolResult.tool_use_id);
             let resolvedSubagent = yield* resolveSessionSubagent({
               nativeThreadId: context.nativeThreadId,
@@ -5342,6 +5339,13 @@ export function makeClaudeAdapterV2(
               nativeThreadId: context.nativeThreadId,
               toolUseId: toolResult.tool_use_id,
             });
+            if (
+              resultTaskId !== undefined &&
+              failedWakeTaskIds?.has(resultTaskId) === true &&
+              (isKnownAgentLaunch || existingToolCall?.subagentTaskId != null)
+            ) {
+              continue;
+            }
             if (resolvedSubagent === undefined && outputTaskId !== undefined) {
               const resolvedByTaskId = yield* resolveSessionSubagent({
                 nativeThreadId: context.nativeThreadId,
