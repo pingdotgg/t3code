@@ -27,6 +27,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -112,6 +113,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const managerScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
   const includePathsFor = readMirrorIncludePaths({ fileSystem, path });
   // Extra include patterns the host sent on its most recent "connected"
   // event for a project, keyed by projectId. Populated per-connection and

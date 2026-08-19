@@ -43,25 +43,50 @@ export class GitSyncCommandError extends Schema.TaggedErrorClass<GitSyncCommandE
   "GitSyncCommandError",
   {
     root: Schema.String,
-    args: Schema.Array(Schema.String),
+    // Bounded, safe-to-log structural context. Full argv (which can embed a
+    // remote URL with credentials, e.g. setRemote/setRemotes) and raw stderr
+    // (unbounded process output) live only inside `cause`, never as their
+    // own serializable fields.
+    subcommand: Schema.String,
     exitCode: Schema.NullOr(Schema.Number),
-    stderr: Schema.String,
+    stderrLength: Schema.Number,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     // `message` reaches MirrorSyncFailedError.detail and from there the RPC
-    // boundary, status, and logs — so it must stay bounded. `args` and
-    // `stderr` are kept as structured fields (e.g. for local debugging) but
-    // never embedded here: args can carry a remote URL with embedded
-    // credentials (setRemote/setRemotes), and stderr is unbounded raw
-    // process output.
-    const subcommand = this.args[0] ?? "git";
-    return `git ${subcommand} failed in '${this.root}'${
+    // boundary, status, and logs — so it must stay bounded.
+    return `git ${this.subcommand} failed in '${this.root}'${
       this.exitCode === null ? "" : ` with exit code ${this.exitCode}`
-    }${this.stderr.trim().length > 0 ? ` (${this.stderr.trim().length} bytes of stderr)` : ""}`;
+    }${this.stderrLength > 0 ? ` (${this.stderrLength} bytes of stderr)` : ""}`;
   }
 }
+
+/** Full argv/stderr for debugging, kept out of the error's serializable fields. */
+interface GitSyncCommandDebugCause {
+  readonly args: ReadonlyArray<string>;
+  readonly stderr: string;
+  readonly processError?: ProcessRunError;
+}
+
+const makeGitSyncCommandError = (input: {
+  readonly root: string;
+  readonly args: ReadonlyArray<string>;
+  readonly exitCode: number | null;
+  readonly stderr: string;
+  readonly processError?: ProcessRunError;
+}): GitSyncCommandError =>
+  new GitSyncCommandError({
+    root: input.root,
+    subcommand: input.args[0] ?? "git",
+    exitCode: input.exitCode,
+    stderrLength: input.stderr.length,
+    cause: {
+      args: input.args,
+      stderr: input.stderr,
+      ...(input.processError === undefined ? {} : { processError: input.processError }),
+    } satisfies GitSyncCommandDebugCause,
+  });
 
 export interface GitSnapshotResult {
   readonly snapshotOid: string;
@@ -243,21 +268,20 @@ export const make = Effect.gen(function* () {
         ...(input.env === undefined ? {} : { env: input.env }),
       })
       .pipe(
-        Effect.mapError(
-          (cause: ProcessRunError) =>
-            new GitSyncCommandError({
-              root: input.root,
-              args: input.args,
-              exitCode: null,
-              stderr: "",
-              cause,
-            }),
+        Effect.mapError((cause: ProcessRunError) =>
+          makeGitSyncCommandError({
+            root: input.root,
+            args: input.args,
+            exitCode: null,
+            stderr: "",
+            processError: cause,
+          }),
         ),
         Effect.flatMap((result) =>
           result.code === 0 || input.allowNonZeroExit === true
             ? Effect.succeed(result)
             : Effect.fail(
-                new GitSyncCommandError({
+                makeGitSyncCommandError({
                   root: input.root,
                   args: input.args,
                   exitCode: typeof result.code === "number" ? result.code : null,
@@ -338,7 +362,7 @@ export const make = Effect.gen(function* () {
           const writeTree = yield* run({ root: input.root, args: ["write-tree"], env });
           const treeOid = writeTree.stdout.trim();
           if (treeOid.length === 0) {
-            return yield* new GitSyncCommandError({
+            return yield* makeGitSyncCommandError({
               root: input.root,
               args: ["write-tree"],
               exitCode: 0,
@@ -352,7 +376,7 @@ export const make = Effect.gen(function* () {
           });
           const snapshotOid = commitTree.stdout.trim();
           if (snapshotOid.length === 0) {
-            return yield* new GitSyncCommandError({
+            return yield* makeGitSyncCommandError({
               root: input.root,
               args: ["commit-tree"],
               exitCode: 0,
@@ -413,7 +437,7 @@ export const make = Effect.gen(function* () {
       const baseTree = yield* treeOfCommit(input.root, input.baseOid);
       const targetTree = yield* treeOfCommit(input.root, input.targetOid);
       if (targetTree === null) {
-        return yield* new GitSyncCommandError({
+        return yield* makeGitSyncCommandError({
           root: input.root,
           args: ["rev-parse", `${input.targetOid}^{tree}`],
           exitCode: null,
@@ -453,7 +477,7 @@ export const make = Effect.gen(function* () {
       // Exit 0: clean merge. Exit 1: conflicts, first line is still the
       // written tree. Anything else is a real failure.
       if (merge.code !== 0 && merge.code !== 1) {
-        return yield* new GitSyncCommandError({
+        return yield* makeGitSyncCommandError({
           root: input.root,
           args: ["merge-tree", "--write-tree"],
           exitCode: typeof merge.code === "number" ? merge.code : null,
@@ -463,7 +487,7 @@ export const make = Effect.gen(function* () {
       const lines = merge.stdout.split("\0").filter((line) => line.length > 0);
       const mergedTree = lines[0]?.trim() ?? "";
       if (mergedTree.length === 0) {
-        return yield* new GitSyncCommandError({
+        return yield* makeGitSyncCommandError({
           root: input.root,
           args: ["merge-tree", "--write-tree"],
           exitCode: typeof merge.code === "number" ? merge.code : null,
@@ -518,19 +542,18 @@ export const make = Effect.gen(function* () {
                   timeout: GIT_TIMEOUT,
                 })
                 .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new GitSyncCommandError({
-                        root: input.root,
-                        args: ["update-index", "--index-info"],
-                        exitCode: null,
-                        stderr: "",
-                        cause,
-                      }),
+                  Effect.mapError((cause) =>
+                    makeGitSyncCommandError({
+                      root: input.root,
+                      args: ["update-index", "--index-info"],
+                      exitCode: null,
+                      stderr: "",
+                      processError: cause,
+                    }),
                   ),
                 );
               if (updateIndex.code !== 0) {
-                return yield* new GitSyncCommandError({
+                return yield* makeGitSyncCommandError({
                   root: input.root,
                   args: ["update-index", "--index-info"],
                   exitCode: typeof updateIndex.code === "number" ? updateIndex.code : null,

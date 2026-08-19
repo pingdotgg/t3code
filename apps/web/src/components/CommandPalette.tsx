@@ -1974,7 +1974,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const rootPath = resolveProjectPathForDispatch(rawPath, null);
+      const rootPath = resolveProjectPathForDispatch(rawPath, currentProjectCwdForBrowse);
       if (rootPath.length === 0) return;
 
       const hostUrl = readPreparedConnection(flow.hostEnvironmentId)?.httpBaseUrl ?? null;
@@ -2029,18 +2029,28 @@ function OpenCommandPaletteDialog(props: {
         // below must roll it back, or a broken/non-git origin folder (and
         // every retry, since each mints a fresh projectId) leaves an
         // orphaned mirrored project persisted on the host forever.
-        const rollbackHostProject = () =>
-          void deleteProject({
+        const rollbackHostProject = async () => {
+          const deleteResult = await deleteProject({
             environmentId: flow.hostEnvironmentId,
             input: { projectId },
           });
+          if (deleteResult._tag === "Failure" && !isAtomCommandInterrupted(deleteResult)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to clean up host project",
+                description: errorMessage(squashAtomCommandFailure(deleteResult)),
+              }),
+            );
+          }
+        };
 
         const credentialResult = await createMirrorPeerCredential({
           environmentId: flow.hostEnvironmentId,
           input: { projectId, originEnvironmentId: flow.originEnvironmentId },
         });
         if (credentialResult._tag === "Failure") {
-          rollbackHostProject();
+          await rollbackHostProject();
           if (!isAtomCommandInterrupted(credentialResult)) {
             toastManager.add(
               stackedThreadToast({
@@ -2063,7 +2073,7 @@ function OpenCommandPaletteDialog(props: {
           },
         });
         if (attachResult._tag === "Failure") {
-          rollbackHostProject();
+          await rollbackHostProject();
           if (!isAtomCommandInterrupted(attachResult)) {
             const error = squashAtomCommandFailure(attachResult);
             toastManager.add(
@@ -2102,6 +2112,7 @@ function OpenCommandPaletteDialog(props: {
       attachMirrorOrigin,
       createMirrorPeerCredential,
       createProject,
+      currentProjectCwdForBrowse,
       deleteProject,
       environments,
       handleNewThread,

@@ -1085,25 +1085,11 @@ const makeWsRpcLayer = (
                 : false;
               // A mirrored project's origin must learn its link is gone when
               // the host project is deleted, or it keeps the link (and its
-              // token) forever. Read mirrored-ness before the delete lands —
-              // the soft-deleted row no longer resolves as mirrored after.
-              const revokeMirrorAfterCommand =
-                normalizedCommand.type === "project.delete"
-                  ? yield* mirrorService
-                      .isMirroredProject(normalizedCommand.projectId)
-                      .pipe(Effect.orElseSucceed(() => false))
-                  : false;
+              // token) forever. Handled by MirrorProjectDeletionReactor off
+              // the project.deleted domain event so it covers every dispatch
+              // transport (WebSocket, HTTP, and the offline CLI), not just
+              // this one.
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
-              if (revokeMirrorAfterCommand && normalizedCommand.type === "project.delete") {
-                yield* mirrorService.revokeLink(normalizedCommand.projectId).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("failed to revoke mirror link after project delete", {
-                      projectId: normalizedCommand.projectId,
-                      cause,
-                    }),
-                  ),
-                );
-              }
               if (parkingCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
                 if (shouldStopSessionAfterCommand) {
@@ -2181,13 +2167,10 @@ const makeWsRpcLayer = (
               // origin) must not leave the previous origin's token live:
               // mirrorConnect authorizes solely by matching this subject, so
               // an un-revoked prior token could still reconnect and displace
-              // the new origin's live connection.
+              // the new origin's live connection. The new session must be
+              // issued before the old ones are revoked: if issuing fails,
+              // the old (still-valid) sessions are the only way back in.
               const existingSessions = yield* serverAuth.listSessions().pipe(Effect.orDie);
-              yield* Effect.forEach(
-                existingSessions.filter((session) => session.subject === peerSubject),
-                (session) => serverAuth.revokeSession(session.sessionId).pipe(Effect.orDie),
-                { discard: true },
-              );
               const issued = yield* serverAuth
                 .issueSession({
                   subject: peerSubject,
@@ -2196,6 +2179,11 @@ const makeWsRpcLayer = (
                   ttl: Duration.days(365),
                 })
                 .pipe(Effect.orDie);
+              yield* Effect.forEach(
+                existingSessions.filter((session) => session.subject === peerSubject),
+                (session) => serverAuth.revokeSession(session.sessionId).pipe(Effect.orDie),
+                { discard: true },
+              );
               return { token: issued.token };
             }),
             { "rpc.aggregate": "mirror" },

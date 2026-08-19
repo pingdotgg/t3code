@@ -176,7 +176,7 @@ export function MirrorStatusChip({
                   data-testid="mirror-transfer-progress"
                 >
                   <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-500"
+                    className="h-full rounded-full bg-primary transition-[width] duration-500 motion-reduce:transition-none"
                     style={{
                       width: `${Math.min(100, Math.round((status.transfer.bytes / status.transfer.totalBytes) * 100))}%`,
                     }}

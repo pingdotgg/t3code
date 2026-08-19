@@ -243,7 +243,7 @@ export const ChatHeader = memo(function ChatHeader({
             doesn't answer it. */}
         {activeProjectName ? (
           <>
-            <WorkspaceBreadcrumbItem>
+            <WorkspaceBreadcrumbItem className="gap-1.5">
               <Tooltip>
                 <TooltipTrigger
                   render={
