@@ -2,7 +2,22 @@ import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/con
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { RightPanelTabs, tabMuteMenuItem } from "./RightPanelTabs";
+import { RightPanelTabs, surfaceShortcutActionForKey, tabMuteMenuItem } from "./RightPanelTabs";
+
+function shortcutEvent(
+  key: string,
+  overrides: Partial<Parameters<typeof surfaceShortcutActionForKey>[1]> = {},
+): Parameters<typeof surfaceShortcutActionForKey>[1] {
+  return {
+    key,
+    altKey: false,
+    ctrlKey: false,
+    defaultPrevented: false,
+    isComposing: false,
+    metaKey: false,
+    ...overrides,
+  };
+}
 
 const previewSurface = {
   id: "browser:tab-1" as const,
@@ -122,6 +137,32 @@ describe("RightPanelTabs preview favicon", () => {
   it("hides a capture while the server session still describes another origin", () => {
     const html = renderTabs(favicon("data:image/png;base64,AAAA", "https://example.com/"));
     expect(html).not.toContain("data:image/png;base64,AAAA");
+  });
+});
+
+describe("surface shortcuts", () => {
+  const actions = [
+    { shortcut: "B", available: true, label: "Browser" },
+    { shortcut: "D", available: false, label: "Diff" },
+  ] as const;
+
+  it("matches available surface shortcuts case-insensitively", () => {
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b"))).toBe(actions[0]);
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
+  });
+
+  it("does not activate unavailable surfaces", () => {
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
+  });
+
+  it("leaves modified, composing, and already-handled key events alone", () => {
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b", { metaKey: true }))).toBeNull();
+    expect(
+      surfaceShortcutActionForKey(actions, shortcutEvent("b", { isComposing: true })),
+    ).toBeNull();
+    expect(
+      surfaceShortcutActionForKey(actions, shortcutEvent("b", { defaultPrevented: true })),
+    ).toBeNull();
   });
 });
 
