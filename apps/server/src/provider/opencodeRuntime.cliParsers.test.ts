@@ -2,7 +2,11 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { parseModelsCliOutput, parseAgentListCliOutput } from "./opencodeRuntime.ts";
+import {
+  parseModelsCliOutput,
+  parseAgentListCliOutput,
+  pickAgentsFromCliParses,
+} from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -160,10 +164,11 @@ describe("parseAgentListCliOutput", () => {
     ].join("\n");
 
     const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 1);
-    NodeAssert.equal(result[0]!.name, "build");
-    NodeAssert.equal(result[0]!.mode, "primary");
-    NodeAssert.equal(result[0]!.permission.length, 1);
+    NodeAssert.equal(result.truncated, false);
+    NodeAssert.equal(result.agents.length, 1);
+    NodeAssert.equal(result.agents[0]!.name, "build");
+    NodeAssert.equal(result.agents[0]!.mode, "primary");
+    NodeAssert.equal(result.agents[0]!.permission.length, 1);
   });
 
   it("parses multiple agents", () => {
@@ -177,21 +182,23 @@ describe("parseAgentListCliOutput", () => {
     ].join("\n");
 
     const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 3);
-    NodeAssert.equal(result[0]!.name, "build");
-    NodeAssert.equal(result[0]!.mode, "primary");
-    NodeAssert.equal(result[1]!.name, "explore");
-    NodeAssert.equal(result[1]!.mode, "subagent");
-    NodeAssert.equal(result[2]!.name, "plan");
-    NodeAssert.equal(result[2]!.mode, "primary");
+    NodeAssert.equal(result.truncated, false);
+    NodeAssert.equal(result.agents.length, 3);
+    NodeAssert.equal(result.agents[0]!.name, "build");
+    NodeAssert.equal(result.agents[0]!.mode, "primary");
+    NodeAssert.equal(result.agents[1]!.name, "explore");
+    NodeAssert.equal(result.agents[1]!.mode, "subagent");
+    NodeAssert.equal(result.agents[2]!.name, "plan");
+    NodeAssert.equal(result.agents[2]!.mode, "primary");
   });
 
   it("handles empty input", () => {
     const result = parseAgentListCliOutput("");
-    NodeAssert.equal(result.length, 0);
+    NodeAssert.equal(result.truncated, false);
+    NodeAssert.equal(result.agents.length, 0);
   });
 
-  it("skips agents with unparseable permission JSON", () => {
+  it("skips agents with unparseable permission JSON and reports truncation", () => {
     const stdout = [
       "build (primary)",
       "  not valid json {",
@@ -200,8 +207,40 @@ describe("parseAgentListCliOutput", () => {
     ].join("\n");
 
     const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 1);
-    NodeAssert.equal(result[0]!.name, "explore");
+    NodeAssert.equal(result.truncated, true);
+    NodeAssert.equal(result.agents.length, 1);
+    NodeAssert.equal(result.agents[0]!.name, "explore");
+  });
+
+  it("reports truncation when the last JSON block is incomplete", () => {
+    const stdout = [
+      "build (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      "Pro Max (primary)",
+      '  [{"permission":"*",',
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result.truncated, true);
+    NodeAssert.equal(result.agents.length, 1);
+    NodeAssert.equal(result.agents[0]!.name, "build");
+    NodeAssert.equal(
+      result.agents.some((agent) => agent.name === "Pro Max"),
+      false,
+    );
+  });
+
+  it("reports truncation when a trailing agent header has no JSON body", () => {
+    const stdout = [
+      "build (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      "Pro Max (primary)",
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result.truncated, true);
+    NodeAssert.equal(result.agents.length, 1);
+    NodeAssert.equal(result.agents[0]!.name, "build");
   });
 
   it("handles real-world permission blocks with nested paths", () => {
@@ -217,10 +256,11 @@ describe("parseAgentListCliOutput", () => {
     const stdout = ["build (primary)", "  " + JSON.stringify(permissions)].join("\n");
 
     const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 1);
-    NodeAssert.equal(result[0]!.permission.length, 3);
-    NodeAssert.equal(result[0]!.permission[0]!.action, "allow");
-    NodeAssert.equal(result[0]!.permission[2]!.action, "ask");
+    NodeAssert.equal(result.truncated, false);
+    NodeAssert.equal(result.agents.length, 1);
+    NodeAssert.equal(result.agents[0]!.permission.length, 3);
+    NodeAssert.equal(result.agents[0]!.permission[0]!.action, "allow");
+    NodeAssert.equal(result.agents[0]!.permission[2]!.action, "ask");
   });
 
   it("handles agent names with spaces", () => {
@@ -232,11 +272,12 @@ describe("parseAgentListCliOutput", () => {
     ].join("\n");
 
     const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 2);
-    NodeAssert.equal(result[0]!.name, "code reviewer");
-    NodeAssert.equal(result[0]!.mode, "subagent");
-    NodeAssert.equal(result[1]!.name, "my custom agent");
-    NodeAssert.equal(result[1]!.mode, "primary");
+    NodeAssert.equal(result.truncated, false);
+    NodeAssert.equal(result.agents.length, 2);
+    NodeAssert.equal(result.agents[0]!.name, "code reviewer");
+    NodeAssert.equal(result.agents[0]!.mode, "subagent");
+    NodeAssert.equal(result.agents[1]!.name, "my custom agent");
+    NodeAssert.equal(result.agents[1]!.mode, "primary");
   });
 
   it("marks known hidden agents", () => {
@@ -248,7 +289,44 @@ describe("parseAgentListCliOutput", () => {
     ].join("\n");
 
     const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result[0]!.hidden, true);
-    NodeAssert.equal(result[1]!.hidden, false);
+    NodeAssert.equal(result.truncated, false);
+    NodeAssert.equal(result.agents[0]!.hidden, true);
+    NodeAssert.equal(result.agents[1]!.hidden, false);
+  });
+});
+
+describe("pickAgentsFromCliParses", () => {
+  const partial = parseAgentListCliOutput(
+    [
+      "build (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      "Pro Max (primary)",
+      "  {",
+    ].join("\n"),
+  );
+
+  it("keeps a usable first parse when the retry is empty and complete", () => {
+    NodeAssert.equal(partial.truncated, true);
+    NodeAssert.ok(partial.agents.length >= 1);
+    const picked = pickAgentsFromCliParses(partial, { agents: [], truncated: false });
+    NodeAssert.deepEqual(
+      picked.map((agent) => agent.name),
+      partial.agents.map((agent) => agent.name),
+    );
+  });
+
+  it("prefers a non-empty complete retry over a truncated first parse", () => {
+    const retry = parseAgentListCliOutput(
+      [
+        "build (primary)",
+        "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+        "Pro Max (primary)",
+        "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      ].join("\n"),
+    );
+    const picked = pickAgentsFromCliParses(partial, retry);
+    NodeAssert.equal(retry.truncated, false);
+    NodeAssert.equal(picked.length, 2);
+    NodeAssert.equal(picked[1]!.name, "Pro Max");
   });
 });
