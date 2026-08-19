@@ -3138,10 +3138,17 @@ export default function Sidebar() {
         },
       });
       if (command === "thread.rename") {
-        const activeThread = routeThreadKey ? threadByKey.get(routeThreadKey) : null;
-        if (!activeThread) return;
+        const activeThread = routeThreadKey
+          ? threads.find(
+              (thread) =>
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+            )
+          : null;
+        if (!activeThread || activeThread.archivedAt !== null) return;
         event.preventDefault();
         event.stopPropagation();
+        if (isSearchingThreads) clearThreadSearch();
+        if (projectScopeKey !== null) setProjectScopeKey(null);
         startThreadRename(
           scopeThreadRef(activeThread.environmentId, activeThread.id),
           activeThread.title,
@@ -3176,11 +3183,15 @@ export default function Sidebar() {
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
     keybindings,
+    clearThreadSearch,
+    isSearchingThreads,
     navigateToThread,
     orderedThreadKeys,
+    projectScopeKey,
     routeTerminalOpen,
     routeThreadKey,
     startThreadRename,
+    threads,
     threadByKey,
   ]);
 

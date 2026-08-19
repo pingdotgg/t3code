@@ -1077,6 +1077,7 @@ interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
+  routeTerminalOpen: boolean;
   openPullRequestsInRightPanel: boolean;
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
@@ -1098,6 +1099,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     project,
     isThreadListExpanded,
     activeRouteThreadKey,
+    routeTerminalOpen,
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     handleNewThread,
@@ -2011,7 +2013,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         platform: navigator.platform,
         context: {
           terminalFocus: isTerminalFocused(),
-          terminalOpen: false,
+          terminalOpen: routeTerminalOpen,
           modelPickerOpen: isModelPickerOpen(),
         },
       });
@@ -2020,11 +2022,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (!activeThread) return;
       event.preventDefault();
       event.stopPropagation();
+      if (!isThreadListExpanded && hasOverflowingThreads) {
+        expandThreadListForProject(project.projectKey);
+      }
       startThreadRename(activeRouteThreadKey, activeThread.title);
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
-  }, [activeRouteThreadKey, keybindings, sidebarThreadByKey, startThreadRename]);
+  }, [
+    activeRouteThreadKey,
+    expandThreadListForProject,
+    hasOverflowingThreads,
+    isThreadListExpanded,
+    keybindings,
+    project.projectKey,
+    routeTerminalOpen,
+    sidebarThreadByKey,
+    startThreadRename,
+  ]);
 
   const commitRename = useCallback(
     async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {
@@ -2804,6 +2819,7 @@ interface SidebarProjectsContentProps {
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
+  routeTerminalOpen: boolean;
   openPullRequestsInRightPanel: boolean;
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
@@ -2846,6 +2862,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
+    routeTerminalOpen,
     openPullRequestsInRightPanel,
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
@@ -2987,6 +3004,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                         }
+                        routeTerminalOpen={
+                          activeRouteProjectKey === project.projectKey ? routeTerminalOpen : false
+                        }
                         openPullRequestsInRightPanel={openPullRequestsInRightPanel}
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
@@ -3019,6 +3039,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                }
+                routeTerminalOpen={
+                  activeRouteProjectKey === project.projectKey ? routeTerminalOpen : false
                 }
                 openPullRequestsInRightPanel={openPullRequestsInRightPanel}
                 newThreadShortcutLabel={newThreadShortcutLabel}
@@ -3706,6 +3729,7 @@ export default function LegacySidebar() {
         expandedThreadListsByProject={expandedThreadListsByProject}
         activeRouteProjectKey={activeRouteProjectKey}
         routeThreadKey={routeThreadKey}
+        routeTerminalOpen={routeTerminalOpen}
         openPullRequestsInRightPanel={routeThreadRef !== null}
         newThreadShortcutLabel={newThreadShortcutLabel}
         commandPaletteShortcutLabel={commandPaletteShortcutLabel}
