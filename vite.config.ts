@@ -109,12 +109,19 @@ export default defineConfig({
               message:
                 "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
             },
+            {
+              name: "@pierre/diffs/react",
+              importNames: ["CodeView"],
+              message:
+                "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
+            },
           ],
         },
       ],
       "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
+      "t3code/no-native-title-tooltip": "error",
       "t3code/namespace-node-imports": "error",
     },
     options: {

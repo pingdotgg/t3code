@@ -94,7 +94,10 @@ export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type)
   }>;
 } {
   const plan = params.todos.flatMap((todo) => {
-    const step = todo.content?.trim() ?? todo.title?.trim() ?? "";
+    // Fall back to the title when content is missing OR blank. `??` only
+    // covers a missing content, so a present-but-empty content ("" or
+    // whitespace) would shadow a real title and drop the step below.
+    const step = todo.content?.trim() || todo.title?.trim() || "";
     if (step === "") {
       return [];
     }

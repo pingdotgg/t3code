@@ -24,6 +24,9 @@ authenticated.
 - `vp run dev`: Starts contracts, server, and web in watch mode.
 - `vp run dev --share`: Also publishes the web port over HTTPS on this machine's tailnet. The
   startup pairing URL is built against the shared origin, and the mapping is removed on exit.
+  Shared runs default to Vite's bundled dev mode (`T3CODE_BUNDLED_DEV=1`): a remote browser pays a
+  network round trip per import level in unbundled dev, which turns a cold module graph into
+  minutes of waterfall. Set `T3CODE_BUNDLED_DEV=0` to opt a shared run back out.
 - `vp run dev --browser`: Auto-opens a browser. Off by default. The dev runner writes
   `T3CODE_NO_BROWSER` itself from this flag, so setting `T3CODE_NO_BROWSER=0` in your environment has
   no effect; use `--browser`.
@@ -75,6 +78,11 @@ authenticated.
 
 - Default build is unsigned/not notarized for local sharing.
 - The DMG build uses `assets/prod/black-macos-1024.png` as the production app icon source.
+- The DMG chrome follows the release channel: neutral for Latest and the Nightly sky artwork for
+  Nightly. Blueprint artwork remains exclusive to Dev builds. Packaging rasterizes the selected
+  SVG into standard and Retina PNGs inside the disposable staging directory.
+- The Finder window is 540×412 while its background is 540×380; the extra 32px accounts for the
+  title bar included in Finder's window bounds.
 - Desktop production windows load the bundled UI from the `t3code://app/` root URL (not a
   `127.0.0.1` document URL, and not an explicit `index.html` path).
 - Desktop packaging includes `apps/server/dist` (the `t3` backend) and starts it on loopback with an

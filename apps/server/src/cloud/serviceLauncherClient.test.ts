@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LAUNCHER_PROTOCOL,
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
@@ -53,10 +54,11 @@ it.effect("waits for the launcher to durably commit the trial update ID", () =>
       id: "update-1",
       fromVersion: "1.0.0",
       targetVersion: "1.1.0",
+      dbPath: "/tmp/state.sqlite",
       status: "pending" as const,
     };
     const host = new FakeLauncherProcess({
-      protocol: 1,
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: "1.1.0",
       update: pending,
     });
@@ -79,13 +81,14 @@ it.effect("waits for the launcher to durably commit the trial update ID", () =>
 it.effect("returns the launcher-generated ID only after update acceptance", () =>
   Effect.gen(function* () {
     const host = new FakeLauncherProcess({
-      protocol: 1,
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: "1.0.0",
     });
     const client = yield* makeClient(host, "1.0.0");
-    const requested = yield* Effect.forkChild(client.requestUpdate({ targetVersion: "1.1.0" }), {
-      startImmediately: true,
-    });
+    const requested = yield* Effect.forkChild(
+      client.requestUpdate({ targetVersion: "1.1.0", dbPath: "/tmp/state.sqlite" }),
+      { startImmediately: true },
+    );
     yield* Effect.yieldNow;
     host.emit({
       type: "update-accepted",
@@ -97,11 +100,15 @@ it.effect("returns the launcher-generated ID only after update acceptance", () =
 
 it.effect("preserves a launcher rejection as a distinct error", () =>
   Effect.gen(function* () {
-    const host = new FakeLauncherProcess({ protocol: 1, childVersion: "1.0.0" });
-    const client = yield* makeClient(host, "1.0.0");
-    const requested = yield* Effect.forkChild(client.requestUpdate({ targetVersion: "1.1.0" }), {
-      startImmediately: true,
+    const host = new FakeLauncherProcess({
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: "1.0.0",
     });
+    const client = yield* makeClient(host, "1.0.0");
+    const requested = yield* Effect.forkChild(
+      client.requestUpdate({ targetVersion: "1.1.0", dbPath: "/tmp/state.sqlite" }),
+      { startImmediately: true },
+    );
     yield* Effect.yieldNow;
     host.emit({ type: "update-rejected", reason: "requires local update" });
     expect(yield* Fiber.join(requested).pipe(Effect.flip)).toMatchObject({
@@ -115,12 +122,13 @@ it.effect("preserves a launcher rejection as a distinct error", () =>
 it.effect("rejects contradictory trial context instead of leaving activation closed", () =>
   Effect.gen(function* () {
     const host = new FakeLauncherProcess({
-      protocol: 1,
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: "1.1.0",
       update: {
         id: "update-1",
         fromVersion: "1.0.0",
         targetVersion: "1.2.0",
+        dbPath: "/tmp/state.sqlite",
         status: "pending",
       },
     });

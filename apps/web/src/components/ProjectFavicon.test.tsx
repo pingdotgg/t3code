@@ -4,6 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => ({
   faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
+  lastResource: null as unknown,
 }));
 
 const hooks = vi.hoisted(() => {
@@ -52,7 +53,10 @@ vi.mock("react", async (importOriginal) => {
 
 vi.mock("react/compiler-runtime", () => ({ c: hooks.useMemoCache }));
 vi.mock("../assets/assetUrls", () => ({
-  useAssetUrl: () => testState.faviconUrl,
+  useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
+    testState.lastResource = resource;
+    return { _tag: "Success", url: testState.faviconUrl };
+  },
 }));
 
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -124,5 +128,19 @@ describe("ProjectFavicon", () => {
     const afterDisplayedError = renderImage(Component, refreshedProps).props.children;
     expect(afterDisplayedError[0]).not.toBeNull();
     expect(afterDisplayedError[1]).toBeNull();
+  });
+
+  it("requests a saved favicon path when one is set", () => {
+    ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace-test",
+      faviconPath: "brand/icon.svg",
+    });
+
+    expect(testState.lastResource).toEqual({
+      _tag: "project-favicon",
+      cwd: "/workspace-test",
+      path: "brand/icon.svg",
+    });
   });
 });

@@ -56,7 +56,13 @@ const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";
 const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
 
-const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+const CURRENT_CLAUDE_MODELS = new Set(["claude-fable-5", "claude-opus-5", "claude-sonnet-5"]);
+
+export function isLegacyClaudeModel(model: string): boolean {
+  return !CURRENT_CLAUDE_MODELS.has(model);
+}
+
+const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-fable-5",
     name: "Claude Fable 5",
@@ -72,7 +78,11 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
             { value: "high", label: "High", isDefault: true },
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
+            {
+              value: "ultracode",
+              label: "Ultracode",
+              description: "xhigh effort plus multi-agent workflow orchestration",
+            },
             { value: "ultrathink", label: "Ultrathink" },
           ],
           promptInjectedValues: ["ultrathink"],
@@ -103,7 +113,11 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
             { value: "high", label: "High", isDefault: true },
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
+            {
+              value: "ultracode",
+              label: "Ultracode",
+              description: "xhigh effort plus multi-agent workflow orchestration",
+            },
             { value: "ultrathink", label: "Ultrathink" },
           ],
           promptInjectedValues: ["ultrathink"],
@@ -139,7 +153,11 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
             { value: "high", label: "High", isDefault: true },
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
+            {
+              value: "ultracode",
+              label: "Ultracode",
+              description: "xhigh effort plus multi-agent workflow orchestration",
+            },
             { value: "ultrathink", label: "Ultrathink" },
           ],
           promptInjectedValues: ["ultrathink"],
@@ -308,6 +326,10 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     }),
   },
 ];
+
+const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = CLAUDE_MODEL_CATALOG.map((model) =>
+  isLegacyClaudeModel(model.slug) ? { ...model, isLegacy: true } : model,
+);
 
 function supportsClaudeOpus5(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_5_VERSION) >= 0 : false;
@@ -584,6 +606,10 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
+    // The probe keeps filesystem setting sources for slash-command discovery,
+    // but must not run the user's hooks: it fires every few minutes, so
+    // SessionStart hooks would run on every health check.
+    settings: { disableAllHooks: true },
     allowedTools: [],
     // Ignore MCP definitions from every filesystem setting source above. The
     // SDK combines this empty explicit map with --strict-mcp-config.

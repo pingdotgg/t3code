@@ -61,6 +61,19 @@ export class GitLabCliAuthenticationError extends Schema.TaggedErrorClass<GitLab
   }
 }
 
+export class GitLabCliRateLimitError extends Schema.TaggedErrorClass<GitLabCliRateLimitError>()(
+  "GitLabCliRateLimitError",
+  gitLabCliExecutionErrorContext,
+) {
+  get detail(): string {
+    return "GitLab API rate limit exceeded.";
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export class GitLabMergeRequestNotFoundError extends Schema.TaggedErrorClass<GitLabMergeRequestNotFoundError>()(
   "GitLabMergeRequestNotFoundError",
   {
@@ -126,6 +139,8 @@ export class GitLabCliCommandError extends Schema.TaggedErrorClass<GitLabCliComm
         switch (cause.failureKind) {
           case "authentication":
             return new GitLabCliAuthenticationError({ ...context, cause });
+          case "rate-limited":
+            return new GitLabCliRateLimitError({ ...context, cause });
           case "not-found":
           case "command-failed":
           case undefined:
@@ -213,6 +228,7 @@ export class GitLabNamespaceDecodeError extends Schema.TaggedErrorClass<GitLabNa
 export const GitLabCliError = Schema.Union([
   GitLabCliUnavailableError,
   GitLabCliAuthenticationError,
+  GitLabCliRateLimitError,
   GitLabMergeRequestNotFoundError,
   GitLabCliCommandError,
   GitLabMergeRequestListDecodeError,
@@ -249,6 +265,9 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
+      /** Piped to the child's stdin, for payloads that must never appear in argv. */
+      readonly stdin?: string;
+      readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitLabCliError>;
 
     readonly listMergeRequests: (input: {
@@ -401,6 +420,8 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       })
       .pipe(Effect.mapError(mapError));
 
