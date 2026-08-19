@@ -1171,12 +1171,18 @@ function PullRequestsRouteView() {
     // The priority reads answer the same question the feed does, so they take the same local
     // narrowing: a host that cannot filter for itself would otherwise put rows into Authored
     // that the filters above just took out of the feed.
-    const narrow = (rows: ReadonlyArray<EnvironmentPullRequestEntry> | undefined) =>
-      rows === undefined || !hasLocalFilters
-        ? rows
-        : rows.filter((entry) =>
+    // The priority reads are their own listings, so a hidden repository has to leave them the way
+    // it leaves the feed: they carry rows the feed has not paged to, and a snapshot of them
+    // predates the hiding entirely.
+    const narrow = (rows: ReadonlyArray<EnvironmentPullRequestEntry> | undefined) => {
+      if (rows === undefined) return rows;
+      const shown = isHiddenEntry === null ? rows : rows.filter((entry) => !isHiddenEntry(entry));
+      return hasLocalFilters
+        ? shown.filter((entry) =>
             matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
-          );
+          )
+        : shown;
+    };
     const authored = narrow(
       partitionsWanted ? (authoredQuery.data?.entries ?? held?.authored) : undefined,
     );
@@ -1189,6 +1195,7 @@ function PullRequestsRouteView() {
     return partitionPullRequestsWithPriority(entries, authored, reviewing);
   }, [
     hasLocalFilters,
+    isHiddenEntry,
     localFilters,
     authoredQuery.data?.entries,
     entries,
