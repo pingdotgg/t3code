@@ -15,6 +15,14 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+type SettingsPageWidth = "readable" | "wide" | "expanded";
+
+const SETTINGS_PAGE_WIDTH_CLASS: Record<SettingsPageWidth, string> = {
+  readable: "max-w-4xl",
+  wide: "max-w-5xl",
+  expanded: "max-w-6xl",
+};
+
 interface SettingsSearchTargetContextValue {
   readonly targetId: string | null;
   readonly onTargetHandled: () => void;
@@ -233,9 +241,11 @@ export function SettingResetButton({
 export function SettingsPageContainer({
   children,
   className,
+  width = "readable",
 }: {
   children: ReactNode;
   className?: string;
+  width?: SettingsPageWidth;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -247,10 +257,16 @@ export function SettingsPageContainer({
   return (
     <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
       <div
-        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10"
+        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
         data-settings-page-scroll
       >
-        <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
+        <div
+          className={cn(
+            "mx-auto flex w-full flex-col gap-12 px-5 pt-6 pb-12 sm:px-6",
+            SETTINGS_PAGE_WIDTH_CLASS[width],
+            className,
+          )}
+        >
           {children}
         </div>
       </div>
