@@ -1645,6 +1645,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const createPortForwardEntry = Effect.fn("ssh/tunnel.portForward.create")(function* (input: {
     readonly key: string;
     readonly connectionKey: string;
+    readonly entryScope: Scope.Closeable;
     readonly resolvedTarget: DesktopSshEnvironmentTarget;
     readonly remotePort: number;
   }): Effect.fn.Return<
@@ -1655,60 +1656,52 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const localPort = yield* reserveLocalTunnelPort();
     const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
     const wsBaseUrl = `ws://127.0.0.1:${localPort}/`;
-    return yield* Effect.acquireUseRelease(
-      Scope.make("sequential"),
-      (entryScope) =>
-        Effect.gen(function* () {
-          const tunnelEntry = yield* runWithSshAuth({
-            key: input.connectionKey,
-            target: input.resolvedTarget,
-            operation: (authOptions) =>
-              startSshTunnel({
-                key: input.key,
-                resolvedTarget: input.resolvedTarget,
-                remotePort: input.remotePort,
-                localPort,
-                httpBaseUrl,
-                wsBaseUrl,
-                authOptions,
-                remoteServerKind: null,
-                readiness: "tcp",
-              }).pipe(Effect.provideService(Scope.Scope, entryScope)),
-          });
-          const entry: SshPortForwardEntry = {
-            ...tunnelEntry,
-            connectionKey: input.connectionKey,
-            leases: new Set(),
-          };
-          yield* Scope.addFinalizer(
-            entryScope,
-            Effect.gen(function* () {
-              if (portForwards.get(entry.key) === entry) {
-                portForwards.delete(entry.key);
-              }
-              for (const leaseId of entry.leases) {
-                portForwardLeases.delete(leaseId);
-              }
-              entry.leases.clear();
-              yield* entry.process
-                .kill({
-                  killSignal: "SIGTERM",
-                  forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-                })
-                .pipe(Effect.ignore);
-            }),
-          );
-          yield* Effect.logInfo("ssh.portForward.create.succeeded", {
-            ...sshTargetLogFields(entry.target),
-            key: entry.key,
-            localPort: entry.localPort,
-            remotePort: entry.remotePort,
-          });
-          return entry;
-        }),
-      (entryScope, exit) =>
-        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+    const tunnelEntry = yield* runWithSshAuth({
+      key: input.connectionKey,
+      target: input.resolvedTarget,
+      operation: (authOptions) =>
+        startSshTunnel({
+          key: input.key,
+          resolvedTarget: input.resolvedTarget,
+          remotePort: input.remotePort,
+          localPort,
+          httpBaseUrl,
+          wsBaseUrl,
+          authOptions,
+          remoteServerKind: null,
+          readiness: "tcp",
+        }).pipe(Effect.provideService(Scope.Scope, input.entryScope)),
+    });
+    const entry: SshPortForwardEntry = {
+      ...tunnelEntry,
+      connectionKey: input.connectionKey,
+      leases: new Set(),
+    };
+    yield* Scope.addFinalizer(
+      input.entryScope,
+      Effect.gen(function* () {
+        if (portForwards.get(entry.key) === entry) {
+          portForwards.delete(entry.key);
+        }
+        for (const leaseId of entry.leases) {
+          portForwardLeases.delete(leaseId);
+        }
+        entry.leases.clear();
+        yield* entry.process
+          .kill({
+            killSignal: "SIGTERM",
+            forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+          })
+          .pipe(Effect.ignore);
+      }),
     );
+    yield* Effect.logInfo("ssh.portForward.create.succeeded", {
+      ...sshTargetLogFields(entry.target),
+      key: entry.key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+    });
+    return entry;
   });
 
   const ensurePortForwardEntry = Effect.fn("ssh/tunnel.portForward.ensure")(function* (input: {
@@ -1753,16 +1746,21 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       creatorFiber: null,
     };
     pendingPortForwards.set(input.key, pendingEntry);
-    const creatorFiber = yield* createPortForwardEntry(input).pipe(
-      Effect.flatMap((entry) => {
-        if (pendingPortForwards.get(input.key) !== pendingEntry) {
-          return closePortForwardEntry(entry).pipe(
-            Effect.andThen(Effect.fail(makeSshTunnelCancelledError(input.resolvedTarget))),
-          );
-        }
-        portForwards.set(input.key, entry);
-        return Effect.succeed(entry);
-      }),
+    const creatorFiber = yield* Effect.acquireUseRelease(
+      Scope.make("sequential"),
+      (entryScope) =>
+        createPortForwardEntry({ ...input, entryScope }).pipe(
+          Effect.flatMap((entry) => {
+            if (pendingPortForwards.get(input.key) !== pendingEntry) {
+              return Effect.fail(makeSshTunnelCancelledError(input.resolvedTarget));
+            }
+            portForwards.set(input.key, entry);
+            return Effect.succeed(entry);
+          }),
+        ),
+      (entryScope, exit) =>
+        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+    ).pipe(
       Effect.tapError((cause) =>
         Effect.logWarning("ssh.portForward.create.failed", {
           ...sshTargetLogFields(input.resolvedTarget),
