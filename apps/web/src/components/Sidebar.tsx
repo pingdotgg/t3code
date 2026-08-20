@@ -3725,14 +3725,6 @@ export default function Sidebar() {
     shortcutLabelForCommand(keybindings, "chat.new") ??
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
-  const handleSidebarBackgroundContextMenu = useCallback(
-    (event: ReactMouseEvent<HTMLUListElement>) => {
-      if (event.target !== event.currentTarget || !supportsAnyThreadSections) return;
-      event.preventDefault();
-      void createEmptyThreadSection();
-    },
-    [createEmptyThreadSection, supportsAnyThreadSections],
-  );
   return (
     <>
       {sectionNameDialog}
@@ -4021,12 +4013,7 @@ export default function Sidebar() {
               closeDelay={0}
               timeout={400}
             >
-              <ul
-                ref={attachListAutoAnimateRef}
-                role="list"
-                className="flex min-h-12 flex-col gap-px"
-                onContextMenu={handleSidebarBackgroundContextMenu}
-              >
+              <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-col gap-px">
                 {(() => {
                   const renderThreadRow = (
                     thread: EnvironmentThreadShell,

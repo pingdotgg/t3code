@@ -14,10 +14,9 @@ their pinned threads keep the default newest-first order below the ones you have
 
 ## Custom sections
 
-On web and desktop, create a named section from the sidebar's **New section** button or by
-right-clicking empty sidebar space. Move one or several threads with **Move to section** in the
-thread context menu. Sections start collapsed, and each header shows its thread
-count and unread count.
+On web and desktop, create a named section from the sidebar's **New section** button. Move one or
+several threads with **Move to section** in the thread context menu. Sections start collapsed, and
+each header shows its thread count and unread count.
 
 Sections do not expire and new activity does not pull a thread back into the active list. Reading a
 thread also leaves it in its section. Snoozing, settling, or pinning temporarily places it in the
