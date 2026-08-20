@@ -159,6 +159,7 @@ export function ThemeSearchSection({
   const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
 
   useEffect(() => {
+    if (!open) return;
     const searchKey = `${debouncedQuery}\u0000${sortBy}`;
     const keyChanged = prevSearchKeyRef.current !== searchKey;
     prevSearchKeyRef.current = searchKey;
@@ -170,6 +171,13 @@ export function ThemeSearchSection({
       setResults(null);
       setError(null);
       setIsSearching(false);
+      return;
+    }
+    if (debouncedQuery !== query.trim()) {
+      // The debounced value still trails the input (dialog reopened with the
+      // box reset, or the user is mid-keystroke). Searching it would hit Open
+      // VSX for a query that is no longer visible; wait for the debounce to
+      // catch up to the current input instead.
       return;
     }
     if (lastSearchKeyRef.current === searchKey) {
@@ -191,7 +199,7 @@ export function ThemeSearchSection({
     // once a search succeeds), so the install error the user needs to see is
     // preserved across that rerun.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQuery, installingId, runSearch]);
+  }, [open, query, debouncedQuery, installingId, runSearch]);
 
   const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
     const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
