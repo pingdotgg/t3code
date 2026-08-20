@@ -267,6 +267,21 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+/**
+ * Whether a sidebar row is exempt from every dimming treatment: it needs a
+ * human (unread completion, fresh wake) or the user is already on it. Both the
+ * receded surface and the in-flight fade read this, so the two can never
+ * disagree about which rows stay at full contrast.
+ */
+export function sidebarRowNeedsAttention(input: {
+  isUnread: boolean;
+  isWoke: boolean;
+  isActive: boolean;
+  isSelected: boolean;
+}): boolean {
+  return input.isUnread || input.isWoke || input.isActive || input.isSelected;
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
