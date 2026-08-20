@@ -146,6 +146,7 @@ export function ThemeSearchSection({
       } catch (cause) {
         if (!controller.signal.aborted) {
           setResults(null);
+          lastSearchKeyRef.current = null;
           setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
         }
       }
