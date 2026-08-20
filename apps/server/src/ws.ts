@@ -258,6 +258,24 @@ function projectFileFailureContext(
   }
 }
 
+// Only ENOENT means the file is genuinely absent. A permission error on a parent
+// directory fails the same operation, and relabeling that as "does not exist"
+// would send people looking for the wrong problem.
+function missingWorkspaceFileMessage(
+  input: { readonly cwd: string; readonly relativePath: string },
+  error:
+    | WorkspaceFileSystem.WorkspaceFileSystemError
+    | WorkspacePaths.WorkspacePathOutsideRootError,
+): { readonly message?: string } {
+  if (error._tag !== "WorkspaceFileSystemOperationError") return {};
+  // A missing workspace root raises ENOENT too, and blaming the file for it
+  // would point at the wrong thing entirely.
+  if (error.operation === "realpath-workspace-root") return {};
+  const code = (error.cause as { readonly code?: unknown } | undefined)?.code;
+  if (code !== "ENOENT") return {};
+  return { message: `Workspace file '${input.relativePath}' does not exist in '${input.cwd}'.` };
+}
+
 function projectSetupScriptCompatibilityDetail(
   error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError,
 ): string {
@@ -1813,6 +1831,7 @@ const makeWsRpcLayer = (
                   new ProjectReadFileError({
                     ...input,
                     ...projectFileFailureContext(cause),
+                    ...missingWorkspaceFileMessage(input, cause),
                     cause,
                   }),
               ),

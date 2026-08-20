@@ -230,6 +230,7 @@ type ProjectFileFailureContext = {
   readonly cwd: string;
   readonly relativePath: string;
   readonly failure: ProjectFileFailure;
+  readonly message?: string;
   readonly resolvedPath?: string;
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;

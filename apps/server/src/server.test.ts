@@ -4943,6 +4943,68 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("names a missing workspace file instead of reporting a generic read failure", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-missing-file-",
+      });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsReadFile]({
+            cwd: workspaceDir,
+            relativePath: "components/selectors/Missing.vue",
+          }).pipe(Effect.result),
+        ),
+      );
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectReadFileError") {
+        assert.fail("Expected a ProjectReadFileError");
+      }
+      const readError = result.failure;
+      assert.equal(
+        readError.message,
+        `Workspace file 'components/selectors/Missing.vue' does not exist in '${workspaceDir}'.`,
+      );
+      assert.equal(readError.cwd, workspaceDir);
+      assert.equal(readError.relativePath, "components/selectors/Missing.vue");
+      assert.equal(readError.failure, "operation_failed");
+      assert.isDefined(readError.cause);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not blame the file when the workspace root itself is missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-missing-root-",
+      });
+      const missingWorkspace = path.join(parentDir, "gone");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsReadFile]({
+            cwd: missingWorkspace,
+            relativePath: "anything.txt",
+          }).pipe(Effect.result),
+        ),
+      );
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectReadFileError") {
+        assert.fail("Expected a ProjectReadFileError");
+      }
+      assert.notInclude(result.failure.message, "does not exist in");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("reports workspace root stat failures without relabeling them as missing", () =>
     Effect.gen(function* () {
       if ((yield* HostProcessPlatform) === "win32") return;
