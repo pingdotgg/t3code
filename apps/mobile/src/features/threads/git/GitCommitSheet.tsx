@@ -14,6 +14,14 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
+// The sheet is a screen and unmounts the moment the action starts, so a draft has to outlive the
+// component to survive a commit the server refuses, typically a rejected commit-msg hook.
+let pendingCommitDraft: {
+  readonly cwd: string;
+  readonly message: string;
+  readonly excludedFiles: ReadonlySet<string>;
+} | null = null;
+
 type GitCommitSheetProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
@@ -40,8 +48,11 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
-  const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const draft = pendingCommitDraft?.cwd === selectedThreadCwd ? pendingCommitDraft : null;
+  const [dialogCommitMessage, setDialogCommitMessage] = useState(draft?.message ?? "");
+  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
+    draft?.excludedFiles ?? new Set(),
+  );
   const [isEditingFiles, setIsEditingFiles] = useState(false);
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
@@ -54,15 +65,29 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
       const commitMessage = dialogCommitMessage.trim();
+      if (selectedThreadCwd !== null) {
+        pendingCommitDraft = { cwd: selectedThreadCwd, message: commitMessage, excludedFiles };
+      }
       navigation.goBack();
-      await gitActions.onRunSelectedThreadGitAction({
+      const result = await gitActions.onRunSelectedThreadGitAction({
         action: "commit",
         featureBranch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
+      if (result !== null) {
+        pendingCommitDraft = null;
+      }
     },
-    [allSelected, dialogCommitMessage, gitActions, navigation, selectedFiles],
+    [
+      allSelected,
+      dialogCommitMessage,
+      excludedFiles,
+      gitActions,
+      navigation,
+      selectedFiles,
+      selectedThreadCwd,
+    ],
   );
 
   return (
