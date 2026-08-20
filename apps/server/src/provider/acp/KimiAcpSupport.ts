@@ -1,4 +1,9 @@
-import { type KimiSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type KimiSettings,
+  type ProviderInteractionMode,
+  ProviderDriverKind,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -134,19 +139,19 @@ type KimiSessionSetupResponse =
   | EffectAcpSchema.NewSessionResponse
   | EffectAcpSchema.ResumeSessionResponse;
 
-type KimiModelConfigOption = Extract<
+type KimiSelectConfigOption = Extract<
   EffectAcpSchema.SessionConfigOption,
   { readonly type: "select" }
 >;
 
 export function findKimiModelConfigOption(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-): KimiModelConfigOption | undefined {
+): KimiSelectConfigOption | undefined {
   if (!configOptions) {
     return undefined;
   }
   const selectOptions = configOptions.filter(
-    (option): option is KimiModelConfigOption => option.type === "select",
+    (option): option is KimiSelectConfigOption => option.type === "select",
   );
   return (
     selectOptions.find((option) => option.category === "model") ??
@@ -190,6 +195,65 @@ export function kimiSessionHasModelConfigOption(
   sessionSetupResult: KimiSessionSetupResponse,
 ): boolean {
   return findKimiModelConfigOption(sessionSetupResult.configOptions) !== undefined;
+}
+
+export type KimiAcpModeId = "default" | "plan" | "auto" | "yolo";
+
+export function resolveKimiAcpModeId(input: {
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
+}): KimiAcpModeId {
+  if (input.interactionMode === "plan") {
+    return "plan";
+  }
+  switch (input.runtimeMode) {
+    case "approval-required":
+      return "default";
+    case "auto-accept-edits":
+    case "auto":
+      return "auto";
+    case "full-access":
+      return "yolo";
+  }
+}
+
+export function currentKimiModeIdFromSessionSetup(
+  sessionSetupResult: KimiSessionSetupResponse,
+): string | undefined {
+  const configOptions = sessionSetupResult.configOptions ?? [];
+  const modeConfig =
+    configOptions.find(
+      (option): option is KimiSelectConfigOption =>
+        option.type === "select" && option.category === "mode",
+    ) ??
+    configOptions.find(
+      (option): option is KimiSelectConfigOption =>
+        option.type === "select" && option.id.trim() === "mode",
+    );
+  return (
+    modeConfig?.currentValue.trim() || sessionSetupResult.modes?.currentModeId.trim() || undefined
+  );
+}
+
+export function applyKimiAcpModeSelection<E>(input: {
+  readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setMode">;
+  readonly currentModeId: string | undefined;
+  readonly requestedModeId: KimiAcpModeId;
+  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+}): Effect.Effect<KimiAcpModeId, E> {
+  if (input.currentModeId === input.requestedModeId) {
+    return Effect.succeed(input.requestedModeId);
+  }
+  return input.runtime
+    .setMode(input.requestedModeId)
+    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModeId));
+}
+
+export function shouldKimiAdapterAutoApprove(input: {
+  readonly runtimeMode: RuntimeMode;
+  readonly currentModeId: string | undefined;
+}): boolean {
+  return input.runtimeMode === "full-access" && input.currentModeId === "yolo";
 }
 
 /**

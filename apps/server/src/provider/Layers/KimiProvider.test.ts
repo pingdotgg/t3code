@@ -109,6 +109,7 @@ describe("buildInitialKimiProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Kimi");
+      expect(snapshot.showInteractionModeToggle).toBe(true);
       expect(snapshot.requiresNewThreadForModelChange).toBe(false);
       expect(snapshot.models.map((model) => model.slug)).toEqual([
         "k3",

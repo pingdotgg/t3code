@@ -54,9 +54,13 @@ import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   advertisedKimiModelIdsFromSessionSetup,
+  applyKimiAcpModeSelection,
   applyKimiAcpModelSelection,
+  currentKimiModeIdFromSessionSetup,
   currentKimiModelIdFromSessionSetup,
   kimiSessionHasModelConfigOption,
+  resolveKimiAcpModeId,
+  shouldKimiAdapterAutoApprove,
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
 } from "../acp/KimiAcpSupport.ts";
@@ -101,6 +105,7 @@ interface KimiSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  currentModeId: string | undefined;
   currentModelId: string | undefined;
   /** Exact model ids the agent advertised at session setup. */
   readonly advertisedModelIds: ReadonlyArray<string> | undefined;
@@ -575,7 +580,12 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             yield* acp.handleRequestPermission((params) =>
               Effect.gen(function* () {
                 yield* logNative(input.threadId, "session/request_permission", params);
-                if (input.runtimeMode === "full-access") {
+                if (
+                  shouldKimiAdapterAutoApprove({
+                    runtimeMode: input.runtimeMode,
+                    currentModeId: sessions.get(input.threadId)?.currentModeId,
+                  })
+                ) {
                   const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                   if (autoApprovedOptionId !== undefined) {
                     return {
@@ -650,6 +660,13 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             ),
           );
 
+          const boundModeId = yield* applyKimiAcpModeSelection({
+            runtime: acp,
+            currentModeId: currentKimiModeIdFromSessionSetup(started.sessionSetupResult),
+            requestedModeId: resolveKimiAcpModeId({ runtimeMode: input.runtimeMode }),
+            mapError: (cause) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
+          });
           const requestedStartModelId = kimiModelSelection?.model
             ? resolveKimiAcpBaseModelId(kimiModelSelection.model)
             : undefined;
@@ -697,6 +714,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
+            currentModeId: boundModeId,
             currentModelId: boundModelId,
             advertisedModelIds,
             hasModelConfigOption,
@@ -863,6 +881,18 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             };
 
             return yield* Effect.gen(function* () {
+              const currentModeId = yield* applyKimiAcpModeSelection({
+                runtime: ctx.acp,
+                currentModeId: ctx.currentModeId,
+                requestedModeId: resolveKimiAcpModeId({
+                  runtimeMode: ctx.session.runtimeMode,
+                  interactionMode: input.interactionMode,
+                }),
+                mapError: (cause) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
+              });
+              ctx.currentModeId = currentModeId;
+
               const turnModelSelection =
                 input.modelSelection?.instanceId === boundInstanceId
                   ? input.modelSelection

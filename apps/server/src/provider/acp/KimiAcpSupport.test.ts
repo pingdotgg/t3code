@@ -5,15 +5,19 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
   advertisedKimiModelIdsFromSessionSetup,
+  applyKimiAcpModeSelection,
   applyKimiAcpModelSelection,
   buildKimiAcpSpawnInput,
+  currentKimiModeIdFromSessionSetup,
   currentKimiModelIdFromSessionSetup,
   findKimiModelConfigOption,
   isKimiAuthRequiredError,
   kimiModelStateFromSessionSetup,
   kimiSessionHasModelConfigOption,
   resolveKimiAcpBaseModelId,
+  resolveKimiAcpModeId,
   resolveKimiAcpWireModelId,
+  shouldKimiAdapterAutoApprove,
 } from "./KimiAcpSupport.ts";
 
 const configOptionSession = {
@@ -29,6 +33,19 @@ const configOptionSession = {
         { value: "kimi-code/k3", name: "K3" },
         { value: "kimi-code/kimi-for-coding", name: "K2.7 Coding" },
         { value: "moonshot-ai/kimi-k3", name: "kimi-k3" },
+      ],
+    },
+    {
+      id: "permission-mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+        { value: "auto", name: "Auto" },
+        { value: "yolo", name: "YOLO" },
       ],
     },
   ],
@@ -94,6 +111,72 @@ describe("kimiModelStateFromSessionSetup", () => {
       "kimi-for-coding",
     ]);
     expect(kimiSessionHasModelConfigOption(legacySession)).toBe(false);
+  });
+});
+
+describe("Kimi ACP modes", () => {
+  it("maps T3 runtime and interaction modes to native Kimi modes", () => {
+    expect(currentKimiModeIdFromSessionSetup(configOptionSession)).toBe("default");
+    expect(resolveKimiAcpModeId({ runtimeMode: "approval-required" })).toBe("default");
+    expect(resolveKimiAcpModeId({ runtimeMode: "auto-accept-edits" })).toBe("auto");
+    expect(resolveKimiAcpModeId({ runtimeMode: "auto" })).toBe("auto");
+    expect(resolveKimiAcpModeId({ runtimeMode: "full-access" })).toBe("yolo");
+    for (const runtimeMode of [
+      "approval-required",
+      "auto-accept-edits",
+      "auto",
+      "full-access",
+    ] as const) {
+      expect(resolveKimiAcpModeId({ runtimeMode, interactionMode: "plan" })).toBe("plan");
+    }
+  });
+
+  it.effect("skips unchanged modes and restores the runtime-derived mode after plan", () =>
+    Effect.gen(function* () {
+      const modeCalls: Array<string> = [];
+      const runtime = {
+        setMode: (modeId: string) =>
+          Effect.sync(() => {
+            modeCalls.push(modeId);
+            return {};
+          }),
+      };
+      const unchanged = yield* applyKimiAcpModeSelection({
+        runtime,
+        currentModeId: "plan",
+        requestedModeId: "plan",
+        mapError: (cause) => cause.message,
+      });
+      const restored = yield* applyKimiAcpModeSelection({
+        runtime,
+        currentModeId: unchanged,
+        requestedModeId: resolveKimiAcpModeId({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+        mapError: (cause) => cause.message,
+      });
+      expect(modeCalls).toEqual(["yolo"]);
+      expect(restored).toBe("yolo");
+    }),
+  );
+
+  it("keeps adapter auto-approval aligned with full-access yolo mode", () => {
+    expect(
+      shouldKimiAdapterAutoApprove({ runtimeMode: "approval-required", currentModeId: "default" }),
+    ).toBe(false);
+    expect(
+      shouldKimiAdapterAutoApprove({ runtimeMode: "auto-accept-edits", currentModeId: "auto" }),
+    ).toBe(false);
+    expect(shouldKimiAdapterAutoApprove({ runtimeMode: "auto", currentModeId: "auto" })).toBe(
+      false,
+    );
+    expect(
+      shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", currentModeId: "plan" }),
+    ).toBe(false);
+    expect(
+      shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", currentModeId: "yolo" }),
+    ).toBe(true);
   });
 });
 
