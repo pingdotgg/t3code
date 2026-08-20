@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -29,6 +30,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  AUTH_PROBE_TIMEOUT_MS,
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
@@ -55,6 +57,15 @@ const MINIMUM_CLAUDE_OPUS_5_VERSION = "2.1.219";
 const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";
 const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
+const MINIMUM_CLAUDE_AUTH_STATUS_VERSION = "2.1.41";
+
+const decodeClaudeAuthStatus = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      loggedIn: Schema.Boolean,
+    }),
+  ),
+);
 
 const CURRENT_CLAUDE_MODELS = new Set(["claude-fable-5", "claude-opus-5", "claude-sonnet-5"]);
 
@@ -345,6 +356,22 @@ function supportsClaudeOpus48(version: string | null | undefined): boolean {
 
 function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
+}
+
+function supportsClaudeAuthStatus(version: string | null | undefined): boolean {
+  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_AUTH_STATUS_VERSION) >= 0 : false;
+}
+
+function classifyClaudeAuthStatus(
+  result: { readonly stdout: string; readonly code: number } | undefined,
+): "authenticated" | "unauthenticated" | "unknown" {
+  if (!result) return "unknown";
+
+  const decoded = decodeClaudeAuthStatus(result.stdout);
+  const loggedIn = Option.isSome(decoded) ? decoded.value.loggedIn : undefined;
+  if (loggedIn === false) return "unauthenticated";
+  if (loggedIn === true) return result.code === 0 ? "authenticated" : "unknown";
+  return result.code === 1 ? "unauthenticated" : "unknown";
 }
 
 function getBuiltInClaudeModelsForVersion(
@@ -953,6 +980,43 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const hasExternalApiProvider =
+    capabilities.apiProvider !== undefined && capabilities.apiProvider !== "firstParty";
+
+  if (!hasExternalApiProvider && supportsClaudeAuthStatus(parsedVersion)) {
+    const authProbe = yield* runClaudeCommand(
+      claudeSettings,
+      ["auth", "status"],
+      resolvedEnvironment,
+    ).pipe(Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS), Effect.result);
+    const authResult =
+      Result.isSuccess(authProbe) && Option.isSome(authProbe.success)
+        ? authProbe.success.value
+        : undefined;
+    const authStatus = classifyClaudeAuthStatus(authResult);
+
+    if (authStatus !== "authenticated") {
+      const isUnauthenticated = authStatus === "unauthenticated";
+      return buildServerProvider({
+        presentation: CLAUDE_PRESENTATION,
+        enabled: claudeSettings.enabled,
+        checkedAt,
+        models,
+        slashCommands: dedupedSlashCommands,
+        skills,
+        probe: {
+          installed: true,
+          version: parsedVersion,
+          status: isUnauthenticated ? "error" : "warning",
+          auth: { status: isUnauthenticated ? "unauthenticated" : "unknown" },
+          message: isUnauthenticated
+            ? "Claude is not authenticated. Run `claude auth login` and try again."
+            : "Could not verify Claude authentication status.",
+        },
+      });
+    }
+  }
+
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
