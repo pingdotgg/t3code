@@ -895,17 +895,25 @@ function WorkspaceFilePreviewPanel({
                   {index > 0 ? (
                     <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
                   ) : null}
-                  <span
-                    className={cn(
-                      "max-w-40 truncate",
-                      crumb.kind === "file"
-                        ? "font-medium text-foreground"
-                        : "text-muted-foreground",
-                    )}
-                    title={crumb.path || projectName}
-                  >
-                    {crumb.label}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          className={cn(
+                            "max-w-40 truncate",
+                            crumb.kind === "file"
+                              ? "font-medium text-foreground"
+                              : "text-muted-foreground",
+                          )}
+                        />
+                      }
+                    >
+                      {crumb.label}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top" className="max-w-80">
+                      {crumb.path || projectName}
+                    </TooltipPopup>
+                  </Tooltip>
                 </div>
               ))}
             </div>
@@ -1087,6 +1095,7 @@ function WorkspaceFilePreviewPanel({
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
+              {...(relativePath && !isImage ? { onRefreshSelectedFile: file.refresh } : {})}
             />
           </aside>
         ) : null}

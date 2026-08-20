@@ -20,6 +20,39 @@ export function getTimestampFormatOptions(
   };
 }
 
+/**
+ * Pick the locale to format wall-clock times in, given the locale the host
+ * reports. Hosts that report nothing fall back to `undefined`, which is the
+ * runtime default and the right answer in a browser.
+ *
+ * A host reports a locale only when it knows better than the runtime does —
+ * see `getSystemLocale` on the desktop bridge for why desktop does.
+ */
+export function resolveTimestampLocale(
+  systemLocale: string | null | undefined,
+): string | undefined {
+  const tag = systemLocale?.trim();
+  if (!tag) return undefined;
+
+  try {
+    // Every timestamp in the UI runs through this formatter, so a tag the host
+    // could not normalize falls back rather than throwing. Throws on a
+    // structurally invalid tag; a well-formed tag ICU has no data for resolves
+    // here and is left to ICU's own fallback.
+    Intl.DateTimeFormat.supportedLocalesOf([tag]);
+    return tag;
+  } catch {
+    return undefined;
+  }
+}
+
+function readHostSystemLocale(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.desktopBridge?.getSystemLocale?.() ?? null;
+}
+
+const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
+
 const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getTimestampFormatter(
@@ -33,7 +66,7 @@ function getTimestampFormatter(
   }
 
   const formatter = new Intl.DateTimeFormat(
-    undefined,
+    timestampLocale,
     getTimestampFormatOptions(timestampFormat, includeSeconds),
   );
   timestampFormatterCache.set(cacheKey, formatter);
@@ -51,6 +84,9 @@ export function formatTimestamp(isoDate: string, timestampFormat: TimestampForma
   return getTimestampFormatter(timestampFormat, true).format(date);
 }
 
+// Deliberately not the host locale: the tooltip's ordinal suffix and
+// day-before-month order below are English, so a localized month alone would
+// read "4th Juni 2026". Localizing the whole label is a separate change.
 const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
 
 function ordinalSuffix(day: number): string {
@@ -91,11 +127,11 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
   return getTimestampFormatter(timestampFormat, false).format(date);
 }
 
-const numericDateFormatter = new Intl.DateTimeFormat(undefined, {
+const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, {
   month: "numeric",
   day: "numeric",
 });
-const numericDateWithYearFormatter = new Intl.DateTimeFormat(undefined, {
+const numericDateWithYearFormatter = new Intl.DateTimeFormat(timestampLocale, {
   month: "numeric",
   day: "numeric",
   year: "numeric",

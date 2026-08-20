@@ -33,6 +33,19 @@ public final class T3NativeControlsModule: Module {
       return arguments[flagIndex + 1]
     }
 
+    // The palette is fixed for the whole capture, so it only ever arrives as a
+    // launch argument — unlike the scene, which the runner rewrites in place.
+    Function("getShowcaseTheme") { () -> String? in
+      let arguments = ProcessInfo.processInfo.arguments
+      guard
+        let flagIndex = arguments.firstIndex(of: "--showcaseTheme"),
+        arguments.indices.contains(flagIndex + 1)
+      else {
+        return nil as String?
+      }
+      return arguments[flagIndex + 1]
+    }
+
     Function("getShowcaseOrientation") { () -> String? in
       let arguments = ProcessInfo.processInfo.arguments
       guard
