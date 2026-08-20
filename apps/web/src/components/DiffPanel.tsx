@@ -28,6 +28,7 @@ import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { advanceGitDiffRefreshTracker, type GitDiffRefreshTracker } from "../lib/diffPanelRefresh";
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
@@ -39,7 +40,7 @@ import {
 } from "../lib/diffRendering";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useProject, useThread } from "../state/entities";
+import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
@@ -117,6 +118,7 @@ export default function DiffPanel({
     readonly threadKey: string | null;
     readonly turnId: TurnId | null;
   } | null>(null);
+  const siblingTurnRefreshTrackerRef = useRef<GitDiffRefreshTracker | null>(null);
 
   const routeThreadRef = useParams({
     strict: false,
@@ -125,14 +127,22 @@ export default function DiffPanel({
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;
-  const activeProject = useProject(
-    activeThread && activeProjectId
-      ? {
-          environmentId: activeThread.environmentId,
-          projectId: activeProjectId,
-        }
-      : null,
+  const activeProjectRef = useMemo(
+    () =>
+      activeThread && activeProjectId
+        ? {
+            environmentId: activeThread.environmentId,
+            projectId: activeProjectId,
+          }
+        : null,
+    [activeProjectId, activeThread?.environmentId],
   );
+  const activeProject = useProject(activeProjectRef);
+  const activeProjectRefs = useMemo(
+    () => (activeProjectRef === null ? [] : [activeProjectRef]),
+    [activeProjectRef],
+  );
+  const activeProjectThreads = useThreadShellsForProjectRefs(activeProjectRefs);
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
   const activeRepositoryRoot = activeThread?.worktreePath
     ? undefined
@@ -307,6 +317,37 @@ export default function DiffPanel({
     refreshBranchDiffPreview();
     lastCompletedTurnRefreshRef.current = current;
   }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreview]);
+
+  useEffect(() => {
+    if (
+      !canRefreshGitDiff ||
+      !activeThread ||
+      !activeProject ||
+      !activeCwd ||
+      !activeThreadRefreshKey
+    ) {
+      return;
+    }
+    const result = advanceGitDiffRefreshTracker(siblingTurnRefreshTrackerRef.current, {
+      scopeKey: `${activeThread.environmentId}:${activeCwd}`,
+      cwd: activeCwd,
+      workspaceRoot: activeProject.workspaceRoot,
+      activeThreadId: activeThread.id,
+      threads: activeProjectThreads,
+    });
+    siblingTurnRefreshTrackerRef.current = result.next;
+    if (result.shouldRefresh) {
+      refreshBranchDiffPreview();
+    }
+  }, [
+    activeCwd,
+    activeProject,
+    activeProjectThreads,
+    activeThread,
+    activeThreadRefreshKey,
+    canRefreshGitDiff,
+    refreshBranchDiffPreview,
+  ]);
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
