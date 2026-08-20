@@ -3,9 +3,11 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import { isPreviewableUrl } from "@t3tools/shared/preview";
 import * as Schema from "effect/Schema";
 
+import { acquireDiscoveredServerRoute } from "~/browser/browserTargetResolver";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
-import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { openPreviewSession } from "./openPreviewSession";
 
 const terminalLinkErrorContext = {
   environmentId: Schema.String,
@@ -81,25 +83,34 @@ export async function openTerminalLinkInPreview<E>(
   }
 
   if (choice === "open-in-preview") {
-    const result = await input.openPreview({
-      environmentId: input.threadRef.environmentId,
-      input: { threadId: input.threadRef.threadId, url: input.url },
-    });
-    if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) {
-        return;
+    try {
+      const route = await acquireDiscoveredServerRoute(input.threadRef.environmentId, input.url);
+      try {
+        const result = await openPreviewSession({
+          openPreview: input.openPreview,
+          threadRef: input.threadRef,
+          url: route.resolution.resolvedUrl,
+        });
+        if (result._tag === "Failure") {
+          if (isAtomCommandInterrupted(result)) {
+            return;
+          }
+          throw result.cause;
+        }
+        await route.commit(result.value.tabId);
+        useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
+      } finally {
+        await route.release();
       }
+    } catch (cause) {
       console.error(
         new TerminalLinkPreviewOpenError({
           ...errorContext,
-          cause: result.cause,
+          cause,
         }),
       );
       input.fallbackToBrowser();
-      return;
     }
-    applyPreviewServerSnapshot(input.threadRef, result.value);
-    useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     return;
   }
 

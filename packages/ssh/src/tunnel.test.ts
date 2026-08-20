@@ -400,7 +400,9 @@ describe("ssh tunnel scripts", () => {
 
       yield* manager.ensureEnvironment(target);
 
-      assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
+      const tunnelCommands = spawnedCommands.filter((args) => args.includes("-N"));
+      assert.equal(tunnelCommands.length, 2);
+      assert.include(tunnelCommands[0] ?? [], "127.0.0.1:41773:127.0.0.1:3773");
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
@@ -447,7 +449,7 @@ describe("ssh tunnel scripts", () => {
       assert.equal(first.localPort, second.localPort);
       assert.notEqual(first.leaseId, second.leaseId);
       assert.equal(tunnelSpawnCount, 1);
-      assert.include(forwardArgs[0] ?? [], "127.0.0.1:41773:127.0.0.1:5173");
+      assert.include(forwardArgs[0] ?? [], "127.0.0.1:41773:localhost:5173");
       assert.include(forwardArgs[0] ?? [], "-v");
 
       yield* manager.releasePortForward(first.leaseId);

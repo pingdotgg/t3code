@@ -981,6 +981,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
   readonly remotePort: number;
+  readonly remoteHost: "127.0.0.1" | "localhost";
   readonly localPort: number;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
@@ -1031,7 +1032,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-n",
     "-N",
     "-L",
-    `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`,
+    `127.0.0.1:${input.localPort}:${input.remoteHost}:${input.remotePort}`,
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
@@ -1497,6 +1498,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           key: input.key,
           resolvedTarget: input.resolvedTarget,
           remotePort,
+          remoteHost: "127.0.0.1",
           localPort,
           httpBaseUrl,
           wsBaseUrl,
@@ -1664,6 +1666,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           key: input.key,
           resolvedTarget: input.resolvedTarget,
           remotePort: input.remotePort,
+          remoteHost: "localhost",
           localPort,
           httpBaseUrl,
           wsBaseUrl,
