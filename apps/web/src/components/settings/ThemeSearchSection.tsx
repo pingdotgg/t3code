@@ -123,18 +123,19 @@ export function ThemeSearchSection({
     async (searchText: string, nextSort = sortBy) => {
       const trimmed = searchText.trim();
       if (!trimmed) return;
-      lastSearchKeyRef.current = `${trimmed}\u0000${nextSort}`;
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
       setIsSearching(true);
-      setError(null);
       try {
         const nextResults = await searchOpenVsxThemes(trimmed, {
           signal: controller.signal,
           sortBy: nextSort,
         });
-        if (!controller.signal.aborted) setResults(nextResults);
+        if (!controller.signal.aborted) {
+          setResults(nextResults);
+          lastSearchKeyRef.current = `${trimmed}\u0000${nextSort}`;
+        }
       } catch (cause) {
         if (!controller.signal.aborted) {
           setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
@@ -165,9 +166,10 @@ export function ThemeSearchSection({
     void runSearch(debouncedQuery);
     // `installingId` and `sortBy` are deliberately not dependencies: the
     // guards above read the current values from the fresh render closure. An
-    // install finishing must only rerun the search when the query or sort
-    // changed while it was in flight (checked via lastSearchKeyRef); a plain
-    // same-key rerun would wipe an install error the user still needs to see.
+    // install finishing reruns the search only when the query or sort changed
+    // while it was in flight (checked via lastSearchKeyRef, recorded only
+    // once a search succeeds), so the install error the user needs to see is
+    // preserved across that rerun.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQuery, installingId, runSearch]);
 
@@ -175,6 +177,7 @@ export function ThemeSearchSection({
     const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
     if (!nextSort) return;
     setSortBy(nextSort);
+    setError(null);
   }, []);
 
   const handleInstall = useCallback(
@@ -196,6 +199,7 @@ export function ThemeSearchSection({
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
+      setIsSearching(false);
       setInstallingId(extension.id);
       try {
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
@@ -235,7 +239,10 @@ export function ThemeSearchSection({
         <InputGroupInput
           aria-label="Search Open VSX themes"
           autoFocus
-          onChange={(event) => setQuery(event.currentTarget.value)}
+          onChange={(event) => {
+            setQuery(event.currentTarget.value);
+            setError(null);
+          }}
           placeholder="Search themes..."
           size="lg"
           type="search"
@@ -252,7 +259,10 @@ export function ThemeSearchSection({
                 key={suggestion}
                 size="xs"
                 variant="ghost"
-                onClick={() => setQuery(suggestion)}
+                onClick={() => {
+                  setQuery(suggestion);
+                  setError(null);
+                }}
               >
                 {suggestion}
               </Button>
