@@ -276,11 +276,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           );
 
-        const committedCommand = yield* Effect.uninterruptibleMask((restore) =>
+        const committedCommand = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
-            // Keep the transaction interruptible, but do not allow an interrupt
-            // between its successful commit and the in-memory ownership handoff.
-            const result = yield* restore(commitCommand);
+            // The transaction helper restores interruptibility after COMMIT, so
+            // keep the entire command masked until ownership has transferred.
+            const result = yield* commitCommand;
             restoredUnarchiveCommitted = restoredUnarchiveThreadId !== null;
             return result;
           }),
