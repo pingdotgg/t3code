@@ -416,6 +416,10 @@ describe("XAiAcpExtension", () => {
     expect(isGrokPlanMarkdownPath("/tmp/other.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/example/plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath(`${home}/project/.grok/sessions/example/plan.md`)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/../../project/plan.md")).toBe(false);
+    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/foo/../../../project/plan.md")).toBe(
+      false,
+    );
 
     expect(
       extractGrokPlanMarkdownFromToolCallData({

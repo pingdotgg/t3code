@@ -274,6 +274,10 @@ function normalizeFsPath(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+function pathHasTraversalSegment(normalized: string): boolean {
+  return normalized.split("/").includes("..");
+}
+
 function addGrokSessionPrefix(
   prefixes: Set<string>,
   homeOrRoot: string,
@@ -301,7 +305,7 @@ function grokPlanSessionPrefixes(): ReadonlySet<string> {
 }
 
 const CANONICAL_HOME_GROK_SESSION_PATH =
-  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/.+\/plan\.md$/i;
+  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/(?:[^/]+\/)+plan\.md$/i;
 
 /**
  * True when a path is Grok's session plan file under a Grok home
@@ -314,7 +318,11 @@ export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean
     return false;
   }
   const normalized = path.trim().replace(/\\/g, "/");
-  if (normalized.length === 0 || !normalized.endsWith("/plan.md")) {
+  if (
+    normalized.length === 0 ||
+    !normalized.endsWith("/plan.md") ||
+    pathHasTraversalSegment(normalized)
+  ) {
     return false;
   }
   const haystack = process.platform === "win32" ? normalized.toLowerCase() : normalized;
