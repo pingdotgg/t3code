@@ -1159,6 +1159,56 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("backfills reasoning items from snapshots that arrive with no active turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // No sendTurn: a background/resumed assistant snapshot arrives with
+      // thinking content — the synthetic turn must surface its reasoning.
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-1",
+        uuid: "assistant-bg-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-bg-message-1",
+          content: [
+            { type: "thinking", thinking: "Background thought" },
+            { type: "text", text: "Background answer." },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const reasoningCompleted = events.find(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      assert.equal(reasoningCompleted?.type, "item.completed");
+      if (reasoningCompleted?.type === "item.completed") {
+        assert.equal(reasoningCompleted.payload.detail, "Background thought");
+        assert.equal(reasoningCompleted.payload.title, "Reasoning");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("ignores a subagent's content_block_stop for the parent's reasoning block", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

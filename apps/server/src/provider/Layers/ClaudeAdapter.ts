@@ -2106,6 +2106,67 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  /**
+   * Reasoning counterpart of `backfillAssistantTextBlocksFromSnapshot`,
+   * scoped to synthetic turns: when a snapshot arrives with no active turn
+   * (background/resumed output), its thinking deltas never had a turnState to
+   * accumulate into, so the snapshot is the only place the text survives.
+   * Live turns are excluded deliberately — their blocks already streamed and
+   * completed, and a second completed item would duplicate the row.
+   */
+  const backfillReasoningBlocksFromSnapshot = Effect.fn("backfillReasoningBlocksFromSnapshot")(
+    function* (context: ClaudeSessionContext, message: SDKMessage) {
+      const turnState = context.turnState;
+      if (!turnState || turnState.synthetic !== true) {
+        return;
+      }
+      if (message.type !== "assistant") {
+        return;
+      }
+      const content = message.message?.content;
+      if (!Array.isArray(content)) {
+        return;
+      }
+      for (const block of content) {
+        if (!block || typeof block !== "object") {
+          continue;
+        }
+        const thinking = block as { type?: unknown; thinking?: unknown };
+        if (thinking.type !== "thinking" || typeof thinking.thinking !== "string") {
+          continue;
+        }
+        const text = thinking.thinking.trim();
+        if (text.length === 0) {
+          continue;
+        }
+        const itemId = yield* randomUUIDv4;
+        const stamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "item.completed",
+          eventId: stamp.eventId,
+          provider: PROVIDER,
+          createdAt: stamp.createdAt,
+          threadId: context.session.threadId,
+          turnId: turnState.turnId,
+          itemId: asRuntimeItemId(itemId),
+          payload: {
+            itemType: "reasoning",
+            status: "completed",
+            title: "Reasoning",
+            detail: text,
+            data: { toolCallId: itemId },
+          },
+          providerRefs: nativeProviderRefs(context),
+          raw: {
+            source: "claude.sdk.message" as const,
+            method: "claude/assistant-reasoning-backfill",
+            payload: message,
+          },
+        });
+      }
+    },
+  );
+
   const ensureThreadId = Effect.fn("ensureThreadId")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -3172,6 +3233,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.turnState) {
       context.turnState.items.push(message.message);
       yield* backfillAssistantTextBlocksFromSnapshot(context, message);
+      yield* backfillReasoningBlocksFromSnapshot(context, message);
     }
 
     context.lastAssistantUuid = message.uuid;

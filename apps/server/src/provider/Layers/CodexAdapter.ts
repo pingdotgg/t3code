@@ -1162,6 +1162,11 @@ function mapToRuntimeEvents(
     if (!payload) {
       return [];
     }
+    // A finished turn seals every reasoning item it streamed; anything left in
+    // the accumulator belongs to items that never completed and would
+    // otherwise leak for the session's lifetime.
+    reasoningStreams?.partsByItemId.clear();
+    reasoningStreams?.lastEmittedLengthByItemId.clear();
     const errorMessage = trimText(payload.turn.error?.message);
     return [
       {
@@ -1176,6 +1181,10 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "turn/aborted") {
+    // Aborted turns never complete their reasoning items — drop the live
+    // accumulator with them (same leak guard as turn/completed).
+    reasoningStreams?.partsByItemId.clear();
+    reasoningStreams?.lastEmittedLengthByItemId.clear();
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
