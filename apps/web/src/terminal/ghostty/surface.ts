@@ -3,6 +3,7 @@ import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../term
 import {
   GhosttyTerminalCore,
   type GhosttyScrollbar,
+  type GhosttySelectionRange,
   type GhosttySnapshot,
   type GhosttyTheme,
 } from "./core";
@@ -34,6 +35,12 @@ export const DEFAULT_TERMINAL_FONT_FAMILY =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
 const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
+/** Selection autoscroll rate at the grid edge, and how fast it ramps past it. */
+const SELECTION_AUTOSCROLL_BASE_ROWS_PER_SECOND = 10;
+const SELECTION_AUTOSCROLL_ROWS_PER_SECOND_PER_CELL = 14;
+const SELECTION_AUTOSCROLL_MAX_ROWS_PER_SECOND = 400;
+/** Frame budget cap so a throttled tab does not resume with one giant jump. */
+const SELECTION_AUTOSCROLL_MAX_STEP_MS = 100;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
@@ -348,6 +355,90 @@ export function isTerminalPasteShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
+export function isTerminalSelectAllShortcut(
+  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  platform = navigator.platform,
+) {
+  if (event.key.toLowerCase() !== "a") return false;
+  // Cmd+A is free on mac, but a bare Ctrl+A is readline's beginning-of-line and
+  // tmux's default prefix, so elsewhere select all takes the Shift chord and
+  // leaves the plain press for the shell — the same split copy already makes.
+  return isMacPlatform(platform)
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && event.shiftKey;
+}
+
+export interface TerminalSelectionKeyMove {
+  readonly columns: number;
+  readonly rows: number;
+  readonly toLineStart?: boolean;
+  readonly toLineEnd?: boolean;
+}
+
+/**
+ * How a Shift chord moves the free end of a keyboard selection, or null when
+ * the press is not one. `pageRows` is the viewport height, so PageUp/PageDown
+ * cover exactly one screen.
+ *
+ * Callers must ignore this on the alternate screen and under mouse tracking:
+ * there the chord belongs to the running application, which is the only thing
+ * that knows what a shifted arrow means to it.
+ */
+export function terminalSelectionKeyMove(
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey">,
+  pageRows: number,
+): TerminalSelectionKeyMove | null {
+  if (!event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return null;
+  switch (event.key) {
+    case "ArrowLeft":
+      return { columns: -1, rows: 0 };
+    case "ArrowRight":
+      return { columns: 1, rows: 0 };
+    case "ArrowUp":
+      return { columns: 0, rows: -1 };
+    case "ArrowDown":
+      return { columns: 0, rows: 1 };
+    case "PageUp":
+      return { columns: 0, rows: -Math.max(1, pageRows) };
+    case "PageDown":
+      return { columns: 0, rows: Math.max(1, pageRows) };
+    case "Home":
+      return { columns: 0, rows: 0, toLineStart: true };
+    case "End":
+      return { columns: 0, rows: 0, toLineEnd: true };
+    default:
+      return null;
+  }
+}
+
+/**
+ * The cursor's viewport cell, or null when it has none. Ghostty reports a
+ * cursor scrolled out of the viewport as -1, and grid refs clamp negatives to
+ * zero — so a caller that forwards it unchecked silently anchors at the top
+ * left of the viewport instead of at the cursor.
+ */
+export function terminalCursorViewportPoint(
+  snapshot: { readonly cursorX: number; readonly cursorY: number } | null,
+): { readonly x: number; readonly y: number } | null {
+  if (snapshot === null || snapshot.cursorX < 0 || snapshot.cursorY < 0) return null;
+  return { x: snapshot.cursorX, y: snapshot.cursorY };
+}
+
+/** Where a keyboard move lands, clamped to the grid and the scrollback. */
+export function terminalSelectionKeyTarget(
+  origin: { readonly x: number; readonly y: number },
+  move: TerminalSelectionKeyMove,
+  bounds: { readonly cols: number; readonly maxRow: number },
+): { readonly x: number; readonly y: number } {
+  const lastColumn = Math.max(0, bounds.cols - 1);
+  const x = move.toLineStart
+    ? 0
+    : move.toLineEnd
+      ? lastColumn
+      : Math.max(0, Math.min(origin.x + move.columns, lastColumn));
+  return { x, y: Math.max(0, Math.min(origin.y + move.rows, Math.max(0, bounds.maxRow))) };
+}
+
 export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
   return (
     event.inputType === "" ||
@@ -456,6 +547,44 @@ export function advanceTerminalSelectionClickSequence(
   };
 }
 
+/**
+ * Rows per second the viewport scrolls while a selection drag rests `overshoot`
+ * pixels past the grid edge, negative above and positive below. The rate ramps
+ * with distance so a slight overhang creeps for fine control while a long drag
+ * covers pages: at a fixed rate, selecting a screenful of scrollback takes
+ * longer than the drag itself.
+ */
+export function terminalSelectionAutoscrollRate(overshoot: number, cellHeight: number): number {
+  if (overshoot === 0 || cellHeight <= 0) return 0;
+  const cells = Math.abs(overshoot) / cellHeight;
+  const rate = Math.min(
+    SELECTION_AUTOSCROLL_MAX_ROWS_PER_SECOND,
+    SELECTION_AUTOSCROLL_BASE_ROWS_PER_SECOND +
+      cells * SELECTION_AUTOSCROLL_ROWS_PER_SECOND_PER_CELL,
+  );
+  return overshoot < 0 ? -rate : rate;
+}
+
+/** Signed pixels the pointer sits past the top or bottom edge of the grid. */
+export function terminalSelectionOvershoot(
+  clientY: number,
+  bounds: { readonly top: number; readonly bottom: number },
+): number {
+  if (clientY < bounds.top) return clientY - bounds.top;
+  if (clientY > bounds.bottom) return clientY - bounds.bottom;
+  return 0;
+}
+
+/**
+ * A command output resolved at one point in time, stamped with the buffer it
+ * came from so a later apply can tell whether that buffer is still the one on
+ * screen.
+ */
+export interface TerminalCommandOutputCapture {
+  readonly range: GhosttySelectionRange["screen"];
+  readonly generation: number;
+}
+
 export interface GhosttySelectionPosition {
   readonly start: { readonly x: number; readonly y: number };
   readonly end: { readonly x: number; readonly y: number };
@@ -516,14 +645,18 @@ export class GhosttyTerminalSurface {
   private selectionAnchorScreen: { x: number; y: number } | null = null;
   private selectionEndScreen: { x: number; y: number } | null = null;
   private selectionMode: "cell" | "word" | "line" = "cell";
+  private selectionRectangle = false;
+  private bufferGeneration = 0;
   // Word/line selection base in screen coordinates so streaming output cannot
   // shift the origin of a drag selection.
   private selectionBase: {
     start: { x: number; y: number };
     end: { x: number; y: number };
   } | null = null;
-  private selectionScrollTimer: number | null = null;
-  private selectionScrollDelta = 0;
+  private selectionScrollFrame: number | null = null;
+  private selectionScrollOvershoot = 0;
+  private selectionScrollRemainder = 0;
+  private selectionScrollTime = 0;
   private selectionPointer: { x: number; y: number } | null = null;
   private mouseReportingPointerId: number | null = null;
   private mouseReportingButton: number | null = null;
@@ -670,6 +803,12 @@ export class GhosttyTerminalSurface {
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.core.resetAndWrite(data);
+    // Replacing the buffer repoints every screen coordinate at new content, so
+    // everything anchored to the old one is void: captures held by embedders,
+    // and the anchor a keyboard selection would resume from. Appends invalidate
+    // neither, since those coordinates stay pinned to the rows they named.
+    this.bufferGeneration += 1;
+    this.clearSelection();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -865,6 +1004,76 @@ export class GhosttyTerminalSurface {
     };
   }
 
+  /**
+   * Selects the whole terminal, scrollback included. The viewport stays put:
+   * jumping to an edge would lose the rows the user was looking at, and the
+   * selection is not something they need to see to copy it.
+   */
+  selectAll(): void {
+    const screen = this.core.selectAll();
+    if (screen === null) return;
+    // A fresh anchor, so a later drag extends from this selection's own bounds
+    // rather than from wherever the previous gesture happened to leave them.
+    this.selectionEnd = null;
+    this.selectionMode = "cell";
+    this.selectionBase = null;
+    this.selectionRectangle = false;
+    this.selectionAnchorScreen = screen.start;
+    this.selectionEndScreen = screen.end;
+    this.options.onSelectionChange();
+    this.forceFullRender = true;
+    this.requestRender();
+  }
+
+  /**
+   * The bounds of the command output under these client coordinates, or null
+   * when there is none. Requires OSC 133 marks from the shell, so an unmarked
+   * shell reports null everywhere and callers can hide the affordance.
+   *
+   * Callers that act on this later must keep the returned range rather than the
+   * coordinates: a menu takes time to answer, and streaming output or a scroll
+   * puts a different command under the same point by the time it does. Screen
+   * coordinates stay pinned to their content, so the range survives that.
+   */
+  commandOutputRangeAt(clientX: number, clientY: number): TerminalCommandOutputCapture | null {
+    // Exact hit testing, not the clamping `cellAt` a drag wants: a click in the
+    // padding or the slack below the grid lands on no cell, and offering the
+    // nearest row's command there would act on output nobody pointed at.
+    const cell = terminalGridCellAt({
+      bounds: this.canvas.getBoundingClientRect(),
+      clientX,
+      clientY,
+      cols: this.cols,
+      rows: this.rows,
+      metrics: this.metrics,
+      padding: CONTENT_PADDING,
+      originY: this.originY,
+    });
+    if (cell === null) return null;
+    const range = this.core.outputRangeAt(cell.x, cell.y);
+    return range === null ? null : { range, generation: this.bufferGeneration };
+  }
+
+  /**
+   * Selects a command output captured earlier by `commandOutputRangeAt`, unless
+   * the buffer was replaced in between — a capture from a buffer that no longer
+   * exists would land on whatever content took those coordinates over.
+   */
+  selectCommandOutputRange(capture: TerminalCommandOutputCapture): void {
+    if (capture.generation !== this.bufferGeneration) return;
+    const range = capture.range;
+    this.selectionEnd = null;
+    this.selectionMode = "cell";
+    this.selectionBase = null;
+    this.selectionRectangle = false;
+    this.selectionAnchorScreen = range.start;
+    this.selectionEndScreen = range.end;
+    this.core.setSelection({ ...range.start, tag: 2 }, { ...range.end, tag: 2 });
+    this.options.onSelectionChange();
+    this.forceFullRender = true;
+    this.requestRender();
+  }
+
   clearSelection(): void {
     this.core.clearSelection();
     this.selectionEnd = null;
@@ -872,6 +1081,7 @@ export class GhosttyTerminalSurface {
     this.selectionEndScreen = null;
     this.selectionMode = "cell";
     this.selectionBase = null;
+    this.selectionRectangle = false;
     this.setSelectionAutoscroll(0);
     this.options.onSelectionChange();
     // Selection highlights span rows Ghostty may not mark dirty for this change.
@@ -898,7 +1108,7 @@ export class GhosttyTerminalSurface {
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
     this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
-    if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
+    this.stopSelectionAutoscroll();
     if (this.resizeNotifyTimer !== null) {
       window.clearTimeout(this.resizeNotifyTimer);
       this.resizeNotifyTimer = null;
@@ -933,6 +1143,25 @@ export class GhosttyTerminalSurface {
     if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
       this.suppressedKeyCodes.add(event.code);
       return;
+    }
+    if (isTerminalSelectAllShortcut(event)) {
+      // Nothing native to fall back on: the grid is a canvas, so the browser's
+      // own select all would target the page instead.
+      event.preventDefault();
+      this.suppressedKeyCodes.add(event.code);
+      this.selectAll();
+      return;
+    }
+    // The alternate screen and mouse tracking belong to the running program:
+    // a shifted arrow there is its input, not a selection gesture.
+    if (!this.core.isAlternateScreen() && !this.core.isMouseTracking()) {
+      const move = terminalSelectionKeyMove(event, this.rows);
+      if (move !== null) {
+        event.preventDefault();
+        this.suppressedKeyCodes.add(event.code);
+        this.extendSelectionByKey(move);
+        return;
+      }
     }
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
       // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
@@ -1161,6 +1390,9 @@ export class GhosttyTerminalSurface {
     this.clearHoveredLink();
     const cell = this.cellAt(event.clientX, event.clientY);
     this.selectionMoved = false;
+    // Alt starts a block selection, so pulling one column out of tabular output
+    // does not drag in the whole width of every row it crosses.
+    this.selectionRectangle = event.altKey;
     this.selectionClickSequence = advanceTerminalSelectionClickSequence(
       this.selectionClickSequence,
       event,
@@ -1187,9 +1419,13 @@ export class GhosttyTerminalSurface {
       this.selectionAnchorScreen = screen;
       this.selectionEndScreen = screen;
       if (screen) {
-        this.core.setSelection({ ...screen, tag: 2 }, { ...screen, tag: 2 });
+        this.core.setSelection(
+          { ...screen, tag: 2 },
+          { ...screen, tag: 2 },
+          this.selectionRectangle,
+        );
       } else {
-        this.core.setSelection(cell, cell);
+        this.core.setSelection(cell, cell, this.selectionRectangle);
       }
     }
     this.forceFullRender = true;
@@ -1222,9 +1458,7 @@ export class GhosttyTerminalSurface {
     this.clearHoveredLink();
     this.selectionPointer = { x: event.clientX, y: event.clientY };
     const bounds = this.canvas.getBoundingClientRect();
-    this.setSelectionAutoscroll(
-      event.clientY < bounds.top ? -1 : event.clientY > bounds.bottom ? 1 : 0,
-    );
+    this.setSelectionAutoscroll(terminalSelectionOvershoot(event.clientY, bounds));
     const cell = this.cellAt(event.clientX, event.clientY);
     if (cell.x === this.selectionEnd?.x && cell.y === this.selectionEnd.y) return;
     this.extendSelectionTo(event.clientX, event.clientY);
@@ -1253,30 +1487,99 @@ export class GhosttyTerminalSurface {
     const end = range === null ? cellScreen : beforeBase ? range.screen.start : range.screen.end;
     this.selectionAnchorScreen = anchor;
     this.selectionEndScreen = end;
-    this.core.setSelection({ ...anchor, tag: 2 }, { ...end, tag: 2 });
+    this.core.setSelection({ ...anchor, tag: 2 }, { ...end, tag: 2 }, this.selectionRectangle);
     this.options.onSelectionChange();
     this.forceFullRender = true;
     this.requestRender();
   }
 
-  private setSelectionAutoscroll(delta: number): void {
-    this.selectionScrollDelta = delta;
-    if (delta === 0) {
-      if (this.selectionScrollTimer !== null) {
-        window.clearInterval(this.selectionScrollTimer);
-        this.selectionScrollTimer = null;
-      }
+  /** `overshoot` is signed pixels past the grid edge; 0 stops the autoscroll. */
+  /**
+   * Moves the free end of the selection, anchoring at the cursor the first time
+   * so a selection can be started from the keyboard alone, and scrolls whatever
+   * the new end lands on into view.
+   */
+  private extendSelectionByKey(move: TerminalSelectionKeyMove): void {
+    const state = this.readScrollbarState();
+    const cursor = terminalCursorViewportPoint(this.snapshot);
+    // No selection and no on-screen cursor means there is nothing to extend
+    // from; anchoring anywhere else would select a region the user never chose.
+    const origin =
+      this.selectionEndScreen ??
+      (cursor === null ? null : this.core.viewportPointToScreen(cursor.x, cursor.y));
+    if (origin === null) return;
+    if (this.selectionAnchorScreen === null) {
+      this.selectionAnchorScreen = origin;
+      this.selectionMode = "cell";
+      this.selectionBase = null;
+      this.selectionRectangle = false;
+    }
+    const target = terminalSelectionKeyTarget(origin, move, {
+      cols: this.cols,
+      maxRow: state === null ? this.rows - 1 : state.total - 1,
+    });
+    this.selectionEnd = null;
+    this.selectionEndScreen = target;
+    this.core.setSelection(
+      { ...this.selectionAnchorScreen, tag: 2 },
+      { ...target, tag: 2 },
+      this.selectionRectangle,
+    );
+    if (state !== null) {
+      // Keep the moving end on screen; a selection you cannot see is not one.
+      const above = target.y - state.offset;
+      const below = target.y - (state.offset + state.len - 1);
+      if (above < 0) this.scrollViewport(above);
+      else if (below > 0) this.scrollViewport(below);
+    }
+    this.options.onSelectionChange();
+    this.forceFullRender = true;
+    this.requestRender();
+  }
+
+  private setSelectionAutoscroll(overshoot: number): void {
+    this.selectionScrollOvershoot = overshoot;
+    if (overshoot === 0) {
+      this.stopSelectionAutoscroll();
       return;
     }
-    if (this.selectionScrollTimer !== null) return;
+    if (this.selectionScrollFrame !== null) return;
     // Dragging past the edge scrolls the viewport and keeps extending the
-    // selection into the newly revealed rows, like xterm's drag scroller.
-    this.selectionScrollTimer = window.setInterval(() => {
-      if (this.disposed || this.selectionScrollDelta === 0) return;
-      this.scrollViewport(this.selectionScrollDelta);
+    // selection into the newly revealed rows, like xterm's drag scroller. The
+    // rate is distance-driven and integrated over real elapsed time, so it
+    // neither creeps on a long drag nor changes with display refresh rate.
+    this.selectionScrollRemainder = 0;
+    this.selectionScrollTime = performance.now();
+    this.selectionScrollFrame = window.requestAnimationFrame(this.stepSelectionAutoscroll);
+  }
+
+  private readonly stepSelectionAutoscroll = (now: number) => {
+    this.selectionScrollFrame = null;
+    if (this.disposed || this.selectionScrollOvershoot === 0) return;
+    const elapsed = Math.min(
+      Math.max(0, now - this.selectionScrollTime),
+      SELECTION_AUTOSCROLL_MAX_STEP_MS,
+    );
+    this.selectionScrollTime = now;
+    this.selectionScrollRemainder +=
+      terminalSelectionAutoscrollRate(this.selectionScrollOvershoot, this.metrics.height) *
+      (elapsed / 1000);
+    const rows = Math.trunc(this.selectionScrollRemainder);
+    if (rows !== 0) {
+      this.selectionScrollRemainder -= rows;
+      // Holding the drag past the edge at either end of scrollback moves
+      // nothing, so skip the re-extension and its full repaint.
+      const scrolled = this.scrollViewport(rows);
       const pointer = this.selectionPointer;
-      if (pointer) this.extendSelectionTo(pointer.x, pointer.y);
-    }, 80);
+      if (scrolled !== 0 && pointer) this.extendSelectionTo(pointer.x, pointer.y);
+    }
+    this.selectionScrollFrame = window.requestAnimationFrame(this.stepSelectionAutoscroll);
+  };
+
+  private stopSelectionAutoscroll(): void {
+    if (this.selectionScrollFrame === null) return;
+    window.cancelAnimationFrame(this.selectionScrollFrame);
+    this.selectionScrollFrame = null;
   }
 
   private updateHoverCursor(event: PointerEvent): void {
@@ -1524,7 +1827,8 @@ export class GhosttyTerminalSurface {
     this.scrollbar.removeEventListener("keydown", this.onScrollbarKeyDown);
   }
 
-  private scrollViewport(deltaRows: number): void {
+  /** Returns the rows actually scrolled, which is 0 at either end of scrollback. */
+  private scrollViewport(deltaRows: number): number {
     let delta = Math.trunc(deltaRows);
     const state = this.readScrollbarState();
     if (state !== null) {
@@ -1533,11 +1837,12 @@ export class GhosttyTerminalSurface {
       delta = offset - state.offset;
       this.scrollbarState = { ...state, offset };
     }
-    if (delta === 0) return;
+    if (delta === 0) return 0;
     this.core.scroll(delta);
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
+    return delta;
   }
 
   private scrollbarToPointer(clientY: number, bounds: DOMRect): void {

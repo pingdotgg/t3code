@@ -257,7 +257,12 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
-export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+export type TerminalContextMenuAction =
+  | "add-to-chat"
+  | "copy"
+  | "paste"
+  | "select-all"
+  | "select-output";
 
 /** Post-selection popup: just the two selection actions, always enabled. */
 export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
@@ -269,18 +274,27 @@ export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "c
 
 /**
  * Right-click menu for the terminal canvas: the selection actions (disabled
- * until a selection exists) plus Paste. Paste is always offered: the browser
- * (and Electron's default editing menu) can only paste into an editable
- * element, so a canvas terminal never gets a usable entry from them.
+ * until a selection exists) plus Select All and Paste. Both are always offered:
+ * the browser (and Electron's default editing menu) only act on an editable
+ * element, so a canvas terminal never gets usable entries from them.
+ *
+ * "Select command output" only appears over output Ghostty can bound, which
+ * needs OSC 133 marks from the shell. Offering it on an unmarked shell would be
+ * an entry that never does anything.
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  hasCommandOutput?: boolean;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
   return [
     ...terminalSelectionMenuItems().map((item) => ({
       ...item,
       disabled: !options.hasSelection,
     })),
+    ...(options.hasCommandOutput === true
+      ? [{ id: "select-output" as const, label: "Select command output" }]
+      : []),
+    { id: "select-all", label: "Select all" },
     { id: "paste", label: "Paste" },
   ];
 }
@@ -631,10 +645,18 @@ export function TerminalViewport({
         clearSelectionAction();
         const selectionAction = readSelectionAction();
         const requestId = selectionActionRequestIdRef.current;
+        // Resolve the command under the pointer now and act on that range, not
+        // on the coordinates: the menu is asynchronous, and output arriving
+        // while it is open would put a different command under the same point.
+        const commandOutput =
+          terminalRef.current?.commandOutputRangeAt(event.clientX, event.clientY) ?? null;
         let clicked: TerminalContextMenuAction | null;
         try {
           clicked = await localApi.contextMenu.show(
-            terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+            terminalContextMenuItems({
+              hasSelection: selectionAction !== null,
+              hasCommandOutput: commandOutput !== null,
+            }),
             { x: event.clientX, y: event.clientY },
           );
         } catch (error) {
@@ -651,6 +673,14 @@ export function TerminalViewport({
             return;
           case "copy":
             if (selectionAction) await copySelection(selectionAction.clipboardText, requestId);
+            return;
+          case "select-all":
+            terminalRef.current?.selectAll();
+            focusIfCurrent(requestId);
+            return;
+          case "select-output":
+            if (commandOutput) terminalRef.current?.selectCommandOutputRange(commandOutput);
+            focusIfCurrent(requestId);
             return;
           case "paste":
             await pasteFromClipboard(requestId);
@@ -929,11 +959,17 @@ export function TerminalViewport({
       current.buffer.length >= previous.buffer.length &&
       current.buffer.startsWith(previous.buffer)
     ) {
+      // An append leaves the selection alone: Ghostty pins it to its content,
+      // so it survives the output scrolling past. Clearing here dates from the
+      // xterm.js renderer, whose selection was invalidated by any write, and
+      // kept making a selection impossible to hold on a live log.
       terminal.write(current.buffer.slice(previous.buffer.length));
     } else {
+      // A replace repoints every coordinate, so the old selection is meaningless.
+      // resetAndWrite drops it, which keeps the invariant with the surface that
+      // owns the coordinates rather than with each caller that replaces a buffer.
       writeTerminalBuffer(terminal, current.buffer);
     }
-    terminal.clearSelection();
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);

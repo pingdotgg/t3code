@@ -602,7 +602,8 @@ export class GhosttyTerminalCore {
     return encoded;
   }
 
-  setSelection(anchor: GhosttyPointInput, end: GhosttyPointInput): void {
+  /** `rectangle` selects the block bounded by the two points instead of the text flow between them. */
+  setSelection(anchor: GhosttyPointInput, end: GhosttyPointInput, rectangle = false): void {
     this.ensureActive();
     const selectionLayout = this.runtime.layout("GhosttySelection");
     const gridRefSize = this.runtime.layout("GhosttyGridRef").size;
@@ -621,6 +622,7 @@ export class GhosttyTerminalCore {
       this.runtime
         .bytes(selection + endField.offset, endField.size)
         .set(this.runtime.bytes(endRef, endField.size));
+      this.runtime.setField(selection, "GhosttySelection", "rectangle", rectangle ? 1 : 0);
       this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
     } finally {
       this.runtime.free(start, gridRefSize);
@@ -629,17 +631,75 @@ export class GhosttyTerminalCore {
     }
   }
 
-  selectAll(): void {
+  /**
+   * The bounds of the command output containing a cell, without selecting it.
+   * Null unless the shell emits OSC 133 semantic prompt marks and the cell sits
+   * inside a marked output region — a prompt or an unmarked shell yields none.
+   */
+  outputRangeAt(col: number, row: number): GhosttySelectionRange["screen"] | null {
+    return this.selectOutputAt(col, row, false);
+  }
+
+  /** Selects the whole output of the command that produced this cell. */
+  selectOutput(col: number, row: number): GhosttySelectionRange["screen"] | null {
+    return this.selectOutputAt(col, row, true);
+  }
+
+  private selectOutputAt(
+    col: number,
+    row: number,
+    apply: boolean,
+  ): GhosttySelectionRange["screen"] | null {
+    this.ensureActive();
+    const selectionLayout = this.runtime.layout("GhosttySelection");
+    const selection = this.runtime.alloc(selectionLayout.size);
+    let ref = 0;
+    let screen: GhosttySelectionRange["screen"] | null = null;
+    try {
+      this.runtime.setField(selection, "GhosttySelection", "size", selectionLayout.size);
+      ref = this.gridRef(col, row);
+      if (
+        this.runtime.call("ghostty_terminal_select_output", this.terminal, ref, selection) ===
+        GHOSTTY_SUCCESS
+      ) {
+        const start = this.pointFromGridRef(selection + selectionLayout.fields.start!.offset, 2);
+        const end = this.pointFromGridRef(selection + selectionLayout.fields.end!.offset, 2);
+        if (start !== null && end !== null) screen = { start, end };
+        if (apply) this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
+      }
+    } finally {
+      this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
+      this.runtime.free(selection, selectionLayout.size);
+    }
+    return screen;
+  }
+
+  /**
+   * Selects everything the terminal holds, scrollback included, and reports the
+   * bounds in screen coordinates. Only screen points are returned: the start of
+   * a full selection usually sits above the viewport, where a viewport point
+   * does not exist. Null means there was nothing to select.
+   */
+  selectAll(): GhosttySelectionRange["screen"] | null {
     this.ensureActive();
     const layout = this.runtime.layout("GhosttySelection");
     const selection = this.runtime.alloc(layout.size);
     this.runtime.setField(selection, "GhosttySelection", "size", layout.size);
-    if (
-      this.runtime.call("ghostty_terminal_select_all", this.terminal, selection) === GHOSTTY_SUCCESS
-    ) {
-      this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
+    let screen: GhosttySelectionRange["screen"] | null = null;
+    try {
+      if (
+        this.runtime.call("ghostty_terminal_select_all", this.terminal, selection) ===
+        GHOSTTY_SUCCESS
+      ) {
+        const start = this.pointFromGridRef(selection + layout.fields.start!.offset, 2);
+        const end = this.pointFromGridRef(selection + layout.fields.end!.offset, 2);
+        if (start !== null && end !== null) screen = { start, end };
+        this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
+      }
+    } finally {
+      this.runtime.free(selection, layout.size);
     }
-    this.runtime.free(selection, layout.size);
+    return screen;
   }
 
   selectWord(col: number, row: number): GhosttySelectionRange | null {
