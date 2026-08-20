@@ -1765,6 +1765,8 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2329,18 +2331,30 @@ export default function Sidebar() {
 
   const visibleCustomSections = useMemo(
     () =>
-      customSections.map((section) => {
-        if (threadSectionExpandedByName[section.name] === true) {
-          return { ...section, visibleThreads: section.threads };
-        }
-        if (routeThreadKey === null) return { ...section, visibleThreads: [] };
-        const routeThread = section.threads.find(
-          (thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-        );
-        return { ...section, visibleThreads: routeThread ? [routeThread] : [] };
-      }),
-    [customSections, routeThreadKey, threadSectionExpandedByName],
+      customSections
+        .filter(
+          (section) =>
+            section.threads.length > 0 ||
+            (scopedProjectKeys === null && storedThreadSectionNames.includes(section.name)),
+        )
+        .map((section) => {
+          if (threadSectionExpandedByName[section.name] === true) {
+            return { ...section, visibleThreads: section.threads };
+          }
+          if (routeThreadKey === null) return { ...section, visibleThreads: [] };
+          const routeThread = section.threads.find(
+            (thread) =>
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+          );
+          return { ...section, visibleThreads: routeThread ? [routeThread] : [] };
+        }),
+    [
+      customSections,
+      routeThreadKey,
+      scopedProjectKeys,
+      storedThreadSectionNames,
+      threadSectionExpandedByName,
+    ],
   );
 
   const orderedThreads = useMemo(
@@ -2906,7 +2920,6 @@ export default function Sidebar() {
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
-        const members = threads.filter((thread) => thread.sectionName === sectionName);
         if (clicked.value === "rename-section") {
           const nextName = await requestSectionName({
             mode: "rename",
@@ -2914,20 +2927,31 @@ export default function Sidebar() {
             existingNames: threadSectionNames,
           });
           if (nextName === null || nextName === sectionName) return;
-          const moved = await moveThreadsToSection(members, nextName, { showToast: false });
+          const moved = await moveThreadsToSection(
+            threadsRef.current.filter((thread) => thread.sectionName === sectionName),
+            nextName,
+            { showToast: false },
+          );
           if (moved) renameStoredThreadSection(sectionName, nextName);
           return;
         }
         if (clicked.value !== "delete-section") return;
+        const memberCount = threadsRef.current.filter(
+          (thread) => thread.sectionName === sectionName,
+        ).length;
         const confirmed = await settlePromise(() =>
           api.dialogs.confirm(
-            members.length === 0
+            memberCount === 0
               ? `Delete section "${sectionName}"?`
-              : `Delete section "${sectionName}" and move ${members.length} thread${members.length === 1 ? "" : "s"} to the active list?`,
+              : `Delete section "${sectionName}" and move ${memberCount} thread${memberCount === 1 ? "" : "s"} to the active list?`,
           ),
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
-        const moved = await moveThreadsToSection(members, null, { showToast: false });
+        const moved = await moveThreadsToSection(
+          threadsRef.current.filter((thread) => thread.sectionName === sectionName),
+          null,
+          { showToast: false },
+        );
         if (moved) forgetThreadSection(sectionName);
       })();
     },
@@ -2937,7 +2961,6 @@ export default function Sidebar() {
       renameStoredThreadSection,
       requestSectionName,
       threadSectionNames,
-      threads,
     ],
   );
 
