@@ -1032,6 +1032,18 @@ export default function GitActionsControl({
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
   );
+  // ChatHeader renders this control unkeyed, so switching threads is a props-only update and the
+  // dialog state survives it. A draft kept after a rejected commit would otherwise follow the user
+  // to the next repository and re-apply its file exclusions there.
+  const commitDraftScopeRef = useRef(sourceControlScope);
+  useEffect(() => {
+    if (commitDraftScopeRef.current === sourceControlScope) {
+      return;
+    }
+    commitDraftScopeRef.current = sourceControlScope;
+    setCommitDialogOpen(false);
+    discardCommitDraft();
+  }, [sourceControlScope]);
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<boolean>;
 
   const updateActiveProgressToast = useCallback(() => {
