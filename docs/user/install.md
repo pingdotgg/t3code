@@ -68,6 +68,10 @@ them on in **Settings** → the provider's card when you want to use them.
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
 
+Grok models that support adjustable reasoning show a **Reasoning** control beside the model picker.
+The available levels and default come from the installed Grok Build CLI, so they can vary by model
+and CLI version.
+
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.
 
