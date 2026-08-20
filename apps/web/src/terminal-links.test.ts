@@ -37,6 +37,17 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it("finds URLs regardless of scheme casing", () => {
+    expect(extractTerminalLinks("open HTTPS://example.com/docs")).toEqual([
+      {
+        kind: "url",
+        text: "HTTPS://example.com/docs",
+        start: 5,
+        end: 29,
+      },
+    ]);
+  });
+
   it("trims trailing punctuation from links", () => {
     const line = "(https://example.com/docs), ./src/main.ts:12.";
     expect(extractTerminalLinks(line)).toEqual([
