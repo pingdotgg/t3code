@@ -336,6 +336,47 @@ export function isTerminalCopyShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
+/**
+ * Canvas terminals have no DOM selection. Native copy and Electron's Edit
+ * menu `role: "copy"` both read the focused textarea, so an empty IME field
+ * writes blankness to the clipboard. Park the Ghostty selection there first.
+ */
+export function primeTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value" | "select">,
+  selection: string,
+): void {
+  input.value = selection;
+  if (selection.length === 0) return;
+  input.select();
+}
+
+export function clearPrimedTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value">,
+  primedSelection: string,
+): void {
+  // Only blank the copy we parked. The same textarea holds the IME candidate;
+  // wiping whatever is there would cancel CJK composition.
+  if (primedSelection.length === 0 || input.value !== primedSelection) return;
+  input.value = "";
+}
+
+/**
+ * Only a copy event that actually received the selection may cancel the
+ * clipboard.writeText fallback. Claiming without clipboardData (Electron's
+ * menu Copy) used to preventDefault an empty write and skip the fallback,
+ * which is how Cmd+C copied blankness.
+ */
+export function applyTerminalCopyEvent(
+  selection: string,
+  clipboardData: { setData: (type: string, data: string) => void } | null | undefined,
+): { preventDefault: boolean; claimWriteFallback: boolean } {
+  if (selection.length === 0 || !clipboardData) {
+    return { preventDefault: false, claimWriteFallback: false };
+  }
+  clipboardData.setData("text/plain", selection);
+  return { preventDefault: true, claimWriteFallback: true };
+}
+
 export function isTerminalPasteShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
@@ -354,6 +395,14 @@ export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputT
     event.inputType === "insertCompositionText" ||
     event.inputType === "insertFromComposition"
   );
+}
+
+/** IME keydowns must not touch the hidden textarea; it holds the candidate. */
+export function isTerminalCompositionKey(
+  event: Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">,
+  composing: boolean,
+): boolean {
+  return event.isComposing || composing || event.key === "Process" || event.keyCode === 229;
 }
 
 export function isTerminalAltGraphText(
@@ -542,6 +591,7 @@ export class GhosttyTerminalSurface {
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
+  private primedCopySelection = "";
   private wheelRemainder = 0;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
@@ -866,6 +916,7 @@ export class GhosttyTerminalSurface {
   }
 
   clearSelection(): void {
+    this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;
     this.selectionAnchorScreen = null;
@@ -941,6 +992,8 @@ export class GhosttyTerminalSurface {
       // clipboard write against it the same way paste races its read. The
       // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
       // inspect), so synthesize one with execCommand("copy").
+      const selection = this.getSelection();
+      this.primeCopy(selection);
       if (event.shiftKey) {
         event.preventDefault();
         document.execCommand("copy");
@@ -955,12 +1008,10 @@ export class GhosttyTerminalSurface {
         if (typeof clipboard?.writeText === "function") {
           // Defer the write past the default action: the native copy event
           // (dispatched synchronously with the default action) claims the
-          // token first when it fires, and the write covers browsers whose
-          // shortcut produces no copy event. Skipping a write the native
-          // event already handled stops a stale resolution from clobbering a
-          // clipboard the user filled after this copy.
+          // token first when it actually writes, and the write covers browsers
+          // whose shortcut produces no copy event. The primed textarea is what
+          // Electron's edit-menu Copy reads if it runs after this handler.
           const token = ++this.copyShortcutToken;
-          const selection = this.getSelection();
           void Promise.resolve().then(() => {
             if (this.disposed || this.copyShortcutToken !== token) return;
             void clipboard.writeText(selection).then(
@@ -1013,10 +1064,12 @@ export class GhosttyTerminalSurface {
       return;
     }
     // keyCode 229 is Safari's only signal that this keydown opens an IME
-    // composition; encoding it would double the committed text.
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    // composition; encoding it would double the committed text. Do not blank
+    // the textarea first: onInput leaves the in-progress candidate there.
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
+    this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
     this.suppressedKeyCodes.delete(event.code);
@@ -1028,7 +1081,7 @@ export class GhosttyTerminalSurface {
   private readonly onKeyUp = (event: KeyboardEvent) => {
     this.updateLinkModifier(event);
     if (this.suppressedKeyCodes.delete(event.code)) return;
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
     // Ghostty's encoder only emits release codes when the terminal enabled the
@@ -1072,15 +1125,32 @@ export class GhosttyTerminalSurface {
     this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
   }
 
+  private primeCopy(selection: string): void {
+    this.primedCopySelection = selection;
+    primeTerminalCopyInput(this.input, selection);
+  }
+
+  private clearPrimedCopy(): void {
+    clearPrimedTerminalCopyInput(this.input, this.primedCopySelection);
+    this.primedCopySelection = "";
+  }
+
   private readonly onCopyEvent = (event: ClipboardEvent) => {
-    if (!this.hasSelection()) return;
-    event.preventDefault();
-    event.clipboardData?.setData("text/plain", this.getSelection());
-    // The native event beat any deferred write; drop the in-flight fallback.
-    this.copyShortcutToken += 1;
-    if (this.clearSelectionAfterCopy) {
-      this.clearSelectionAfterCopy = false;
-      this.clearSelection();
+    const selection = this.hasSelection() ? this.getSelection() : this.input.value;
+    // Menu-role Copy never hits the keydown primer. The native action reads
+    // this.input, so park the current selection first — including when
+    // clipboardData is missing and we must not preventDefault.
+    this.primeCopy(selection);
+    const result = applyTerminalCopyEvent(selection, event.clipboardData);
+    if (result.preventDefault) event.preventDefault();
+    if (result.claimWriteFallback) {
+      // The native event actually wrote the selection; drop the in-flight
+      // writeText so a late resolution cannot clobber a later user copy.
+      this.copyShortcutToken += 1;
+      if (this.clearSelectionAfterCopy) {
+        this.clearSelectionAfterCopy = false;
+        this.clearSelection();
+      }
     }
   };
 
@@ -1098,6 +1168,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onCompositionStart = () => {
+    this.clearPrimedCopy();
     this.clearCompositionInputSuppression();
     this.composing = true;
   };
