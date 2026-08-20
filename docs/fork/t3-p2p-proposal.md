@@ -6,12 +6,17 @@
 
 ## The problem, stated honestly
 
-Earlier in this project I argued against adding P2P to T3, and I stand by the
-reasoning as far as it went: T3 already expresses remoteness at the connection
-layer, Tailscale already solves NAT traversal, and mesh *routing* would buy
-nothing because every hub is directly reachable once an overlay exists.
+Earlier in this project I argued against adding P2P to T3: T3 already expresses
+remoteness at the connection layer, Tailscale already solves NAT traversal, and
+mesh *routing* would buy nothing because every hub is directly reachable once an
+overlay exists.
 
-But that argument was about **transport**, and transport is not the gap.
+That last clause is doing more work than it can carry, and the qualifier belongs
+in the claim: routing buys nothing *where an overlay reaches every machine*. It
+is the machines an overlay cannot reach that most need a fabric. See
+**Deferred: peer relaying** below — the question is open, not closed.
+
+What the argument does establish is that transport is not the **first** gap.
 
 The gap is **provisioning**. Before a client can connect to a machine, something
 has to be *running* on that machine. Today that means: open a shell there,
@@ -184,6 +189,43 @@ The natural attachment point on the T3 side already exists:
 remote environments" when empty. A picker fed by the directory belongs there,
 and beside the pairing-token field, which is where a user currently transcribes
 an address by hand.
+
+## Deferred: peer relaying
+
+Whether peers should carry traffic for each other is **an open question, and a
+follow-on design study after the first prototype ships**. It is recorded here
+rather than decided because the case for it is stronger than the original
+argument against allowed.
+
+The argument against assumed a universal overlay. Where one is partial — which
+is the ordinary state of a mixed home network — relaying is not a luxury:
+
+- **A machine that cannot join the overlay.** An old or locked-down box where
+  Tailscale will not install is exactly the machine worth reaching remotely. If
+  a peer on its LAN can reach both it and you, relaying through that peer is the
+  only path.
+- **Bridging networks.** A peer joined to a tailnet and to a private mesh *is* a
+  relay. Calling those "two records with different transports" describes the
+  directory correctly and quietly assumes someone carries bytes across.
+- **Policy, not just reachability.** ACLs can permit A↔B and deny you↔B.
+- **Discovery already relays.** The hello protocol walks peer lists through
+  intermediaries. Relaying knowledge but refusing to relay bytes is a line drawn
+  by taste rather than principle.
+
+Two conditions look load-bearing enough to write down now, since they decide
+whether relaying stays cheap:
+
+- **End-to-end encrypted, with the relay as a dumb forwarder.** A peer that
+  carries traffic must not be able to read it, or every added peer widens what a
+  single compromise exposes. This also keeps relaying a transport decision
+  rather than a trust one.
+- **Relaying is a capability a peer offers.** It spends bandwidth and exposure,
+  so it belongs beside "will run a broker": explicitly granted, revocable, and
+  used only when no direct route exists.
+
+With both, relaying is a fallback path with an owner rather than the mesh
+routing the original argument rejected. Deferring it is a sequencing decision —
+the prototype should not carry it — not a judgement that it is unnecessary.
 
 ## Implementation options
 
