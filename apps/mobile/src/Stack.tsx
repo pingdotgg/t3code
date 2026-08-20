@@ -350,6 +350,15 @@ function workspacePathFromState(state: NavigationState): string {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
+function activeNavigationTransitionKey(state: NavigationState): string {
+  const route = state.routes[state.index];
+  if (!route) {
+    return "empty";
+  }
+  const nestedState = route.state as NavigationState | undefined;
+  return nestedState ? `${route.key}/${activeNavigationTransitionKey(nestedState)}` : route.key;
+}
+
 // The drain hook subscribes to the outbox, all thread shells, projects, and
 // connection statuses. Hosting it in a null-rendering leaf keeps those
 // updates from re-rendering RootStackLayout (and with it every screen) on
@@ -391,9 +400,10 @@ function RootStackLayout(props: {
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspacePathname = workspacePathFromState(props.state);
+  const transitionKey = activeNavigationTransitionKey(props.state);
 
   return (
-    <MobileNavigationHistoryProvider pathname={pathname}>
+    <MobileNavigationHistoryProvider pathname={pathname} transitionKey={transitionKey}>
       <HardwareKeyboardCommandProvider pathname={pathname}>
         <ThreadOutboxDrainWorker />
         <ShowcaseCaptureCoordinator pathname={pathname} />
