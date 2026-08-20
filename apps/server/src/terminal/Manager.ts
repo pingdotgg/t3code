@@ -54,6 +54,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 import {
   increment,
   terminalRestartsTotal,
@@ -464,13 +465,13 @@ function normalizeShellCommand(
   if (trimmed.length === 0) return null;
 
   const quotedExecutable = trimmed.match(/^(["'])(.*?)\1(?:\s|$)/u)?.[2];
-  if (quotedExecutable) return quotedExecutable;
+  if (quotedExecutable) return expandHomePath(quotedExecutable);
 
-  if (platform === "win32") return trimmed;
+  if (platform === "win32") return expandHomePath(trimmed);
 
   const firstToken = trimmed.split(/\s+/g)[0]?.trim();
   if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
+  return expandHomePath(firstToken.replace(/^['"]|['"]$/g, ""));
 }
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
