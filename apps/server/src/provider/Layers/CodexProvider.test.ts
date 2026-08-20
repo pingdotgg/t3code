@@ -4,21 +4,40 @@ import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
   mapCodexModelCapabilities,
+  resolveCodexCatalogModelSlug,
 } from "./CodexProvider.ts";
 
-it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
+it("keeps provider-qualified GPT-5.6 Codex models out of legacy models", () => {
   assert.deepStrictEqual(
-    ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.4"].map((model) => [
-      model,
-      isLegacyCodexModel(model),
-    ]),
+    ["gpt-5.6-luna", "openai.gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.4"].map(
+      (model) => [model, isLegacyCodexModel(model)],
+    ),
     [
       ["gpt-5.6-luna", false],
+      ["openai.gpt-5.6-luna", false],
       ["gpt-5.6-terra", false],
       ["gpt-5.6-sol", false],
       ["gpt-5.4", true],
     ],
   );
+});
+
+it("resolves an unqualified model through the live Bedrock catalog", () => {
+  const models = [
+    {
+      slug: "openai.gpt-5.6-luna",
+      name: "GPT-5.6-Luna",
+      isCustom: false,
+      capabilities: null,
+    },
+  ];
+
+  assert.strictEqual(resolveCodexCatalogModelSlug("gpt-5.6-luna", models), "openai.gpt-5.6-luna");
+  assert.strictEqual(
+    resolveCodexCatalogModelSlug("openai.gpt-5.6-luna", models),
+    "openai.gpt-5.6-luna",
+  );
+  assert.strictEqual(resolveCodexCatalogModelSlug("custom-model", models), "custom-model");
 });
 
 it("maps current Codex model capability fields", () => {
@@ -144,6 +163,25 @@ it("prefers sol over terra when both are available", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.6-sol");
+});
+
+it("preserves a provider-qualified preferred default slug", () => {
+  const models = applyPreferredCodexDefaultModel([
+    {
+      slug: "openai.gpt-5.6-terra",
+      name: "GPT-5.6-Terra",
+      isCustom: false,
+      capabilities: null,
+    },
+    {
+      slug: "openai.gpt-5.6-sol",
+      name: "GPT-5.6-Sol",
+      isCustom: false,
+      capabilities: null,
+    },
+  ]);
+
+  assert.strictEqual(models.find((model) => model.isDefault)?.slug, "openai.gpt-5.6-sol");
 });
 
 it("keeps Codex's own default when no preferred model is available", () => {

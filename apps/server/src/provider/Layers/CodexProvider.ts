@@ -63,9 +63,33 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 
 const DEFAULT_SERVICE_TIER_ID = "default";
 const CURRENT_CODEX_MODELS = new Set(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+const CODEX_BEDROCK_MODEL_PREFIX = "openai.";
+
+function codexBaseModelSlug(model: string): string {
+  return model.startsWith(CODEX_BEDROCK_MODEL_PREFIX)
+    ? model.slice(CODEX_BEDROCK_MODEL_PREFIX.length)
+    : model;
+}
 
 export function isLegacyCodexModel(model: string): boolean {
-  return !CURRENT_CODEX_MODELS.has(model);
+  return !CURRENT_CODEX_MODELS.has(codexBaseModelSlug(model));
+}
+
+export function resolveCodexCatalogModelSlug(
+  requestedModel: string,
+  models: ReadonlyArray<ServerProviderModel>,
+): string {
+  const exactMatch = models.find((model) => model.slug === requestedModel);
+  if (exactMatch) {
+    return exactMatch.slug;
+  }
+  if (requestedModel.startsWith(CODEX_BEDROCK_MODEL_PREFIX)) {
+    return requestedModel;
+  }
+  return (
+    models.find((model) => !model.isCustom && codexBaseModelSlug(model.slug) === requestedModel)
+      ?.slug ?? requestedModel
+  );
 }
 
 function reasoningEffortLabel(reasoningEffort: string): string {
@@ -207,14 +231,17 @@ function parseCodexModelListResponse(
 export function applyPreferredCodexDefaultModel(
   models: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> {
-  const preferredSlug = PREFERRED_DEFAULT_CODEX_MODELS.find((slug) =>
-    models.some((model) => model.slug === slug && !model.isCustom),
-  );
-  if (!preferredSlug) {
+  const preferredModel = PREFERRED_DEFAULT_CODEX_MODELS.flatMap((preferredSlug) => {
+    const model = models.find(
+      (candidate) => !candidate.isCustom && codexBaseModelSlug(candidate.slug) === preferredSlug,
+    );
+    return model ? [model] : [];
+  })[0];
+  if (!preferredModel) {
     return models;
   }
   return models.map((model) => {
-    if (model.slug === preferredSlug) {
+    if (model.slug === preferredModel.slug) {
       return model.isDefault ? model : { ...model, isDefault: true };
     }
     if (!model.isDefault) {

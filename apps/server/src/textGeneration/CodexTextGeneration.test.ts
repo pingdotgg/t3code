@@ -9,7 +9,12 @@ import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  ProviderInstanceId,
+  type ServerProviderModel,
+  TextGenerationError,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -191,6 +196,7 @@ function withFakeCodexEnv<A, E, R>(
     stdinMustNotContain?: string;
     launchArgs?: string;
     environment?: NodeJS.ProcessEnv;
+    modelCatalog?: ReadonlyArray<ServerProviderModel>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -199,7 +205,11 @@ function withFakeCodexEnv<A, E, R>(
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
     const config = decodeCodexSettings({ binaryPath: codexPath, launchArgs: input.launchArgs });
-    const textGeneration = yield* makeCodexTextGeneration(config, input.environment);
+    const textGeneration = yield* makeCodexTextGeneration(
+      config,
+      input.environment,
+      Effect.succeed(input.modelCatalog ?? []),
+    );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -301,6 +311,30 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           stagedSummary: "M README.md",
           stagedPatch: "diff --git a/README.md b/README.md",
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        }),
+    ),
+  );
+
+  it.effect("uses the provider-qualified model slug from the live Codex catalog", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Bedrock model resolution" }),
+        requireArg: "openai.gpt-5.6-luna",
+        forbidArg: "gpt-5.6-luna",
+        modelCatalog: [
+          {
+            slug: "openai.gpt-5.6-luna",
+            name: "GPT-5.6-Luna",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+      },
+      (textGeneration) =>
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Resolve this background generation model.",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-luna"),
         }),
     ),
   );
