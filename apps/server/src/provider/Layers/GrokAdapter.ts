@@ -1076,11 +1076,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         const promptFailureMessageRef = yield* Ref.make<string | undefined>(undefined);
 
         return yield* Effect.gen(function* () {
-          yield* observer?.onTurnStarted ?? Effect.void;
           const result = yield* prepared.acp
-            .prompt({
-              prompt: prepared.promptParts,
-            })
+            .prompt(
+              { prompt: prepared.promptParts },
+              { onRegistered: observer?.onTurnStarted ?? Effect.void },
+            )
             .pipe(
               Effect.tap((promptResult) =>
                 Effect.all([

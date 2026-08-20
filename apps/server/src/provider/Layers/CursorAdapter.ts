@@ -1010,11 +1010,11 @@ export function makeCursorAdapter(
             });
           }
 
-          yield* observer?.onTurnStarted ?? Effect.void;
           const result = yield* ctx.acp
-            .prompt({
-              prompt: promptParts,
-            })
+            .prompt(
+              { prompt: promptParts },
+              { onRegistered: observer?.onTurnStarted ?? Effect.void },
+            )
             .pipe(
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),

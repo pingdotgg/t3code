@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -228,45 +229,62 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
-  it.effect("releases a fully silent prompt when session/cancel is requested", () =>
+  it.effect("cancels an active prompt and a registered prompt waiting behind it", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const firstPromptLogged = yield* Deferred.make<void>();
+      const secondPromptRegistered = yield* Deferred.make<void>();
+      const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+      const runtime = yield* AcpSessionRuntime.make({
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+          env: {
+            T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          },
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        authMethodId: "test",
+        requestLogger: (event) =>
+          Effect.sync(() => {
+            requestEvents.push(event);
+          }).pipe(
+            Effect.andThen(
+              event.method === "session/prompt" && event.status === "started"
+                ? Deferred.succeed(firstPromptLogged, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
+      });
       yield* runtime.start();
 
-      const promptFiber = yield* runtime
-        .prompt({
-          prompt: [{ type: "text", text: "hang forever" }],
-        })
+      const firstPromptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hang forever" }] })
         .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(firstPromptLogged);
 
-      yield* TestClock.adjust("500 millis");
+      const secondPromptFiber = yield* runtime
+        .prompt(
+          { prompt: [{ type: "text", text: "must never be sent" }] },
+          {
+            onRegistered: Deferred.succeed(secondPromptRegistered, undefined).pipe(Effect.asVoid),
+          },
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(secondPromptRegistered);
+
       yield* runtime.cancel;
 
-      const firstPromptResult = yield* Fiber.join(promptFiber);
+      const firstPromptResult = yield* Fiber.join(firstPromptFiber);
+      const secondPromptResult = yield* Fiber.join(secondPromptFiber);
       expect(firstPromptResult).toMatchObject({ stopReason: "cancelled" });
-
-      const secondPromptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "second" }],
-      });
-      expect(secondPromptResult).toMatchObject({ stopReason: "end_turn" });
-    }).pipe(
-      Effect.provide(
-        AcpSessionRuntime.layer({
-          spawn: {
-            command: mockAgentCommand,
-            args: mockAgentArgs,
-            env: {
-              T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
-            },
-          },
-          cwd: process.cwd(),
-          clientInfo: { name: "t3-test", version: "0.0.0" },
-          authMethodId: "test",
-        }),
-      ),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    ),
+      expect(secondPromptResult).toMatchObject({ stopReason: "cancelled" });
+      expect(
+        requestEvents.filter(
+          (event) => event.method === "session/prompt" && event.status === "started",
+        ),
+      ).toHaveLength(1);
+    }).pipe(TestClock.withLive, Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("segments assistant text around ACP tool calls", () =>

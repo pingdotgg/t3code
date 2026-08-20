@@ -83,6 +83,8 @@ export interface ProviderServiceLiveOptions {
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
   /** Same seam as `issueMcpCredential`, for observing the deny path's revoke. */
   readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
+  /** Test receipt emitted immediately before a lifecycle-lock acquisition. */
+  readonly beforeLifecycleLockAcquire?: (threadId: ThreadId) => Effect.Effect<void>;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -242,14 +244,48 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   interface TurnStartMarker {
     readonly threadId: ThreadId;
     readonly lifecycleLock: Semaphore.Semaphore;
+    readonly lifecycleGeneration: number;
     claimed: boolean;
     lifecycleLockHeld: boolean;
-    observable: boolean;
-    baseTurnId: ProviderSession["activeTurnId"] | null;
-    baseSessionUpdatedAt: string | undefined;
+  }
+  interface ThreadLifecycleState {
+    readonly generation: number;
+    readonly snapshotUpdatedAt: string;
   }
   const turnStartsByThreadId = new Map<ThreadId, Set<TurnStartMarker>>();
+  const lifecycleStateByThreadId = new Map<ThreadId, ThreadLifecycleState>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+  const lifecycleStateFor = (threadId: ThreadId, fallbackUpdatedAt: string) => {
+    const existing = lifecycleStateByThreadId.get(threadId);
+    if (existing) {
+      return existing;
+    }
+    const initial = { generation: 0, snapshotUpdatedAt: fallbackUpdatedAt };
+    lifecycleStateByThreadId.set(threadId, initial);
+    return initial;
+  };
+
+  const advanceLifecycle = Effect.fn("advanceProviderThreadLifecycle")(function* (
+    threadId: ThreadId,
+  ) {
+    const now = yield* DateTime.now;
+    return yield* Effect.sync(() => {
+      const previous = lifecycleStateByThreadId.get(threadId);
+      const nowMillis = DateTime.toEpochMillis(now);
+      const previousMillis = previous
+        ? DateTime.toEpochMillis(DateTime.makeUnsafe(previous.snapshotUpdatedAt))
+        : Number.NEGATIVE_INFINITY;
+      const next = {
+        generation: (previous?.generation ?? 0) + 1,
+        snapshotUpdatedAt: DateTime.formatIso(
+          DateTime.makeUnsafe(Math.max(nowMillis, previousMillis + 1)),
+        ),
+      };
+      lifecycleStateByThreadId.set(threadId, next);
+      return next;
+    });
+  });
 
   const getThreadLock = (threadId: ThreadId) =>
     SynchronizedRef.modifyEffect(threadLocks, (locks) => {
@@ -267,74 +303,78 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
    * per-thread lifecycle lock. Turn sends release it as soon as the adapter
    * has made the new turn observable and committed to the provider prompt. The
    * marker remains until sendTurn settles so guarded interrupts can reject a
-   * snapshot from before that start. Approval and user-input responses never
-   * take this lock because they may be what lets that prompt finish.
+   * snapshot from before that start. Approval and user-input responses take the
+   * lock only after the adapter has registered the prompt that may await them.
    */
   const withThreadLock = <A, E, R>(
     threadId: ThreadId,
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E, R> =>
-    Effect.flatMap(getThreadLock(threadId), (lock) => lock.withPermit(effect));
+    Effect.flatMap(getThreadLock(threadId), (lock) =>
+      options?.beforeLifecycleLockAcquire
+        ? options.beforeLifecycleLockAcquire(threadId).pipe(Effect.andThen(lock.withPermit(effect)))
+        : lock.withPermit(effect),
+    );
 
-  const beginTurnStart = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const lifecycleLock = yield* getThreadLock(threadId);
-      yield* lifecycleLock.take(1);
-      return yield* Effect.sync(() => {
-        const marker: TurnStartMarker = {
-          threadId,
-          lifecycleLock,
-          claimed: false,
-          lifecycleLockHeld: true,
-          observable: false,
-          baseTurnId: null,
-          baseSessionUpdatedAt: undefined,
-        };
-        const markers = turnStartsByThreadId.get(threadId) ?? new Set<TurnStartMarker>();
-        markers.add(marker);
-        turnStartsByThreadId.set(threadId, markers);
-        return marker;
-      });
+  const beginTurnStart = Effect.fn("beginProviderTurnStart")(function* (threadId: ThreadId) {
+    const lifecycleLock = yield* getThreadLock(threadId);
+    yield* options?.beforeLifecycleLockAcquire?.(threadId) ?? Effect.void;
+    yield* lifecycleLock.take(1);
+    const lifecycleState = yield* advanceLifecycle(threadId);
+    return yield* Effect.sync(() => {
+      const marker: TurnStartMarker = {
+        threadId,
+        lifecycleLock,
+        lifecycleGeneration: lifecycleState.generation,
+        claimed: false,
+        lifecycleLockHeld: true,
+      };
+      const markers = turnStartsByThreadId.get(threadId) ?? new Set<TurnStartMarker>();
+      markers.add(marker);
+      turnStartsByThreadId.set(threadId, markers);
+      return marker;
     });
+  });
 
-  const observeTurnStart = (marker: TurnStartMarker) =>
-    Effect.gen(function* () {
-      const shouldRelease = yield* Effect.sync(() => {
-        marker.observable = true;
-        if (!marker.lifecycleLockHeld) {
-          return false;
-        }
-        marker.lifecycleLockHeld = false;
-        return true;
-      });
-      if (shouldRelease) {
-        yield* marker.lifecycleLock.release(1);
+  const observeTurnStart = Effect.fn("observeProviderTurnStart")(function* (
+    marker: TurnStartMarker,
+  ) {
+    const shouldRelease = yield* Effect.sync(() => {
+      if (!marker.lifecycleLockHeld) {
+        return false;
+      }
+      marker.lifecycleLockHeld = false;
+      return true;
+    });
+    if (shouldRelease) {
+      yield* marker.lifecycleLock.release(1);
+    }
+  });
+
+  const completeTurnStart = Effect.fn("completeProviderTurnStart")(function* (
+    marker: TurnStartMarker,
+  ) {
+    const shouldRelease = yield* Effect.sync(() => {
+      if (!marker.lifecycleLockHeld) {
+        return false;
+      }
+      marker.lifecycleLockHeld = false;
+      return true;
+    });
+    const forgetMarker = Effect.sync(() => {
+      const markers = turnStartsByThreadId.get(marker.threadId);
+      markers?.delete(marker);
+      if (markers?.size === 0) {
+        turnStartsByThreadId.delete(marker.threadId);
       }
     });
-
-  const completeTurnStart = (marker: TurnStartMarker) =>
-    Effect.gen(function* () {
-      const shouldRelease = yield* Effect.sync(() => {
-        if (!marker.lifecycleLockHeld) {
-          return false;
-        }
-        marker.lifecycleLockHeld = false;
-        return true;
-      });
-      const forgetMarker = Effect.sync(() => {
-        const markers = turnStartsByThreadId.get(marker.threadId);
-        markers?.delete(marker);
-        if (markers?.size === 0) {
-          turnStartsByThreadId.delete(marker.threadId);
-        }
-      });
-      if (shouldRelease) {
-        yield* forgetMarker;
-        yield* marker.lifecycleLock.release(1);
-        return;
-      }
-      yield* withThreadLock(marker.threadId, forgetMarker);
-    });
+    if (shouldRelease) {
+      yield* forgetMarker;
+      yield* marker.lifecycleLock.release(1);
+      return;
+    }
+    yield* withThreadLock(marker.threadId, forgetMarker);
+  });
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
    *
@@ -888,13 +928,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         metricProvider = routed.adapter.provider;
         metricModel = input.modelSelection?.model;
-        const baseSession = (yield* routed.adapter.listSessions()).find(
-          (session) => session.threadId === input.threadId,
-        );
-        yield* Effect.sync(() => {
-          turnStart.baseTurnId = baseSession?.activeTurnId ?? null;
-          turnStart.baseSessionUpdatedAt = baseSession?.updatedAt;
-        });
         yield* Effect.annotateCurrentSpan({
           "provider.kind": routed.adapter.provider,
           ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
@@ -909,30 +942,64 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           onTurnStarted: observeTurnStart(turnStart),
         });
         yield* observeTurnStart(turnStart);
-        yield* directory.upsert({
-          threadId: input.threadId,
-          provider: routed.adapter.provider,
-          providerInstanceId: routed.instanceId,
-          status: "running",
-          ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-          runtimePayload: {
-            ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-            activeTurnId: turn.turnId,
-            lastRuntimeEvent: "provider.sendTurn",
-            lastRuntimeEventAt: yield* nowIso,
-          },
-        });
-        yield* analytics.record("provider.turn.sent", {
-          provider: routed.adapter.provider,
-          model: input.modelSelection?.model,
-          interactionMode: input.interactionMode,
-          // Session-start events alone skew runtime mode toward users who toggle
-          // often, since every toggle restarts the session. Recording it per turn
-          // gives a usage-weighted view and lets it cross with interactionMode.
-          runtimeMode: routed.runtimeMode,
-          attachmentCount: input.attachments.length,
-          hasInput: typeof input.input === "string" && input.input.trim().length > 0,
-        });
+        const completionCommitted = yield* withThreadLock(
+          input.threadId,
+          Effect.gen(function* () {
+            const lifecycleState = lifecycleStateByThreadId.get(input.threadId);
+            const binding = Option.getOrUndefined(yield* directory.getBinding(input.threadId));
+            const bindingInstanceId = binding
+              ? yield* requireBindingInstanceId("ProviderService.sendTurn", binding)
+              : undefined;
+            const sessionIsActive = yield* routed.adapter.hasSession(input.threadId);
+            if (
+              lifecycleState?.generation !== turnStart.lifecycleGeneration ||
+              binding?.provider !== routed.adapter.provider ||
+              bindingInstanceId !== routed.instanceId ||
+              !sessionIsActive
+            ) {
+              return false;
+            }
+            const lastRuntimeEventAt = yield* nowIso;
+            const baseRuntimePayload = {
+              activeTurnId: turn.turnId,
+              lastRuntimeEvent: "provider.sendTurn",
+              lastRuntimeEventAt,
+            };
+            const runtimePayload =
+              input.modelSelection === undefined
+                ? baseRuntimePayload
+                : {
+                    ...baseRuntimePayload,
+                    modelSelection: input.modelSelection,
+                  };
+            const nextBinding = {
+              threadId: input.threadId,
+              provider: routed.adapter.provider,
+              providerInstanceId: routed.instanceId,
+              status: "running",
+              runtimePayload,
+            } as const;
+            yield* directory.upsert(
+              turn.resumeCursor === undefined
+                ? nextBinding
+                : { ...nextBinding, resumeCursor: turn.resumeCursor },
+            );
+            return true;
+          }),
+        );
+        if (completionCommitted) {
+          yield* analytics.record("provider.turn.sent", {
+            provider: routed.adapter.provider,
+            model: input.modelSelection?.model,
+            interactionMode: input.interactionMode,
+            // Session-start events alone skew runtime mode toward users who toggle
+            // often, since every toggle restarts the session. Recording it per turn
+            // gives a usage-weighted view and lets it cross with interactionMode.
+            runtimeMode: routed.runtimeMode,
+            attachmentCount: input.attachments.length,
+            hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+          });
+        }
         return turn;
       }).pipe(
         withMetrics({
@@ -979,26 +1046,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             (candidate) => candidate.threadId === routed.threadId,
           );
           const actualTurnId = session?.activeTurnId ?? null;
-          const turnStartedAfterSnapshot = Array.from(
-            turnStartsByThreadId.get(input.threadId) ?? [],
-          ).some(
-            (marker) =>
-              !marker.observable ||
-              ((input.expectedTurnId === undefined || input.expectedTurnId === marker.baseTurnId) &&
-                (input.expectedSessionUpdatedAt === undefined ||
-                  input.expectedSessionUpdatedAt === marker.baseSessionUpdatedAt)),
-          );
+          const currentSnapshotUpdatedAt = session
+            ? lifecycleStateFor(input.threadId, session.updatedAt).snapshotUpdatedAt
+            : undefined;
+          const turnStartedWithoutSnapshot =
+            input.expectedSessionUpdatedAt === undefined &&
+            (turnStartsByThreadId.get(input.threadId)?.size ?? 0) > 0;
           const turnChanged =
             input.expectedTurnId !== undefined && input.expectedTurnId !== actualTurnId;
-          const sessionChanged =
+          const lifecycleChanged =
             input.expectedSessionUpdatedAt !== undefined &&
-            input.expectedSessionUpdatedAt !== session?.updatedAt;
+            input.expectedSessionUpdatedAt !== currentSnapshotUpdatedAt;
           if (
-            turnStartedAfterSnapshot ||
+            turnStartedWithoutSnapshot ||
             !routed.isActive ||
             session === undefined ||
             turnChanged ||
-            sessionChanged
+            lifecycleChanged
           ) {
             return yield* new ProviderTurnChangedError({
               threadId: input.threadId,
@@ -1008,6 +1072,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           }
         }
         yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
+        yield* advanceLifecycle(input.threadId);
         yield* analytics.record("provider.turn.interrupted", {
           provider: routed.adapter.provider,
         });
@@ -1023,48 +1088,48 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  const respondToRequest: ProviderServiceMethod<"respondToRequest"> = Effect.fn("respondToRequest")(
-    function* (rawInput) {
-      const input = yield* decodeInputOrValidationError({
+  const respondToRequestUnlocked: ProviderServiceMethod<"respondToRequest"> = Effect.fn(
+    "respondToRequest",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.respondToRequest",
+      schema: ProviderRespondToRequestInput,
+      payload: rawInput,
+    });
+    let metricProvider = "unknown";
+    return yield* Effect.gen(function* () {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
         operation: "ProviderService.respondToRequest",
-        schema: ProviderRespondToRequestInput,
-        payload: rawInput,
+        allowRecovery: false,
       });
-      let metricProvider = "unknown";
-      return yield* Effect.gen(function* () {
-        const routed = yield* resolveRoutableSession({
-          threadId: input.threadId,
-          operation: "ProviderService.respondToRequest",
-          allowRecovery: false,
-        });
-        if (!routed.isActive) {
-          return yield* new ProviderSessionNotFoundError({ threadId: input.threadId });
-        }
-        metricProvider = routed.adapter.provider;
-        yield* Effect.annotateCurrentSpan({
-          "provider.operation": "respond-to-request",
-          "provider.kind": routed.adapter.provider,
-          "provider.thread_id": input.threadId,
-          "provider.request_id": input.requestId,
-        });
-        yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
-        yield* analytics.record("provider.request.responded", {
-          provider: routed.adapter.provider,
-          decision: input.decision,
-        });
-      }).pipe(
-        withMetrics({
-          counter: providerTurnsTotal,
-          outcomeAttributes: () =>
-            providerMetricAttributes(metricProvider, {
-              operation: "approval-response",
-            }),
-        }),
-      );
-    },
-  );
+      if (!routed.isActive) {
+        return yield* new ProviderSessionNotFoundError({ threadId: input.threadId });
+      }
+      metricProvider = routed.adapter.provider;
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "respond-to-request",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+        "provider.request_id": input.requestId,
+      });
+      yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
+      yield* analytics.record("provider.request.responded", {
+        provider: routed.adapter.provider,
+        decision: input.decision,
+      });
+    }).pipe(
+      withMetrics({
+        counter: providerTurnsTotal,
+        outcomeAttributes: () =>
+          providerMetricAttributes(metricProvider, {
+            operation: "approval-response",
+          }),
+      }),
+    );
+  });
 
-  const respondToUserInput: ProviderServiceMethod<"respondToUserInput"> = Effect.fn(
+  const respondToUserInputUnlocked: ProviderServiceMethod<"respondToUserInput"> = Effect.fn(
     "respondToUserInput",
   )(function* (rawInput) {
     const input = yield* decodeInputOrValidationError({
@@ -1195,9 +1260,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
       const sessions: ProviderSession[] = [];
       for (const session of activeSessions) {
+        const snapshotUpdatedAt = lifecycleStateFor(
+          session.threadId,
+          session.updatedAt,
+        ).snapshotUpdatedAt;
         const binding = bindingsByThreadId.get(session.threadId);
         if (!binding) {
-          sessions.push(session);
+          sessions.push({ ...session, updatedAt: snapshotUpdatedAt });
           continue;
         }
 
@@ -1205,7 +1274,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           resumeCursor?: ProviderSession["resumeCursor"];
           runtimeMode?: ProviderSession["runtimeMode"];
           providerInstanceId?: ProviderSession["providerInstanceId"];
-        } = {};
+          updatedAt: ProviderSession["updatedAt"];
+        } = { updatedAt: snapshotUpdatedAt };
         overrides.providerInstanceId = dieOnMissingBindingInstanceId(
           "ProviderService.listSessions",
           binding,
@@ -1344,7 +1414,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
 
   const startSession: ProviderServiceMethod<"startSession"> = (threadId, input) =>
-    withThreadLock(threadId, startSessionUnlocked(threadId, input));
+    withThreadLock(
+      threadId,
+      Effect.gen(function* () {
+        const lifecycleState = yield* advanceLifecycle(threadId);
+        const session = yield* startSessionUnlocked(threadId, input);
+        return { ...session, updatedAt: lifecycleState.snapshotUpdatedAt };
+      }),
+    );
   const sendTurn: ProviderServiceMethod<"sendTurn"> = (input) =>
     Effect.acquireUseRelease(
       beginTurnStart(input.threadId),
@@ -1353,10 +1430,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = (input) =>
     withThreadLock(input.threadId, interruptTurnUnlocked(input));
+  const respondToRequest: ProviderServiceMethod<"respondToRequest"> = (input) =>
+    withThreadLock(input.threadId, respondToRequestUnlocked(input));
+  const respondToUserInput: ProviderServiceMethod<"respondToUserInput"> = (input) =>
+    withThreadLock(input.threadId, respondToUserInputUnlocked(input));
   const stopSession: ProviderServiceMethod<"stopSession"> = (input) =>
-    withThreadLock(input.threadId, stopSessionUnlocked(input));
+    withThreadLock(
+      input.threadId,
+      advanceLifecycle(input.threadId).pipe(Effect.andThen(stopSessionUnlocked(input))),
+    );
   const rollbackConversation: ProviderServiceMethod<"rollbackConversation"> = (input) =>
-    withThreadLock(input.threadId, rollbackConversationUnlocked(input));
+    withThreadLock(
+      input.threadId,
+      advanceLifecycle(input.threadId).pipe(Effect.andThen(rollbackConversationUnlocked(input))),
+    );
 
   return {
     startSession,
