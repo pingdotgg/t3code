@@ -1,4 +1,5 @@
 import type {
+  ContextMenuItem,
   EnvironmentId,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
@@ -28,6 +29,8 @@ const DEFAULT_ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY = 4;
 export type ArchivedThreadSortField = "archivedAt" | "createdAt";
 export type ArchivedThreadSortDirection = "asc" | "desc";
 export type ArchivedProjectBulkScope = "all" | "matching";
+export type ArchivedThreadContextMenuId = "unarchive" | "delete";
+export type ArchivedProjectContextMenuId = "unarchive-all" | "delete-all";
 
 export interface ArchivedThreadSortState {
   readonly field: ArchivedThreadSortField;
@@ -65,6 +68,40 @@ export interface ArchivedThreadSearchInput {
   readonly normalizedQuery: string;
   readonly tokens: ReadonlyArray<string>;
   readonly isSearching: boolean;
+}
+
+export function buildArchivedThreadContextMenuItems(): ReadonlyArray<
+  ContextMenuItem<ArchivedThreadContextMenuId>
+> {
+  return [
+    { id: "unarchive", label: "Unarchive", icon: "archive-restore" },
+    {
+      id: "delete",
+      label: "Delete",
+      icon: "trash",
+      destructive: true,
+      separatorBefore: true,
+    },
+  ];
+}
+
+export function buildArchivedProjectContextMenuItems(
+  scope: ArchivedProjectBulkScope,
+): ReadonlyArray<ContextMenuItem<ArchivedProjectContextMenuId>> {
+  return [
+    {
+      id: "unarchive-all",
+      label: scope === "matching" ? "Unarchive matching" : "Unarchive all",
+      icon: "archive-restore",
+    },
+    {
+      id: "delete-all",
+      label: scope === "matching" ? "Delete matching" : "Delete all",
+      icon: "trash",
+      destructive: true,
+      separatorBefore: true,
+    },
+  ];
 }
 
 export interface ArchivedProjectBulkActionOptions {

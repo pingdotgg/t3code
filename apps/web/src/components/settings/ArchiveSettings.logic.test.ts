@@ -20,6 +20,8 @@ import {
   archivedThreadActionKey,
   archivedThreadSearchScore,
   archivedThreadTimestampValue,
+  buildArchivedProjectContextMenuItems,
+  buildArchivedThreadContextMenuItems,
   buildArchivedThreadGroups,
   hasArchivedThreads,
   nextArchivedThreadSortState,
@@ -31,6 +33,38 @@ import {
 } from "./ArchiveSettings.logic";
 
 const environmentId = EnvironmentId.make("environment-1");
+
+describe("archive context menus", () => {
+  it("uses the upstream icon and destructive section conventions for thread actions", () => {
+    expect(buildArchivedThreadContextMenuItems()).toEqual([
+      { id: "unarchive", label: "Unarchive", icon: "archive-restore" },
+      {
+        id: "delete",
+        label: "Delete",
+        icon: "trash",
+        destructive: true,
+        separatorBefore: true,
+      },
+    ]);
+  });
+
+  it("keeps project action labels scoped while sharing the same menu treatment", () => {
+    expect(buildArchivedProjectContextMenuItems("matching")).toEqual([
+      { id: "unarchive-all", label: "Unarchive matching", icon: "archive-restore" },
+      {
+        id: "delete-all",
+        label: "Delete matching",
+        icon: "trash",
+        destructive: true,
+        separatorBefore: true,
+      },
+    ]);
+    expect(buildArchivedProjectContextMenuItems("all").map((item) => item.label)).toEqual([
+      "Unarchive all",
+      "Delete all",
+    ]);
+  });
+});
 
 function scoreArchivedTitle(title: string, query: string): number | null {
   const normalizedQuery = normalizeSearchQuery(query);

@@ -42,6 +42,8 @@ import {
   type ArchivedProjectBulkThread,
   type ArchivedThreadSortField,
   type ArchivedThreadSortState,
+  buildArchivedProjectContextMenuItems,
+  buildArchivedThreadContextMenuItems,
   buildArchivedThreadGroups,
   hasArchivedThreads as archiveHasThreads,
   nextArchivedThreadSortState,
@@ -510,13 +512,7 @@ export function ArchivedThreadsPanel() {
     async (threadRef: ScopedThreadRef, title: string, position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "unarchive", label: "Unarchive" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
+      const clicked = await api.contextMenu.show(buildArchivedThreadContextMenuItems(), position);
 
       if (clicked === "unarchive") {
         await handleUnarchiveThread(threadRef);
@@ -540,17 +536,7 @@ export function ArchivedThreadsPanel() {
       const api = readLocalApi();
       if (!api) return;
       const clicked = await api.contextMenu.show(
-        [
-          {
-            id: "unarchive-all",
-            label: scope === "matching" ? "Unarchive matching" : "Unarchive all",
-          },
-          {
-            id: "delete-all",
-            label: scope === "matching" ? "Delete matching" : "Delete all",
-            destructive: true,
-          },
-        ],
+        buildArchivedProjectContextMenuItems(scope),
         position,
       );
 
