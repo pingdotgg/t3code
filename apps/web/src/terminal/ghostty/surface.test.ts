@@ -287,6 +287,31 @@ describe("applyTerminalCopyEvent", () => {
     ).toBe("deferred");
     expect(preventDefault).not.toHaveBeenCalled();
   });
+
+  it("still primes the textarea when a copy event has no clipboardData", () => {
+    const input = {
+      value: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+      setSelectionRange(start: number, end: number) {
+        this.selectionStart = start;
+        this.selectionEnd = end;
+      },
+    };
+
+    expect(
+      applyTerminalCopyEvent(
+        {
+          clipboardData: null,
+          preventDefault: vi.fn(),
+        },
+        "menu copy",
+      ),
+    ).toBe("deferred");
+    primeTerminalCopyInput(input, "menu copy");
+    expect(input.value).toBe("menu copy");
+    expect(input.selectionEnd).toBe("menu copy".length);
+  });
 });
 
 describe("isTerminalPasteShortcut", () => {

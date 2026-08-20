@@ -65,8 +65,13 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
+import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
 import { useAtomCommand } from "../state/use-atom-command";
+import {
+  canOpenTerminalLinkInPreview,
+  openTerminalLinkInPreview,
+} from "./preview/openTerminalLinkInPreview";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
   resolveTerminalFontPreference,
@@ -359,6 +364,9 @@ export function TerminalViewport({
     serverConfig?.availableEditors ?? [],
   );
   const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
+  const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
   const runTerminalWrite = useAtomCommand(terminalEnvironment.write, {
     reportFailure: false,
   });
@@ -746,12 +754,24 @@ export function TerminalViewport({
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (/^https?:\/\//u.test(text)) {
-          // Open in this same tick so the click stays a user gesture: a later
-          // window.open after a preview/browser menu is popup-blocked, and
-          // openExternal would leave the current browser for the OS default.
-          if (!openUrlInHostBrowser(text)) {
-            writeSystemMessage(latestTerminal, "Unable to open link");
+          const fallbackToBrowser = () => {
+            if (!openUrlInHostBrowser(text)) {
+              writeSystemMessage(latestTerminal, "Unable to open link");
+            }
+          };
+          // Loopback URLs can open the in-app preview without a user gesture.
+          // Public URLs must click a _blank link in this same tick, or the
+          // current browser never sees them.
+          if (canOpenTerminalLinkInPreview(text, threadRef)) {
+            void openTerminalLinkInPreview({
+              url: text,
+              threadRef,
+              openPreview,
+              fallbackToBrowser,
+            });
+            return;
           }
+          fallbackToBrowser();
           return;
         }
         const target = resolvePathLinkTarget(text, cwd);

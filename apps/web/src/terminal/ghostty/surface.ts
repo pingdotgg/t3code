@@ -1120,8 +1120,10 @@ export class GhosttyTerminalSurface {
     if (!this.hasSelection()) return;
     const selection = this.getSelection();
     if (applyTerminalCopyEvent(event, selection) === "deferred") {
-      // No clipboardData: leave the primed textarea and writeText fallback
-      // alive so Electron Edit → Copy can still copy real text.
+      // Edit → Copy can fire without a preceding copy keydown, so the
+      // textarea may still be empty. Prime it before the default action
+      // copies the focused field.
+      primeTerminalCopyInput(this.input, selection);
       return;
     }
     // The native event beat any deferred write; drop the in-flight fallback.
