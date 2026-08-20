@@ -2804,6 +2804,7 @@ export default function Sidebar() {
         })),
       );
       const moved = results.filter(({ result }) => result._tag === "Success");
+      const unsuccessful = results.filter(({ result }) => result._tag === "Failure");
       const failed = results.filter(
         ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
       );
@@ -2811,27 +2812,42 @@ export default function Sidebar() {
       if (options.showToast !== false && moved.length > 0) {
         toastManager.add(
           stackedThreadToast({
-            type: failed.length > 0 ? "warning" : "success",
+            type: unsuccessful.length > 0 ? "warning" : "success",
             title:
-              failed.length > 0
+              unsuccessful.length > 0
                 ? `Moved ${moved.length} of ${changes.length} threads`
                 : sectionName === null
                   ? `Moved ${moved.length === 1 ? "thread" : `${moved.length} threads`} to active list`
                   : `Moved ${moved.length === 1 ? "thread" : `${moved.length} threads`} to ${sectionName}`,
             description:
-              failed.length > 0
-                ? `${failed.length} thread${failed.length === 1 ? "" : "s"} couldn't be moved.`
+              unsuccessful.length > 0
+                ? `${unsuccessful.length} thread${unsuccessful.length === 1 ? "" : "s"} couldn't be moved.`
                 : undefined,
             timeout: 5_000,
             actionProps: {
               children: "Undo",
               onClick: () => {
-                for (const { thread, previousSectionName } of moved) {
-                  void updateThreadMetadata({
-                    environmentId: thread.environmentId,
-                    input: { threadId: thread.id, sectionName: previousSectionName },
-                  });
-                }
+                void Promise.all(
+                  moved.map(({ thread, previousSectionName }) =>
+                    updateThreadMetadata({
+                      environmentId: thread.environmentId,
+                      input: { threadId: thread.id, sectionName: previousSectionName },
+                    }),
+                  ),
+                ).then((undone) => {
+                  const firstFailure = undone.find(
+                    (result) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
+                  );
+                  if (firstFailure?._tag !== "Failure") return;
+                  const error = squashAtomCommandFailure(firstFailure);
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Failed to undo section move",
+                      description: error instanceof Error ? error.message : "An error occurred.",
+                    }),
+                  );
+                });
               },
             },
           }),
@@ -2855,7 +2871,7 @@ export default function Sidebar() {
           );
         }
       }
-      return failed.length === 0;
+      return unsuccessful.length === 0;
     },
     [rememberThreadSection, updateThreadMetadata],
   );
@@ -3165,8 +3181,8 @@ export default function Sidebar() {
         if (clicked.value === "section:new" && sectionName !== null) {
           rememberThreadSection(sectionName, false);
         }
-        await moveThreadsToSection(selectedThreads, sectionName);
-        clearSelection();
+        const moved = await moveThreadsToSection(selectedThreads, sectionName);
+        if (moved) clearSelection();
         return;
       }
       if (clicked.value?.startsWith("snooze:")) {

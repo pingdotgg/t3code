@@ -178,7 +178,13 @@ export function buildThreadActionMenuItems(
 }
 
 export function threadSectionMenuId(name: string): `section:name:${string}` {
-  return `section:name:${encodeURIComponent(name)}`;
+  const wellFormedName = Array.from(name, (character) => {
+    const codeUnit = character.charCodeAt(0);
+    return character.length === 1 && codeUnit >= 0xd800 && codeUnit <= 0xdfff
+      ? "\uFFFD"
+      : character;
+  }).join("");
+  return `section:name:${encodeURIComponent(wellFormedName)}`;
 }
 
 export function parseThreadSectionMenuId(id: string): string | null | undefined {

@@ -209,6 +209,10 @@ export function useThreadActionMenu(input: {
                   void updateThreadMetadata({
                     environmentId: threadRef.environmentId,
                     input: { threadId: threadRef.threadId, sectionName: previousSectionName },
+                  }).then((undone) => {
+                    if (undone._tag === "Failure" && !isAtomCommandInterrupted(undone)) {
+                      failureToast("Failed to move thread", squashAtomCommandFailure(undone));
+                    }
                   });
                 },
               },

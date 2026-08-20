@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  parseThreadSectionMenuId,
+  threadSectionMenuId,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   branch: null,
@@ -96,6 +101,14 @@ describe("buildThreadActionMenuItems", () => {
       ]),
     );
   });
+
+  it("encodes malformed UTF-16 section names without crashing the menu", () => {
+    const id = threadSectionMenuId("\uD800");
+
+    expect(id).toBe("section:name:%EF%BF%BD");
+    expect(parseThreadSectionMenuId(id)).toBe("\uFFFD");
+  });
+
   it("offers archive as a non-destructive action right before delete", () => {
     const items = buildThreadActionMenuItems(baseState);
     const archiveItem = items.at(-2);
