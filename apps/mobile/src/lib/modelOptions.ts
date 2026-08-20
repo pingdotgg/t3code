@@ -3,7 +3,6 @@ import type {
   ModelSelection,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -83,6 +82,26 @@ export function resolveSelectableModelSelection(
     provider.auth.status !== "unauthenticated"
     ? selection
     : null;
+}
+
+/**
+ * Like resolveSelectableModelSelection, but additionally rejects legacy
+ * models. Used for implicit defaults (stored draft, project last-used): a
+ * new thread should never quietly start on a legacy model, so those fall
+ * through to the provider's default instead. Explicit picks in the settings
+ * sheet are unaffected.
+ */
+export function resolveDefaultableModelSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+): ModelSelection | null {
+  const usable = resolveSelectableModelSelection(config, selection);
+  if (!usable || !config) {
+    return usable;
+  }
+  const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
+  const model = provider?.models.find((candidate) => candidate.slug === usable.model);
+  return model?.isLegacy === true ? null : usable;
 }
 
 export function buildModelOptions(
@@ -167,54 +186,4 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerLabel: group.providerLabel,
     models: group.models,
   }));
-}
-
-function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
-  return {
-    id: `model:${option.key}`,
-    title: option.label,
-    state:
-      option.selection.instanceId === selectedModel?.instanceId &&
-      option.selection.model === selectedModel.model
-        ? "on"
-        : undefined,
-  };
-}
-
-export function buildModelMenuActions(
-  groups: ReadonlyArray<ProviderGroup>,
-  selectedModel: ModelSelection | null,
-): MenuAction[] {
-  return groups.flatMap((group) => {
-    const currentModels = group.models.filter((model) => !model.isLegacy);
-    const legacyModels = group.models.filter((model) => model.isLegacy);
-    const selected = group.models.find(
-      (model) =>
-        model.selection.instanceId === selectedModel?.instanceId &&
-        model.selection.model === selectedModel.model,
-    );
-
-    return [
-      ...(currentModels.length > 0
-        ? [
-            {
-              id: `provider:${group.providerKey}`,
-              title: group.providerLabel,
-              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
-              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-      ...(legacyModels.length > 0
-        ? [
-            {
-              id: `legacy-models:${group.providerKey}`,
-              title: `${group.providerLabel} legacy models`,
-              subtitle: selected?.isLegacy ? selected.label : undefined,
-              subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
-            },
-          ]
-        : []),
-    ];
-  });
 }

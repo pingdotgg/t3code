@@ -12,11 +12,106 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  isPendingUserInputOptionSelected,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
+
+const singleSelectQuestion = {
+  id: "runtime",
+  header: "Runtime",
+  question: "Which runtime should be used?",
+  options: [
+    { label: "Go", description: "One binary" },
+    { label: "Node.js", description: "Reuse TypeScript" },
+  ],
+  multiSelect: false,
+} as const;
+
+const multiSelectQuestion = {
+  id: "scope",
+  header: "Scope",
+  question: "Which data should be collected?",
+  options: [
+    { label: "Orders", description: "Receipts" },
+    { label: "Listings", description: "Inventory" },
+  ],
+  multiSelect: true,
+} as const;
+
+describe("pending user input answers", () => {
+  it("replaces single-select options and toggles multi-select options", () => {
+    expect(
+      togglePendingUserInputOptionSelection(
+        singleSelectQuestion,
+        { selectedOptionLabels: ["Go"] },
+        "Node.js",
+      ),
+    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Node.js"] });
+
+    const orders = togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Orders");
+    const ordersAndListings = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      orders,
+      "Listings",
+    );
+    expect(ordersAndListings).toEqual({
+      customAnswer: "",
+      selectedOptionLabels: ["Orders", "Listings"],
+    });
+    expect(
+      togglePendingUserInputOptionSelection(multiSelectQuestion, ordersAndListings, "Orders"),
+    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Listings"] });
+
+    const paddedOrders = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      undefined,
+      "  Orders  ",
+    );
+    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionLabels: ["Orders"] });
+    expect(
+      togglePendingUserInputOptionSelection(multiSelectQuestion, paddedOrders, "  Orders  "),
+    ).toEqual({ customAnswer: "" });
+  });
+
+  it("builds array answers for multi-select questions", () => {
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, multiSelectQuestion], {
+        runtime: { selectedOptionLabels: ["Go"] },
+        scope: { selectedOptionLabels: ["Orders", "Listings"] },
+      }),
+    ).toEqual({
+      runtime: "Go",
+      scope: ["Orders", "Listings"],
+    });
+  });
+
+  it("clears selected options while a custom answer is active", () => {
+    expect(
+      setPendingUserInputCustomAnswer(
+        { selectedOptionLabels: ["Orders", "Listings"] },
+        "Orders first",
+      ),
+    ).toEqual({ customAnswer: "Orders first" });
+  });
+
+  it("matches selected chips against normalized option labels", () => {
+    expect(
+      isPendingUserInputOptionSelected({ selectedOptionLabels: ["Orders"] }, "  Orders  "),
+    ).toBe(true);
+    expect(
+      isPendingUserInputOptionSelected(
+        { selectedOptionLabels: ["Orders"], customAnswer: "Orders first" },
+        "  Orders  ",
+      ),
+    ).toBe(false);
+  });
+});
 
 function makeActivity(
   input: Partial<OrchestrationThreadActivity> &
@@ -530,5 +625,41 @@ describe("buildThreadFeed", () => {
       type: "work-toggle",
       expanded: true,
     });
+  });
+});
+
+describe("quiet timeline: nested agents", () => {
+  it("keeps a nested agent's terminal row but hides its background work", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-nested"),
+      projectId: ProjectId.make("project-1"),
+      title: "Nested agents",
+      activities: [
+        // A subagent's own shell: internal, covered by the owner's liveness.
+        makeActivity({
+          id: EventId.make("shell-done"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: { taskId: "sh-1", agentId: "owner", agentKind: "background" },
+        }),
+        // A nested AGENT's completion: mobile has no Agents sheet, so this
+        // terminal row is the only signal it ever finished.
+        makeActivity({
+          id: EventId.make("nested-done"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          payload: { taskId: "n-1", agentId: "owner", agentKind: "agent" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const ids = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((row) => row.id) : [],
+    );
+    expect(ids).toContain("nested-done");
+    expect(ids).not.toContain("shell-done");
   });
 });

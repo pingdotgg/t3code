@@ -1,8 +1,9 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
-import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
-import { showContextMenuFallback } from "./contextMenuFallback";
+import { requestConfirmDialog } from "./confirmDialog";
+import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
 let cachedApi: LocalApi | undefined;
 
@@ -13,11 +14,8 @@ function createBrowserLocalApi(): LocalApi {
         if (!window.desktopBridge) return null;
         return window.desktopBridge.pickFolder(options);
       },
-      confirm: async (message) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.confirm(message);
-        }
-        return window.confirm(message);
+      confirm: async (message, options?: ConfirmDialogOptions) => {
+        return requestConfirmDialog(message, options) ?? false;
       },
     },
     shell: {
@@ -42,6 +40,14 @@ function createBrowserLocalApi(): LocalApi {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
+      },
+      // A native desktop menu blocks keyboard input and closes on outside
+      // interaction, so nothing to do there; the DOM fallback needs an explicit
+      // dismiss when the state behind it goes away.
+      close: async () => {
+        if (!window.desktopBridge) {
+          dismissContextMenu();
+        }
       },
     },
     persistence: {

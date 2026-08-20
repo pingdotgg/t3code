@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildT3ProjectFileJsonSchema, T3ProjectFileFromJson } from "./t3ProjectFile.ts";
+import {
+  buildT3ProjectFileJsonSchema,
+  parseT3ProjectFile,
+  T3ProjectFileFromJson,
+} from "./t3ProjectFile.ts";
 
 const decodeJson = Schema.decodeUnknownSync(T3ProjectFileFromJson);
 
@@ -27,9 +31,15 @@ describe("buildT3ProjectFileJsonSchema", () => {
       required?: ReadonlyArray<string>;
     };
 
-    expect(Object.keys(schema.properties).sort()).toEqual(["$schema", "iconPath", "scripts"]);
+    expect(Object.keys(schema.properties).sort()).toEqual([
+      "$schema",
+      "defaultThreadEnvMode",
+      "iconPath",
+      "scripts",
+    ]);
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
+    expect(schema.properties.defaultThreadEnvMode?.description).toContain("new threads start");
 
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);
@@ -65,5 +75,18 @@ describe("T3ProjectFileFromJson", () => {
 
   it("fails on malformed JSON", () => {
     expect(() => decodeJson("{ not json")).toThrow();
+  });
+});
+
+describe("parseT3ProjectFile", () => {
+  it("returns the decoded file for valid contents", () => {
+    expect(parseT3ProjectFile('{ "defaultThreadEnvMode": "worktree" }')).toEqual({
+      defaultThreadEnvMode: "worktree",
+    });
+  });
+
+  it("returns null for malformed or invalid contents", () => {
+    expect(parseT3ProjectFile("{ not json")).toBeNull();
+    expect(parseT3ProjectFile('{ "defaultThreadEnvMode": "spaceship" }')).toBeNull();
   });
 });

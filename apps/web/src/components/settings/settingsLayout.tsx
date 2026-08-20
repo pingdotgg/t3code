@@ -1,4 +1,4 @@
-import { Undo2Icon } from "lucide-react";
+import { InfoIcon, Undo2Icon } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   createContext,
@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { cn } from "../../lib/utils";
+import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -62,6 +63,11 @@ function scrollAndFocusSettingsTarget(target: HTMLElement): void {
   });
 }
 
+/** The row id a settings-search jump is currently trying to reach, if any. */
+export function useSettingsSearchTargetId(): string | null {
+  return useContext(SettingsSearchTargetContext).targetId;
+}
+
 function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
   const { targetId, onTargetHandled } = useContext(SettingsSearchTargetContext);
   const isSearchTarget = id !== undefined && id === targetId;
@@ -76,6 +82,25 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
   );
 
   return targetRef;
+}
+
+/** Info affordance explaining how a setting interacts with the shared background policy. */
+export function PolicyTooltip({ children }: { readonly children: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        delay={200}
+        render={
+          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+            <InfoIcon className="size-3.5" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-72">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** Re-render every `intervalMs`; return a stable timestamp snapshot for render-time relative labels. */
@@ -133,7 +158,7 @@ export function SettingsRow({
   ...rowProps
 }: Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   title: ReactNode;
-  description: ReactNode;
+  description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
@@ -156,9 +181,11 @@ export function SettingsRow({
               {resetAction}
             </span>
           </div>
-          <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
-            {description}
-          </p>
+          {description ? (
+            <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
+              {description}
+            </p>
+          ) : null}
           {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
         {control ? (
@@ -172,16 +199,24 @@ export function SettingsRow({
   );
 }
 
-export function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
+export function SettingResetButton({
+  label,
+  disabled = false,
+  onClick,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            size="icon-xs"
-            variant="ghost"
+            size="icon-micro"
+            variant="ghost-muted"
             aria-label={`Reset ${label} to default`}
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
               onClick();
@@ -199,9 +234,11 @@ export function SettingResetButton({ label, onClick }: { label: string; onClick:
 export function SettingsPageContainer({
   children,
   className,
+  width = "readable",
 }: {
   children: ReactNode;
   className?: string;
+  width?: WorkspacePageWidth;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -212,10 +249,13 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
-      <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
-        <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
+      <div
+        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
+        data-settings-page-scroll
+      >
+        <WorkspacePageContainer width={width} className={cn("gap-12", className)}>
           {children}
-        </div>
+        </WorkspacePageContainer>
       </div>
     </SettingsSearchTargetProvider>
   );

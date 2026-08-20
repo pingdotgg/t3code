@@ -11,6 +11,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
+import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 interface HarnessOptions {
@@ -44,13 +45,19 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
             timedOut: false,
             stdoutTruncated: false,
             stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
           };
         }
         order.push("preflight");
         const result =
           options.preflight === "blocked"
             ? { status: "blocked", version: "1.1.0", reason: "local update required" }
-            : { status: "ready", version: "1.1.0", launcherProtocol: 1 };
+            : {
+                status: "ready",
+                version: "1.1.0",
+                launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+              };
         return {
           // @effect-diagnostics-next-line preferSchemaOverJson:off - fake child-process stdout.
           stdout: JSON.stringify(result),
@@ -59,12 +66,13 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
         };
       }),
   });
   const launcher = ServiceLauncherClient.ServiceLauncherClient.of({
     managed: options.managed ?? true,
-    trial: false,
     requestUpdate:
       options.requestUpdate ??
       (() =>
