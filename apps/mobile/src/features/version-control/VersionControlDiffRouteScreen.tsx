@@ -2,20 +2,14 @@ import type { VcsPanelFileChange, VcsPanelFileDiffInput } from "@t3tools/contrac
 import { EnvironmentId } from "@t3tools/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
-import {
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text as NativeText,
-  useColorScheme,
-  View,
-} from "react-native";
+import { Platform, ScrollView, StyleSheet, Text as NativeText, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   getCachedNativeReviewDiffData,
   NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
@@ -76,8 +70,7 @@ export function VersionControlDiffRouteScreen(props: VersionControlDiffRouteScre
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const api = useVersionControlPanelApi(environmentId);
   const [state, setState] = useState<DiffState>({ status: "loading" });
-  const colorScheme = useColorScheme();
-  const scheme = colorScheme === "dark" ? "dark" : "light";
+  const { themeAppearance: scheme } = useAppearancePreferences();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const originalPath = renameOriginalPathForFile(file);
 
@@ -118,7 +111,6 @@ export function VersionControlDiffRouteScreen(props: VersionControlDiffRouteScre
     sectionId: cacheKey,
     diff: patch,
     data: nativeData,
-    scheme,
     collapsedFileIds: EMPTY_IDS,
     viewedFileIds: EMPTY_IDS,
     selectedRowIds: EMPTY_IDS,
