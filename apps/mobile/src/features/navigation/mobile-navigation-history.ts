@@ -4,8 +4,8 @@ export interface MobileNavigationHistorySnapshot {
 }
 
 export interface MobileNavigationHistory {
-  readonly back: () => string | null;
-  readonly forward: () => string | null;
+  readonly backTarget: () => string | null;
+  readonly forwardTarget: () => string | null;
   readonly getSnapshot: () => MobileNavigationHistorySnapshot;
   readonly subscribe: (listener: () => void) => () => void;
   readonly visit: (pathname: string) => void;
@@ -36,19 +36,9 @@ export function createMobileNavigationHistory(initialPathname: string): MobileNa
     listeners.forEach((listener) => listener());
   };
 
-  const move = (nextCursor: number): string | null => {
-    const pathname = entries[nextCursor];
-    if (pathname === undefined) {
-      return null;
-    }
-    cursor = nextCursor;
-    publish();
-    return pathname;
-  };
-
   return {
-    back: () => move(cursor - 1),
-    forward: () => move(cursor + 1),
+    backTarget: () => entries[cursor - 1] ?? null,
+    forwardTarget: () => entries[cursor + 1] ?? null,
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -65,6 +55,18 @@ export function createMobileNavigationHistory(initialPathname: string): MobileNa
       }
       if (pathname === entries[cursor + 1]) {
         cursor += 1;
+        publish();
+        return;
+      }
+      const priorIndex = entries.lastIndexOf(pathname, cursor - 1);
+      if (priorIndex >= 0) {
+        cursor = priorIndex;
+        publish();
+        return;
+      }
+      const forwardIndex = entries.indexOf(pathname, cursor + 1);
+      if (forwardIndex >= 0) {
+        cursor = forwardIndex;
         publish();
         return;
       }
