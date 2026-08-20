@@ -955,7 +955,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("status skips the provider lookup for a branch that was never pushed", () =>
+  it.effect("status still looks up PRs for a branch that was never pushed", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -970,7 +970,58 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(status.refName).toBe("feature/never-pushed");
       expect(status.pr).toBeNull();
-      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+      expect(ghCalls.filter((call) => call.startsWith("pr list ")).length).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("status still looks up merged PRs after the remote branch is pruned", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/merged-then-deleted"]);
+      // Push without `-u`, then delete the host head and prune. That is the
+      // merged-PR path: GitHub removes the branch, a local prune drops
+      // `refs/remotes/*/feature/merged-then-deleted`, and `@{u}` never existed.
+      yield* runGit(repoDir, ["push", "origin", "feature/merged-then-deleted"]);
+      yield* runGit(repoDir, ["push", "origin", "--delete", "feature/merged-then-deleted"]);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 7653,
+                title: "Merged then deleted",
+                url: "https://github.com/pingdotgg/t3code/pull/7653",
+                baseRefName: "main",
+                headRefName: "feature/merged-then-deleted",
+                state: "MERGED",
+                mergedAt: "2026-08-20T10:00:00Z",
+                updatedAt: "2026-08-20T10:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.refName).toBe("feature/merged-then-deleted");
+      expect(status.pr).toEqual({
+        number: 7653,
+        title: "Merged then deleted",
+        url: "https://github.com/pingdotgg/t3code/pull/7653",
+        baseRef: "main",
+        headRef: "feature/merged-then-deleted",
+        state: "merged",
+        updatedAt: "2026-08-20T10:00:00.000Z",
+      });
+      expect(ghCalls.filter((call) => call.startsWith("pr list ")).length).toBeGreaterThan(0);
     }),
   );
 

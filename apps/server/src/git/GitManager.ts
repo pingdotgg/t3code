@@ -969,11 +969,9 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        // Only skip when the branch is untracked as well: anything carrying an
-        // upstream keeps the old behaviour.
-        if (details.upstreamRef === null && (yield* isUnpublishedBranch(cwd, headContext))) {
-          return { latest: null, headContext };
-        }
+        // Missing `refs/remotes/*/<branch>` is not enough to skip: GitHub
+        // deletes merged heads, and a local prune then looks identical to a
+        // branch that was never pushed. `gh pr list --head` still finds the PR.
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
         return { latest, headContext };
       });
@@ -1261,43 +1259,6 @@ export const make = Effect.gen(function* () {
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,
     } satisfies BranchHeadContext;
-  });
-
-  /**
-   * Whether git has no record of this branch on any remote, so a change request
-   * cannot exist for it and asking the provider is a guaranteed-empty API call.
-   *
-   * `git push` writes the remote-tracking ref even without `-u` (how most
-   * terminal and agent pushes land), which makes this a safer "did it ever
-   * reach the host" test than looking for upstream config, and the glob spans
-   * every remote so a fork branch still counts. A repository that tracks no
-   * remotes at all cannot answer the question, because then every branch looks
-   * unpublished; it, and any failed probe, keeps the lookup.
-   */
-  const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
-    cwd: string,
-    headContext: Pick<BranchHeadContext, "headBranch">,
-  ) {
-    if (headContext.headBranch.length === 0) {
-      return false;
-    }
-    const matchesRef = (pattern: string) =>
-      gitCore
-        .execute({
-          operation: "GitManager.isUnpublishedBranch",
-          cwd,
-          args: ["for-each-ref", "--count=1", "--format=%(refname)", pattern],
-          timeoutMs: 5_000,
-        })
-        .pipe(Effect.map((result) => result.stdout.trim().length > 0));
-
-    return yield* Effect.all(
-      [matchesRef("refs/remotes"), matchesRef(`refs/remotes/*/${headContext.headBranch}`)],
-      { concurrency: "unbounded" },
-    ).pipe(
-      Effect.map(([tracksAnyRemote, tracksThisBranch]) => tracksAnyRemote && !tracksThisBranch),
-      Effect.orElseSucceed(() => false),
-    );
   });
 
   const findOpenPr = Effect.fn("findOpenPr")(function* (
