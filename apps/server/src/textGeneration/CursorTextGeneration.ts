@@ -16,6 +16,8 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildWorkItemMatchPrompt,
+  buildWorkItemTaskPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -54,7 +56,9 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateWorkItemTask"
+      | "findWorkItemMatches";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -259,10 +263,37 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateWorkItemTask: TextGeneration.TextGeneration["Service"]["generateWorkItemTask"] =
+    Effect.fn("CursorTextGeneration.generateWorkItemTask")(function* (input) {
+      const { prompt, outputSchema } = buildWorkItemTaskPrompt(input);
+      const generated = yield* runCursorJson({
+        operation: "generateWorkItemTask",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { prompt: generated.prompt.trim() };
+    });
+
+  const findWorkItemMatches: TextGeneration.TextGeneration["Service"]["findWorkItemMatches"] =
+    Effect.fn("CursorTextGeneration.findWorkItemMatches")(function* (input) {
+      const { prompt, outputSchema } = buildWorkItemMatchPrompt(input);
+      return yield* runCursorJson({
+        operation: "findWorkItemMatches",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateWorkItemTask,
+    findWorkItemMatches,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

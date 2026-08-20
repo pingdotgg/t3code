@@ -11,6 +11,7 @@ import type {
   PullRequestReviewThread,
   PullRequestState,
   PullRequestUpdateMethod,
+  WorkItemMatch,
   VcsRef,
 } from "@t3tools/contracts";
 
@@ -821,6 +822,38 @@ export function buildExplainPullRequestHandoff(input: {
       pullRequestContextComment(input, [
         "Walk through this pull request as if the reader is reviewing it for the first time. Cover, in this order: what the change is for; how it goes about it, file by file where that matters; anything surprising or risky in it; and what is worth reading closely before approving.",
         "Read the diff before answering, and say plainly where you are unsure rather than filling the gap. Explain only. Do not change any code.",
+      ]),
+    ],
+  };
+}
+
+export const LINK_ISSUES_HANDOFF_KIND = "link-issues";
+
+/**
+ * Links one selected issue to this change where the host reads the relationship. There is no
+ * call to make for a link: the host derives one from a closing keyword in the
+ * description, so the description is what gets edited — and saying so is what keeps the agent
+ * from going looking for an API that does not exist.
+ */
+export function buildLinkIssuesHandoff(
+  input: {
+    readonly number: number;
+    readonly title: string;
+    readonly url: string;
+    readonly headBranch: string;
+    readonly baseBranch: string;
+  },
+  issue: WorkItemMatch,
+): FixFindingsHandoff {
+  return {
+    prompt: [
+      `Link this pull request to issue #${issue.number} on \`${boundedField(issue.repository)}\`.`,
+      `Read the change and the selected issue at ${boundedField(issue.url)}. Record the link in the pull request's own description: \`Closes #${issue.number}\` where the change closes the issue, and a plain \`#${issue.number}\` mention where it only relates to it.`,
+      "Edit the description and nothing else: keep every word it already has and add only the line carrying the link.",
+    ].join("\n"),
+    reviewComments: [
+      pullRequestContextComment(input, [
+        "This pull request is the change to link. Do not change any code: the only edit is to its description.",
       ]),
     ],
   };

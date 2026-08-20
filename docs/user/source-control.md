@@ -1,15 +1,15 @@
 # Source Control Integrations
 
-T3 Code connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
+T3 Code connects to your Git hosting provider so you can create pull requests, review code, track issues, and manage repositories without leaving the app.
 
 ## Supported Providers
 
 T3 Code works with the platforms your team already uses:
 
-- **GitHub** – Pull requests, repository creation, and clone integration
-- **GitLab** – Merge requests, repository publishing, and hosted clones
-- **Bitbucket** – Pull request workflows (via API token authentication)
-- **Azure DevOps** – Pull request support for Microsoft-hosted repositories
+- **GitHub** – Pull requests, issues, repository creation, and clone integration
+- **GitLab** – Merge requests, issues, repository publishing, and hosted clones
+- **Bitbucket** – Pull request and issue workflows (via API token authentication)
+- **Azure DevOps** – Pull request support and work items for Microsoft-hosted repositories
 
 ## What You Can Do
 
@@ -52,6 +52,34 @@ T3 Code works with the platforms your team already uses:
 - Rewrite your own comments the same way, wherever they are shown
 - Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
+
+### Track Issues Beside the Work
+
+**Browse every tracker in one place**
+
+- The **Issues** page lists issues across all the projects in your environment, filtered by state,
+  by whether they are assigned to you, raised by you or mention you, and by project, host or label
+- Free-text search asks the host itself, so it finds issues that are not on screen yet
+- Supports GitHub Issues, GitLab Issues, Bitbucket Issues, and Azure DevOps work items. What each
+  host cannot do is simply not offered rather than failing when pressed
+
+**Read and act on one without leaving T3 Code**
+
+- Open several issues as tabs in the right panel, beside a thread or on the page
+- Read the description and the conversation, comment, close (with a reason where the host
+  records one), reopen, rename, edit the body, and change labels and assignees
+- File a new issue from the **New issue** button
+- The change requests that reference an issue are listed on it, and the issues a pull request
+  cites or closes are listed on the pull request — either one opens the other beside it
+
+**Hand one to an agent**
+
+- **Solve** starts a thread on the issue, with the issue attached as context
+- **Ask** and **Explain** answer a question about the issue without changing any code
+- **Add to composer** attaches the issue to a thread you are already in, rather than starting a
+  new one
+- Everything an issue carries is handed over as untrusted data, so a body written by a stranger on
+  a public tracker cannot instruct the agent
 
 ### Know Your Setup at a Glance
 

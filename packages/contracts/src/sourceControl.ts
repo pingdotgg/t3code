@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
@@ -10,6 +10,63 @@ export const SourceControlProviderKind = Schema.Literals([
   "unknown",
 ]);
 export type SourceControlProviderKind = typeof SourceControlProviderKind.Type;
+
+/**
+ * Somebody a host names on a change request or an issue. Shared by both because every host spells
+ * a person the same way whichever of the two they appear on.
+ */
+export const SourceControlActor = Schema.Struct({
+  login: TrimmedNonEmptyString,
+  name: Schema.NullOr(Schema.String),
+  /** Null where a host does not report one, which is what the initials fall back to. */
+  avatarUrl: Schema.NullOr(Schema.String),
+});
+export type SourceControlActor = typeof SourceControlActor.Type;
+
+export const SourceControlLabel = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  color: Schema.NullOr(Schema.String),
+});
+export type SourceControlLabel = typeof SourceControlLabel.Type;
+
+/**
+ * Where each repository a listing already reached carries on from, keyed `"<host> <repository>"`
+ * — which is how a listing tells two repositories apart, since the same `owner/repo` exists on
+ * github.com and on an Enterprise install at once.
+ *
+ * Each value is opaque: only the provider that issued one knows what it means, and the page hands
+ * back exactly what it was given rather than composing one.
+ */
+export const SourceControlListCursors = Schema.Record(
+  TrimmedNonEmptyString,
+  // Bounded because it arrives from the page and is unfolded into a host's own filter.
+  TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+);
+export type SourceControlListCursors = typeof SourceControlListCursors.Type;
+
+/** One project whose repository could not be read; healthy projects still return entries. */
+export const SourceControlListProjectError = Schema.Struct({
+  projectId: ProjectId,
+  projectTitle: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+});
+export type SourceControlListProjectError = typeof SourceControlListProjectError.Type;
+
+/**
+ * The host a project's repository is addressed below. `canonicalKey` is the normalized remote,
+ * `host/owner/repo`, so its first segment is the host; the provider kind stands in when there is
+ * no key to read, which keeps one bucket per kind for identities recorded before it existed.
+ *
+ * Shared between the server and the page so both bucket a workspace the same way — the page knows
+ * its hosts before a listing answers, and the two must agree on what they are called.
+ */
+export function sourceControlHostOf(
+  identity: { readonly canonicalKey?: string | undefined } | null | undefined,
+  kind: SourceControlProviderKind,
+): string {
+  const host = identity?.canonicalKey?.split("/")[0]?.trim();
+  return host === undefined || host.length === 0 ? kind : host.toLowerCase();
+}
 
 export const SourceControlProviderInfo = Schema.Struct({
   kind: SourceControlProviderKind,

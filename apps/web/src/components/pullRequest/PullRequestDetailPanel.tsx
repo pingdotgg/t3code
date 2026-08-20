@@ -2,12 +2,14 @@ import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/enviro
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
+  IssueLink,
   PullRequestAction,
   PullRequestMergeMethod,
   PullRequestUpdateMethod,
   PullRequestRef,
   PullRequestState,
   ScopedThreadRef,
+  WorkItemMatch,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -77,7 +79,6 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   Menu,
   MenuItem,
@@ -90,8 +91,10 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
-import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
+import { PullRequestDetailGhost, TimelineGhost } from "../sourceControl/ListGhosts";
+import { DetailTabStrip } from "../sourceControl/DetailTabStrip";
+import { ActivityUnavailableState } from "../sourceControl/ActivityUnavailableState";
+import { useMountedTabs } from "../sourceControl/useMountedTabs";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
@@ -104,9 +107,11 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildLinkIssuesHandoff,
   buildResolveConflictsPrompt,
   handoffPrompt,
   handoffReviewComments,
+  LINK_ISSUES_HANDOFF_KIND,
   latestPullRequestReviewOutcomes,
   isStackedPullRequestBase,
   pullRequestActionMenuHasGroup,
@@ -367,6 +372,7 @@ export function PullRequestDetailPanel({
   onActed,
   onClose,
   onStateChange,
+  onOpenLinkedIssue,
   context = "page",
   composerDraftTarget,
 }: {
@@ -393,6 +399,11 @@ export function PullRequestDetailPanel({
     state: PullRequestState;
     isDraft: boolean;
   }) => void;
+  /**
+   * Opens one of the issues this pull request references, as a peer tab beside it. Supplied by
+   * whoever mounted the panel, because only they know which panel the tab belongs in.
+   */
+  onOpenLinkedIssue?: (link: IssueLink & { readonly provider: string }) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -421,19 +432,7 @@ export function PullRequestDetailPanel({
     selectCodeCommit(oid);
     setTab("code");
   };
-  // Every tab the reader has opened stays mounted behind the active one. The diff viewer
-  // always needed this (it virtualizes against its own scroll position); the trace showed the
-  // summary needs it too — a large description re-parses its whole markdown on every return
-  // to the tab. `visibility` keeps boxes, sizes and scroll offsets, and takes hidden content
-  // out of the tab order and the accessibility tree.
-  const [mountedTabs, setMountedTabs] = useState<ReadonlySet<DetailTab>>(
-    () => new Set<DetailTab>(["summary"]),
-  );
-  useEffect(() => {
-    setMountedTabs((previous) =>
-      previous.has(tab) ? previous : new Set<DetailTab>(previous).add(tab),
-    );
-  }, [tab]);
+  const mountedTabs = useMountedTabs(tab);
   const [chromeCondensed, setChromeCondensed] = useState(false);
   // Each mounted tab remembers its own scroll chrome; short tabs cannot scroll to reopen it.
   const chromeStateByTab = useRef<Partial<Record<DetailTab, boolean>>>({});
@@ -754,7 +753,13 @@ export function PullRequestDetailPanel({
   };
 
   /** A question about the change, which needs a thread and nothing else. */
-  const startAsk = async (kind: string, task: ThreadTask) => {
+  const startAsk = async (
+    kind: string,
+    task: ThreadTask,
+    // What the toast says landed, for the hand-offs that need a thread and no checkout but are
+    // not questions.
+    announce?: { readonly title: string; readonly description: string },
+  ) => {
     if (!detail || handoff !== null) return;
     if (attachTarget !== null) {
       writeTaskToComposer(attachTarget, task);
@@ -782,13 +787,15 @@ export function PullRequestDetailPanel({
     }
     toastManager.add({
       type: "success",
-      title: "Asked in a thread",
-      // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
-      // the reader looking for something that is not there. The chips are what landed.
-      description:
-        task.prompt.length > 0
-          ? "The question is in the composer — read it over, then send."
-          : "The pull request is in the composer — type your question, then send.",
+      ...(announce ?? {
+        title: "Asked in a thread",
+        // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
+        // the reader looking for something that is not there. The chips are what landed.
+        description:
+          task.prompt.length > 0
+            ? "The question is in the composer — read it over, then send."
+            : "The pull request is in the composer — type your question, then send.",
+      }),
     });
   };
 
@@ -950,6 +957,32 @@ export function PullRequestDetailPanel({
     });
   };
 
+  /**
+   * Links one selected issue with an agent. No checkout: the link is a line in
+   * the description, and nothing here touches code.
+   */
+  const linkIssues = (issue: WorkItemMatch) => {
+    if (!detail) return;
+    void startAsk(
+      LINK_ISSUES_HANDOFF_KIND,
+      buildLinkIssuesHandoff(
+        {
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+        },
+        issue,
+      ),
+      {
+        title: "Opened in a thread",
+        description: "The task is in the composer — read it over, then send.",
+      },
+    );
+  };
+
+  /** Lines the reader marked in the diff, handed to the current agent composer. */
   const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
     if (!detail) return;
     void startAsk(
@@ -1448,7 +1481,26 @@ export function PullRequestDetailPanel({
                     <ArrowUpRightIcon className="size-3.5" />
                     {openOnHostLabel(detail.provider)}
                   </MenuItem>
-                  <MenuItem onClick={() => void writeTextToClipboard(detail.url)}>
+                  {/* A clipboard that is switched off or refuses says nothing on its own, and a
+                      reader who has been handed nothing goes and pastes whatever was there
+                      before. The refusal is the host's own sentence, because it is the only
+                      thing that says which of the two happened. */}
+                  <MenuItem
+                    onClick={() =>
+                      void writeTextToClipboard(detail.url, "pull request link").catch(
+                        (error: unknown) => {
+                          toastManager.add({
+                            type: "error",
+                            title: "Could not copy the link",
+                            description:
+                              error instanceof Error
+                                ? error.message
+                                : "The clipboard refused it. Open the pull request on the host instead.",
+                          });
+                        },
+                      )
+                    }
+                  >
                     <LinkIcon className="size-3.5" />
                     Copy link
                   </MenuItem>
@@ -1768,25 +1820,12 @@ export function PullRequestDetailPanel({
         </div>
 
         {detail ? (
-          <nav
-            className="col-span-2 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-border/60 px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            aria-label="Pull request tabs"
+          <DetailTabStrip
+            label="Pull request tabs"
+            tabs={visibleTabs}
+            active={tab}
+            onSelect={setTab}
           >
-            <ToggleGroup
-              size="segmented"
-              variant="segmented"
-              value={[tab]}
-              onValueChange={(next) => {
-                const nextTab = visibleTabs.find((item) => item.value === next[0])?.value;
-                if (nextTab) setTab(nextTab);
-              }}
-            >
-              {visibleTabs.map((item) => (
-                <Toggle key={item.value} value={item.value}>
-                  {item.label}
-                </Toggle>
-              ))}
-            </ToggleGroup>
             {tab === "summary" ? (
               <span
                 className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
@@ -1874,7 +1913,7 @@ export function PullRequestDetailPanel({
                 </Button>
               </div>
             ) : null}
-          </nav>
+          </DetailTabStrip>
         ) : null}
       </div>
 
@@ -1882,6 +1921,12 @@ export function PullRequestDetailPanel({
         className="relative min-h-0 flex-1 overflow-hidden"
         onScrollCapture={(event) => {
           const scroller = event.target as HTMLElement;
+          // Only the tab's own scrollport folds the chrome. A scrollable inside it — a code
+          // block running wide, the capped list of stranded conversations — is the reader
+          // moving something on the page rather than the page, and its `scrollTop` is not the
+          // one the compensation belongs to. Summary and timeline render their scroller as the
+          // marked wrapper's only child, so that is what the mark asks about.
+          if (scroller.parentElement?.hasAttribute("data-tab-scroller") !== true) return;
           scrollerRef.current = scroller;
           const top = scroller.scrollTop;
           setChromeCondensed((previous) => {
@@ -1910,7 +1955,10 @@ export function PullRequestDetailPanel({
         ) : detail ? (
           <>
             {mountedTabs.has("summary") ? (
-              <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
+              <div
+                data-tab-scroller
+                className={cn("absolute inset-0", tab !== "summary" && "invisible")}
+              >
                 <PullRequestSummaryTab
                   environmentId={environmentId}
                   reference={reference}
@@ -1921,16 +1969,22 @@ export function PullRequestDetailPanel({
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   onFixFinding={startFixFinding}
+                  onLinkIssues={linkIssues}
+                  {...(onOpenLinkedIssue ? { onOpenLinkedIssue } : {})}
                   onRefresh={refreshDetail}
                 />
               </div>
             ) : null}
             {mountedTabs.has("timeline") ? (
-              <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
+              <div
+                data-tab-scroller
+                className={cn("absolute inset-0", tab !== "timeline" && "invisible")}
+              >
                 {activityPending ? (
-                  <PullRequestTimelineGhost />
+                  <TimelineGhost />
                 ) : activityError ? (
-                  <PullRequestActivityUnavailableState
+                  <ActivityUnavailableState
+                    title="Could not load pull request activity"
                     error={activityError}
                     onRetry={activityQuery.refresh}
                   />
@@ -1947,6 +2001,8 @@ export function PullRequestDetailPanel({
               </div>
             ) : null}
             {mountedTabs.has("code") ? (
+              // No mark: the viewer keeps its scrollport inside itself, under its own toolbar,
+              // so no child of this wrapper is the tab's own scrollport to fold against.
               <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
                 <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
                   <PullRequestCodeTab

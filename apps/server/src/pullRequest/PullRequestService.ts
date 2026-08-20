@@ -1183,6 +1183,10 @@ export const make = Effect.gen(function* () {
               checks: changeRequest.checks,
               mergeCapabilities: changeRequest.mergeCapabilities,
               viewerPermissions: changeRequest.viewerPermissions,
+              linkedIssues: changeRequest.linkedIssues,
+              ...(changeRequest.linkedIssuesTruncated === undefined
+                ? {}
+                : { linkedIssuesTruncated: changeRequest.linkedIssuesTruncated }),
               ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
               ...(changeRequest.baseComparison === undefined
                 ? {}

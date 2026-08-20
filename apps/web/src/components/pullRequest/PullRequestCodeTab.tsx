@@ -1166,7 +1166,9 @@ export function PullRequestCodeTab({
       {/* The overlay is anchored to this wrapper, not the scroller: absolute positioning
           inside an overflowing element tracks the content's bottom edge, which would carry
           the trigger away with the first scroll. */}
-      <div className="relative min-h-0 flex-1">
+      {/* The panel folds its chrome on the scroll of whatever this marks, so it sits on the
+          wrapper whose child actually scrolls rather than on the tab root. */}
+      <div className="relative min-h-0 flex-1" data-tab-scroller>
         <div className="h-full overflow-auto">{body}</div>
         {reviewOverlay}
       </div>
@@ -1314,6 +1316,9 @@ export function PullRequestCodeTab({
             up; the viewer inside still owns its own scrolling. */}
         <div
           className="relative min-h-0 flex-1"
+          // The viewer owns its scroll container and that host is in the light DOM, so its
+          // scroll reaches the panel and should fold the chrome like any other tab's does.
+          data-tab-scroller
           // The chevron answers this too, but the whole header row is the target a reader
           // actually aims for. The header lives in the viewer's shadow tree, so the capture
           // listener walks `composedPath` — the only way to see through the shadow boundary.

@@ -1,7 +1,7 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { PullRequestReaction } from "@t3tools/contracts";
+import type { IssueLink, PullRequestReaction } from "@t3tools/contracts";
 
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
@@ -111,6 +111,154 @@ describe("gitHubViewerPermissions", () => {
             }),
           getViewerAccess: () =>
             Effect.succeed({ canWrite: false, canUpdate: true, didAuthor: false }),
+          listLinkedIssues: () => Effect.succeed({ links: [], truncated: false }),
+        }),
+      ),
+    ),
+  );
+});
+
+describe("getChangeRequest linked issues", () => {
+  const issue = (number: number, closesIssue: boolean): IssueLink => ({
+    repository: "acme/web",
+    number,
+    title: `Issue ${number}`,
+    url: `https://github.com/acme/web/issues/${number}`,
+    state: "open",
+    closesIssue,
+  });
+
+  const detailWith = (body: string) => ({
+    authorId: null,
+    number: 7,
+    title: "Open an issue beside a thread",
+    url: "https://github.com/acme/web/pull/7",
+    author: null,
+    headRepositoryOwner: null,
+    headBranch: "feat/page",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    reviewDecision: null,
+    additions: 1,
+    deletions: 1,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    reviewRequestLogins: [],
+    hasTeamReviewRequest: false,
+    checksState: null,
+    labels: [],
+    body,
+    changedFiles: 1,
+    mergedAt: null,
+    closedAt: null,
+    checks: [],
+    comments: [],
+    commits: [],
+  });
+
+  const layerWith = (input: {
+    readonly body: string;
+    readonly linked: ReadonlyArray<IssueLink>;
+    readonly listCitedIssues: GitHubPullRequestCli.GitHubPullRequestCli["Service"]["listCitedIssues"];
+  }) =>
+    Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+      getPullRequestDetail: () => Effect.succeed(detailWith(input.body)),
+      getRepositoryAccess: () =>
+        Effect.succeed({
+          canWrite: true,
+          mergeCapabilities: { merge: true, squash: true, rebase: true },
+        }),
+      getViewerAccess: () => Effect.succeed({ canWrite: true, canUpdate: true, didAuthor: false }),
+      listLinkedIssues: () => Effect.succeed({ links: input.linked, truncated: false }),
+      listCitedIssues: input.listCitedIssues,
+    });
+
+  const read = Effect.gen(function* () {
+    const provider = yield* make;
+    return yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+  });
+
+  it.effect("adds an issue the body only cites, once GitHub confirms it is one", () => {
+    const listCitedIssues = vi.fn<
+      GitHubPullRequestCli.GitHubPullRequestCli["Service"]["listCitedIssues"]
+    >(() => Effect.succeed([issue(34, false)]));
+    return read.pipe(
+      Effect.map((detail) => {
+        expect(detail.linkedIssues.map((link) => [link.number, link.closesIssue])).toEqual([
+          [12, true],
+          [34, false],
+        ]);
+        // The one GitHub already reported is not asked about again.
+        expect(listCitedIssues.mock.calls[0]?.[0].references).toEqual([
+          { repository: "acme/web", number: 34 },
+        ]);
+      }),
+      Effect.provide(
+        layerWith({
+          body: "Closes #12. Part of #34.",
+          linked: [issue(12, true)],
+          listCitedIssues,
+        }),
+      ),
+    );
+  });
+
+  it.effect("asks nothing when the words name only what the host already reported", () => {
+    const listCitedIssues = vi.fn<
+      GitHubPullRequestCli.GitHubPullRequestCli["Service"]["listCitedIssues"]
+    >(() => Effect.succeed([]));
+    return read.pipe(
+      Effect.map((detail) => {
+        expect(listCitedIssues).not.toHaveBeenCalled();
+        // The host's own claim survives: only it can say what merging closes.
+        expect(detail.linkedIssues.map((link) => [link.number, link.closesIssue])).toEqual([
+          [12, true],
+        ]);
+      }),
+      Effect.provide(
+        layerWith({ body: "Closes #12.", linked: [issue(12, true)], listCitedIssues }),
+      ),
+    );
+  });
+
+  it.effect("drops a reference GitHub answered nothing for", () =>
+    read.pipe(
+      // `#404` is a number in a body and no more than that: a dead row here is worse than
+      // an absent one.
+      Effect.map((detail) => expect(detail.linkedIssues).toEqual([])),
+      Effect.provide(
+        layerWith({
+          body: "Part of #404.",
+          linked: [],
+          listCitedIssues: () => Effect.succeed([]),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("keeps the host's own links when the lookup fails", () =>
+    read.pipe(
+      Effect.map((detail) => expect(detail.linkedIssues).toEqual([issue(12, true)])),
+      Effect.provide(
+        layerWith({
+          body: "Part of #34.",
+          linked: [issue(12, true)],
+          listCitedIssues: () =>
+            Effect.fail(
+              new GitHubPullRequestCli.GitHubPullRequestReadError({
+                command: "gh",
+                cwd: "/w",
+                operation: "listCitedIssues",
+                cause: new Error("GraphQL: Could not resolve to an issue"),
+              }),
+            ),
         }),
       ),
     ),

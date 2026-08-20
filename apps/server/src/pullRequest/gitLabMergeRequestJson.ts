@@ -3,6 +3,7 @@ import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
+  IssueLink,
   PullRequestActor,
   PullRequestCheck,
   PullRequestCheckStatus,
@@ -583,6 +584,84 @@ export function decodeDiffRefsJson(
   return Result.succeed(
     refs ? { baseSha: refs.base_sha, headSha: refs.head_sha, startSha: refs.start_sha } : null,
   );
+}
+
+const RawClosesIssueSchema = Schema.Struct({
+  iid: Schema.Int,
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+  web_url: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  references: Schema.optional(
+    Schema.NullOr(Schema.Struct({ full: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+});
+
+const decodeClosesIssueEntry = Schema.decodeUnknownExit(RawClosesIssueSchema);
+
+interface GitLabIssueLinksPage {
+  readonly links: ReadonlyArray<IssueLink>;
+  readonly rawCount: number;
+}
+
+/**
+ * The issues merging this merge request closes, which is the whole of what GitLab reports as a
+ * link. The ones it only mentions have no endpoint of their own — they would be a walk over every
+ * note the merge request carries, a page at a time, for links nobody declared — so the mentions
+ * the section shows are read out of the words instead.
+ *
+ * A row is skipped where it cannot name its own project, which is the one field of the link that
+ * cannot be filled in from anywhere else.
+ */
+export function decodeClosesIssuesJson(
+  raw: string,
+): Result.Result<GitLabIssueLinksPage, DecodeFailure> {
+  return decodeIssueLinks(raw, true);
+}
+
+/**
+ * The issues a merge request's own words name, as GitLab's issues endpoint answered for them.
+ * Only what it hands back is kept, which is how a number that names no issue — or names one in a
+ * project this account cannot read — drops out silently.
+ *
+ * These cite rather than close: GitLab alone knows which of them merging will shut.
+ */
+export function decodeCitedIssuesJson(
+  raw: string,
+): Result.Result<ReadonlyArray<IssueLink>, DecodeFailure> {
+  const decoded = decodeIssueLinks(raw, false);
+  return Result.isSuccess(decoded)
+    ? Result.succeed(decoded.success.links)
+    : Result.fail(decoded.failure);
+}
+
+function decodeIssueLinks(
+  raw: string,
+  closesIssue: boolean,
+): Result.Result<GitLabIssueLinksPage, DecodeFailure> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const links: IssueLink[] = [];
+  for (const entry of decoded.success) {
+    const issue = decodeClosesIssueEntry(entry);
+    if (Exit.isFailure(issue)) continue;
+    const value = issue.value;
+    const repository = trimmed(value.references?.full?.split("#")[0]);
+    const title = trimmed(value.title);
+    const url = trimmed(value.web_url);
+    if (repository === null || title === null || url === null || value.iid <= 0) continue;
+    links.push({
+      repository,
+      number: value.iid,
+      title,
+      url,
+      // GitLab spells an open issue `opened`, and `locked` is an open one whose discussion is.
+      state: value.state?.trim().toLowerCase() === "closed" ? "closed" : "open",
+      closesIssue,
+    });
+  }
+  return Result.succeed({ links, rawCount: decoded.success.length });
 }
 
 export function decodeNotesJson(

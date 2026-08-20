@@ -26,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveSourceControlSurfaceCapability,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -38,6 +39,20 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("source-control surface capability", () => {
+  it.each([
+    { state: "unknown", input: { capabilityKnown: false, supported: false }, expected: "loading" },
+    {
+      state: "unsupported",
+      input: { capabilityKnown: true, supported: false },
+      expected: "unavailable",
+    },
+    { state: "supported", input: { capabilityKnown: true, supported: true }, expected: "ready" },
+  ] as const)("returns $expected for a $state capability", ({ input, expected }) => {
+    expect(resolveSourceControlSurfaceCapability(input)).toBe(expected);
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());

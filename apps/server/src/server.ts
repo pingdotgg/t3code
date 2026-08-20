@@ -23,6 +23,9 @@ import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
+import * as IssueProviderRegistry from "./issue/IssueProviderRegistry.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as LinearApi from "./issue/LinearApi.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
@@ -40,6 +43,7 @@ import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitHubGraphQlBudget from "./sourceControl/githubGraphQlBudget.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
@@ -143,6 +147,7 @@ const PtyAdapterLive = Layer.unwrap(
 );
 
 const ServerSettingsLayerLive = ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer));
+const LinearApiLive = LinearApi.layer.pipe(Layer.provide(ServerSecretStore.layer));
 
 const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
   Layer.provide(ResourceMonitorBinary.layer),
@@ -444,6 +449,13 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
   Layer.provide(VcsProcess.layer),
 );
 
+const IssueServiceLive = IssueService.layer.pipe(
+  // One registry entry per supported host; the service only knows the registry.
+  Layer.provide(IssueProviderRegistry.layer),
+  Layer.provide(SourceControlProviderRegistryLayerLive),
+  Layer.provide(VcsProcess.layer),
+);
+
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -464,6 +476,12 @@ export const makeRoutesLayer = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
+  // One server-lifetime instance, so every client shares its caches and a mutation one of them
+  // makes is invalidated for all of them.
+  Layer.provide(IssueServiceLive),
+  Layer.provide(LinearApiLive),
+  // GitHub applies one GraphQL quota to both features, so both registries share one budget.
+  Layer.provide(GitHubGraphQlBudget.layer),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(commandReadinessLayer),

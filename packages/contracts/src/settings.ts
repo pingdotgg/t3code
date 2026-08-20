@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { ProjectId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -586,6 +586,25 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const LinearProjectBinding = Schema.Struct({
+  credentialId: TrimmedNonEmptyString,
+  teamKey: TrimmedNonEmptyString,
+});
+export type LinearProjectBinding = typeof LinearProjectBinding.Type;
+
+const LinearIssueTrackingSettings = Schema.Struct({
+  projectBindings: Schema.Record(ProjectId, Schema.NullOr(LinearProjectBinding)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  projectTeams: Schema.Record(ProjectId, TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+
+const IssueTrackingSettings = Schema.Struct({
+  linear: LinearIssueTrackingSettings,
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -629,6 +648,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  issueTracking: IssueTrackingSettings,
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -828,6 +848,20 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  issueTracking: Schema.optionalKey(
+    Schema.Struct({
+      linear: Schema.optionalKey(
+        Schema.Struct({
+          projectBindings: Schema.optionalKey(
+            Schema.Record(ProjectId, Schema.NullOr(LinearProjectBinding)),
+          ),
+          projectBindingsToDelete: Schema.optionalKey(Schema.Array(ProjectId)),
+          projectTeams: Schema.optionalKey(Schema.Record(ProjectId, TrimmedNonEmptyString)),
+          projectTeamsToDelete: Schema.optionalKey(Schema.Array(ProjectId)),
+        }),
+      ),
+    }),
+  ),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

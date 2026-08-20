@@ -14,7 +14,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
  * Preview renders through the same component the saved body will be read through, which is the
  * only way to see what a host's markdown will actually become before it is sent.
  */
-export function PullRequestMarkdownEditor({
+export function SourceControlMarkdownEditor({
   value,
   cwd,
   placeholder,
@@ -111,3 +111,6 @@ export function PullRequestMarkdownEditor({
     </div>
   );
 }
+
+/** Existing name kept for pull-request callers while issues share the same editor. */
+export const PullRequestMarkdownEditor = SourceControlMarkdownEditor;

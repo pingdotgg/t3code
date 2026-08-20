@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
+  IssueLink,
   PullRequestAction,
   PullRequestActor,
   PullRequestBaseComparison,
@@ -160,6 +161,14 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly mergeCapabilities: PullRequestMergeCapabilities;
   readonly viewerPermissions: PullRequestViewerPermissions;
+  /**
+   * The issues this change request closes, and the ones it only cites. Empty where the host has
+   * no notion of the link at all, which is a change request with nothing to show rather than a
+   * read that failed — so a provider never guesses a link out of the words in a body.
+   */
+  readonly linkedIssues: ReadonlyArray<IssueLink>;
+  /** True when the host has more linked issues than this bounded read returned. */
+  readonly linkedIssuesTruncated?: boolean;
   /** Absent from a host that cannot compare the branch with its base, which is most of them. */
   readonly baseComparison?: PullRequestBaseComparison;
   readonly behindBy?: number;

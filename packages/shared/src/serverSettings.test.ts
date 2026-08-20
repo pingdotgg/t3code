@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProjectId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -18,6 +19,101 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("deletes selected Linear project mappings while preserving the others", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      issueTracking: {
+        linear: {
+          ...DEFAULT_SERVER_SETTINGS.issueTracking.linear,
+          projectTeams: { project_1: "ENG", project_2: "OPS" },
+          projectBindings: {
+            project_1: null,
+            project_2: { credentialId: "user-2", teamKey: "OPS" },
+          },
+        },
+      },
+    };
+
+    const linear = applyServerSettingsPatch(current, {
+      issueTracking: {
+        linear: {
+          projectBindingsToDelete: ["project_1" as ProjectId],
+          projectTeamsToDelete: ["project_1" as ProjectId],
+        },
+      },
+    });
+    expect(linear.issueTracking.linear.projectBindings).toEqual({
+      project_2: { credentialId: "user-2", teamKey: "OPS" },
+    });
+    expect(linear.issueTracking.linear.projectTeams).toEqual({ project_2: "OPS" });
+    expect(linear.issueTracking.linear).not.toHaveProperty("projectTeamsToDelete");
+  });
+
+  it("lets legacy project-team changes update a migrated binding", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      issueTracking: {
+        linear: {
+          projectTeams: { project_1: "ENG" },
+          projectBindings: {
+            project_1: { credentialId: "user-1", teamKey: "ENG" },
+          },
+        },
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      issueTracking: { linear: { projectTeams: { ["project_1" as ProjectId]: "OPS" } } },
+    });
+
+    expect(next.issueTracking.linear.projectTeams).toEqual({ project_1: "OPS" });
+    expect(next.issueTracking.linear.projectBindings).toEqual({
+      project_1: { credentialId: "user-1", teamKey: "OPS" },
+    });
+  });
+
+  it("keeps saved-account identity on a legacy no-op team patch", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      issueTracking: {
+        linear: {
+          projectTeams: { project_1: "ENG", project_2: "OPS" },
+          projectBindings: {
+            project_1: { credentialId: "user-1", teamKey: "ENG" },
+            project_2: { credentialId: "user-2", teamKey: "OPS" },
+          },
+        },
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      issueTracking: { linear: { projectTeams: { ["project_1" as ProjectId]: "ENG" } } },
+    });
+
+    expect(next.issueTracking.linear.projectBindings).toEqual(
+      current.issueTracking.linear.projectBindings,
+    );
+  });
+
+  it("keeps a disconnected project tombstone during a legacy team patch", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      issueTracking: {
+        linear: {
+          projectTeams: {},
+          projectBindings: { project_1: null },
+        },
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      issueTracking: { linear: { projectTeams: { ["project_1" as ProjectId]: "OPS" } } },
+    });
+
+    expect(next.issueTracking.linear.projectTeams).toEqual({ project_1: "OPS" });
+    expect(next.issueTracking.linear.projectBindings).toEqual({ project_1: null });
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

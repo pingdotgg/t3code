@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
+  IssueLink,
   PullRequestAction,
   PullRequestComment,
   PullRequestCommit,
@@ -24,6 +25,8 @@ import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import {
   AWARD_EMOJI_GRAPHQL_QUERY,
   decodeAwardEmojiJson,
+  decodeCitedIssuesJson,
+  decodeClosesIssuesJson,
   decodeCommitDiffRefsJson,
   decodeCommitsJson,
   decodeDiffRefsJson,
@@ -248,6 +251,25 @@ export class GitLabPullRequestCli extends Context.Service<
       { readonly comments: ReadonlyArray<PullRequestComment>; readonly truncated: boolean },
       GitLabPullRequestCliError
     >;
+
+    /** The issues merging this merge request closes; GitLab reports no other kind of link. */
+    readonly listLinkedIssues: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<IssueLink>, GitLabPullRequestCliError>;
+
+    /**
+     * The issues a merge request's own words name, looked up so that only ones which exist reach
+     * the section. One request for the batch, which is why the numbers are all read from the one
+     * project: GitLab's issues endpoint is per project, and another project would cost a request
+     * of its own.
+     */
+    readonly listCitedIssues: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly numbers: ReadonlyArray<number>;
+    }) => Effect.Effect<ReadonlyArray<IssueLink>, GitLabPullRequestCliError>;
 
     readonly listCommits: (input: {
       readonly cwd: string;
@@ -1046,6 +1068,42 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** GitLab paginates closing issues by offset and supplies no total, so a short page ends it. */
+  const linkedIssuesPage = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+    readonly page: number;
+    readonly collected: ReadonlyArray<IssueLink>;
+  }): Effect.Effect<ReadonlyArray<IssueLink>, GitLabPullRequestCliError> =>
+    api({
+      cwd: input.cwd,
+      path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/closes_issues?${query(
+        [
+          ["per_page", String(MAX_PAGE_SIZE)],
+          ["page", String(input.page)],
+        ],
+      )}`,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeClosesIssuesJson(result.stdout.trim());
+        if (!Result.isSuccess(decoded)) {
+          return Effect.fail(
+            new GitLabMergeRequestReadError({
+              command: "glab",
+              cwd: input.cwd,
+              operation: "listLinkedIssues",
+              cause: decoded.failure,
+            }),
+          );
+        }
+        const collected = [...input.collected, ...decoded.success.links];
+        return decoded.success.rawCount < MAX_PAGE_SIZE
+          ? Effect.succeed(collected)
+          : linkedIssuesPage({ ...input, page: input.page + 1, collected });
+      }),
+    );
+
   return GitLabPullRequestCli.of({
     getViewerUsername: viewerUsername,
 
@@ -1058,6 +1116,33 @@ export const make = Effect.gen(function* () {
     getMergeRequestDetail: mergeRequestDetail,
 
     listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
+
+    listLinkedIssues: (input) => linkedIssuesPage({ ...input, page: 1, collected: [] }),
+
+    listCitedIssues: (input) =>
+      input.numbers.length === 0
+        ? Effect.succeed<ReadonlyArray<IssueLink>>([])
+        : api({
+            cwd: input.cwd,
+            path: `projects/${projectPath(input.repository)}/issues?${query([
+              ...input.numbers.map((number) => ["iids[]", String(number)] as const),
+              ["per_page", String(MAX_PAGE_SIZE)],
+            ])}`,
+          }).pipe(
+            Effect.flatMap((result) => {
+              const decoded = decodeCitedIssuesJson(result.stdout.trim());
+              return Result.isSuccess(decoded)
+                ? Effect.succeed(decoded.success)
+                : Effect.fail(
+                    new GitLabMergeRequestReadError({
+                      command: "glab",
+                      cwd: input.cwd,
+                      operation: "listCitedIssues",
+                      cause: decoded.failure,
+                    }),
+                  );
+            }),
+          ),
 
     listReactions: (input) => awardsPage({ ...input, cursor: null, page: 1, collected: null }),
 

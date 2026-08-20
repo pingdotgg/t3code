@@ -66,6 +66,46 @@ import {
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
+import {
+  IssueActionInput,
+  IssueActivity,
+  IssueAssigneeCandidateList,
+  IssueAssigneesInput,
+  IssueCommentInput,
+  IssueCommentsPageInput,
+  IssueCommentsPageResult,
+  IssueCommentUpdateInput,
+  IssueCreateInput,
+  IssueCreateResult,
+  IssueDetail,
+  IssueInvalidateInput,
+  IssueLabelCandidateList,
+  IssueLabelsInput,
+  IssueListInput,
+  IssueListResult,
+  IssueOperationError,
+  IssueReactionInput,
+  IssueRef,
+  IssueRepositoryRef,
+  IssueTemplateList,
+  IssueUnavailableError,
+  IssueUpdateInput,
+} from "./issue.ts";
+import {
+  IssueTrackingError,
+  LinearConnectInput,
+  LinearConnection,
+  LinearDisconnectInput,
+  LinearSetProjectBindingInput,
+} from "./issueTracking.ts";
+import {
+  WorkItemMatchError,
+  WorkItemMatchInput,
+  WorkItemMatchResult,
+  WorkItemTaskError,
+  WorkItemTaskInput,
+  WorkItemTaskResult,
+} from "./workItem.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestActionInput,
@@ -296,6 +336,32 @@ export const WS_METHODS = {
   pullRequestsInvalidate: "pullRequests.invalidate",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
+
+  // Issue methods
+  issuesList: "issues.list",
+  issuesDetail: "issues.detail",
+  issuesActivity: "issues.activity",
+  issuesCommentsPage: "issues.commentsPage",
+  issuesRunAction: "issues.runAction",
+  issuesComment: "issues.comment",
+  issuesUpdateComment: "issues.updateComment",
+  issuesSetReaction: "issues.setReaction",
+  issuesCreate: "issues.create",
+  issuesUpdate: "issues.update",
+  issuesSetLabels: "issues.setLabels",
+  issuesSetAssignees: "issues.setAssignees",
+  issuesLabelCandidates: "issues.labelCandidates",
+  issuesAssigneeCandidates: "issues.assigneeCandidates",
+  issuesTemplates: "issues.templates",
+  issuesInvalidate: "issues.invalidate",
+
+  // Issue tracking connection methods
+  linearConnectionStatus: "linear.connectionStatus",
+  linearConnect: "linear.connect",
+  linearDisconnect: "linear.disconnect",
+  linearSetProjectBinding: "linear.setProjectBinding",
+  workItemsGenerateTask: "workItems.generateTask",
+  workItemsFindMatches: "workItems.findMatches",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -592,6 +658,153 @@ export const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequest
   payload: PullRequestReviewerRequestInput,
   success: Schema.Void,
   error: PullRequestRpcError,
+});
+
+const IssueRpcError = Schema.Union([
+  IssueUnavailableError,
+  IssueOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
+  payload: IssueListInput,
+  success: IssueListResult,
+  error: IssueRpcError,
+});
+
+export const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
+  payload: IssueRef,
+  success: IssueDetail,
+  error: IssueRpcError,
+});
+
+export const WsIssuesActivityRpc = Rpc.make(WS_METHODS.issuesActivity, {
+  payload: IssueRef,
+  success: IssueActivity,
+  error: IssueRpcError,
+});
+
+export const WsIssuesCommentsPageRpc = Rpc.make(WS_METHODS.issuesCommentsPage, {
+  payload: IssueCommentsPageInput,
+  success: IssueCommentsPageResult,
+  error: IssueRpcError,
+});
+
+export const WsIssuesRunActionRpc = Rpc.make(WS_METHODS.issuesRunAction, {
+  payload: IssueActionInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+export const WsIssuesCommentRpc = Rpc.make(WS_METHODS.issuesComment, {
+  payload: IssueCommentInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+export const WsIssuesUpdateCommentRpc = Rpc.make(WS_METHODS.issuesUpdateComment, {
+  payload: IssueCommentUpdateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+export const WsIssuesSetReactionRpc = Rpc.make(WS_METHODS.issuesSetReaction, {
+  payload: IssueReactionInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+export const WsIssuesCreateRpc = Rpc.make(WS_METHODS.issuesCreate, {
+  payload: IssueCreateInput,
+  success: IssueCreateResult,
+  error: IssueRpcError,
+});
+
+export const WsIssuesUpdateRpc = Rpc.make(WS_METHODS.issuesUpdate, {
+  payload: IssueUpdateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+export const WsIssuesSetLabelsRpc = Rpc.make(WS_METHODS.issuesSetLabels, {
+  payload: IssueLabelsInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+export const WsIssuesSetAssigneesRpc = Rpc.make(WS_METHODS.issuesSetAssignees, {
+  payload: IssueAssigneesInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+/**
+ * Read on their own rather than as part of the detail: a repository's labels and the people who
+ * may be assigned are only wanted once somebody opens the menu, and reading them with every issue
+ * would spend a request per host on a list nobody looked at.
+ */
+export const WsIssuesLabelCandidatesRpc = Rpc.make(WS_METHODS.issuesLabelCandidates, {
+  payload: IssueRef,
+  success: IssueLabelCandidateList,
+  error: IssueRpcError,
+});
+
+export const WsIssuesAssigneeCandidatesRpc = Rpc.make(WS_METHODS.issuesAssigneeCandidates, {
+  payload: IssueRef,
+  success: IssueAssigneeCandidateList,
+  error: IssueRpcError,
+});
+
+/**
+ * What this repository offers as a starting point for a new issue, read when somebody opens the
+ * composer rather than with the listing: it is about the repository and not about any issue in it,
+ * which is why it takes a repository rather than a reference.
+ */
+export const WsIssuesTemplatesRpc = Rpc.make(WS_METHODS.issuesTemplates, {
+  payload: IssueRepositoryRef,
+  success: IssueTemplateList,
+  error: IssueRpcError,
+});
+
+export const WsIssuesInvalidateRpc = Rpc.make(WS_METHODS.issuesInvalidate, {
+  payload: IssueInvalidateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+export const WsLinearConnectionStatusRpc = Rpc.make(WS_METHODS.linearConnectionStatus, {
+  success: LinearConnection,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearConnectRpc = Rpc.make(WS_METHODS.linearConnect, {
+  payload: LinearConnectInput,
+  success: LinearConnection,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearDisconnectRpc = Rpc.make(WS_METHODS.linearDisconnect, {
+  payload: LinearDisconnectInput,
+  success: LinearConnection,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearSetProjectBindingRpc = Rpc.make(WS_METHODS.linearSetProjectBinding, {
+  payload: LinearSetProjectBindingInput,
+  success: Schema.Void,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkItemsGenerateTaskRpc = Rpc.make(WS_METHODS.workItemsGenerateTask, {
+  payload: WorkItemTaskInput,
+  success: WorkItemTaskResult,
+  error: Schema.Union([WorkItemTaskError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorkItemsFindMatchesRpc = Rpc.make(WS_METHODS.workItemsFindMatches, {
+  payload: WorkItemMatchInput,
+  success: WorkItemMatchResult,
+  error: Schema.Union([WorkItemMatchError, EnvironmentAuthorizationError]),
 });
 
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
@@ -1023,6 +1236,28 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsInvalidateRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
+  WsIssuesListRpc,
+  WsIssuesDetailRpc,
+  WsIssuesActivityRpc,
+  WsIssuesRunActionRpc,
+  WsIssuesCommentsPageRpc,
+  WsIssuesCommentRpc,
+  WsIssuesUpdateCommentRpc,
+  WsIssuesSetReactionRpc,
+  WsIssuesCreateRpc,
+  WsIssuesUpdateRpc,
+  WsIssuesSetLabelsRpc,
+  WsIssuesSetAssigneesRpc,
+  WsIssuesLabelCandidatesRpc,
+  WsIssuesAssigneeCandidatesRpc,
+  WsIssuesTemplatesRpc,
+  WsIssuesInvalidateRpc,
+  WsLinearConnectionStatusRpc,
+  WsLinearConnectRpc,
+  WsLinearDisconnectRpc,
+  WsLinearSetProjectBindingRpc,
+  WsWorkItemsGenerateTaskRpc,
+  WsWorkItemsFindMatchesRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,

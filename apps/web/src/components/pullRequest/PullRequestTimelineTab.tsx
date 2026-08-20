@@ -1,6 +1,5 @@
 import type {
   EnvironmentId,
-  PullRequestActor,
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
@@ -16,7 +15,7 @@ import {
   MessageSquareIcon,
   PencilIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -24,6 +23,12 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import {
+  ActorName,
+  ActorTimelineMarker,
+  IconMarker,
+  uniqueConversationActors,
+} from "../sourceControl/TimelineRail";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
@@ -68,66 +73,6 @@ function TimelineBody({ body, markdown, cwd }: { body: string; markdown: boolean
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
       )}
     </div>
-  );
-}
-
-function ActorName({ actor }: { actor: PullRequestActor | null }) {
-  return <span className="font-semibold text-foreground">{actor?.login ?? "ghost"}</span>;
-}
-
-function TimelineMarker({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string | undefined;
-}) {
-  return (
-    <span
-      className={cn(
-        "absolute left-0 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center bg-background",
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-function IconMarker({ icon, className }: { icon: ReactNode; className?: string | undefined }) {
-  return (
-    <TimelineMarker className={className}>
-      <span className="flex size-7 items-center justify-center bg-background text-muted-foreground">
-        {icon}
-      </span>
-    </TimelineMarker>
-  );
-}
-
-function ActorTimelineMarker({
-  actors,
-  className,
-  fallback,
-  muted = false,
-}: {
-  actors: ReadonlyArray<PullRequestActor>;
-  className?: string | undefined;
-  fallback: ReactNode;
-  muted?: boolean;
-}) {
-  const actor = actors[0];
-  return actor === undefined ? (
-    <IconMarker className={className} icon={fallback} />
-  ) : (
-    <TimelineMarker className={className}>
-      <PullRequestActorAvatar
-        actor={actor}
-        className={cn(
-          "size-7 bg-muted text-[9px] transition-opacity",
-          muted && "opacity-45 grayscale",
-        )}
-      />
-    </TimelineMarker>
   );
 }
 
@@ -260,15 +205,6 @@ function ConversationCard({
       ) : null}
     </article>
   );
-}
-
-function uniqueConversationActors(events: ReadonlyArray<PullRequestTimelineEvent>) {
-  const actors = new Map<string, PullRequestActor>();
-  for (const event of events) {
-    const actor = event.actor;
-    if (actor !== null && !actors.has(actor.login)) actors.set(actor.login, actor);
-  }
-  return [...actors.values()];
 }
 
 function ConversationGroup({
