@@ -978,6 +978,187 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("attaches thinking blocks to a reasoning item with a stable itemId", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "think, then answer",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-0",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "thinking",
+            thinking: "",
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "thinking_delta",
+            thinking: "Let me ",
+          },
+        },
+      } as unknown as SDKMessage);
+
+      // Long enough to cross the live-update throttle (512 chars) exactly once.
+      const longThought = "x".repeat(600);
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-2",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "thinking_delta",
+            thinking: longThought,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-3",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_stop",
+          index: 0,
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-1",
+        uuid: "assistant-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-1",
+          content: [
+            { type: "thinking", thinking: `Let me ${longThought}` },
+            { type: "text", text: "Done." },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-1",
+        uuid: "result-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      const reasoningStarted = runtimeEvents.find(
+        (event) => event.type === "item.started" && event.payload.itemType === "reasoning",
+      );
+      assert.equal(reasoningStarted?.type, "item.started");
+      if (reasoningStarted?.type !== "item.started") {
+        return;
+      }
+      assert.equal(reasoningStarted.payload.status, "inProgress");
+      assert.equal(reasoningStarted.payload.title, "Reasoning");
+      const reasoningItemId = reasoningStarted.itemId;
+      assert.equal(typeof reasoningItemId, "string");
+
+      const reasoningDeltas = runtimeEvents.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+      );
+      assert.equal(reasoningDeltas.length, 2);
+      for (const delta of reasoningDeltas) {
+        assert.equal(String(delta.itemId), String(reasoningItemId));
+      }
+      assert.deepEqual(
+        reasoningDeltas.map((delta) => (delta.type === "content.delta" ? delta.payload.delta : "")),
+        ["Let me ", longThought],
+      );
+
+      const reasoningUpdates = runtimeEvents.filter(
+        (event) => event.type === "item.updated" && event.payload.itemType === "reasoning",
+      );
+      // First text goes out immediately; the 600-char delta crosses the
+      // live-update throttle once more.
+      assert.equal(reasoningUpdates.length, 2);
+      const firstUpdate = reasoningUpdates[0];
+      if (firstUpdate?.type === "item.updated") {
+        assert.equal(String(firstUpdate.itemId), String(reasoningItemId));
+        assert.equal(firstUpdate.payload.detail, "Let me ");
+      }
+      const reasoningUpdate = reasoningUpdates[1];
+      if (reasoningUpdate?.type === "item.updated") {
+        assert.equal(String(reasoningUpdate.itemId), String(reasoningItemId));
+        assert.equal(reasoningUpdate.payload.detail, `Let me ${longThought}`);
+        const updateData = reasoningUpdate.payload.data as { toolCallId?: string } | undefined;
+        assert.equal(String(updateData?.toolCallId), String(reasoningItemId));
+      }
+
+      const reasoningCompleted = runtimeEvents.find(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      assert.equal(reasoningCompleted?.type, "item.completed");
+      if (reasoningCompleted?.type === "item.completed") {
+        assert.equal(String(reasoningCompleted.itemId), String(reasoningItemId));
+        assert.equal(reasoningCompleted.payload.status, "completed");
+        assert.equal(reasoningCompleted.payload.detail, `Let me ${longThought}`);
+        const completedData = reasoningCompleted.payload.data as
+          | { toolCallId?: string }
+          | undefined;
+        assert.equal(String(completedData?.toolCallId), String(reasoningItemId));
+      }
+
+      const startedIndex = runtimeEvents.indexOf(reasoningStarted);
+      const completedIndex = runtimeEvents.indexOf(reasoningCompleted!);
+      assert.equal(startedIndex >= 0 && completedIndex > startedIndex, true);
+
+      // Thinking text must not leak into the assistant message backfill.
+      const assistantCompleted = runtimeEvents.find(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      if (assistantCompleted?.type === "item.completed") {
+        assert.equal(assistantCompleted.payload.detail, "Done.");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("does not emit turn.completed for a result with no active turn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -1119,7 +1300,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 14).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1229,14 +1410,22 @@ describe("ClaudeAdapterLive", () => {
           "session.state.changed",
           "turn.started",
           "thread.started",
+          "item.started",
           "content.delta",
+          "item.updated",
           "item.started",
           "item.updated",
           "item.updated",
           "item.completed",
+          "item.completed",
           "turn.completed",
         ],
       );
+
+      const reasoningStarted = runtimeEvents.find(
+        (event) => event.type === "item.started" && event.payload.itemType === "reasoning",
+      );
+      assert.equal(reasoningStarted?.type, "item.started");
 
       const reasoningDelta = runtimeEvents.find(
         (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
@@ -1245,9 +1434,21 @@ describe("ClaudeAdapterLive", () => {
       if (reasoningDelta?.type === "content.delta") {
         assert.equal(reasoningDelta.payload.delta, "Let");
         assert.equal(String(reasoningDelta.turnId), String(turn.turnId));
+        // Thinking deltas carry the reasoning itemId (upstream issue #5542).
+        assert.equal(String(reasoningDelta.itemId), String(reasoningStarted?.itemId));
       }
 
-      const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
+      const reasoningCompleted = runtimeEvents.find(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      assert.equal(reasoningCompleted?.type, "item.completed");
+      if (reasoningCompleted?.type === "item.completed") {
+        assert.equal(reasoningCompleted.payload.detail, "Let");
+      }
+
+      const toolStarted = runtimeEvents.find(
+        (event) => event.type === "item.started" && event.payload.itemType !== "reasoning",
+      );
       assert.equal(toolStarted?.type, "item.started");
       if (toolStarted?.type === "item.started") {
         assert.equal(toolStarted.payload.itemType, "dynamic_tool_call");
