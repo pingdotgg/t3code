@@ -158,7 +158,11 @@ export function ThemeSearchSection({
       return;
     }
     void runSearch(debouncedQuery);
-  }, [debouncedQuery, installingId, runSearch]);
+    // `installingId` is deliberately not a dependency: the guard above reads
+    // the current value from the fresh render closure, and a completed install
+    // must not retrigger a search that would wipe an install error.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery, runSearch]);
 
   const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
     const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
