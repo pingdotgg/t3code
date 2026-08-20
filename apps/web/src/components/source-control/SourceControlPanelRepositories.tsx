@@ -242,10 +242,10 @@ export function makeSourceControlPanelRepositoryRenderers(
   };
 
   const localBranchesRow = (branches: readonly VcsRef[]) => {
-    const key = treeKey("remote", "local");
+    const key = treeKey("unpublished", "local");
     const expanded = expandedTree.has(key);
     return (
-      <div key="local" className="space-y-0.5">
+      <div key="unpublished" className="space-y-0.5">
         <div
           role="button"
           tabIndex={0}
