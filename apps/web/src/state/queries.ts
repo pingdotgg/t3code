@@ -14,6 +14,7 @@ import type {
   OrchestrationThread,
   ProjectContentMatch,
   ProjectEntryKind,
+  ProviderInstanceId,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -27,6 +28,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
+import { serverEnvironment } from "./server";
 import { useEnvironmentQuery } from "./query";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
@@ -344,6 +346,21 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
     truncated: result.data?.truncated ?? false,
     invalidRegex: target.useRegex && result.data?.regexFallbackError !== undefined,
   };
+}
+
+export function useProviderSkills(target: {
+  readonly environmentId: EnvironmentId | null;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly cwd: string | null;
+}) {
+  return useEnvironmentQuery(
+    target.environmentId !== null && target.instanceId !== null && target.cwd !== null
+      ? serverEnvironment.providerSkills({
+          environmentId: target.environmentId,
+          input: { instanceId: target.instanceId, cwd: target.cwd },
+        })
+      : null,
+  );
 }
 
 export function useCheckpointDiff(
