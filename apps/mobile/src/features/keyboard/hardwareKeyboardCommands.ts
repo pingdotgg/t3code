@@ -5,6 +5,7 @@ export type HardwareKeyboardCommand =
   | "newTask"
   | "focusSearch"
   | "back"
+  | "forward"
   | "files"
   | "terminal"
   | "review"

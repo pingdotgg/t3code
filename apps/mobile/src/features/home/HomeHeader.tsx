@@ -15,6 +15,8 @@ import { resolveMobileStageLabel } from "../../lib/mobileBranding";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { MobileNavigationHistoryButtons } from "../navigation/MobileNavigationHistoryButtons";
+import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import {
   createNativeMailSearchToolbarItem,
@@ -231,6 +233,8 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               }
             />
 
+            <MobileNavigationHistoryButtons />
+
             <ControlPillMenu
               actions={menuActions}
               isAnchoredToRight
@@ -299,6 +303,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
 }
 
 function IosHomeHeader(props: HomeHeaderProps) {
+  const navigationHistory = useMobileNavigationHistory();
   const searchBarRef = useRef<SearchBarCommands>(null);
   const iconColor = useThemeColor("--color-icon");
   // Thread List v2 lays the list out in fixed creation order, so the
@@ -317,6 +322,29 @@ function IosHomeHeader(props: HomeHeaderProps) {
     ...props,
     listOrganization: !threadListV2Enabled,
   });
+  const navigationHeaderItems = useMemo(
+    () => [
+      withNativeGlassHeaderItem({
+        accessibilityLabel: "Back",
+        disabled: !navigationHistory.canGoBack,
+        icon: { name: "chevron.left", type: "sfSymbol" } as const,
+        identifier: "home-navigation-back",
+        label: "",
+        onPress: navigationHistory.back,
+        type: "button" as const,
+      }),
+      withNativeGlassHeaderItem({
+        accessibilityLabel: "Forward",
+        disabled: !navigationHistory.canGoForward,
+        icon: { name: "chevron.right", type: "sfSymbol" } as const,
+        identifier: "home-navigation-forward",
+        label: "",
+        onPress: navigationHistory.forward,
+        type: "button" as const,
+      }),
+    ],
+    [navigationHistory],
+  );
 
   return (
     <>
@@ -329,6 +357,7 @@ function IosHomeHeader(props: HomeHeaderProps) {
           unstable_headerRightItems:
             Platform.OS === "ios"
               ? () => [
+                  ...navigationHeaderItems,
                   withNativeGlassHeaderItem({
                     accessibilityLabel: "Open settings",
                     icon: { name: "ellipsis", type: "sfSymbol" } as const,
