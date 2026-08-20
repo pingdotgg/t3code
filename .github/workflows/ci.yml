@@ -6,17 +6,59 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  classify:
+    name: Classify changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      check: ${{ steps.classify.outputs.check }}
+      full_check: ${{ steps.classify.outputs.full_check }}
+      test: ${{ steps.classify.outputs.test }}
+      mobile_native: ${{ steps.classify.outputs.mobile_native }}
+      release_smoke: ${{ steps.classify.outputs.release_smoke }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Test change classifier
+        run: node --test .github/scripts/ci-change-classifier.test.cjs
+
+      - name: Classify changed paths
+        id: classify
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { run } = require("./.github/scripts/ci-change-classifier.cjs");
+            await run({ github, context, core });
+
   check:
     name: Check
+    needs: classify
+    if: >-
+      !cancelled() &&
+      (needs.classify.result != 'success' || needs.classify.outputs.check != 'false')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
+      - name: Validate workflow-only change
+        if: needs.classify.result == 'success' && needs.classify.outputs.full_check == 'false'
+        run: echo "GitHub Actions parsed the changed workflow successfully."
+
       - name: Checkout
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         uses: actions/checkout@v6
         with:
           sparse-checkout: |
@@ -25,6 +67,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -32,26 +75,33 @@ jobs:
           run-install: true
 
       - name: Setup Rust
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
       - name: Ensure Electron runtime is installed
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         run: vp run --filter @t3tools/desktop ensure:electron
 
       - name: Check
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         run: vp check
 
       - name: Typecheck
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         run: vpr typecheck
 
       - name: Check resource monitor formatting
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         run: cargo fmt --manifest-path native/resource-monitor/Cargo.toml -- --check
 
       - name: Build desktop pipeline
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         run: vp run build:desktop
 
       - name: Verify preload bundle output
+        if: needs.classify.result != 'success' || needs.classify.outputs.full_check != 'false'
         run: |
           test -f apps/desktop/dist-electron/preload.cjs
           grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
@@ -59,6 +109,10 @@ jobs:
 
   test:
     name: Test
+    needs: classify
+    if: >-
+      !cancelled() &&
+      (needs.classify.result != 'success' || needs.classify.outputs.test != 'false')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -112,6 +166,10 @@ jobs:
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
+    needs: classify
+    if: >-
+      !cancelled() &&
+      (needs.classify.result != 'success' || needs.classify.outputs.mobile_native != 'false')
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 10
     steps:
@@ -140,6 +198,10 @@ jobs:
 
   release_smoke:
     name: Release Smoke
+    needs: classify
+    if: >-
+      !cancelled() &&
+      (needs.classify.result != 'success' || needs.classify.outputs.release_smoke != 'false')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

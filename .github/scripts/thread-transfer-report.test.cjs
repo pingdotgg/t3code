@@ -90,6 +90,7 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
   const outputs = {};
   const listWorkflowRunArtifacts = () => {};
   const listWorkflowRuns = () => {};
+  const listJobsForWorkflowRun = () => {};
   const listPullRequestsAssociatedWithCommit = () => {};
   const github = {
     paginate: async (method, input) => {
@@ -101,6 +102,9 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
             head: { sha: "head-sha", ref: "feature-branch", repo: null },
           },
         ];
+      }
+      if (method === listJobsForWorkflowRun) {
+        return [{ name: "Test", conclusion: "success" }];
       }
       if (method === listWorkflowRunArtifacts) {
         return [
@@ -117,7 +121,7 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
       throw new Error("unexpected pagination call");
     },
     rest: {
-      actions: { listWorkflowRunArtifacts, listWorkflowRuns },
+      actions: { listJobsForWorkflowRun, listWorkflowRunArtifacts, listWorkflowRuns },
       pulls: {
         get: async () => ({
           data: {
@@ -159,6 +163,57 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
   assert.equal(outputs.pr_artifact, "true");
   assert.equal(outputs.baseline_run_id, "1");
   assert.equal(outputs.baseline_matches_base, "true");
+});
+
+test("does not publish when the Test job was intentionally skipped", async () => {
+  const outputs = {};
+  const listJobsForWorkflowRun = () => {};
+  const listWorkflowRunArtifacts = () => {};
+  await resolve({
+    github: {
+      paginate: async (method) => {
+        if (method === listJobsForWorkflowRun) {
+          return [{ name: "Test", conclusion: "skipped" }];
+        }
+        if (method === listWorkflowRunArtifacts) {
+          throw new Error("must not inspect artifacts for a skipped Test job");
+        }
+        throw new Error("unexpected pagination call");
+      },
+      rest: {
+        actions: { listJobsForWorkflowRun, listWorkflowRunArtifacts },
+        pulls: {
+          get: async () => ({
+            data: {
+              head: { sha: "head-sha" },
+              base: { sha: "base-sha", ref: "main" },
+            },
+          }),
+        },
+        repos: {},
+      },
+    },
+    context: {
+      repo: { owner: "pingdotgg", repo: "t3code" },
+      payload: {
+        workflow_run: {
+          id: 2,
+          event: "pull_request",
+          head_sha: "head-sha",
+          conclusion: "success",
+          pull_requests: [{ number: 42 }],
+        },
+      },
+    },
+    core: {
+      info: () => {},
+      setOutput: (key, value) => {
+        outputs[key] = value;
+      },
+    },
+  });
+
+  assert.equal(outputs.publish, "false");
 });
 
 test("does not guess when a fallback commit belongs to multiple PRs", async () => {

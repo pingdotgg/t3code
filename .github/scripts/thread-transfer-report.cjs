@@ -276,6 +276,18 @@ async function resolve({ github, context, core }) {
     return;
   }
 
+  const sourceJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    owner,
+    repo,
+    run_id: source.id,
+    per_page: 100,
+  });
+  if (sourceJobs.some((job) => job.name === "Test" && job.conclusion === "skipped")) {
+    core.info("Skipping thread transfer report because the Test job was not needed.");
+    core.setOutput("publish", "false");
+    return;
+  }
+
   const sourceArtifacts = await artifactsForRun(github, owner, repo, source.id);
   const sourceArtifact = findResultArtifact(sourceArtifacts);
   const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
