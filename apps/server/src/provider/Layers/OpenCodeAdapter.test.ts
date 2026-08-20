@@ -1564,6 +1564,84 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("ignores in-progress token updates and still emits when the message completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-partial-tokens");
+      runtimeMock.state.providerList = [
+        {
+          id: "anthropic",
+          models: {
+            "claude-sonnet-4-6": { limit: { context: 200000 } },
+          },
+        },
+      ];
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-partial",
+              role: "assistant",
+              providerID: "anthropic",
+              modelID: "claude-sonnet-4-6",
+              time: { created: 1 },
+              tokens: {
+                input: 100,
+                output: 50,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-partial",
+              role: "assistant",
+              providerID: "anthropic",
+              modelID: "claude-sonnet-4-6",
+              time: { created: 1, completed: 2 },
+              tokens: {
+                input: 1000,
+                output: 200,
+                reasoning: 0,
+                cache: { read: 4000, write: 0 },
+              },
+            },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.filter((event) => event.type === "thread.token-usage.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.length, 1);
+      const usageEvent = events[0];
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        NodeAssert.equal(usageEvent.payload.usage.usedTokens, 5200);
+        NodeAssert.equal(usageEvent.payload.usage.maxTokens, 200000);
+      }
+      NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
+    }),
+  );
+
   it.effect("emits token usage once per message and reuses the cached context window", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

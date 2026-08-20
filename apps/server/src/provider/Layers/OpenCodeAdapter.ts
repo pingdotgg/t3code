@@ -775,24 +775,29 @@ export function makeOpenCodeAdapter(
         Effect.orElseSucceed((): Provider[] => []),
       );
       for (const provider of providers) {
-        for (const [id, model] of Object.entries(provider.models)) {
-          if (model.limit.context > 0) {
-            context.modelContextWindowById.set(`${provider.id}/${id}`, model.limit.context);
+        for (const [id, model] of Object.entries(provider.models ?? {})) {
+          const contextWindow = model.limit?.context ?? 0;
+          if (contextWindow > 0) {
+            context.modelContextWindowById.set(`${provider.id}/${id}`, contextWindow);
           }
         }
       }
       return context.modelContextWindowById.get(key);
     });
 
-    // OpenCode reports token usage on the `message.updated` event once the
-    // assistant message completes; earlier updates for the same message carry
-    // zero tokens. Emit one `thread.token-usage.updated` per message id.
+    // OpenCode reports token usage on the `message.updated` event as the
+    // assistant message completes. Only completed messages (`time.completed`
+    // set) are counted, so a mid-completion update carrying a partial token
+    // footprint can never consume the message's one-shot emission.
     const emitOpenCodeTokenUsage = Effect.fn("emitOpenCodeTokenUsage")(function* (
       context: OpenCodeSessionContext,
       info: AssistantMessage,
       turnId: TurnId | undefined,
       raw: unknown,
     ) {
+      if (info.time?.completed === undefined) {
+        return;
+      }
       const messageTokens = openCodeMessageTokensTotal(info.tokens);
       if (messageTokens <= 0 || context.tokenUsageEmittedMessageIds.has(info.id)) {
         return;
@@ -993,6 +998,7 @@ export function makeOpenCodeAdapter(
 
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
+          context.tokenUsageEmittedMessageIds.delete(event.properties.messageID);
           break;
         }
 
