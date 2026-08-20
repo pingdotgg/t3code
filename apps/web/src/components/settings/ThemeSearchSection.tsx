@@ -100,6 +100,10 @@ export function ThemeSearchSection({
   // finishing can tell a same-key rerun (which must not wipe an install
   // error) from a query that changed mid-install (which must be searched).
   const lastSearchKeyRef = useRef<string | null>(null);
+  // The (query, sort) pair from the previous effect run, so a search error
+  // that belongs to an older key can be cleared when the user returns to
+  // already-shown results without clearing a fresh install error.
+  const prevSearchKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     requestRef.current?.abort();
@@ -153,6 +157,9 @@ export function ThemeSearchSection({
   const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
 
   useEffect(() => {
+    const searchKey = `${debouncedQuery}\u0000${sortBy}`;
+    const keyChanged = prevSearchKeyRef.current !== searchKey;
+    prevSearchKeyRef.current = searchKey;
     if (installingId !== null) return;
     if (!debouncedQuery) {
       lastSearchKeyRef.current = null;
@@ -163,7 +170,16 @@ export function ThemeSearchSection({
       setIsSearching(false);
       return;
     }
-    if (lastSearchKeyRef.current === `${debouncedQuery}\u0000${sortBy}`) return;
+    if (lastSearchKeyRef.current === searchKey) {
+      // The results already match this query. A request for a newer key may
+      // still be in flight (typed and then undone); abort it so it cannot
+      // overwrite the results. Only a genuine key change makes a stale search
+      // error irrelevant, so an install error on an unchanged query survives.
+      requestRef.current?.abort();
+      requestRef.current = null;
+      if (keyChanged) setError(null);
+      return;
+    }
     void runSearch(debouncedQuery);
     // `installingId` and `sortBy` are deliberately not dependencies: the
     // guards above read the current values from the fresh render closure. An
