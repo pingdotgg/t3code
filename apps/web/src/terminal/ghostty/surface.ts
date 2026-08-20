@@ -392,6 +392,14 @@ export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputT
   );
 }
 
+/** IME keydowns must not touch the hidden textarea; it holds the candidate. */
+export function isTerminalCompositionKey(
+  event: Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">,
+  composing: boolean,
+): boolean {
+  return event.isComposing || composing || event.key === "Process" || event.keyCode === 229;
+}
+
 export function isTerminalAltGraphText(
   event: Pick<KeyboardEvent, "getModifierState" | "key">,
 ): boolean {
@@ -1026,7 +1034,6 @@ export class GhosttyTerminalSurface {
       this.suppressedKeyCodes.add(event.code);
       return;
     }
-    clearPrimedTerminalCopyInput(this.input);
     if (isTerminalPasteShortcut(event)) {
       this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;
@@ -1051,10 +1058,12 @@ export class GhosttyTerminalSurface {
       return;
     }
     // keyCode 229 is Safari's only signal that this keydown opens an IME
-    // composition; encoding it would double the committed text.
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    // composition; encoding it would double the committed text. Do not blank
+    // the textarea first: onInput leaves the in-progress candidate there.
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
+    clearPrimedTerminalCopyInput(this.input);
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
     this.suppressedKeyCodes.delete(event.code);
@@ -1066,7 +1075,7 @@ export class GhosttyTerminalSurface {
   private readonly onKeyUp = (event: KeyboardEvent) => {
     this.updateLinkModifier(event);
     if (this.suppressedKeyCodes.delete(event.code)) return;
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
     // Ghostty's encoder only emits release codes when the terminal enabled the

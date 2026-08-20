@@ -10,6 +10,7 @@ import {
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
+  isTerminalCompositionKey,
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
@@ -348,6 +349,28 @@ describe("isTerminalCompositionCommitInput", () => {
 
   it("keeps a fast repeated input as legitimate text", () => {
     expect(isTerminalCompositionCommitInput({ inputType: "insertText" })).toBe(false);
+  });
+});
+
+describe("isTerminalCompositionKey", () => {
+  const event = (
+    overrides: Partial<Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">> = {},
+  ) => ({
+    isComposing: false,
+    key: "a",
+    keyCode: 65,
+    ...overrides,
+  });
+
+  it("treats in-progress IME keydowns as composition so the copy primer cannot wipe them", () => {
+    expect(isTerminalCompositionKey(event({ isComposing: true }), false)).toBe(true);
+    expect(isTerminalCompositionKey(event(), true)).toBe(true);
+    expect(isTerminalCompositionKey(event({ key: "Process" }), false)).toBe(true);
+    expect(isTerminalCompositionKey(event({ keyCode: 229 }), false)).toBe(true);
+  });
+
+  it("lets ordinary keydowns clear a primed copy", () => {
+    expect(isTerminalCompositionKey(event(), false)).toBe(false);
   });
 });
 
