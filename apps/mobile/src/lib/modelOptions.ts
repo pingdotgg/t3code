@@ -15,6 +15,7 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  readonly providerBadgeLabel: string | undefined;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
@@ -24,6 +25,7 @@ export type ModelOption = {
 export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
+  readonly providerBadgeLabel: string | undefined;
   readonly models: ReadonlyArray<ModelOption>;
 };
 
@@ -35,6 +37,7 @@ function providerDisplayLabel(provider: {
   if (provider.displayName) return provider.displayName;
   if (provider.driver === "codex") return "Codex";
   if (provider.driver === "claudeAgent") return "Claude";
+  if (provider.driver === "kimi") return "Kimi";
   return provider.instanceId;
 }
 
@@ -125,6 +128,7 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        providerBadgeLabel: provider.badgeLabel,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
@@ -156,6 +160,7 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,
+        providerBadgeLabel: undefined,
         isDefault: false,
         isLegacy: false,
         capabilities: null,
@@ -168,7 +173,14 @@ export function buildModelOptions(
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
-  const groups = new Map<string, { providerLabel: string; models: ModelOption[] }>();
+  const groups = new Map<
+    string,
+    {
+      providerLabel: string;
+      providerBadgeLabel: string | undefined;
+      models: ModelOption[];
+    }
+  >();
   for (const option of options) {
     const existing = groups.get(option.providerKey);
     if (existing) {
@@ -176,6 +188,7 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
+        providerBadgeLabel: option.providerBadgeLabel,
         models: [option],
       });
     }
@@ -184,6 +197,7 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
   return [...groups.entries()].map(([providerKey, group]) => ({
     providerKey,
     providerLabel: group.providerLabel,
+    providerBadgeLabel: group.providerBadgeLabel,
     models: group.models,
   }));
 }

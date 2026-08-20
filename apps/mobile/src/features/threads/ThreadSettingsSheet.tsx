@@ -135,6 +135,7 @@ function ModelRow(props: {
 function ProviderHeader(props: {
   readonly driver: string | undefined;
   readonly label: string;
+  readonly badgeLabel: string | undefined;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
@@ -145,6 +146,11 @@ function ProviderHeader(props: {
     <>
       <ProviderIcon provider={props.driver} size={15} />
       <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      {props.badgeLabel ? (
+        <Text className="rounded-full bg-surface-raised px-2 py-0.5 text-3xs font-t3-medium uppercase text-foreground-muted">
+          {props.badgeLabel}
+        </Text>
+      ) : null}
       {props.collapsible ? (
         <>
           <View className="flex-1" />
@@ -509,6 +515,7 @@ type ThreadSettingsProviderCatalog = {
   readonly key: string;
   readonly driver: string | undefined;
   readonly label: string;
+  readonly badgeLabel: string | undefined;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
@@ -574,6 +581,7 @@ function ThreadSettingsProviderListHeader(props: {
       collapsed={props.provider.collapsed}
       driver={props.provider.driver}
       label={props.provider.label}
+      badgeLabel={props.provider.badgeLabel}
       modelCount={props.provider.modelCount}
       onToggle={onToggle}
     />
@@ -619,6 +627,7 @@ function useThreadSettingsCatalogItems(
           key: group.providerKey,
           driver,
           label: group.providerLabel,
+          badgeLabel: group.providerBadgeLabel,
           collapsible,
           collapsed,
           modelCount: visibleModels.length,
