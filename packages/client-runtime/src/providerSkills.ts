@@ -54,3 +54,14 @@ export function resolveProviderSkillSourceKind(
       return "other";
   }
 }
+
+export function mergeProviderSkills(
+  providerSkills: ReadonlyArray<ServerProviderSkill>,
+  projectSkills: ReadonlyArray<ServerProviderSkill>,
+): ServerProviderSkill[] {
+  const skillsByName = new Map(providerSkills.map((skill) => [skill.name, skill]));
+  for (const skill of projectSkills) {
+    skillsByName.set(skill.name, skill);
+  }
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}

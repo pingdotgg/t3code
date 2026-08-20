@@ -18,10 +18,12 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
+import { parse as parseYamlDocument } from "yaml";
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -84,6 +86,32 @@ export const WorkspaceEntriesError = Schema.Union([
 ]);
 export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
+const SKILL_FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+function parseSkillFrontmatter(contents: string): {
+  readonly name?: string;
+  readonly description?: string;
+} | null {
+  const match = SKILL_FRONTMATTER_PATTERN.exec(contents);
+  if (!match) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = parseYamlDocument(match[1] ?? "");
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  const description = typeof record.description === "string" ? record.description.trim() : "";
+  return {
+    ...(name ? { name } : {}),
+    ...(description ? { description } : {}),
+  };
+}
+
 export class WorkspaceEntries extends Context.Service<
   WorkspaceEntries,
   {
@@ -93,6 +121,9 @@ export class WorkspaceEntries extends Context.Service<
     readonly list: (
       input: ProjectListEntriesInput,
     ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
+    readonly listSkills: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
     readonly search: (
       input: ProjectSearchEntriesInput,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntriesError>;
@@ -288,7 +319,40 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search, searchContents });
+  const listSkills: WorkspaceEntries["Service"]["listSkills"] = Effect.fn(
+    "WorkspaceEntries.listSkills",
+  )(function* ({ cwd }) {
+    const skillsRoot = path.join(cwd, ".agents", "skills");
+    const entries = yield* Effect.tryPromise(() => NodeFSP.readdir(skillsRoot)).pipe(
+      Effect.orElseSucceed((): string[] => []),
+    );
+    const skills: ServerProviderSkill[] = [];
+
+    for (const entry of entries.toSorted()) {
+      const skillPath = path.join(skillsRoot, entry, "SKILL.md");
+      const contents = yield* Effect.tryPromise(() => NodeFSP.readFile(skillPath, "utf8")).pipe(
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (contents === undefined) continue;
+
+      const frontmatter = parseSkillFrontmatter(contents);
+      if (frontmatter === null) continue;
+      const name = frontmatter.name ?? entry.trim();
+      if (!name) continue;
+
+      skills.push({
+        name,
+        path: skillPath,
+        enabled: true,
+        scope: "project",
+        ...(frontmatter.description ? { description: frontmatter.description } : {}),
+      });
+    }
+
+    return skills;
+  });
+
+  return WorkspaceEntries.of({ browse, list, listSkills, refresh, search, searchContents });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

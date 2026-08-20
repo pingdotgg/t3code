@@ -123,6 +123,33 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 
+  describe("listSkills", () => {
+    it.effect("discovers project skills under .agents/skills", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-agent-skills-" });
+        yield* writeTextFile(
+          cwd,
+          ".agents/skills/unslop/SKILL.md",
+          "---\nname: unslop\ndescription: Remove AI writing patterns.\n---\n",
+        );
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const skills = yield* workspaceEntries.listSkills({ cwd });
+
+        expect(skills).toEqual([
+          {
+            name: "unslop",
+            description: "Remove AI writing patterns.",
+            path: path.join(cwd, ".agents", "skills", "unslop", "SKILL.md"),
+            enabled: true,
+            scope: "project",
+          },
+        ]);
+      }),
+    );
+  });
+
   describe("search", () => {
     it.effect("returns files and directories relative to cwd", () =>
       Effect.gen(function* () {
