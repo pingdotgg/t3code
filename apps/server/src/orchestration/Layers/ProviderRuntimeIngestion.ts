@@ -1042,7 +1042,6 @@ const make = Effect.gen(function* () {
         if (!shouldEmit) {
           return;
         }
-        buffer.emittedLength = buffer.text.length;
         yield* appendReasoningActivity(event, threadId, {
           id: EventId.make(`${event.eventId}:reasoning`),
           createdAt: event.createdAt,
@@ -1058,6 +1057,10 @@ const make = Effect.gen(function* () {
           turnId: buffer.turnId,
           ...reasoningActivitySequence(event),
         });
+        // Advance only after a successful dispatch: a failed append is logged
+        // and skipped upstream, so an eager advance would suppress the retry
+        // a later delta gets for free.
+        buffer.emittedLength = buffer.text.length;
         return;
       }
 
@@ -1071,13 +1074,16 @@ const make = Effect.gen(function* () {
           typeof event.payload.detail === "string" && event.payload.detail.trim().length > 0
             ? event.payload.detail
             : undefined;
-        byKey?.delete(key);
         if (buffer) {
           const text =
             detailFromItem !== undefined && detailFromItem.length > buffer.text.length
               ? detailFromItem
               : buffer.text;
+          // Flush before delete: a failed dispatch is logged and skipped
+          // upstream, and a still-buffered thought gets a second chance at
+          // the turn boundary instead of vanishing.
           yield* flushReasoningBuffer(event, threadId, buffer, text);
+          byKey?.delete(key);
         } else if (detailFromItem !== undefined) {
           yield* flushReasoningBuffer(event, threadId, {
             text: detailFromItem,
@@ -1090,26 +1096,46 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // Turn and session boundaries flush every open buffer for the thread,
-      // so adapters with no reasoning item lifecycle (OpenCode, Claude)
-      // still land a completed thought row.
+      // Turn boundaries flush the boundary turn's buffers, so adapters with
+      // no reasoning item lifecycle (OpenCode, Claude) still land a completed
+      // thought row. Scoped to the event's turn: a late turn.completed from a
+      // superseded turn must not flush or wipe the active turn's reasoning
+      // (review finding — plan progress in this handler makes the same
+      // distinction). A buffer with no turn attribution flushes on any turn
+      // boundary for the thread; session.exited flushes and drops everything.
       if (
         event.type === "turn.completed" ||
         event.type === "turn.aborted" ||
-        event.type === "session.exited" ||
         event.type === "request.opened" ||
         event.type === "user-input.requested"
       ) {
         const byKey = reasoningBuffersByThread.get(threadId);
         if (byKey) {
-          for (const buffer of byKey.values()) {
+          const boundaryTurnId = toTurnId(event.turnId) ?? null;
+          for (const [key, buffer] of [...byKey.entries()]) {
+            if (
+              buffer.turnId !== null &&
+              boundaryTurnId !== null &&
+              buffer.turnId !== boundaryTurnId
+            ) {
+              continue;
+            }
             yield* flushReasoningBuffer(event, threadId, buffer);
+            byKey.delete(key);
           }
-          byKey.clear();
         }
-        if (event.type === "session.exited") {
-          reasoningBuffersByThread.delete(threadId);
+        return;
+      }
+
+      if (event.type === "session.exited") {
+        const byKey = reasoningBuffersByThread.get(threadId);
+        if (byKey) {
+          for (const [key, buffer] of [...byKey.entries()]) {
+            yield* flushReasoningBuffer(event, threadId, buffer);
+            byKey.delete(key);
+          }
         }
+        reasoningBuffersByThread.delete(threadId);
       }
     });
 

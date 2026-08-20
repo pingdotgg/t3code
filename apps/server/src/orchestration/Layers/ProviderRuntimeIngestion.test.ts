@@ -3772,6 +3772,64 @@ describe("ProviderRuntimeIngestion", () => {
     expect(duplicateFlushes).toHaveLength(0);
   });
 
+  it("does not flush the active turn's reasoning on a superseded turn's boundary", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-active-reasoning-delta"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-active"),
+      itemId: asItemId("reasoning-active-1"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Active turn reasoning in progress.",
+      },
+    });
+    // A late boundary from a superseded turn must not flush the active buffer.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stale-turn-completed"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-stale"),
+      status: "completed",
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-active-turn-completed"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-active"),
+      status: "completed",
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-active-turn-completed:reasoning:reasoning-active-1",
+      ),
+    );
+    const staleFlushes = thread.activities.filter((activity: ProviderRuntimeTestActivity) =>
+      activity.id.startsWith("evt-stale-turn-completed:reasoning:"),
+    );
+    expect(staleFlushes).toHaveLength(0);
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.id === "evt-active-turn-completed:reasoning:reasoning-active-1",
+    );
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+    expect(completedPayload?.detail).toBe("Active turn reasoning in progress.");
+  });
+
   it("does not emit reasoning activities for assistant text and empty reasoning buffers", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
