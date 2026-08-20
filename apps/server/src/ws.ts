@@ -238,7 +238,14 @@ function projectFileFailureContext(
       return { failure: "workspace_path_outside_root" };
     case "WorkspaceFileSystemOperationError":
       return {
-        failure: "operation_failed",
+        // Only ENOENT means the target is genuinely absent, and a missing
+        // workspace root raises it through the same operation, so neither a
+        // permission error nor a missing root is reported as a missing file.
+        failure:
+          error.operation !== "realpath-workspace-root" &&
+          (error.cause as { readonly code?: unknown } | undefined)?.code === "ENOENT"
+            ? "file_not_found"
+            : "operation_failed",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
@@ -256,24 +263,6 @@ function projectFileFailureContext(
     default:
       return unexpectedCompatibilityError(error);
   }
-}
-
-// Only ENOENT means the file is genuinely absent. A permission error on a parent
-// directory fails the same operation, and relabeling that as "does not exist"
-// would send people looking for the wrong problem.
-function missingWorkspaceFileMessage(
-  input: { readonly cwd: string; readonly relativePath: string },
-  error:
-    | WorkspaceFileSystem.WorkspaceFileSystemError
-    | WorkspacePaths.WorkspacePathOutsideRootError,
-): { readonly message?: string } {
-  if (error._tag !== "WorkspaceFileSystemOperationError") return {};
-  // A missing workspace root raises ENOENT too, and blaming the file for it
-  // would point at the wrong thing entirely.
-  if (error.operation === "realpath-workspace-root") return {};
-  const code = (error.cause as { readonly code?: unknown } | undefined)?.code;
-  if (code !== "ENOENT") return {};
-  return { message: `Workspace file '${input.relativePath}' does not exist in '${input.cwd}'.` };
 }
 
 function projectSetupScriptCompatibilityDetail(
@@ -1831,7 +1820,6 @@ const makeWsRpcLayer = (
                   new ProjectReadFileError({
                     ...input,
                     ...projectFileFailureContext(cause),
-                    ...missingWorkspaceFileMessage(input, cause),
                     cause,
                   }),
               ),

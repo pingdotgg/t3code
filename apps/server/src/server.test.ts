@@ -4972,7 +4972,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(readError.cwd, workspaceDir);
       assert.equal(readError.relativePath, "components/selectors/Missing.vue");
-      assert.equal(readError.failure, "operation_failed");
+      assert.equal(readError.failure, "file_not_found");
       assert.isDefined(readError.cause);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -5001,6 +5001,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (result._tag !== "Failure" || result.failure._tag !== "ProjectReadFileError") {
         assert.fail("Expected a ProjectReadFileError");
       }
+      assert.equal(result.failure.failure, "operation_failed");
       assert.notInclude(result.failure.message, "does not exist in");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
