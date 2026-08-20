@@ -125,6 +125,24 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
 }
 
+function projectCommandValue(data: Record<string, unknown>): unknown {
+  if (data.command !== undefined) {
+    return data.command;
+  }
+
+  const input = asRecord(data.input);
+  if (input?.command !== undefined) {
+    return input.command;
+  }
+
+  const stateInput = asRecord(asRecord(data.state)?.input);
+  if (stateInput?.command !== undefined) {
+    return stateInput.command;
+  }
+
+  return undefined;
+}
+
 function summarizeToolTextOutput(value: string): string | null {
   const lines: string[] = [];
   for (const rawLine of value.split(/\r?\n/u)) {
@@ -339,8 +357,9 @@ export function projectActivityPayload(
   if (item) {
     projectedData.item = item;
   }
-  if ("command" in data) {
-    projectedData.command = data.command;
+  const command = projectCommandValue(data);
+  if (command !== undefined) {
+    projectedData.command = command;
   }
 
   const changedFiles: string[] = [];
@@ -418,12 +437,10 @@ function dropStaleContextWindowActivities(
 }
 
 /**
- * Identity both clients use to fold a tool lifecycle row into the call it
- * belongs to (`deriveToolLifecycleCollapseKey` in web's `session-logic` and
- * mobile's `threadActivity`): an explicit `data.toolCallId` when the adapter
- * emits one, otherwise the itemType/title/detail triple. Returns null for rows
- * with no identity at all — those never collapse on the client either, so they
- * must not be dropped here.
+ * Identity used to retain only the newest lifecycle row for each call in a
+ * thread snapshot. Prefer the runtime item id, then the legacy nested id, and
+ * finally the itemType/title/detail triple. Rows without any identity remain
+ * untouched.
  */
 function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | null {
   const payload = asRecord(activity.payload);
@@ -431,7 +448,8 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
     return null;
   }
 
-  const toolCallId = asTrimmedString(asRecord(payload.data)?.toolCallId);
+  const toolCallId =
+    asTrimmedString(payload.toolCallId) ?? asTrimmedString(asRecord(payload.data)?.toolCallId);
   if (toolCallId) {
     return `id:${toolCallId}`;
   }
