@@ -2122,9 +2122,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: ["t3code", "t3code-dev"],
         },
       ],
+      // Electron derives WM_CLASS from the app name (productName), not from
+      // executableName, so StartupWMClass has to track productName. A
+      // hardcoded "t3code" never matches the window, leaving Linux shells
+      // unable to bind the running app to this launcher.
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: resolveDesktopProductName(version),
         },
       },
     };

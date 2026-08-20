@@ -488,6 +488,40 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect("keeps the Linux StartupWMClass aligned with the product name", () =>
+    Effect.gen(function* () {
+      const stable = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const nightly = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3-nightly.20260413.42",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      // Electron derives WM_CLASS from the app name, so a StartupWMClass tied
+      // to executableName never matches the window and Linux shells render an
+      // unmatched generic icon next to the launcher.
+      assert.equal(stable.productName, "T3 Code (Alpha)");
+      assert.equal(nightly.productName, "T3 Code (Nightly)");
+      for (const config of [stable, nightly]) {
+        assert.deepStrictEqual((config.linux as Record<string, unknown>).desktop, {
+          entry: { StartupWMClass: config.productName },
+        });
+      }
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect("validates every ASAR-unpacked native in the packaged Windows payload", () =>
     Effect.scoped(
       Effect.gen(function* () {
