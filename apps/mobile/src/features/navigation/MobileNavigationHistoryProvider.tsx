@@ -5,7 +5,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
   type PropsWithChildren,
@@ -13,6 +12,7 @@ import {
 
 import {
   createMobileNavigationHistory,
+  type MobileNavigationLocation,
   type MobileNavigationHistorySnapshot,
 } from "./mobile-navigation-history";
 
@@ -25,16 +25,15 @@ const MobileNavigationHistoryContext = createContext<MobileNavigationHistoryValu
 
 export function MobileNavigationHistoryProvider({
   children,
-  pathname,
-  transitionKey,
-}: PropsWithChildren<{ readonly pathname: string; readonly transitionKey: string }>) {
-  const [history] = useState(() => createMobileNavigationHistory({ pathname, transitionKey }));
+  location,
+}: PropsWithChildren<{ readonly location: MobileNavigationLocation }>) {
+  const [history] = useState(() => createMobileNavigationHistory(location));
   const snapshot = useSyncExternalStore(
     history.subscribe,
     history.getSnapshot,
     history.getSnapshot,
   );
-  const { back, forward } = useMobileNavigationHistoryCoordinator(history, pathname, transitionKey);
+  const { back, forward } = useMobileNavigationHistoryCoordinator(history, location);
   const value = useMemo(() => ({ ...snapshot, back, forward }), [back, forward, snapshot]);
 
   return (
@@ -46,59 +45,29 @@ export function MobileNavigationHistoryProvider({
 
 function useMobileNavigationHistoryCoordinator(
   history: ReturnType<typeof createMobileNavigationHistory>,
-  pathname: string,
-  transitionKey: string,
+  location: MobileNavigationLocation,
 ) {
   const linkTo = useLinkTo();
-  const pendingTraversalPathRef = useRef<string | null>(null);
-  const pendingTraversalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const traversal = pendingTraversalPathRef.current === pathname;
-    if (traversal) {
-      pendingTraversalPathRef.current = null;
-      if (pendingTraversalTimeoutRef.current !== null) {
-        clearTimeout(pendingTraversalTimeoutRef.current);
-        pendingTraversalTimeoutRef.current = null;
-      }
-    }
-    history.visit({ pathname, transitionKey }, { traversal });
-  }, [history, pathname, transitionKey]);
-
-  useEffect(
-    () => () => {
-      if (pendingTraversalTimeoutRef.current !== null) {
-        clearTimeout(pendingTraversalTimeoutRef.current);
-      }
-    },
-    [],
-  );
+    history.visit(location);
+  }, [history, location]);
 
   const requestTraversal = useCallback(
-    (target: string | null) => {
+    (target: ReturnType<typeof history.requestBack>) => {
       if (!target) {
         return;
       }
-      pendingTraversalPathRef.current = target;
-      if (pendingTraversalTimeoutRef.current !== null) {
-        clearTimeout(pendingTraversalTimeoutRef.current);
-      }
-      pendingTraversalTimeoutRef.current = setTimeout(() => {
-        if (pendingTraversalPathRef.current === target) {
-          pendingTraversalPathRef.current = null;
-        }
-        pendingTraversalTimeoutRef.current = null;
-      }, 1_000);
-      linkTo(target);
+      linkTo(target.location.pathname);
     },
     [linkTo],
   );
 
   const back = useCallback(() => {
-    requestTraversal(history.backTarget());
+    requestTraversal(history.requestBack());
   }, [history, requestTraversal]);
   const forward = useCallback(() => {
-    requestTraversal(history.forwardTarget());
+    requestTraversal(history.requestForward());
   }, [history, requestTraversal]);
 
   return { back, forward };
