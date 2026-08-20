@@ -506,6 +506,9 @@ export function ThemeImportDialog({
                     <Button size="sm" variant="ghost" onClick={() => setConflicts(null)}>
                       Back
                     </Button>
+                    <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+                      Cancel
+                    </Button>
                   </div>
                 </div>
               );
@@ -529,7 +532,7 @@ export function ThemeImportDialog({
                   {fileInput}
                 </div>
                 {editorSection()}
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex flex-col-reverse gap-2 border-t border-border/70 pt-3 sm:flex-row sm:justify-end">
                   <Button variant="ghost" onClick={() => onOpenChange(false)}>
                     Cancel
                   </Button>
