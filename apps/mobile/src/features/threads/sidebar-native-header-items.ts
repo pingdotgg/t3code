@@ -37,11 +37,31 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
  * the Messages-style grouped header buttons.
  */
 export function createSidebarHeaderItems(input: {
+  readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
+  readonly onBack: () => void;
+  readonly onForward: () => void;
   readonly onOpenSettings: () => void;
 }): NativeStackHeaderItem[] {
   return [
+    withNativeGlassHeaderItem({
+      type: "button",
+      label: "",
+      accessibilityLabel: "Back",
+      disabled: !input.canGoBack,
+      icon: sfSymbolIcon("chevron.left"),
+      onPress: input.onBack,
+    }),
+    withNativeGlassHeaderItem({
+      type: "button",
+      label: "",
+      accessibilityLabel: "Forward",
+      disabled: !input.canGoForward,
+      icon: sfSymbolIcon("chevron.right"),
+      onPress: input.onForward,
+    }),
     withNativeGlassHeaderItem({
       type: "menu",
       label: "",

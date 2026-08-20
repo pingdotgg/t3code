@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect } from "react";
 
@@ -84,16 +85,11 @@ export function NavigationHistoryButtons(props: NavigationHistoryButtonsProps) {
   );
 }
 
-export function NavigationHistoryControls({
-  buttonClassName,
-}: {
-  readonly buttonClassName?: string;
-}) {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { back, canGoBack, canGoForward, forward } = useNavigationHistory();
-  const backShortcut = shortcutLabelForCommand(keybindings, "navigation.back");
-  const forwardShortcut = shortcutLabelForCommand(keybindings, "navigation.forward");
-
+function useNavigationHistoryShortcuts(input: {
+  readonly back: () => void;
+  readonly forward: () => void;
+  readonly keybindings: ResolvedKeybindingsConfig;
+}): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
@@ -104,7 +100,7 @@ export function NavigationHistoryControls({
         return;
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
+      const command = resolveShortcutCommand(event, input.keybindings, {
         context: {
           previewFocus: isPreviewFocused(),
           terminalFocus: isTerminalFocused(),
@@ -117,15 +113,27 @@ export function NavigationHistoryControls({
       event.preventDefault();
       event.stopPropagation();
       if (command === "navigation.back") {
-        back();
+        input.back();
       } else {
-        forward();
+        input.forward();
       }
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [back, forward, keybindings]);
+  }, [input.back, input.forward, input.keybindings]);
+}
+
+export function NavigationHistoryControls({
+  buttonClassName,
+}: {
+  readonly buttonClassName?: string;
+}) {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const { back, canGoBack, canGoForward, forward } = useNavigationHistory();
+  const backShortcut = shortcutLabelForCommand(keybindings, "navigation.back");
+  const forwardShortcut = shortcutLabelForCommand(keybindings, "navigation.forward");
+  useNavigationHistoryShortcuts({ back, forward, keybindings });
 
   return (
     <NavigationHistoryButtons

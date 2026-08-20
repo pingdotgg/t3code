@@ -53,9 +53,10 @@ successful pick; its hover glow and badge preview the element and color family t
 so add one in **Settings** → **Keybindings** if you want to use it.
 
 `navigation.back` and `navigation.forward` move through the locations you visited in T3 Code. The
-defaults are `mod+[` and `mod+]`. The same actions are available from the arrow buttons beside the
-sidebar toggle and from the command palette. The defaults do not run while a terminal or browser
-preview has focus.
+defaults are `mod+[` and `mod+]`. On web and desktop, the same actions are available from the arrow
+buttons beside the sidebar toggle and from the command palette. Mobile shows the buttons in thread
+navigation and supports `cmd+[` and `cmd+]` on an attached keyboard. The web and desktop defaults do
+not run while a terminal or browser preview has focus.
 
 `thread.settle` settles the active thread or restores it when it is already settled. Its default
 shortcut is `mod+shift+s`, and it does not run while the terminal has focus.

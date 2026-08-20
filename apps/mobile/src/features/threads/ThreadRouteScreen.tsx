@@ -29,6 +29,7 @@ import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
+import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
 
 import {
   useRemoteConnections,
@@ -215,6 +216,7 @@ function ThreadRouteContent(
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const navigation = useNavigation();
+  const navigationHistory = useMobileNavigationHistory();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
@@ -637,6 +639,20 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const compactRightHeaderItemsWithHistory = useMemo<NativeHeaderItems>(
+    () => [
+      withNativeGlassHeaderItem({
+        accessibilityLabel: "Forward",
+        disabled: !navigationHistory.canGoForward,
+        icon: { name: "chevron.right", type: "sfSymbol" as const },
+        identifier: "thread-navigation-forward",
+        onPress: navigationHistory.forward,
+        type: "button" as const,
+      }),
+      ...compactRightHeaderItems,
+    ],
+    [compactRightHeaderItems, navigationHistory],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -682,6 +698,12 @@ function ThreadRouteContent(
     if (Platform.OS !== "android") return [];
 
     const actions: AndroidHeaderAction[] = [];
+    actions.push({
+      accessibilityLabel: "Forward",
+      disabled: !navigationHistory.canGoForward,
+      icon: "chevron.right",
+      onPress: navigationHistory.forward,
+    });
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -722,6 +744,7 @@ function ThreadRouteContent(
     handleOpenTerminal,
     handleOpenGitInspector,
     handleToggleInspector,
+    navigationHistory,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -845,7 +868,10 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () =>
+                  layout.usesSplitView
+                    ? threadCenterHeaderItems
+                    : compactRightHeaderItemsWithHistory
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}

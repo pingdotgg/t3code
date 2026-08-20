@@ -1,12 +1,13 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createNavigationHistory } from "./navigationHistory";
+import { createNavigationHistory } from "./navigationHistoryStore";
 
 describe("createNavigationHistory", () => {
   it("tracks back and forward availability through navigation", () => {
     const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
     const history = createNavigationHistory(routerHistory);
+    const unsubscribe = history.subscribe(() => undefined);
 
     expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: false });
 
@@ -21,11 +22,13 @@ describe("createNavigationHistory", () => {
     history.forward();
     expect(routerHistory.location.pathname).toBe("/thread-b");
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
+    unsubscribe();
   });
 
   it("drops the forward path after navigating somewhere new", () => {
     const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
     const history = createNavigationHistory(routerHistory);
+    const unsubscribe = history.subscribe(() => undefined);
 
     routerHistory.push("/thread-a");
     routerHistory.push("/thread-b");
@@ -36,6 +39,7 @@ describe("createNavigationHistory", () => {
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
     history.forward();
     expect(routerHistory.location.pathname).toBe("/settings/general");
+    unsubscribe();
   });
 
   it("notifies subscribers only when availability changes", () => {

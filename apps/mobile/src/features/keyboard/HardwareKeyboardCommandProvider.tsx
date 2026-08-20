@@ -10,12 +10,14 @@ import {
   subscribeToHardwareKeyboardCommandRegistrations,
   type HardwareKeyboardCommand,
 } from "./hardwareKeyboardCommands";
+import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
 
 export function HardwareKeyboardCommandProvider({
   children,
   pathname,
 }: PropsWithChildren<{ readonly pathname: string }>) {
   const navigation = useNavigation();
+  const navigationHistory = useMobileNavigationHistory();
   const registrationVersion = useSyncExternalStore(
     subscribeToHardwareKeyboardCommandRegistrations,
     getHardwareKeyboardCommandRegistrationVersion,
@@ -24,14 +26,15 @@ export function HardwareKeyboardCommandProvider({
   const enabledCommands = useMemo(() => {
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
-    if (pathname !== "/" || navigation.canGoBack()) commands.add("back");
+    if (pathname !== "/" || navigationHistory.canGoBack) commands.add("back");
+    if (navigationHistory.canGoForward) commands.add("forward");
     if (parseActiveThreadPath(pathname)) {
       commands.add("files");
       commands.add("terminal");
       commands.add("review");
     }
     return [...commands];
-  }, [pathname, registrationVersion, navigation]);
+  }, [navigationHistory.canGoBack, navigationHistory.canGoForward, pathname, registrationVersion]);
 
   const onCommand = useCallback(
     (command: HardwareKeyboardCommand) => {
@@ -42,11 +45,15 @@ export function HardwareKeyboardCommandProvider({
         return;
       }
       if (command === "back") {
-        if (navigation.canGoBack()) {
-          navigation.goBack();
+        if (navigationHistory.canGoBack) {
+          navigationHistory.back();
         } else {
           navigation.dispatch(StackActions.replace("Home"));
         }
+        return;
+      }
+      if (command === "forward") {
+        navigationHistory.forward();
         return;
       }
 
@@ -62,7 +69,7 @@ export function HardwareKeyboardCommandProvider({
         navigation.navigate("ThreadReview", thread);
       }
     },
-    [pathname, navigation],
+    [navigation, navigationHistory, pathname],
   );
 
   return (
