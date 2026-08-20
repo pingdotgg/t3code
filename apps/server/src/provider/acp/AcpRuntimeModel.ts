@@ -316,6 +316,32 @@ function toolCallContentText(entry: EffectAcpSchema.ToolCallContent): string | u
   return entry.content.text;
 }
 
+// Trim is used for display `text`, so whitespace-only (or whitespace-padded) entries never
+// contribute to `chunks` and used to take the early returns with the original array. Bound
+// each text entry independently so those paths cannot persist an unbounded terminal buffer
+// on `toolCall.data.content` / `rawPayload`.
+function boundToolCallContentEntries(
+  content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
+): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
+  let changed = false;
+  const bounded = content.map((entry) => {
+    const text = toolCallContentText(entry);
+    if (text === undefined || text.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
+      return entry;
+    }
+    changed = true;
+    const trimmed = text.trim();
+    return {
+      type: "content",
+      content: {
+        type: "text",
+        text: boundToolCallOutputText(trimmed.length > 0 ? trimmed : text),
+      },
+    } as const;
+  });
+  return changed ? bounded : content;
+}
+
 function extractTextContentFromToolCallContent(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined,
 ): ExtractedToolCallContent {
@@ -330,11 +356,11 @@ function extractTextContentFromToolCallContent(
     }
   }
   if (chunks.length === 0) {
-    return { text: undefined, content };
+    return { text: undefined, content: boundToolCallContentEntries(content) };
   }
   const joined = chunks.join("\n");
   if (joined.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
-    return { text: joined, content };
+    return { text: joined, content: boundToolCallContentEntries(content) };
   }
   const bounded = boundToolCallOutputText(joined);
   // Collapse the text entries into a single bounded one at the final contributing text entry,

@@ -542,6 +542,88 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
+  it("bounds oversized whitespace-only tool call content that has no trimmed text", () => {
+    // Whitespace-only entries are skipped when extracting display text (`chunks.length === 0`)
+    // and used to be returned unchanged, which let a redrawing terminal persist unbounded
+    // buffers on `toolCall.data.content` and `rawPayload`.
+    const hugeWhitespace = " \n\t".repeat(30_000);
+    expect(hugeWhitespace.length).toBeGreaterThan(60_000);
+
+    const { events } = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        kind: "other",
+        status: "in_progress",
+        content: [{ type: "content", content: { type: "text", text: hugeWhitespace } }],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const event = events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+
+    expect(event.toolCall.detail).toBeUndefined();
+    const content = event.toolCall.data.content as ReadonlyArray<EffectAcpSchema.ToolCallContent>;
+    const textEntry = content[0];
+    if (textEntry?.type !== "content" || textEntry.content.type !== "text") {
+      throw new Error("expected a bounded text entry");
+    }
+    expect(textEntry.content.text.length).toBeLessThan(8_100);
+    expect(textEntry.content.text.startsWith("[Earlier output truncated]")).toBe(true);
+
+    const rawUpdate = (
+      event.rawPayload as {
+        readonly update: {
+          readonly content: ReadonlyArray<{ readonly content: { text: string } }>;
+        };
+      }
+    ).update;
+    expect(rawUpdate.content[0]?.content.text.length).toBeLessThan(8_100);
+    expect(JSON.stringify(event).length).toBeLessThan(hugeWhitespace.length);
+  });
+
+  it("bounds oversized whitespace-padded text entries even when trimmed content fits", () => {
+    const padded = `${" ".repeat(40_000)}ok${" ".repeat(40_000)}`;
+    expect(padded.length).toBeGreaterThan(60_000);
+
+    const { events } = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        kind: "other",
+        status: "in_progress",
+        content: [{ type: "content", content: { type: "text", text: padded } }],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const event = events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+
+    expect(event.toolCall.detail).toBe("ok");
+    const content = event.toolCall.data.content as ReadonlyArray<EffectAcpSchema.ToolCallContent>;
+    const textEntry = content[0];
+    if (textEntry?.type !== "content" || textEntry.content.type !== "text") {
+      throw new Error("expected a bounded text entry");
+    }
+    expect(textEntry.content.text).toBe("ok");
+
+    const rawUpdate = (
+      event.rawPayload as {
+        readonly update: {
+          readonly content: ReadonlyArray<{ readonly content: { text: string } }>;
+        };
+      }
+    ).update;
+    expect(rawUpdate.content[0]?.content.text).toBe("ok");
+    expect(JSON.stringify(event).length).toBeLessThan(padded.length);
+  });
+
   describe("decideToolCallUpdateEmission", () => {
     const toolCall = (detail: string | undefined, status?: AcpToolCallState["status"]) =>
       ({
