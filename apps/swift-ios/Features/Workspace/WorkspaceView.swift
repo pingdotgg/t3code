@@ -384,10 +384,18 @@ public struct WorkspaceView: View {
                 Text("Code")
                     .fontWeight(.medium)
                     .foregroundStyle(T3Colors.textSecondary)
+                if let suffix = PersonalBuildChannel.current.titleSuffix {
+                    Text(suffix)
+                        .fontWeight(.bold)
+                        .foregroundStyle(PersonalBuildChannel.current.color)
+                }
             }
             .font(.system(size: 16))
+            .fixedSize(horizontal: true, vertical: false)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("T3 Code")
+            .accessibilityLabel(
+                PersonalBuildChannel.current.titleSuffix.map { "T3 Code \($0)" } ?? "T3 Code"
+            )
         }
     }
 
