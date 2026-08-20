@@ -381,7 +381,7 @@ describe("when: ref has diverged from upstream", () => {
   it("resolveQuickAction returns a disabled sync hint", () => {
     const quick = resolveQuickAction(status({ aheadCount: 2, behindCount: 1 }), false);
     assert.deepEqual(quick, {
-      label: "Sync ref",
+      label: "Sync branch",
       disabled: true,
       kind: "show_hint",
       hint: "Branch has diverged from upstream. Rebase/merge first.",

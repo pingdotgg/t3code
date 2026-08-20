@@ -61,7 +61,7 @@ export function buildGitActionProgressStages(input: {
   terminology?: ChangeRequestTerminology;
 }): string[] {
   const terminology = input.terminology ?? DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
-  const branchStages = input.featureBranch ? ["Preparing feature ref..."] : [];
+  const branchStages = input.featureBranch ? ["Preparing feature branch..."] : [];
   const pushStage = input.pushTarget ? `Pushing to ${input.pushTarget}...` : "Pushing...";
   const prStages = [
     `Preparing ${terminology.shortLabel}...`,
@@ -197,7 +197,7 @@ export function resolveQuickAction(
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: `Create and checkout a ref before pushing or opening a ${terminology.singular}.`,
+      hint: `Create and checkout a branch before pushing or opening a ${terminology.singular}.`,
     };
   }
 
@@ -256,7 +256,7 @@ export function resolveQuickAction(
 
   if (isDiverged) {
     return {
-      label: "Sync ref",
+      label: "Sync branch",
       disabled: true,
       kind: "show_hint",
       hint: "Branch has diverged from upstream. Rebase/merge first.",
