@@ -22,7 +22,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
-import { getRecentUsageDays } from "./usageBreakdown";
+import { getHourlyUsagePeriods, getRecentUsageDays } from "./usageBreakdown";
 import { PROVIDER_LABEL, PROVIDER_ORDER, useProviderColors } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
@@ -143,6 +143,7 @@ export function UsageRouteScreen() {
             <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
             <BreakdownSection
               merged={merged}
+              hourStarts={isPast24Hours ? chartDays : []}
               isPast24Hours={isPast24Hours}
               timeZone={window.timeZone}
             />
@@ -421,6 +422,7 @@ function MetricCell(props: {
 
 function BreakdownSection(props: {
   readonly merged: MergedUsage;
+  readonly hourStarts: readonly string[];
   readonly isPast24Hours: boolean;
   readonly timeZone: string;
 }) {
@@ -429,17 +431,10 @@ function BreakdownSection(props: {
   const [breakdown, setBreakdown] = useState<"model" | "day">("model");
   const recentPeriods = useMemo(
     () =>
-      getRecentUsageDays(
-        props.isPast24Hours
-          ? merged.hourly.map((hour) => ({
-              day: hour.hourStart,
-              costUsd: hour.costUsd,
-              totalTokens: hour.totalTokens,
-              byProvider: hour.byProvider,
-            }))
-          : merged.daily,
-      ),
-    [merged.daily, merged.hourly, props.isPast24Hours],
+      props.isPast24Hours
+        ? getHourlyUsagePeriods(props.hourStarts, merged.hourly)
+        : getRecentUsageDays(merged.daily),
+    [merged.daily, merged.hourly, props.hourStarts, props.isPast24Hours],
   );
 
   return (

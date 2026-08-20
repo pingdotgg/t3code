@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { DailyTotals } from "@t3tools/shared/usageMerge";
+import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
-import { getRecentUsageDays } from "./usageBreakdown";
+import { getHourlyUsagePeriods, getRecentUsageDays } from "./usageBreakdown";
 
 function makeDay(day: string): DailyTotals {
   return {
@@ -52,5 +52,30 @@ describe("getRecentUsageDays", () => {
     getRecentUsageDays(daily);
 
     expect(daily).toEqual(original);
+  });
+});
+
+describe("getHourlyUsagePeriods", () => {
+  it("keeps every hour oldest-first and fills quiet hours", () => {
+    const active: HourlyTotals = {
+      day: "2026-08-10",
+      hourStart: "2026-08-10T11:00:00.000Z",
+      costUsd: 1.25,
+      totalTokens: 42,
+      byProvider: new Map(),
+    };
+
+    const periods = getHourlyUsagePeriods(
+      ["2026-08-10T10:00:00.000Z", "2026-08-10T11:00:00.000Z", "2026-08-10T12:00:00.000Z"],
+      [active],
+    );
+
+    expect(periods.map((entry) => entry.day)).toEqual([
+      "2026-08-10T10:00:00.000Z",
+      "2026-08-10T11:00:00.000Z",
+      "2026-08-10T12:00:00.000Z",
+    ]);
+    expect(periods.map((entry) => entry.totalTokens)).toEqual([0, 42, 0]);
+    expect(periods[1]?.costUsd).toBe(1.25);
   });
 });
