@@ -995,8 +995,14 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }));
       routing.codex.interruptTurn.mockClear();
       routing.codex.sendTurn.mockClear();
+      const interruptStarted = yield* Deferred.make<void>();
       const releaseInterrupt = yield* Deferred.make<void>();
-      routing.codex.interruptTurn.mockImplementationOnce(() => Deferred.await(releaseInterrupt));
+      routing.codex.interruptTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(interruptStarted, undefined);
+          yield* Deferred.await(releaseInterrupt);
+        }),
+      );
 
       const interruptFiber = yield* provider
         .interruptTurn({
@@ -1005,20 +1011,75 @@ routing.layer("ProviderServiceLive routing", (it) => {
           expectedSessionUpdatedAt: updatedAt,
         })
         .pipe(Effect.forkChild);
-      while (routing.codex.interruptTurn.mock.calls.length === 0) {
-        yield* Effect.yieldNow;
-      }
+      yield* Deferred.await(interruptStarted);
 
-      const sendFiber = yield* provider
-        .sendTurn({ threadId, input: "new work", attachments: [] })
-        .pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
+      const sendAttempted = yield* Deferred.make<void>();
+      const sendFiber = yield* Effect.gen(function* () {
+        yield* Deferred.succeed(sendAttempted, undefined);
+        return yield* provider.sendTurn({ threadId, input: "new work", attachments: [] });
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(sendAttempted);
       assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
 
       yield* Deferred.succeed(releaseInterrupt, undefined);
       yield* Fiber.join(interruptFiber);
       yield* Fiber.join(sendFiber);
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("serializes rollback behind an in-flight guarded interrupt", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-guarded-interrupt-rollback");
+      const session = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.interruptTurn.mockClear();
+      routing.codex.rollbackThread.mockClear();
+
+      const interruptStarted = yield* Deferred.make<void>();
+      const releaseInterrupt = yield* Deferred.make<void>();
+      routing.codex.interruptTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(interruptStarted, undefined);
+          yield* Deferred.await(releaseInterrupt);
+        }),
+      );
+
+      const interruptFiber = yield* provider
+        .interruptTurn({
+          threadId,
+          expectedTurnId: session.activeTurnId,
+          expectedSessionUpdatedAt: session.updatedAt,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(interruptStarted);
+
+      const rollbackAttempted = yield* Deferred.make<void>();
+      const rollbackEnteredAdapter = yield* Deferred.make<void>();
+      routing.codex.rollbackThread.mockImplementationOnce((rollbackThreadId) =>
+        Deferred.succeed(rollbackEnteredAdapter, undefined).pipe(
+          Effect.as({ threadId: rollbackThreadId, turns: [] as const }),
+        ),
+      );
+      const rollbackFiber = yield* Effect.gen(function* () {
+        yield* Deferred.succeed(rollbackAttempted, undefined);
+        yield* provider.rollbackConversation({ threadId, numTurns: 1 });
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(rollbackAttempted);
+
+      assert.equal(Option.isNone(yield* Deferred.poll(rollbackEnteredAdapter)), true);
+
+      yield* Deferred.succeed(releaseInterrupt, undefined);
+      yield* Fiber.join(interruptFiber);
+      yield* Fiber.join(rollbackFiber);
+
+      assert.equal(Option.isSome(yield* Deferred.poll(rollbackEnteredAdapter)), true);
+      assert.deepEqual(routing.codex.rollbackThread.mock.calls, [[threadId, 1]]);
     }),
   );
 

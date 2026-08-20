@@ -252,10 +252,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
 
   /**
-   * Session creation, turn start, guarded interrupt, and session stop share a
-   * per-thread lock. This makes the provider-session guard check and adapter
-   * interrupt one atomic operation relative to every facade path that can
-   * replace the session or start newer work.
+   * Every facade path that can recover or mutate a provider session shares a
+   * per-thread lock. This keeps a guarded interrupt's adapter-session check
+   * and interrupt atomic relative to session replacement, newer turns,
+   * responses, rollback, and stop.
    */
   const withThreadLock = <A, E, R>(
     threadId: ThreadId,
@@ -915,45 +915,45 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  const respondToRequest: ProviderServiceMethod<"respondToRequest"> = Effect.fn("respondToRequest")(
-    function* (rawInput) {
-      const input = yield* decodeInputOrValidationError({
+  const respondToRequestUnlocked: ProviderServiceMethod<"respondToRequest"> = Effect.fn(
+    "respondToRequest",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.respondToRequest",
+      schema: ProviderRespondToRequestInput,
+      payload: rawInput,
+    });
+    let metricProvider = "unknown";
+    return yield* Effect.gen(function* () {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
         operation: "ProviderService.respondToRequest",
-        schema: ProviderRespondToRequestInput,
-        payload: rawInput,
+        allowRecovery: true,
       });
-      let metricProvider = "unknown";
-      return yield* Effect.gen(function* () {
-        const routed = yield* resolveRoutableSession({
-          threadId: input.threadId,
-          operation: "ProviderService.respondToRequest",
-          allowRecovery: true,
-        });
-        metricProvider = routed.adapter.provider;
-        yield* Effect.annotateCurrentSpan({
-          "provider.operation": "respond-to-request",
-          "provider.kind": routed.adapter.provider,
-          "provider.thread_id": input.threadId,
-          "provider.request_id": input.requestId,
-        });
-        yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
-        yield* analytics.record("provider.request.responded", {
-          provider: routed.adapter.provider,
-          decision: input.decision,
-        });
-      }).pipe(
-        withMetrics({
-          counter: providerTurnsTotal,
-          outcomeAttributes: () =>
-            providerMetricAttributes(metricProvider, {
-              operation: "approval-response",
-            }),
-        }),
-      );
-    },
-  );
+      metricProvider = routed.adapter.provider;
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "respond-to-request",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+        "provider.request_id": input.requestId,
+      });
+      yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
+      yield* analytics.record("provider.request.responded", {
+        provider: routed.adapter.provider,
+        decision: input.decision,
+      });
+    }).pipe(
+      withMetrics({
+        counter: providerTurnsTotal,
+        outcomeAttributes: () =>
+          providerMetricAttributes(metricProvider, {
+            operation: "approval-response",
+          }),
+      }),
+    );
+  });
 
-  const respondToUserInput: ProviderServiceMethod<"respondToUserInput"> = Effect.fn(
+  const respondToUserInputUnlocked: ProviderServiceMethod<"respondToUserInput"> = Effect.fn(
     "respondToUserInput",
   )(function* (rawInput) {
     const input = yield* decodeInputOrValidationError({
@@ -1128,7 +1128,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
-  const rollbackConversation: ProviderServiceMethod<"rollbackConversation"> = Effect.fn(
+  const rollbackConversationUnlocked: ProviderServiceMethod<"rollbackConversation"> = Effect.fn(
     "rollbackConversation",
   )(function* (rawInput) {
     const input = yield* decodeInputOrValidationError({
@@ -1235,8 +1235,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     withThreadLock(input.threadId, sendTurnUnlocked(input));
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = (input) =>
     withThreadLock(input.threadId, interruptTurnUnlocked(input));
+  const respondToRequest: ProviderServiceMethod<"respondToRequest"> = (input) =>
+    withThreadLock(input.threadId, respondToRequestUnlocked(input));
+  const respondToUserInput: ProviderServiceMethod<"respondToUserInput"> = (input) =>
+    withThreadLock(input.threadId, respondToUserInputUnlocked(input));
   const stopSession: ProviderServiceMethod<"stopSession"> = (input) =>
     withThreadLock(input.threadId, stopSessionUnlocked(input));
+  const rollbackConversation: ProviderServiceMethod<"rollbackConversation"> = (input) =>
+    withThreadLock(input.threadId, rollbackConversationUnlocked(input));
 
   return {
     startSession,
