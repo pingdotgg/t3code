@@ -15,6 +15,8 @@ import {
   type VcsListRefsInput,
   type VcsListRefsResult,
   type GitManagerServiceError,
+  type GitListRewriteableCommitsInput,
+  type GitListRewriteableCommitsResult,
   type GitPreparePullRequestThreadInput,
   type GitPreparePullRequestThreadResult,
   type GitPullRequestRefInput,
@@ -23,6 +25,8 @@ import {
   type GitResolvePullRequestResult,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
+  type GitRewriteCommitMessagesInput,
+  type GitRewriteCommitMessagesResult,
   type VcsStatusInput,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
@@ -65,6 +69,12 @@ export class GitWorkflowService extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+    readonly listRewriteableCommits: (
+      input: GitListRewriteableCommitsInput,
+    ) => Effect.Effect<GitListRewriteableCommitsResult, GitManagerServiceError>;
+    readonly rewriteCommitMessages: (
+      input: GitRewriteCommitMessagesInput,
+    ) => Effect.Effect<GitRewriteCommitMessagesResult, GitManagerServiceError>;
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
@@ -382,6 +392,17 @@ export const make = Effect.gen(function* () {
             handle.repository.rootPath,
             gitManager.runStackedAction(input, options),
           ),
+        ),
+      );
+    }),
+    listRewriteableCommits: routeGitManager(
+      "GitWorkflowService.listRewriteableCommits",
+      gitManager.listRewriteableCommits,
+    ),
+    rewriteCommitMessages: Effect.fn("GitWorkflowService.rewriteCommitMessages")(function (input) {
+      return ensureGit("GitWorkflowService.rewriteCommitMessages", input.cwd).pipe(
+        Effect.flatMap((handle) =>
+          withCheckoutLease(handle.repository.rootPath, gitManager.rewriteCommitMessages(input)),
         ),
       );
     }),

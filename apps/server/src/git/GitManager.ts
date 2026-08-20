@@ -23,12 +23,16 @@ import {
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
+  GitListRewriteableCommitsInput,
+  GitListRewriteableCommitsResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
+  GitRewriteCommitMessagesInput,
+  GitRewriteCommitMessagesResult,
   GitStackedAction,
   VcsStatusInput,
   type VcsStatusLocalResult,
@@ -166,6 +170,12 @@ export class GitManager extends Context.Service<
       never,
       Scope.Scope
     >;
+    readonly listRewriteableCommits: (
+      input: GitListRewriteableCommitsInput,
+    ) => Effect.Effect<GitListRewriteableCommitsResult, GitManagerServiceError>;
+    readonly rewriteCommitMessages: (
+      input: GitRewriteCommitMessagesInput,
+    ) => Effect.Effect<GitRewriteCommitMessagesResult, GitManagerServiceError>;
   }
 >()("t3/git/GitManager") {}
 
@@ -174,6 +184,8 @@ const AFTER_PUSH_TIMEOUT_MS = 30 * 60_000;
 const MAX_LOGICAL_COMMITS = 20;
 const MAX_LOGICAL_CHANGE_UNITS = 200;
 const MAX_LOGICAL_COMMIT_PATCH_BYTES = 2_000_000;
+const MAX_REWRITEABLE_COMMITS = 50;
+const MAX_COMMIT_MESSAGE_PATCH_BYTES = 2_000_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
@@ -558,6 +570,71 @@ interface CommitAndBranchSuggestion {
   body: string;
   branch?: string | undefined;
   commitMessage: string;
+}
+
+interface CommitObjectDetails {
+  readonly sha: string;
+  readonly treeSha: string;
+  readonly parentShas: readonly string[];
+  readonly authorName: string;
+  readonly authorEmail: string;
+  readonly authorDate: string;
+  readonly committerName: string;
+  readonly committerEmail: string;
+  readonly committerDate: string;
+  readonly message: string;
+  readonly signed: boolean;
+}
+
+function parseCommitIdentity(
+  value: string,
+): { readonly name: string; readonly email: string; readonly date: string } | null {
+  const match = /^(.*) <([^<>]*)> (\d+) ([+-]\d{4})$/.exec(value);
+  if (!match?.[1] || match[2] === undefined || !match[3] || !match[4]) {
+    return null;
+  }
+  return {
+    name: match[1],
+    email: match[2],
+    date: `${match[3]} ${match[4]}`,
+  };
+}
+
+function parseCommitObject(sha: string, raw: string): CommitObjectDetails | null {
+  const separatorIndex = raw.indexOf("\n\n");
+  if (separatorIndex < 0) {
+    return null;
+  }
+  const headers = raw.slice(0, separatorIndex).split("\n");
+  const treeSha = headers
+    .find((line) => line.startsWith("tree "))
+    ?.slice(5)
+    .trim();
+  const parentShas = headers
+    .filter((line) => line.startsWith("parent "))
+    .map((line) => line.slice(7).trim());
+  const author = parseCommitIdentity(
+    headers.find((line) => line.startsWith("author "))?.slice(7) ?? "",
+  );
+  const committer = parseCommitIdentity(
+    headers.find((line) => line.startsWith("committer "))?.slice(10) ?? "",
+  );
+  if (!treeSha || !author || !committer) {
+    return null;
+  }
+  return {
+    sha,
+    treeSha,
+    parentShas,
+    authorName: author.name,
+    authorEmail: author.email,
+    authorDate: author.date,
+    committerName: committer.name,
+    committerEmail: committer.email,
+    committerDate: committer.date,
+    message: raw.slice(separatorIndex + 2),
+    signed: headers.some((line) => line.startsWith("gpgsig ") || line.startsWith("gpgsig-sha256 ")),
+  };
 }
 
 function isCommitAction(
@@ -3413,6 +3490,411 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const readCommitObject = Effect.fn("readCommitObject")(function* (cwd: string, sha: string) {
+    const result = yield* gitCore.execute({
+      operation: "GitManager.readCommitObject",
+      cwd,
+      args: ["cat-file", "commit", sha],
+      maxOutputBytes: MAX_COMMIT_MESSAGE_PATCH_BYTES,
+    });
+    const commit = parseCommitObject(sha, result.stdout);
+    if (!commit) {
+      return yield* new GitManagerError({
+        operation: "readCommitObject",
+        cwd,
+        detail: `Could not parse commit ${sha.slice(0, SHORT_SHA_LENGTH)}.`,
+      });
+    }
+    return commit;
+  });
+
+  const resolveRewriteableCommitObjects = Effect.fn("resolveRewriteableCommitObjects")(function* (
+    cwd: string,
+  ) {
+    const status = yield* gitCore.statusDetails(cwd);
+    if (!status.isRepo || !status.branch) {
+      return yield* new GitManagerError({
+        operation: "resolveRewriteableCommitObjects",
+        cwd,
+        detail: "Commit messages can only be rewritten on a checked-out Git branch.",
+      });
+    }
+
+    const headResult = yield* gitCore.execute({
+      operation: "GitManager.resolveRewriteableCommitObjects.head",
+      cwd,
+      args: ["rev-parse", "HEAD"],
+    });
+    const headSha = headResult.stdout.trim();
+    const fallbackCount = Math.min(
+      MAX_REWRITEABLE_COMMITS,
+      status.aheadOfDefaultCount > 0 ? status.aheadOfDefaultCount : status.aheadCount,
+    );
+    const args = status.upstreamRef
+      ? [
+          "rev-list",
+          "--first-parent",
+          "--reverse",
+          `--max-count=${MAX_REWRITEABLE_COMMITS}`,
+          "HEAD",
+          "--not",
+          status.upstreamRef,
+        ]
+      : fallbackCount > 0
+        ? ["rev-list", "--first-parent", "--reverse", `--max-count=${fallbackCount}`, "HEAD"]
+        : null;
+    const shas = args
+      ? yield* gitCore
+          .execute({
+            operation: "GitManager.resolveRewriteableCommitObjects.list",
+            cwd,
+            args,
+          })
+          .pipe(
+            Effect.map((result) =>
+              result.stdout
+                .split(/\r?\n/g)
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0),
+            ),
+          )
+      : [];
+    const commits = yield* Effect.forEach(shas, (sha) => readCommitObject(cwd, sha), {
+      concurrency: 4,
+    });
+    return { branch: status.branch, headSha, commits };
+  });
+
+  const listCommitFiles = Effect.fn("listCommitFiles")(function* (
+    cwd: string,
+    commit: CommitObjectDetails,
+  ) {
+    const firstParent = commit.parentShas[0];
+    const args = firstParent
+      ? ["diff", "--name-only", "-z", firstParent, commit.sha, "--"]
+      : ["ls-tree", "-r", "--name-only", "-z", commit.sha];
+    const result = yield* gitCore.execute({
+      operation: "GitManager.listCommitFiles",
+      cwd,
+      args,
+      maxOutputBytes: 1_000_000,
+    });
+    return result.stdout.split("\0").filter((filePath) => filePath.length > 0);
+  });
+
+  const listRewriteableCommits: GitManager["Service"]["listRewriteableCommits"] = Effect.fn(
+    "listRewriteableCommits",
+  )(function* (input) {
+    const resolved = yield* resolveRewriteableCommitObjects(input.cwd);
+    const commits = yield* Effect.forEach(
+      resolved.commits,
+      (commit) =>
+        listCommitFiles(input.cwd, commit).pipe(
+          Effect.map((files) => {
+            const parsedMessage = parseCustomCommitMessage(commit.message);
+            const timestampSeconds = Number.parseInt(commit.authorDate.split(" ")[0] ?? "", 10);
+            return {
+              sha: commit.sha,
+              shortSha: commit.sha.slice(0, SHORT_SHA_LENGTH),
+              subject: parsedMessage?.subject ?? "(no commit message)",
+              body: parsedMessage?.body ?? "",
+              authoredAt: Number.isFinite(timestampSeconds)
+                ? new Date(timestampSeconds * 1_000).toISOString()
+                : new Date(0).toISOString(),
+              files,
+            };
+          }),
+        ),
+      { concurrency: 4 },
+    );
+    return {
+      branch: resolved.branch,
+      headSha: resolved.headSha,
+      commits,
+    };
+  });
+
+  const readCommittedChangeContext = Effect.fn("readCommittedChangeContext")(function* (
+    cwd: string,
+    commit: CommitObjectDetails,
+  ) {
+    const firstParent = commit.parentShas[0];
+    const summaryArgs = firstParent
+      ? ["diff", "--stat", "--summary", firstParent, commit.sha, "--"]
+      : ["diff-tree", "--root", "--no-commit-id", "--stat", "--summary", "-r", commit.sha];
+    const patchArgs = firstParent
+      ? ["diff", "--binary", "--full-index", "--patch", firstParent, commit.sha, "--"]
+      : [
+          "diff-tree",
+          "--root",
+          "--no-commit-id",
+          "--binary",
+          "--full-index",
+          "--patch",
+          "-r",
+          commit.sha,
+        ];
+    const [summary, patch] = yield* Effect.all(
+      [
+        gitCore.execute({
+          operation: "GitManager.readCommittedChangeContext.summary",
+          cwd,
+          args: summaryArgs,
+          maxOutputBytes: 100_000,
+        }),
+        gitCore.execute({
+          operation: "GitManager.readCommittedChangeContext.patch",
+          cwd,
+          args: patchArgs,
+          maxOutputBytes: MAX_COMMIT_MESSAGE_PATCH_BYTES,
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (patch.stdoutTruncated) {
+      return yield* new GitManagerError({
+        operation: "readCommittedChangeContext",
+        cwd,
+        detail: `Commit ${commit.sha.slice(0, SHORT_SHA_LENGTH)} exceeds the supported patch size.`,
+      });
+    }
+    return { summary: summary.stdout, patch: patch.stdout };
+  });
+
+  const rewriteCommitMessages: GitManager["Service"]["rewriteCommitMessages"] = Effect.fn(
+    "rewriteCommitMessages",
+  )(function* (input) {
+    const resolved = yield* resolveRewriteableCommitObjects(input.cwd);
+    if (resolved.headSha !== input.expectedHeadSha) {
+      return yield* new GitManagerError({
+        operation: "rewriteCommitMessages",
+        cwd: input.cwd,
+        detail: "The branch changed after the commit list was loaded. Reopen the dialog and retry.",
+      });
+    }
+
+    const selectedShas = new Set(input.commitShas);
+    if (selectedShas.size !== input.commitShas.length) {
+      return yield* new GitManagerError({
+        operation: "rewriteCommitMessages",
+        cwd: input.cwd,
+        detail: "Each selected commit must be unique.",
+      });
+    }
+    const earliestSelectedIndex = resolved.commits.findIndex((commit) =>
+      selectedShas.has(commit.sha),
+    );
+    if (
+      earliestSelectedIndex < 0 ||
+      input.commitShas.some((sha) => !resolved.commits.some((commit) => commit.sha === sha))
+    ) {
+      return yield* new GitManagerError({
+        operation: "rewriteCommitMessages",
+        cwd: input.cwd,
+        detail: "One or more selected commits are no longer rewriteable on this branch.",
+      });
+    }
+    const rewrittenRange = resolved.commits.slice(earliestSelectedIndex);
+    const signedCommit = rewrittenRange.find((commit) => commit.signed);
+    if (signedCommit) {
+      return yield* new GitManagerError({
+        operation: "rewriteCommitMessages",
+        cwd: input.cwd,
+        detail: `Commit ${signedCommit.sha.slice(0, SHORT_SHA_LENGTH)} is signed and cannot be safely recreated.`,
+      });
+    }
+
+    const settings = yield* projectSettingsFor(input).pipe(
+      Effect.flatMap((resolved) =>
+        providerRegistry.getProviders.pipe(
+          Effect.map((providers) => ({
+            modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+              resolved,
+              providers,
+            ),
+            style: resolved.sourceControlWritingStyle,
+          })),
+        ),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "rewriteCommitMessages",
+            cwd: input.cwd,
+            detail: "Failed to get server settings.",
+            cause,
+          }),
+      ),
+    );
+    const stylePolicy = yield* resolveStylePolicy(input.cwd, settings);
+    const repositoryInstructions = yield* readRepositoryInstructions(
+      input.cwd,
+      ".t3code/commit-message.md",
+    );
+    const policy = repositoryInstructions
+      ? {
+          ...stylePolicy,
+          commitInstructions: [stylePolicy.commitInstructions, repositoryInstructions]
+            .filter(Boolean)
+            .join("\n\n"),
+        }
+      : stylePolicy;
+    const generationCwd = yield* fileSystem
+      .makeTempDirectory({
+        prefix: "t3code-commit-message-",
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "rewriteCommitMessages",
+              cwd: input.cwd,
+              detail: "Failed to create an isolated directory for commit message generation.",
+              cause,
+            }),
+        ),
+      );
+    const generatedMessages = yield* Effect.gen(function* () {
+      const messages = new Map<string, string>();
+      for (const commit of resolved.commits) {
+        if (!selectedShas.has(commit.sha)) {
+          continue;
+        }
+        const context = yield* readCommittedChangeContext(input.cwd, commit);
+        const generated = yield* textGeneration
+          .generateCommitMessage({
+            cwd: generationCwd,
+            branch: resolved.branch,
+            stagedSummary: limitContext(context.summary, 8_000),
+            stagedPatch: limitContext(context.patch, 50_000),
+            ...(policy ? { policy } : {}),
+            modelSelection: settings.modelSelection,
+          })
+          .pipe(Effect.map(sanitizeCommitMessage));
+        messages.set(commit.sha, formatCommitMessage(generated.subject, generated.body));
+      }
+      return messages;
+    }).pipe(
+      Effect.ensuring(
+        fileSystem
+          .remove(generationCwd, { recursive: true, force: true })
+          .pipe(Effect.ignore({ log: true })),
+      ),
+    );
+
+    const [currentHead, currentBranchRef] = yield* Effect.all(
+      [
+        gitCore.execute({
+          operation: "GitManager.rewriteCommitMessages.verifyHead",
+          cwd: input.cwd,
+          args: ["rev-parse", "HEAD"],
+        }),
+        gitCore.execute({
+          operation: "GitManager.rewriteCommitMessages.branchRef",
+          cwd: input.cwd,
+          args: ["symbolic-ref", "-q", "HEAD"],
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (currentHead.stdout.trim() !== input.expectedHeadSha) {
+      return yield* new GitManagerError({
+        operation: "rewriteCommitMessages",
+        cwd: input.cwd,
+        detail: "The branch changed while messages were being generated. No history was updated.",
+      });
+    }
+
+    let previousNewSha: string | null = null;
+    for (const commit of rewrittenRange) {
+      const parents = [...commit.parentShas];
+      if (previousNewSha !== null && parents.length > 0) {
+        parents[0] = previousNewSha;
+      }
+      const message = generatedMessages.get(commit.sha) ?? commit.message;
+      const result = yield* gitCore.execute({
+        operation: "GitManager.rewriteCommitMessages.commitTree",
+        cwd: input.cwd,
+        args: [
+          "commit-tree",
+          commit.treeSha,
+          ...parents.flatMap((parentSha) => ["-p", parentSha]),
+          "-F",
+          "-",
+        ],
+        stdin: message,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: commit.authorName,
+          GIT_AUTHOR_EMAIL: commit.authorEmail,
+          GIT_AUTHOR_DATE: commit.authorDate,
+          GIT_COMMITTER_NAME: commit.committerName,
+          GIT_COMMITTER_EMAIL: commit.committerEmail,
+          GIT_COMMITTER_DATE: commit.committerDate,
+        },
+      });
+      previousNewSha = result.stdout.trim();
+      if (previousNewSha.length === 0) {
+        return yield* new GitManagerError({
+          operation: "rewriteCommitMessages",
+          cwd: input.cwd,
+          detail: `Git returned an empty object ID while recreating ${commit.sha.slice(0, SHORT_SHA_LENGTH)}.`,
+        });
+      }
+    }
+
+    const newHeadSha = previousNewSha;
+    if (!newHeadSha) {
+      return yield* new GitManagerError({
+        operation: "rewriteCommitMessages",
+        cwd: input.cwd,
+        detail: "No commits were recreated.",
+      });
+    }
+    const [oldTree, newTree] = yield* Effect.all(
+      [
+        gitCore.execute({
+          operation: "GitManager.rewriteCommitMessages.oldTree",
+          cwd: input.cwd,
+          args: ["rev-parse", `${input.expectedHeadSha}^{tree}`],
+        }),
+        gitCore.execute({
+          operation: "GitManager.rewriteCommitMessages.newTree",
+          cwd: input.cwd,
+          args: ["rev-parse", `${newHeadSha}^{tree}`],
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (oldTree.stdout.trim() !== newTree.stdout.trim()) {
+      return yield* new GitManagerError({
+        operation: "rewriteCommitMessages",
+        cwd: input.cwd,
+        detail: "Safety check failed because the recreated HEAD tree does not match the original.",
+      });
+    }
+
+    yield* gitCore.execute({
+      operation: "GitManager.rewriteCommitMessages.updateRef",
+      cwd: input.cwd,
+      args: [
+        "update-ref",
+        "--create-reflog",
+        "-m",
+        "t3: regenerate commit messages",
+        currentBranchRef.stdout.trim(),
+        newHeadSha,
+        input.expectedHeadSha,
+      ],
+    });
+    yield* invalidateStatus(input.cwd);
+    return {
+      previousHeadSha: input.expectedHeadSha,
+      headSha: newHeadSha,
+      rewrittenCount: selectedShas.size,
+    };
+  });
+
   const runStackedAction: GitManager["Service"]["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
       const progress = yield* createProgressEmitter(input, options);
@@ -3669,6 +4151,8 @@ export const make = Effect.gen(function* () {
     invalidateStatus,
     resolvePullRequest,
     preparePullRequestThread,
+    listRewriteableCommits,
+    rewriteCommitMessages,
     runStackedAction,
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),

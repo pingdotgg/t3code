@@ -3181,6 +3181,12 @@ export const layerWsRpc = (
               ),
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
+        [WS_METHODS.gitListRewriteableCommits]: (input) =>
+          gitWorkflow.listRewriteableCommits(input),
+        [WS_METHODS.gitRewriteCommitMessages]: (input) =>
+          gitWorkflow
+            .rewriteCommitMessages(input)
+            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           gitWorkflow
             .preparePullRequestThread(input)

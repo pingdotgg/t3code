@@ -23,5 +23,17 @@ export function createGitEnvironmentAtoms<R, E>(
       onSettled: ({ environmentId, input }, registry) =>
         invalidateCachedVcsRefs(registry, { environmentId, cwd: input.cwd }),
     }),
+    listRewriteableCommits: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:git:list-rewriteable-commits",
+      tag: WS_METHODS.gitListRewriteableCommits,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    rewriteCommitMessages: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:git:rewrite-commit-messages",
+      tag: WS_METHODS.gitRewriteCommitMessages,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
   };
 }

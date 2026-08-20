@@ -58,6 +58,15 @@ export function resolveGitActionResultToastTiming(
   };
 }
 
+export function canRewriteCommitMessages(gitStatus: VcsStatusResult | null): boolean {
+  if (!gitStatus || gitStatus.refName === null) {
+    return false;
+  }
+  return gitStatus.hasUpstream
+    ? gitStatus.aheadCount > 0
+    : Math.max(gitStatus.aheadCount, gitStatus.aheadOfDefaultCount ?? 0) > 0;
+}
+
 export function resolveGitActionProgressPresentation(input: {
   readonly isRunning: boolean;
   readonly operation: string | null;

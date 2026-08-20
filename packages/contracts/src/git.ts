@@ -53,6 +53,7 @@ const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
+const GitCommitSha = TrimmedNonEmptyStringSchema.check(Schema.isPattern(/^[0-9a-f]{40,64}$/));
 export const GitRunStackedActionToastRunAction = Schema.Struct({
   kind: GitStackedAction,
 });
@@ -135,6 +136,18 @@ export const GitRunStackedActionInput = Schema.Struct({
   projectId: Schema.optional(ProjectId),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
+
+export const GitListRewriteableCommitsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type GitListRewriteableCommitsInput = typeof GitListRewriteableCommitsInput.Type;
+
+export const GitRewriteCommitMessagesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  expectedHeadSha: GitCommitSha,
+  commitShas: Schema.Array(GitCommitSha).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+});
+export type GitRewriteCommitMessagesInput = typeof GitRewriteCommitMessagesInput.Type;
 
 export const VcsListRefsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -341,6 +354,30 @@ export const GitRunStackedActionResult = Schema.Struct({
   toast: GitRunStackedActionToast,
 });
 export type GitRunStackedActionResult = typeof GitRunStackedActionResult.Type;
+
+const GitRewriteableCommit = Schema.Struct({
+  sha: GitCommitSha,
+  shortSha: TrimmedNonEmptyStringSchema,
+  subject: TrimmedNonEmptyStringSchema,
+  body: Schema.String,
+  authoredAt: TrimmedNonEmptyStringSchema,
+  files: Schema.Array(TrimmedNonEmptyStringSchema),
+});
+export type GitRewriteableCommit = typeof GitRewriteableCommit.Type;
+
+export const GitListRewriteableCommitsResult = Schema.Struct({
+  branch: TrimmedNonEmptyStringSchema,
+  headSha: GitCommitSha,
+  commits: Schema.Array(GitRewriteableCommit),
+});
+export type GitListRewriteableCommitsResult = typeof GitListRewriteableCommitsResult.Type;
+
+export const GitRewriteCommitMessagesResult = Schema.Struct({
+  previousHeadSha: GitCommitSha,
+  headSha: GitCommitSha,
+  rewrittenCount: PositiveInt,
+});
+export type GitRewriteCommitMessagesResult = typeof GitRewriteCommitMessagesResult.Type;
 
 export const VcsPullResult = Schema.Struct({
   status: Schema.Literals(["pulled", "skipped_up_to_date"]),

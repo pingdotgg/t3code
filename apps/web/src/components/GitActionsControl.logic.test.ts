@@ -4,6 +4,7 @@ import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
+  canRewriteCommitMessages,
   isDuplicatePendingThreadBranchSync,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
@@ -11,6 +12,24 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
 } from "./GitActionsControl.logic";
+
+describe("canRewriteCommitMessages", () => {
+  it("allows local commits ahead of an upstream", () => {
+    assert.isTrue(canRewriteCommitMessages(status({ aheadCount: 2 })));
+  });
+
+  it("does not offer already-published upstream commits", () => {
+    assert.isFalse(canRewriteCommitMessages(status({ aheadCount: 0, aheadOfDefaultCount: 3 })));
+  });
+
+  it("uses the default-branch delta when there is no upstream", () => {
+    assert.isTrue(
+      canRewriteCommitMessages(
+        status({ hasUpstream: false, aheadCount: 0, aheadOfDefaultCount: 2 }),
+      ),
+    );
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {

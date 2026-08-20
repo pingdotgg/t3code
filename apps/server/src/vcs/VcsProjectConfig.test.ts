@@ -172,7 +172,6 @@ describe("VcsProjectConfig", () => {
         yield* fileSystem.makeDirectory(nested, { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(configDir, "vcs.json"),
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           JSON.stringify({ hooks: { afterPush: "./scripts/populate-cache" } }),
         );
 

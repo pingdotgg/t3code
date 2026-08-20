@@ -11,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -786,6 +787,161 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("regenerates multiple commit messages without changing source state", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/rewrite-messages"]);
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.txt"), "alpha source\n");
+      yield* runGit(repoDir, ["add", "alpha.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Old alpha message"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.txt"), "beta source\n");
+      yield* runGit(repoDir, ["add", "beta.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Old beta message"]);
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.txt"), "alpha source\ndirty change\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "untracked\n");
+
+      const generatedPatches: string[] = [];
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPatches.push(input.stagedPatch);
+            return Effect.succeed({
+              subject: input.stagedPatch.includes("alpha source")
+                ? "Describe alpha source"
+                : "Describe beta source",
+              body: "",
+            });
+          },
+        },
+      });
+
+      const beforeHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
+        Effect.map((result) => result.stdout.trim()),
+      );
+      const beforeTree = yield* runGit(repoDir, ["rev-parse", "HEAD^{tree}"]).pipe(
+        Effect.map((result) => result.stdout.trim()),
+      );
+      const beforeStatus = yield* runGit(repoDir, ["status", "--porcelain=v1"]).pipe(
+        Effect.map((result) => result.stdout),
+      );
+
+      const candidates = yield* manager.listRewriteableCommits({ cwd: repoDir });
+      expect(candidates.branch).toBe("feature/rewrite-messages");
+      expect(candidates.headSha).toBe(beforeHead);
+      expect(candidates.commits.map((commit) => commit.subject)).toEqual([
+        "Old alpha message",
+        "Old beta message",
+      ]);
+      expect(candidates.commits.map((commit) => commit.files)).toEqual([
+        ["alpha.txt"],
+        ["beta.txt"],
+      ]);
+
+      const result = yield* manager.rewriteCommitMessages({
+        cwd: repoDir,
+        expectedHeadSha: candidates.headSha,
+        commitShas: candidates.commits.map((commit) => commit.sha),
+      });
+
+      expect(result.previousHeadSha).toBe(beforeHead);
+      expect(result.headSha).not.toBe(beforeHead);
+      expect(result.rewrittenCount).toBe(2);
+      expect(generatedPatches).toHaveLength(2);
+      expect(generatedPatches[0]).toContain("alpha source");
+      expect(generatedPatches[0]).not.toContain("beta source");
+      expect(generatedPatches[1]).toContain("beta source");
+      expect(generatedPatches[1]).not.toContain("alpha source");
+      expect(
+        yield* runGit(repoDir, ["log", "-2", "--reverse", "--pretty=%s"]).pipe(
+          Effect.map((gitResult) => gitResult.stdout.trim().split("\n")),
+        ),
+      ).toEqual(["Describe alpha source", "Describe beta source"]);
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "HEAD^{tree}"]).pipe(
+          Effect.map((gitResult) => gitResult.stdout.trim()),
+        ),
+      ).toBe(beforeTree);
+      expect(
+        yield* runGit(repoDir, ["status", "--porcelain=v1"]).pipe(
+          Effect.map((gitResult) => gitResult.stdout),
+        ),
+      ).toBe(beforeStatus);
+      expect(NodeFS.readFileSync(NodePath.join(repoDir, "alpha.txt"), "utf8")).toBe(
+        "alpha source\ndirty change\n",
+      );
+      expect(NodeFS.readFileSync(NodePath.join(repoDir, "untracked.txt"), "utf8")).toBe(
+        "untracked\n",
+      );
+    }),
+  );
+
+  it.effect("rewrites one earlier message while preserving descendant messages", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/rewrite-one-message"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "first.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "first.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Replace this message"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "second.txt"), "second\n");
+      yield* runGit(repoDir, ["add", "second.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Keep this descendant message"]);
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.succeed({ subject: "Describe the first file", body: "" }),
+        },
+      });
+      const candidates = yield* manager.listRewriteableCommits({ cwd: repoDir });
+      yield* manager.rewriteCommitMessages({
+        cwd: repoDir,
+        expectedHeadSha: candidates.headSha,
+        commitShas: [candidates.commits[0]!.sha],
+      });
+
+      expect(
+        yield* runGit(repoDir, ["log", "-2", "--reverse", "--pretty=%s"]).pipe(
+          Effect.map((result) => result.stdout.trim().split("\n")),
+        ),
+      ).toEqual(["Describe the first file", "Keep this descendant message"]);
+    }),
+  );
+
+  it.effect("rejects a rewrite when HEAD changed after candidates were loaded", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/stale-rewrite"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "first.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "first.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "First message"]);
+
+      const { manager } = yield* makeManager();
+      const candidates = yield* manager.listRewriteableCommits({ cwd: repoDir });
+      NodeFS.writeFileSync(NodePath.join(repoDir, "second.txt"), "second\n");
+      yield* runGit(repoDir, ["add", "second.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Second message"]);
+
+      const exit = yield* Effect.exit(
+        manager.rewriteCommitMessages({
+          cwd: repoDir,
+          expectedHeadSha: candidates.headSha,
+          commitShas: [candidates.commits[0]!.sha],
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(
+        yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
+          Effect.map((gitResult) => gitResult.stdout.trim()),
+        ),
+      ).toBe("Second message");
+    }),
+  );
+
   it.effect("runs hooks.afterPush after pushing and concurrently with PR creation", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

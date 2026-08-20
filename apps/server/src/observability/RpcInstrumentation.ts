@@ -179,6 +179,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.vcsRefreshStatus]: "vcs",
   [WS_METHODS.vcsPull]: "git",
   [WS_METHODS.gitRunStackedAction]: "vcs",
+  [WS_METHODS.gitListRewriteableCommits]: "git",
+  [WS_METHODS.gitRewriteCommitMessages]: "git",
   [WS_METHODS.gitResolvePullRequest]: "git",
   [WS_METHODS.gitPreparePullRequestThread]: "git",
   [WS_METHODS.vcsListRefs]: "vcs",
