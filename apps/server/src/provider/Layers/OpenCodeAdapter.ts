@@ -531,10 +531,11 @@ export function normalizeOpenCodeTokenUsage(
   const maxTokens =
     modelContextWindow !== undefined && modelContextWindow > 0 ? modelContextWindow : undefined;
   const cappedUsedTokens = maxTokens !== undefined ? Math.min(usedTokens, maxTokens) : usedTokens;
-  const inputTokens = tokens.input;
-  const cachedInputTokens = tokens.cache.read;
-  const outputTokens = tokens.output;
-  const reasoningOutputTokens = tokens.reasoning;
+  const cache = tokens.cache;
+  const inputTokens = typeof tokens.input === "number" ? tokens.input : 0;
+  const cachedInputTokens = cache && typeof cache.read === "number" ? cache.read : 0;
+  const outputTokens = typeof tokens.output === "number" ? tokens.output : 0;
+  const reasoningOutputTokens = typeof tokens.reasoning === "number" ? tokens.reasoning : 0;
   return {
     usedTokens: cappedUsedTokens,
     lastUsedTokens: cappedUsedTokens,

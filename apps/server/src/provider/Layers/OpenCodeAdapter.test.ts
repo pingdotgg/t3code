@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import type { AssistantMessage } from "@opencode-ai/sdk/v2";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -1766,6 +1767,24 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           200000,
         )?.usedTokens,
         5000,
+      );
+      // Older OpenCode versions may send a tokens object without the `cache`
+      // sub-object; the snapshot must build without crashing.
+      NodeAssert.deepEqual(
+        normalizeOpenCodeTokenUsage(
+          { input: 100, output: 50 } as unknown as AssistantMessage["tokens"],
+          200000,
+        ),
+        {
+          usedTokens: 150,
+          lastUsedTokens: 150,
+          maxTokens: 200000,
+          inputTokens: 100,
+          lastInputTokens: 100,
+          outputTokens: 50,
+          lastOutputTokens: 50,
+          compactsAutomatically: true,
+        },
       );
     }),
   );
