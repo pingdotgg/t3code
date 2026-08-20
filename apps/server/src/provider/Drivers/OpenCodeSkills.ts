@@ -107,7 +107,7 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
           }
           current = parent;
         }
-        return dirs.reverse();
+        return dirs.toReversed();
       })
     : [];
 

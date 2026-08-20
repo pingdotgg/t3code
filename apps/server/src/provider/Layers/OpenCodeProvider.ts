@@ -280,6 +280,20 @@ function flattenOpenCodeSkills(input: OpenCodeInventory): ReadonlyArray<ServerPr
   return skills.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
+function mergeOpenCodeSkills(
+  sdkSkills: ReadonlyArray<ServerProviderSkill>,
+  discoveredSkills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyArray<ServerProviderSkill> {
+  const skillsByName = new Map<string, ServerProviderSkill>();
+  for (const skill of sdkSkills) {
+    skillsByName.set(skill.name, skill);
+  }
+  for (const skill of discoveredSkills) {
+    skillsByName.set(skill.name, skill);
+  }
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
 ): Effect.Effect<ServerProviderDraft> =>
@@ -339,7 +353,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
-  const skills = yield* discoverOpenCodeSkills(cwd, resolvedEnvironment);
+  const discoveredSkills = yield* discoverOpenCodeSkills(cwd, resolvedEnvironment);
 
   const fallback = (cause: unknown, version: string | null = null) => {
     const failure = formatOpenCodeProbeError({
@@ -352,7 +366,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: openCodeSettings.enabled,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      skills,
+      skills: discoveredSkills,
       probe: {
         installed: failure.installed,
         version,
@@ -369,7 +383,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: false,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      skills,
+      skills: discoveredSkills,
       probe: {
         installed: false,
         version: null,
@@ -416,7 +430,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         enabled: openCodeSettings.enabled,
         checkedAt,
         models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-        skills,
+        skills: discoveredSkills,
         probe: {
           installed: true,
           version,
@@ -468,7 +482,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = flattenOpenCodeSkills(inventoryExit.value);
+  const skills = mergeOpenCodeSkills(flattenOpenCodeSkills(inventoryExit.value), discoveredSkills);
   const connectedCount = inventoryExit.value.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,

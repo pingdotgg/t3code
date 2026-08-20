@@ -258,7 +258,18 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ],
       };
 
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-inventory-test-" });
+
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings(),
+        path.join(tempDir, "workspace"),
+        {
+          HOME: path.join(tempDir, "empty-home"),
+          OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-config"),
+        },
+      );
 
       NodeAssert.deepEqual(
         snapshot.skills.map((skill) => ({
