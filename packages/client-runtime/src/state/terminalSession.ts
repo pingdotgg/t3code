@@ -122,6 +122,46 @@ export function combineTerminalSessionState(
   };
 }
 
+/**
+ * How to feed a new buffer snapshot into an already-rendered terminal surface.
+ *
+ * Prefer append so Ghostty keeps the user's scrollback place. A full replace is
+ * only used when the buffers are unrelated (clear / restart / true rewrite).
+ * Head-trim of the client-side history ring is treated as append of the new tail
+ * so we do not resetAndWrite and jump the viewport to the live prompt (#6096).
+ */
+export type TerminalBufferWritePlan =
+  | { readonly kind: "noop" }
+  | { readonly kind: "append"; readonly data: string }
+  | { readonly kind: "replace"; readonly data: string };
+
+export function terminalBufferWritePlan(
+  previous: string,
+  current: string,
+): TerminalBufferWritePlan {
+  if (current === previous) return { kind: "noop" };
+  if (current.startsWith(previous)) {
+    return { kind: "append", data: current.slice(previous.length) };
+  }
+  if (previous.length === 0) {
+    return { kind: "replace", data: current };
+  }
+
+  // Head-trim of the history ring: longest suffix of `previous` that prefixes `current`.
+  // Only runs when the cheap startsWith path failed (near the byte cap), so a linear
+  // scan over the overlap is acceptable. Require a minimum overlap so unrelated
+  // rewrites (clear → new prompt) do not accidentally append on a short shared tail.
+  const maxOverlap = Math.min(previous.length, current.length);
+  const minOverlap = Math.min(16, maxOverlap);
+  for (let len = maxOverlap; len >= minOverlap; len -= 1) {
+    if (current.startsWith(previous.slice(previous.length - len))) {
+      return { kind: "append", data: current.slice(len) };
+    }
+  }
+
+  return { kind: "replace", data: current };
+}
+
 export function applyTerminalAttachStreamEvent(
   current: TerminalBufferState,
   event: TerminalAttachStreamEvent,

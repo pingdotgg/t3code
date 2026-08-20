@@ -196,6 +196,28 @@ describe("vendored libghostty-vt WebAssembly", () => {
     expect(call("ghostty_terminal_get", terminal, 9, scrollbar)).toBe(0);
     expect(Number(scrollbarView.getBigUint64(8, true))).toBe(36);
 
+    // Scrolled into history → viewport is no longer pinned to the active prompt.
+    const viewportActive = alloc(1);
+    expect(call("ghostty_terminal_get", terminal, 32, viewportActive)).toBe(0);
+    expect(new Uint8Array(memory.buffer, viewportActive, 1)[0]).toBe(0);
+
+    // Further output must not steal the user's scroll place (regression for #6096).
+    const more = new TextEncoder().encode("more\r\n");
+    const morePointer = alloc(more.length);
+    new Uint8Array(memory.buffer, morePointer, more.length).set(more);
+    call("ghostty_terminal_vt_write", terminal, morePointer, more.length);
+    expect(call("ghostty_terminal_get", terminal, 32, viewportActive)).toBe(0);
+    expect(new Uint8Array(memory.buffer, viewportActive, 1)[0]).toBe(0);
+    expect(call("ghostty_terminal_get", terminal, 9, scrollbar)).toBe(0);
+    expect(Number(scrollbarView.getBigUint64(8, true))).toBe(36);
+
+    // Resize/reflow also must not re-pin when the user is in history.
+    expect(call("ghostty_terminal_resize", terminal, 80, 12, 8, 16)).toBe(0);
+    expect(call("ghostty_terminal_get", terminal, 32, viewportActive)).toBe(0);
+    expect(new Uint8Array(memory.buffer, viewportActive, 1)[0]).toBe(0);
+
+    call("ghostty_wasm_free_u8_array", morePointer, more.length);
+    call("ghostty_wasm_free_u8_array", viewportActive, 1);
     call("ghostty_wasm_free_u8_array", scroll, 24);
     call("ghostty_wasm_free_u8_array", scrollbar, 24);
     call("ghostty_wasm_free_u8_array", inputPointer, input.length);

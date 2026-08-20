@@ -8,6 +8,7 @@ import {
   combineTerminalSessionState,
   EMPTY_TERMINAL_BUFFER_STATE,
   selectRunningSubprocessTerminalIds,
+  terminalBufferWritePlan,
 } from "./terminalSession.ts";
 
 const TARGET = {
@@ -183,5 +184,32 @@ describe("terminal session reducers", () => {
     );
 
     expect(state.buffer).toBe("🙂");
+  });
+});
+
+describe("terminalBufferWritePlan", () => {
+  it("appends a pure suffix without rewriting history", () => {
+    expect(terminalBufferWritePlan("hello", "hello world")).toEqual({
+      kind: "append",
+      data: " world",
+    });
+    expect(terminalBufferWritePlan("same", "same")).toEqual({ kind: "noop" });
+  });
+
+  it("treats head-trim of the history ring as an append of the new tail", () => {
+    // Simulates DEFAULT_MAX_TERMINAL_BUFFER_BYTES ring: drop the head, keep overlap.
+    const previous = "AAAA" + "B".repeat(32);
+    const current = "B".repeat(32) + "CCCC";
+    expect(terminalBufferWritePlan(previous, current)).toEqual({
+      kind: "append",
+      data: "CCCC",
+    });
+  });
+
+  it("replaces when the buffers are unrelated", () => {
+    expect(terminalBufferWritePlan("old prompt\n", "brand new session\n")).toEqual({
+      kind: "replace",
+      data: "brand new session\n",
+    });
   });
 });
