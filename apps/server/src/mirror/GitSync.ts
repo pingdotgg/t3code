@@ -495,6 +495,18 @@ export const make = Effect.gen(function* () {
         });
       }
       const conflictPaths = merge.code === 1 ? [...new Set(lines.slice(1))] : [];
+      if (merge.code === 1 && conflictPaths.length === 0) {
+        // merge-tree reported conflicts (exit 1) but listed no conflicted
+        // paths to resolve against the preferred side, so mergedTree may
+        // still contain raw conflict markers. Fail rather than silently
+        // writing that out as a clean "applied" result.
+        return yield* makeGitSyncCommandError({
+          root: input.root,
+          args: ["merge-tree", "--write-tree"],
+          exitCode: merge.code,
+          stderr: merge.stderr,
+        });
+      }
 
       let finalTree = mergedTree;
       if (conflictPaths.length > 0) {

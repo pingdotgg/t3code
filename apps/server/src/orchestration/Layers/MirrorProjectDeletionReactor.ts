@@ -1,8 +1,10 @@
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -15,6 +17,16 @@ import {
 import { forkParked } from "../../serverActivation.ts";
 
 type ProjectDeletedEvent = Extract<OrchestrationEvent, { type: "project.deleted" }>;
+
+/**
+ * revokeLink/listSessions/revokeSession are in-process SQL/state operations
+ * expected to succeed; a transient failure shouldn't permanently drop the
+ * revocation and leave a mirror-peer credential live, since this hot event
+ * is consumed exactly once from the stream. Retry a few times with backoff
+ * before falling back to a logged, best-effort skip.
+ */
+const REVOCATION_RETRY_SCHEDULE = Schedule.exponential(Duration.millis(200));
+const REVOCATION_RETRY_ATTEMPTS = 4;
 
 /**
  * Revoke a deleted project's mirror link and every mirror-peer credential
@@ -49,7 +61,9 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
 
   const processProjectDeleted = (event: ProjectDeletedEvent) =>
-    revokeMirrorLinkAndCredentials(event.payload.projectId);
+    revokeMirrorLinkAndCredentials(event.payload.projectId).pipe(
+      Effect.retry({ schedule: REVOCATION_RETRY_SCHEDULE, times: REVOCATION_RETRY_ATTEMPTS }),
+    );
 
   const processProjectDeletedSafely = (event: ProjectDeletedEvent) =>
     processProjectDeleted(event).pipe(

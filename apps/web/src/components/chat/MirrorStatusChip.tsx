@@ -150,7 +150,12 @@ export function MirrorStatusChip({
               <span className="min-w-0 truncate font-mono text-muted-foreground">
                 {origin.rootPath}
               </span>
-              <MessageCopyButton text={origin.rootPath} size="icon-xs" variant="ghost" />
+              <MessageCopyButton
+                text={origin.rootPath}
+                ariaLabel={`Copy ${originLabel} path`}
+                size="icon-xs"
+                variant="ghost"
+              />
             </div>
             {workspaceRoot != null && workspaceRoot.length > 0 ? (
               <div className="flex min-w-0 items-center gap-1">
@@ -158,7 +163,12 @@ export function MirrorStatusChip({
                 <span className="min-w-0 truncate font-mono text-muted-foreground">
                   {workspaceRoot}
                 </span>
-                <MessageCopyButton text={workspaceRoot} size="icon-xs" variant="ghost" />
+                <MessageCopyButton
+                  text={workspaceRoot}
+                  ariaLabel="Copy mirror path"
+                  size="icon-xs"
+                  variant="ghost"
+                />
               </div>
             ) : null}
           </div>
