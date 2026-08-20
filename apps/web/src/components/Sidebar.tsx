@@ -127,6 +127,7 @@ import {
 } from "./threadActionMenu.logic";
 import { useThreadSectionNameDialog } from "./ThreadSectionNameDialog";
 import {
+  animatePinnedLayoutChanges,
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
@@ -455,6 +456,7 @@ function SortablePinnedThreadRow(props: {
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.id,
+    animateLayoutChanges: animatePinnedLayoutChanges,
   });
   return props.children({ listeners, setNodeRef, transform, transition, isDragging });
 }
@@ -4330,7 +4332,7 @@ export default function Sidebar() {
                   <button
                     type="button"
                     onClick={openAddProjectCommandPalette}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
                     <PlusIcon className="-mx-0.5 size-3" />
                     Add project
