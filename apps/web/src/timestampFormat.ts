@@ -127,11 +127,11 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
   return getTimestampFormatter(timestampFormat, false).format(date);
 }
 
-const numericDateFormatter = new Intl.DateTimeFormat(undefined, {
+const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, {
   month: "numeric",
   day: "numeric",
 });
-const numericDateWithYearFormatter = new Intl.DateTimeFormat(undefined, {
+const numericDateWithYearFormatter = new Intl.DateTimeFormat(timestampLocale, {
   month: "numeric",
   day: "numeric",
   year: "numeric",

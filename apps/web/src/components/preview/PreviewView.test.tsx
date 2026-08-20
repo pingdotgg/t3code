@@ -1,4 +1,10 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_PREVIEW_APPEARANCE,
+  DEFAULT_PREVIEW_ZOOM_FACTOR,
+  EnvironmentId,
+  FILL_PREVIEW_VIEWPORT,
+  ThreadId,
+} from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -41,6 +47,34 @@ vi.mock("~/state/session", () => ({
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
+// Stubbed at the direct dependency rather than letting the real module pull in
+// `useSettings` -> `state/server`, which would drag the whole settings and
+// connection graph into a test that only cares about the browser chrome.
+vi.mock("~/browser/browserDefaults", () => ({
+  useBrowserDefaults: () => ({
+    viewport: FILL_PREVIEW_VIEWPORT,
+    zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
+    appearance: DEFAULT_PREVIEW_APPEARANCE,
+    autoShowFloatingPreview: true,
+  }),
+  getBrowserDefaults: () => ({
+    viewport: FILL_PREVIEW_VIEWPORT,
+    zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
+    appearance: DEFAULT_PREVIEW_APPEARANCE,
+    autoShowFloatingPreview: true,
+  }),
+  browserDefaultOpenViewport: () => FILL_PREVIEW_VIEWPORT,
+  browserDefaultTabState: () => ({
+    zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
+    colorScheme: DEFAULT_PREVIEW_APPEARANCE,
+  }),
+  browserResponsiveViewportForToggle: () => ({
+    _tag: "freeform" as const,
+    width: 1024,
+    height: 768,
+  }),
+}));
+
 vi.mock("~/composerDraftStore", () => ({
   useComposerDraftStore: (
     select: (store: { addPreviewAnnotation: () => void; addImage: () => void }) => unknown,
@@ -73,6 +107,8 @@ vi.mock("~/previewStateStore", () => ({
         zoomFactor: 1,
         pictureInPicture: mocks.pictureInPicture,
         colorScheme: "system",
+        audioMuted: false,
+        audible: false,
         controller: "none",
       },
     },

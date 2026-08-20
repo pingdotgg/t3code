@@ -62,7 +62,13 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
-const CURRENT_CODEX_MODELS = new Set(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+const CURRENT_CODEX_MODELS = new Set([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-daybreak-blue-latest",
+  "gpt-daybreak-red-latest",
+]);
 
 export function isLegacyCodexModel(model: string): boolean {
   return !CURRENT_CODEX_MODELS.has(model);

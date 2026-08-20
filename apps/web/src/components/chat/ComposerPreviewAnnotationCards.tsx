@@ -6,6 +6,7 @@ import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ComposerPreviewAnnotationCardsProps {
   annotations: ReadonlyArray<PreviewAnnotationPayload>;
@@ -16,14 +17,19 @@ interface ComposerPreviewAnnotationCardsProps {
 }
 
 function TargetStat(props: { icon: ReactNode; count: number; label: string }) {
+  const tooltipText = `${props.count} ${props.label}${props.count === 1 ? "" : "s"}`;
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
-      title={`${props.count} ${props.label}${props.count === 1 ? "" : "s"}`}
-    >
-      {props.icon}
-      {props.count}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+            {props.icon}
+            {props.count}
+          </span>
+        }
+      />
+      <TooltipPopup side="top">{tooltipText}</TooltipPopup>
+    </Tooltip>
   );
 }
 
