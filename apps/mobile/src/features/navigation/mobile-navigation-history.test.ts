@@ -8,10 +8,14 @@ describe("createMobileNavigationHistory", () => {
     history.visit("/threads/env/thread-a");
     history.visit("/threads/env/thread-b");
 
-    expect(history.back()).toBe("/threads/env/thread-a");
+    const backTarget = history.backTarget();
+    expect(backTarget).toBe("/threads/env/thread-a");
+    history.visit(backTarget!);
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
 
-    expect(history.forward()).toBe("/threads/env/thread-b");
+    const forwardTarget = history.forwardTarget();
+    expect(forwardTarget).toBe("/threads/env/thread-b");
+    history.visit(forwardTarget!);
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
   });
 
@@ -19,12 +23,12 @@ describe("createMobileNavigationHistory", () => {
     const history = createMobileNavigationHistory("/");
     history.visit("/threads/env/thread-a");
     history.visit("/threads/env/thread-b");
-    history.back();
+    history.visit(history.backTarget()!);
 
     history.visit("/settings");
 
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
-    expect(history.forward()).toBeNull();
+    expect(history.forwardTarget()).toBeNull();
   });
 
   it("recognizes native back navigation", () => {
@@ -35,6 +39,17 @@ describe("createMobileNavigationHistory", () => {
     history.visit("/threads/env/thread-a");
 
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
-    expect(history.forward()).toBe("/settings");
+    expect(history.forwardTarget()).toBe("/settings");
+  });
+
+  it("reconciles non-adjacent native back navigation without adding a duplicate", () => {
+    const history = createMobileNavigationHistory("/");
+    history.visit("/threads/env/thread-a");
+    history.visit("/threads/env/thread-b");
+
+    history.visit("/");
+
+    expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: true });
+    expect(history.forwardTarget()).toBe("/threads/env/thread-a");
   });
 });

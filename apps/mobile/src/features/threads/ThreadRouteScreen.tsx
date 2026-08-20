@@ -30,6 +30,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
+import { createNativeNavigationHistoryItems } from "../navigation/native-navigation-history-items";
 
 import {
   useRemoteConnections,
@@ -641,13 +642,13 @@ function ThreadRouteContent(
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
   const compactRightHeaderItemsWithHistory = useMemo<NativeHeaderItems>(
     () => [
-      withNativeGlassHeaderItem({
-        accessibilityLabel: "Forward",
-        disabled: !navigationHistory.canGoForward,
-        icon: { name: "chevron.right", type: "sfSymbol" as const },
-        identifier: "thread-navigation-forward",
-        onPress: navigationHistory.forward,
-        type: "button" as const,
+      ...createNativeNavigationHistoryItems({
+        canGoBack: navigationHistory.canGoBack,
+        canGoForward: navigationHistory.canGoForward,
+        identifierPrefix: "thread-navigation",
+        includeBack: false,
+        onBack: navigationHistory.back,
+        onForward: navigationHistory.forward,
       }),
       ...compactRightHeaderItems,
     ],

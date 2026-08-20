@@ -5,6 +5,7 @@ import type {
 
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import { createNativeNavigationHistoryItems } from "../navigation/native-navigation-history-items";
 
 type NativeHeaderMenuItems = NativeStackHeaderItemMenu["menu"]["items"];
 type NativeHeaderIcon = NonNullable<Extract<NativeStackHeaderItem, { type: "button" }>["icon"]>;
@@ -32,9 +33,8 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
 }
 
 /**
- * Right-side UINavigationBar items for the sidebar column: the thread list
- * filter/sort menu plus the settings button, sharing one glass capsule —
- * the Messages-style grouped header buttons.
+ * Right-side UINavigationBar items for the sidebar column: navigation history,
+ * the thread-list menu, and settings, sharing one Messages-style glass group.
  */
 export function createSidebarHeaderItems(input: {
   readonly canGoBack: boolean;
@@ -46,21 +46,12 @@ export function createSidebarHeaderItems(input: {
   readonly onOpenSettings: () => void;
 }): NativeStackHeaderItem[] {
   return [
-    withNativeGlassHeaderItem({
-      type: "button",
-      label: "",
-      accessibilityLabel: "Back",
-      disabled: !input.canGoBack,
-      icon: sfSymbolIcon("chevron.left"),
-      onPress: input.onBack,
-    }),
-    withNativeGlassHeaderItem({
-      type: "button",
-      label: "",
-      accessibilityLabel: "Forward",
-      disabled: !input.canGoForward,
-      icon: sfSymbolIcon("chevron.right"),
-      onPress: input.onForward,
+    ...createNativeNavigationHistoryItems({
+      canGoBack: input.canGoBack,
+      canGoForward: input.canGoForward,
+      identifierPrefix: "sidebar-navigation",
+      onBack: input.onBack,
+      onForward: input.onForward,
     }),
     withNativeGlassHeaderItem({
       type: "menu",

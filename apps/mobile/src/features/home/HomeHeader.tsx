@@ -17,6 +17,7 @@ import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { MobileNavigationHistoryButtons } from "../navigation/MobileNavigationHistoryButtons";
 import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
+import { createNativeNavigationHistoryItems } from "../navigation/native-navigation-history-items";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import {
   createNativeMailSearchToolbarItem,
@@ -323,26 +324,14 @@ function IosHomeHeader(props: HomeHeaderProps) {
     listOrganization: !threadListV2Enabled,
   });
   const navigationHeaderItems = useMemo(
-    () => [
-      withNativeGlassHeaderItem({
-        accessibilityLabel: "Back",
-        disabled: !navigationHistory.canGoBack,
-        icon: { name: "chevron.left", type: "sfSymbol" } as const,
-        identifier: "home-navigation-back",
-        label: "",
-        onPress: navigationHistory.back,
-        type: "button" as const,
+    () =>
+      createNativeNavigationHistoryItems({
+        canGoBack: navigationHistory.canGoBack,
+        canGoForward: navigationHistory.canGoForward,
+        identifierPrefix: "home-navigation",
+        onBack: navigationHistory.back,
+        onForward: navigationHistory.forward,
       }),
-      withNativeGlassHeaderItem({
-        accessibilityLabel: "Forward",
-        disabled: !navigationHistory.canGoForward,
-        icon: { name: "chevron.right", type: "sfSymbol" } as const,
-        identifier: "home-navigation-forward",
-        label: "",
-        onPress: navigationHistory.forward,
-        type: "button" as const,
-      }),
-    ],
     [navigationHistory],
   );
 

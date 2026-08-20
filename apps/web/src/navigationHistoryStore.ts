@@ -7,8 +7,10 @@ export interface NavigationHistorySnapshot {
 
 export interface NavigationHistory {
   readonly back: () => void;
+  readonly dispose: () => void;
   readonly forward: () => void;
   readonly getSnapshot: () => NavigationHistorySnapshot;
+  readonly start: () => void;
   readonly subscribe: (listener: () => void) => () => void;
 }
 
@@ -53,22 +55,27 @@ export function createNavigationHistory(history: RouterHistory): NavigationHisto
         history.back();
       }
     },
+    dispose: () => {
+      stopTracking?.();
+      stopTracking = null;
+    },
     forward: () => {
       if (snapshot.canGoForward) {
         history.forward();
       }
     },
     getSnapshot: () => snapshot,
+    start: () => {
+      if (stopTracking) {
+        return;
+      }
+      maximumIndex = Math.max(maximumIndex, history.location.state.__TSR_index);
+      snapshot = snapshotFor(history, maximumIndex);
+      stopTracking = history.subscribe(update);
+    },
     subscribe: (listener) => {
       listeners.add(listener);
-      stopTracking ??= history.subscribe(update);
-      return () => {
-        listeners.delete(listener);
-        if (listeners.size === 0) {
-          stopTracking?.();
-          stopTracking = null;
-        }
-      };
+      return () => listeners.delete(listener);
     },
   };
 }
@@ -81,6 +88,7 @@ export function registerNavigationHistory(history: RouterHistory): NavigationHis
     return existing;
   }
   const navigationHistory = createNavigationHistory(history);
+  navigationHistory.start();
   navigationHistoryByRouterHistory.set(history, navigationHistory);
   return navigationHistory;
 }
