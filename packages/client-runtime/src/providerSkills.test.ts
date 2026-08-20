@@ -2,8 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatProviderSkillDisplayName,
-  formatProviderSkillInstallSource,
-} from "./providerSkillPresentation";
+  resolveProviderSkillSourceKind,
+} from "./providerSkills.ts";
 
 describe("formatProviderSkillDisplayName", () => {
   it("prefers the provider display name", () => {
@@ -24,34 +24,54 @@ describe("formatProviderSkillDisplayName", () => {
   });
 });
 
-describe("formatProviderSkillInstallSource", () => {
+describe("resolveProviderSkillSourceKind", () => {
   it("marks plugin-backed skills as app installs", () => {
     expect(
-      formatProviderSkillInstallSource({
+      resolveProviderSkillSourceKind({
         path: "/Users/julius/.codex/plugins/cache/openai-curated/github/skills/gh-fix-ci/SKILL.md",
         scope: "user",
       }),
-    ).toBe("App");
+    ).toBe("app");
   });
 
-  it("maps standard scopes to user-facing labels", () => {
+  it("maps standard scopes to source kinds", () => {
     expect(
-      formatProviderSkillInstallSource({
-        path: "/Users/julius/.agents/skills/agent-browser/SKILL.md",
-        scope: "user",
+      resolveProviderSkillSourceKind({
+        path: "/workspace/.codex/skills/review-follow-up/SKILL.md",
+        scope: "repo",
       }),
-    ).toBe("Personal");
+    ).toBe("repo");
     expect(
-      formatProviderSkillInstallSource({
-        path: "/usr/local/share/codex/skills/imagegen/SKILL.md",
-        scope: "system",
-      }),
-    ).toBe("System");
-    expect(
-      formatProviderSkillInstallSource({
+      resolveProviderSkillSourceKind({
         path: "/workspace/.codex/skills/review-follow-up/SKILL.md",
         scope: "project",
       }),
-    ).toBe("Project");
+    ).toBe("project");
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/Users/julius/.agents/skills/agent-browser/SKILL.md",
+        scope: "user",
+      }),
+    ).toBe("personal");
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/usr/local/share/codex/skills/imagegen/SKILL.md",
+        scope: "system",
+      }),
+    ).toBe("system");
+  });
+
+  it("keeps unknown and missing scopes usable", () => {
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/opt/skills/team-review/SKILL.md",
+        scope: "team_shared",
+      }),
+    ).toBe("other");
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/opt/skills/team-review/SKILL.md",
+      }),
+    ).toBe("other");
   });
 });

@@ -408,6 +408,60 @@ describe("deriveActivePlanState", () => {
       steps: [{ step: "Write tests", status: "completed" }],
     });
   });
+
+  it("starts timing again after a plan is cleared and recreated", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-old-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-old-complete",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "completed" }] },
+      }),
+      makeActivity({
+        id: "plan-clear",
+        createdAt: "2026-02-23T00:00:06.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [] },
+      }),
+      makeActivity({
+        id: "plan-new-start",
+        createdAt: "2026-02-23T00:00:10.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-new-complete",
+        createdAt: "2026-02-23T00:00:13.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { plan: [{ step: "Check", status: "completed" }] },
+      }),
+    ];
+
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
+      { durationMs: 3_000, step: "Check", status: "completed" },
+    ]);
+  });
 });
 
 describe("deriveTurnPlans", () => {
@@ -455,7 +509,9 @@ describe("deriveTurnPlans", () => {
       createdAt: "2026-02-23T00:00:01.000Z",
       turnId: "turn-1",
     });
-    expect(turnPlans[0]?.plan.steps).toEqual([{ step: "Inspect code", status: "completed" }]);
+    expect(turnPlans[0]?.plan.steps).toEqual([
+      { durationMs: 4_000, step: "Inspect code", status: "completed" },
+    ]);
     expect(turnPlans[1]?.plan.steps).toEqual([{ step: "Ship it", status: "pending" }]);
   });
 
@@ -472,6 +528,110 @@ describe("deriveTurnPlans", () => {
       }),
     ];
     expect(deriveTurnPlans(activities)).toEqual([]);
+  });
+
+  it("tracks repeated step labels independently", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-1a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "Check", status: "inProgress" },
+            { step: "Check", status: "pending" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-1b",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "Check", status: "completed" },
+            { step: "Check", status: "inProgress" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-1c",
+        createdAt: "2026-02-23T00:00:11.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "Check", status: "completed" },
+            { step: "Check", status: "completed" },
+          ],
+        },
+      }),
+    ];
+
+    expect(deriveTurnPlans(activities)[0]?.plan.steps).toEqual([
+      { durationMs: 4_000, step: "Check", status: "completed" },
+      { durationMs: 6_000, step: "Check", status: "completed" },
+    ]);
+  });
+
+  it("derives fallback durations in completion order", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "First", status: "pending" },
+            { step: "Second", status: "pending" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-second-complete",
+        createdAt: "2026-02-23T00:00:06.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "First", status: "pending" },
+            { step: "Second", status: "completed" },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "plan-first-complete",
+        createdAt: "2026-02-23T00:00:11.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [
+            { step: "First", status: "completed" },
+            { step: "Second", status: "completed" },
+          ],
+        },
+      }),
+    ];
+
+    expect(deriveTurnPlans(activities)[0]?.plan.steps).toEqual([
+      { durationMs: 5_000, step: "First", status: "completed" },
+      { durationMs: 5_000, step: "Second", status: "completed" },
+    ]);
   });
 
   it("drops a turn's chip when a later snapshot clears the plan", () => {

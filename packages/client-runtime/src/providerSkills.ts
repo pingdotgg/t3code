@@ -1,5 +1,7 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 
+export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
+
 function titleCaseWords(value: string): string {
   const words: string[] = [];
   for (const segment of value.split(/[\s:_-]+/)) {
@@ -23,31 +25,32 @@ export function formatProviderSkillDisplayName(
   return titleCaseWords(skill.name);
 }
 
-export function formatProviderSkillInstallSource(
+export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
-): string | null {
+): ProviderSkillSourceKind {
   const normalizedPath = normalizePathSeparators(skill.path);
   if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
-    return "App";
+    return "app";
   }
 
   const normalizedScope = skill.scope?.trim().toLowerCase();
-  if (normalizedScope === "system") {
-    return "System";
+  switch (normalizedScope) {
+    case "repo":
+    case "repository":
+      return "repo";
+    case "project":
+    case "workspace":
+    case "local":
+      return "project";
+    case "user":
+    case "personal":
+      return "personal";
+    case "system":
+      return "system";
+    case undefined:
+    case "":
+      return "other";
+    default:
+      return "other";
   }
-  if (
-    normalizedScope === "project" ||
-    normalizedScope === "workspace" ||
-    normalizedScope === "local"
-  ) {
-    return "Project";
-  }
-  if (normalizedScope === "user" || normalizedScope === "personal") {
-    return "Personal";
-  }
-  if (normalizedScope) {
-    return titleCaseWords(normalizedScope);
-  }
-
-  return null;
 }

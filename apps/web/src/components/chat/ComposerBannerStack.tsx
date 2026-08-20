@@ -26,7 +26,7 @@ const exitTransitionStyle = {
 // banners are stacked behind it, so its border must match the severity of the
 // first hidden banner — a neutral banner must not masquerade as a warning.
 const stackCapBorderClass: Record<ComposerBannerStackItem["variant"], string> = {
-  default: "border-border",
+  default: "border-[var(--chat-composer-attached-outline)]",
   error: "border-destructive/24",
   info: "border-info/24",
   success: "border-success/24",
@@ -98,7 +98,10 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   };
 
   return (
-    <div className={cn("group/banner-stack mx-auto mb-2 max-w-3xl", className)}>
+    <div
+      className={cn("group/banner-stack chat-composer-drawer-slot", className)}
+      data-composer-banner-drawer="true"
+    >
       <div
         className={cn(
           "relative flex flex-col-reverse",
@@ -108,8 +111,8 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         {showCollapsedStackCap && firstStackedItem ? (
           <div
             className={cn(
-              "pointer-events-none absolute inset-x-0 -top-3 z-0 mx-auto h-3 rounded-t-[22px]",
-              "border border-b-0 bg-background/96 shadow-[0_6px_18px_rgba(0,0,0,0.06)]",
+              "pointer-events-none absolute inset-x-0 -top-3 z-0 mx-auto h-3 rounded-t-2xl",
+              "chat-composer-banner-stack-cap border border-b-0 shadow-[0_6px_18px_rgba(0,0,0,0.06)]",
               stackCapBorderClass[firstStackedItem.variant],
               "transition-opacity duration-150 ease-out",
               "group-hover/banner-stack:opacity-0 group-focus-within/banner-stack:opacity-0",
@@ -130,6 +133,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         >
           <ComposerBannerStackAlert
             item={frontItem}
+            attached
             exiting={exitingItemId === frontItem.id}
             onDismissRequest={() => requestDismiss(frontItem)}
           />
@@ -162,6 +166,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
                   >
                     <ComposerBannerStackAlert
                       item={item}
+                      attached={false}
                       exiting={exitingItemId === item.id}
                       onDismissRequest={() => requestDismiss(item)}
                     />
@@ -178,10 +183,12 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
 
 function ComposerBannerStackAlert({
   item,
+  attached,
   exiting,
   onDismissRequest,
 }: {
   readonly item: ComposerBannerStackItem;
+  readonly attached: boolean;
   readonly exiting: boolean;
   readonly onDismissRequest: () => void;
 }) {
@@ -190,7 +197,12 @@ function ComposerBannerStackAlert({
   return (
     <Alert
       variant={item.variant}
-      className={cn("alert-glass rounded-[22px]", item.className)}
+      className={cn(
+        attached
+          ? "chat-composer-drawer-surface chat-composer-drawer-attached px-3 pt-2 pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)] text-xs sm:px-4"
+          : "alert-glass rounded-[22px]",
+        item.className,
+      )}
       data-variant={item.variant}
     >
       {item.icon}
