@@ -724,14 +724,20 @@ export function deriveMessagesTimelineRows(input: {
     return false;
   });
 
-  const activeToolEntries = activeEntries.flatMap((entry) =>
-    entry.kind === "work" &&
-    entry.entry.agentSpawn === undefined &&
-    entry.entry.tone !== "error" &&
-    workLogEntryIsToolLike(entry.entry)
-      ? [entry]
-      : [],
-  );
+  const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
+  for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
+    const entry = input.timelineEntries[index]!;
+    if (
+      !entryBelongsToActiveTurn(entry, index) ||
+      entry.kind !== "work" ||
+      entry.entry.agentSpawn !== undefined ||
+      entry.entry.tone === "error" ||
+      !workLogEntryIsToolLike(entry.entry)
+    ) {
+      break;
+    }
+    activeToolEntries.unshift(entry);
+  }
   const activeWorkEntryIds = new Set(activeToolEntries.map((entry) => entry.id));
   const visibleActiveToolEntries = omitSupersededLifecycleMarkers(
     activeToolEntries.filter((entry) => isVisibleActiveToolEntry(entry.entry)),
