@@ -329,19 +329,19 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   terminology?: ChangeRequestTerminology;
 }): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
-  const suffix = ` on "${branchLabel}". You can continue on this ref or create a feature ref and run the same action there.`;
+  const suffix = ` on "${branchLabel}". You can continue on this branch or create a feature branch and run the same action there.`;
   const terminology = input.terminology ?? DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
 
   if (input.action === "push" || input.action === "commit_push") {
     if (input.includesCommit) {
       return {
-        title: "Commit & push to default ref?",
+        title: "Commit & push to default branch?",
         description: `This action will commit and push changes${suffix}`,
         continueLabel: `Commit & push to ${branchLabel}`,
       };
     }
     return {
-      title: "Push to default ref?",
+      title: "Push to default branch?",
       description: `This action will push local commits${suffix}`,
       continueLabel: `Push to ${branchLabel}`,
     };
@@ -349,13 +349,13 @@ export function resolveDefaultBranchActionDialogCopy(input: {
 
   if (input.includesCommit) {
     return {
-      title: `Commit, push & create ${terminology.shortLabel} from default ref?`,
+      title: `Commit, push & create ${terminology.shortLabel} from default branch?`,
       description: `This action will commit, push, and create a ${terminology.singular}${suffix}`,
       continueLabel: `Commit, push & create ${terminology.shortLabel}`,
     };
   }
   return {
-    title: `Push & create ${terminology.shortLabel} from default ref?`,
+    title: `Push & create ${terminology.shortLabel} from default branch?`,
     description: `This action will push local commits and create a ${terminology.singular}${suffix}`,
     continueLabel: `Push & create ${terminology.shortLabel}`,
   };
