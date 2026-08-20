@@ -84,15 +84,34 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
     ? [path.join(resolvedCustomConfigDir, "skills")]
     : [path.join(defaultConfigDir, "skills"), path.join(homeDir, ".opencode", "skills")];
 
+  const projectDirs: ReadonlyArray<string> = cwd
+    ? yield* Effect.gen(function* () {
+        const dirs: Array<string> = [];
+        let current = path.resolve(cwd);
+        while (true) {
+          dirs.push(current);
+          const gitPath = path.join(current, ".git");
+          const hasGit = yield* fileSystem.exists(gitPath).pipe(Effect.orElseSucceed(() => false));
+          if (hasGit) {
+            break;
+          }
+          const parent = path.dirname(current);
+          if (parent === current) {
+            break;
+          }
+          current = parent;
+        }
+        return dirs.reverse();
+      })
+    : [];
+
   const roots: ReadonlyArray<{ directory: string; scope: SkillScope }> = [
     ...userRoots.map((directory) => ({ directory, scope: "user" as const })),
-    ...(cwd
-      ? [
-          { directory: path.join(cwd, ".claude", "skills"), scope: "project" as const },
-          { directory: path.join(cwd, ".agents", "skills"), scope: "project" as const },
-          { directory: path.join(cwd, ".opencode", "skills"), scope: "project" as const },
-        ]
-      : []),
+    ...projectDirs.flatMap((dir) => [
+      { directory: path.join(dir, ".claude", "skills"), scope: "project" as const },
+      { directory: path.join(dir, ".agents", "skills"), scope: "project" as const },
+      { directory: path.join(dir, ".opencode", "skills"), scope: "project" as const },
+    ]),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();

@@ -194,6 +194,57 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
     }),
   );
 
+  it.effect(
+    "discovers project skills from git ancestor directories and overrides appropriately",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+        const repoRoot = path.join(tempDir, "repo");
+        const nestedWorkspace = path.join(repoRoot, "packages", "app");
+
+        // Mark repoRoot with .git
+        yield* fs.makeDirectory(path.join(repoRoot, ".git"), { recursive: true });
+        yield* fs.makeDirectory(nestedWorkspace, { recursive: true });
+
+        // Root skill
+        yield* writeSkill(
+          path.join(repoRoot, ".opencode", "skills"),
+          "root-skill",
+          ["---", "name: root-skill", "description: Root skill.", "---"].join("\n"),
+        );
+
+        // Overridden skill in ancestor vs child
+        yield* writeSkill(
+          path.join(repoRoot, ".claude", "skills"),
+          "shared-skill",
+          ["---", "name: shared-skill", "description: Root shared.", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(nestedWorkspace, ".opencode", "skills"),
+          "shared-skill",
+          ["---", "name: shared-skill", "description: Child shared.", "---"].join("\n"),
+        );
+
+        const skills = yield* discoverOpenCodeSkills(nestedWorkspace, {
+          OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-home"),
+        });
+
+        assert.deepEqual(
+          skills.map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            scope: skill.scope,
+          })),
+          [
+            { name: "root-skill", description: "Root skill.", scope: "project" },
+            { name: "shared-skill", description: "Child shared.", scope: "project" },
+          ],
+        );
+      }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
