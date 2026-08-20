@@ -790,10 +790,6 @@ export default function FilePreviewPanel({
   const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
   const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
-  // Turn checkpoints drive a refetch of whatever this panel shows: the open
-  // file when an unreconciled turn touched it, the tree when one changed
-  // anything, and both after a revert, since checkpoints cannot describe a
-  // revert's change set.
   const checkpointsSnapshot = useCheckpointsSnapshot(threadRef);
   const explorerVisible = explorerOpen || relativePath === null;
   const refreshScope = `${threadRef.environmentId}:${threadRef.threadId}:${cwd}`;

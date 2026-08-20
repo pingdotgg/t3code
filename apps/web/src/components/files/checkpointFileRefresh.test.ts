@@ -72,8 +72,6 @@ describe("evaluateScopeRefresh", () => {
   });
 
   it("catches a relevant turn buried under later irrelevant turns", () => {
-    // Scope inactive across turns 3 (touches the file) and 4 (does not);
-    // reconciling against only the newest checkpoint would miss turn 3.
     const result = evaluateScopeRefresh(
       { completedAt: "T2", maxTurnCount: 2 },
       snapshot(4, [
@@ -96,9 +94,6 @@ describe("evaluateScopeRefresh", () => {
   });
 
   it("refreshes when reverting away only a mid-turn placeholder", () => {
-    // An interrupted turn leaves a placeholder at count 3; the marker saw it
-    // via maxTurnCount. Reverting it away keeps the newest captured
-    // checkpoint identical, so only the count drop signals the revert.
     const result = evaluateScopeRefresh(
       { completedAt: "T2", maxTurnCount: 3 },
       snapshot(2, [{ completedAt: "T2", files: [file("src/main.tsx")] }]),
@@ -108,9 +103,6 @@ describe("evaluateScopeRefresh", () => {
   });
 
   it("refreshes when a revert-then-redo recreated checkpoints under old turn counts", () => {
-    // While the scope was inactive: revert from turn 3 to 1, then two new
-    // turns recreate counts 2 and 3. Counts and ref names match the marker's
-    // era; only the capture times reveal the new work.
     const result = evaluateScopeRefresh(
       { completedAt: "T3", maxTurnCount: 3 },
       snapshot(3, [
@@ -147,8 +139,6 @@ describe("buildSnapshot", () => {
   });
 
   it("scans interrupted and failed captures, whose file lists are real", () => {
-    // An interrupted turn is captured with status "missing" but a genuine
-    // changed-file list; dropping it would hide the turn's partial edits.
     const result = buildSnapshot([
       checkpoint(1, "ready", "T1", [file("docs/other.md")]),
       checkpoint(2, "missing", "T2", [file("src/main.tsx")]),
