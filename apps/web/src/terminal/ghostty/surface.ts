@@ -336,6 +336,42 @@ export function isTerminalCopyShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
+/**
+ * Canvas terminals have no DOM selection. Native copy and Electron's Edit
+ * menu `role: "copy"` both read the focused textarea, so an empty IME field
+ * writes blankness to the clipboard. Park the Ghostty selection there first.
+ */
+export function primeTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value" | "select">,
+  selection: string,
+): void {
+  input.value = selection;
+  if (selection.length === 0) return;
+  input.select();
+}
+
+export function clearPrimedTerminalCopyInput(input: Pick<HTMLTextAreaElement, "value">): void {
+  if (input.value.length === 0) return;
+  input.value = "";
+}
+
+/**
+ * Only a copy event that actually received the selection may cancel the
+ * clipboard.writeText fallback. Claiming without clipboardData (Electron's
+ * menu Copy) used to preventDefault an empty write and skip the fallback,
+ * which is how Cmd+C copied blankness.
+ */
+export function applyTerminalCopyEvent(
+  selection: string,
+  clipboardData: { setData: (type: string, data: string) => void } | null | undefined,
+): { preventDefault: boolean; claimWriteFallback: boolean } {
+  if (selection.length === 0 || !clipboardData) {
+    return { preventDefault: false, claimWriteFallback: false };
+  }
+  clipboardData.setData("text/plain", selection);
+  return { preventDefault: true, claimWriteFallback: true };
+}
+
 export function isTerminalPasteShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
@@ -866,6 +902,7 @@ export class GhosttyTerminalSurface {
   }
 
   clearSelection(): void {
+    clearPrimedTerminalCopyInput(this.input);
     this.core.clearSelection();
     this.selectionEnd = null;
     this.selectionAnchorScreen = null;
@@ -941,6 +978,8 @@ export class GhosttyTerminalSurface {
       // clipboard write against it the same way paste races its read. The
       // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
       // inspect), so synthesize one with execCommand("copy").
+      const selection = this.getSelection();
+      primeTerminalCopyInput(this.input, selection);
       if (event.shiftKey) {
         event.preventDefault();
         document.execCommand("copy");
@@ -955,12 +994,10 @@ export class GhosttyTerminalSurface {
         if (typeof clipboard?.writeText === "function") {
           // Defer the write past the default action: the native copy event
           // (dispatched synchronously with the default action) claims the
-          // token first when it fires, and the write covers browsers whose
-          // shortcut produces no copy event. Skipping a write the native
-          // event already handled stops a stale resolution from clobbering a
-          // clipboard the user filled after this copy.
+          // token first when it actually writes, and the write covers browsers
+          // whose shortcut produces no copy event. The primed textarea is what
+          // Electron's edit-menu Copy reads if it runs after this handler.
           const token = ++this.copyShortcutToken;
-          const selection = this.getSelection();
           void Promise.resolve().then(() => {
             if (this.disposed || this.copyShortcutToken !== token) return;
             void clipboard.writeText(selection).then(
@@ -989,6 +1026,7 @@ export class GhosttyTerminalSurface {
       this.suppressedKeyCodes.add(event.code);
       return;
     }
+    clearPrimedTerminalCopyInput(this.input);
     if (isTerminalPasteShortcut(event)) {
       this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;
@@ -1073,14 +1111,17 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onCopyEvent = (event: ClipboardEvent) => {
-    if (!this.hasSelection()) return;
-    event.preventDefault();
-    event.clipboardData?.setData("text/plain", this.getSelection());
-    // The native event beat any deferred write; drop the in-flight fallback.
-    this.copyShortcutToken += 1;
-    if (this.clearSelectionAfterCopy) {
-      this.clearSelectionAfterCopy = false;
-      this.clearSelection();
+    const selection = this.hasSelection() ? this.getSelection() : this.input.value;
+    const result = applyTerminalCopyEvent(selection, event.clipboardData);
+    if (result.preventDefault) event.preventDefault();
+    if (result.claimWriteFallback) {
+      // The native event actually wrote the selection; drop the in-flight
+      // writeText so a late resolution cannot clobber a later user copy.
+      this.copyShortcutToken += 1;
+      if (this.clearSelectionAfterCopy) {
+        this.clearSelectionAfterCopy = false;
+        this.clearSelection();
+      }
     }
   };
 
@@ -1098,6 +1139,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onCompositionStart = () => {
+    clearPrimedTerminalCopyInput(this.input);
     this.clearCompositionInputSuppression();
     this.composing = true;
   };

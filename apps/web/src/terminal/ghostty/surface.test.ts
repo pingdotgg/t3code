@@ -5,6 +5,8 @@ import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   advanceTerminalSelectionClickSequence,
+  applyTerminalCopyEvent,
+  clearPrimedTerminalCopyInput,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
@@ -12,6 +14,7 @@ import {
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
+  primeTerminalCopyInput,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
@@ -230,6 +233,51 @@ describe("isTerminalCopyShortcut", () => {
   it("uses the produced character instead of the physical key position", () => {
     expect(isTerminalCopyShortcut(event({ key: "C", metaKey: true }), "MacIntel")).toBe(true);
     expect(isTerminalCopyShortcut(event({ key: "j", metaKey: true }), "MacIntel")).toBe(false);
+  });
+});
+
+describe("applyTerminalCopyEvent", () => {
+  it("writes the selection and claims the fallback when clipboardData is present", () => {
+    const setData = vi.fn();
+    expect(applyTerminalCopyEvent("ls -la", { setData })).toEqual({
+      preventDefault: true,
+      claimWriteFallback: true,
+    });
+    expect(setData).toHaveBeenCalledWith("text/plain", "ls -la");
+  });
+
+  it("leaves the writeText fallback alive when clipboardData is missing", () => {
+    // Electron's edit-menu Copy often delivers a copy event with no
+    // clipboardData. Claiming that event used to skip writeText and copy the
+    // empty IME textarea, which is the blank clipboard users paste.
+    expect(applyTerminalCopyEvent("ls -la", null)).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+    expect(applyTerminalCopyEvent("", { setData: vi.fn() })).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+  });
+});
+
+describe("primeTerminalCopyInput", () => {
+  it("selects the Ghostty selection in the hidden textarea so native copy has text", () => {
+    const input = {
+      value: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+      select() {
+        this.selectionStart = 0;
+        this.selectionEnd = this.value.length;
+      },
+    };
+    primeTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("git status");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(10);
+    clearPrimedTerminalCopyInput(input);
+    expect(input.value).toBe("");
   });
 });
 
