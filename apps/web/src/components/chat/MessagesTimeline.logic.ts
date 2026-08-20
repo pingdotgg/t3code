@@ -704,6 +704,10 @@ export function deriveMessagesTimelineRows(input: {
     input.isWorking &&
     index >= activeTurnHeaderIndex &&
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
+  const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
+    input.isWorking &&
+    (entry.toolLifecycleStatus === "inProgress" || entry.sourceActivityKind === "task.progress") &&
+    (unsettledTurnId === null || entry.turnId === unsettledTurnId);
   const isVisibleActiveToolEntry = (entry: WorkLogEntry) =>
     workLogEntryIsToolLike(entry) && workEntryIsVisibleInGroup(entry, true);
   const activeEntries = input.isWorking
@@ -837,7 +841,9 @@ export function deriveMessagesTimelineRows(input: {
         cursor += 1;
       }
       const visibleGroupedEntries = omitSupersededLifecycleMarkers(
-        groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry)),
+        groupedEntries.filter((entry) =>
+          workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
+        ),
         (entry) => entry,
       );
       if (visibleGroupedEntries.length > 0) {
@@ -847,7 +853,33 @@ export function deriveMessagesTimelineRows(input: {
             entry.agentSpawn === undefined &&
             entry.tone !== "error",
         );
-        if (onlyToolEntries) {
+        const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
+        if (onlyToolEntries && activeInProgressToolEntries.length > 0) {
+          const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
+          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
+          nextRows.push({
+            kind: "work-live",
+            id: `work-live:${workGroupIdentity(timelineEntry.id, timelineEntry.entry)}`,
+            createdAt: timelineEntry.createdAt,
+            entry: latestActiveToolEntry,
+            groupedEntries: visibleGroupedEntries,
+            groupId,
+            expanded,
+          });
+          if (expanded) {
+            for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
+              nextRows.push({
+                kind: "work",
+                id: workEntry.id,
+                createdAt: workEntry.createdAt,
+                groupedEntries: [workEntry],
+                isExpandedToolGroupEntry: true,
+                isLastExpandedToolGroupEntry: entryIndex === visibleGroupedEntries.length - 1,
+              });
+            }
+          }
+        } else if (onlyToolEntries) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
