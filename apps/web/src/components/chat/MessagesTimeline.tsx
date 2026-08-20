@@ -206,7 +206,6 @@ interface MessagesTimelineProps {
   onOpenAgents?: () => void;
   isWorking: boolean;
   workingStepLabel?: string | null;
-  activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
@@ -1486,7 +1485,7 @@ function LiveActivityContent({
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot);
-  const failed = row.groupedEntries.some((entry) => workEntryDisplayIndicatesToolFailure(entry));
+  const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
     <button
