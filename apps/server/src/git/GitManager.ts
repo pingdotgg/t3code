@@ -644,7 +644,7 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "GitManager.readRecentCommitSubjects",
         cwd,
-        args: ["log", "-n", String(recentCommitCount), "--pretty=format:%s"],
+        args: ["log", "-n", String(recentCommitCount), "--no-merges", "--pretty=format:%s"],
       })
       .pipe(
         Effect.map((result) =>

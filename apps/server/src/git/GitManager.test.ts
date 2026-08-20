@@ -2953,6 +2953,21 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         "-m",
         "Commit body must not reach PR instructions",
       ]);
+      yield* runGit(repoDir, ["checkout", "-b", "pr-style-example"]);
+      yield* runGit(repoDir, [
+        "commit",
+        "--allow-empty",
+        "-m",
+        "fix(server): preserve authored PR style",
+      ]);
+      yield* runGit(repoDir, ["checkout", "feature-pr-style"]);
+      yield* runGit(repoDir, [
+        "merge",
+        "--no-ff",
+        "pr-style-example",
+        "-m",
+        "Merge noisy PR style example",
+      ]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature-pr-style"]);
       yield* runGit(repoDir, ["config", "branch.feature-pr-style.gh-merge-base", "main"]);
       let commitInstructions: string | undefined;
@@ -2997,6 +3012,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(changeRequestInstructions).toContain("Recent commit subjects from this repository:");
       expect(changeRequestInstructions).toContain("feat(server): add PR style example");
+      expect(changeRequestInstructions).toContain("fix(server): preserve authored PR style");
+      expect(changeRequestInstructions).not.toContain("Merge noisy PR style example");
       expect(changeRequestInstructions).not.toContain("Commit body must not reach PR instructions");
       expect(commitInstructions).toBe(
         "Follow the repository's established commit message style when examples are available.",
