@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  OrchestrationDispatchCommandError,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -10,6 +11,10 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import {
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -49,6 +54,36 @@ export function startNewThreadForProject(
   void handleNewThread(projectRef);
 
   return true;
+}
+
+const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+
+/**
+ * The server marks a command failure only after bootstrap cleanup has deleted
+ * the provisional thread, making its id safe to replace. Unmarked and
+ * transport failures retain the id because the original thread may still
+ * become visible after reconnect.
+ */
+export function shouldReplaceFailedDraftThreadIdentity(input: {
+  isLocalDraftThread: boolean;
+  draftId: string | null;
+  result: AtomCommandResult<unknown, unknown>;
+}): boolean {
+  const failure =
+    input.result._tag === "Failure" ? squashAtomCommandFailure(input.result) : undefined;
+  return (
+    input.isLocalDraftThread &&
+    input.draftId !== null &&
+    isOrchestrationDispatchCommandError(failure) &&
+    failure.provisionalThreadRolledBack === true
+  );
+}
+
+export function resolveOptimisticMessageScopeKey(
+  draftId: string | null,
+  threadId: ThreadId | null,
+): string | null {
+  return draftId ?? threadId;
 }
 
 export function resolveThreadMetadataUpdateForNextTurn(input: {

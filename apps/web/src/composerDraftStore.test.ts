@@ -823,6 +823,95 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("renews only the failed provisional thread identity while preserving the draft", () => {
+    const store = useComposerDraftStore.getState();
+    const replacementThreadId = ThreadId.make("thread-replacement");
+    const secondReplacementThreadId = ThreadId.make("thread-second-replacement");
+    const replacementCreatedAt = "2026-01-02T00:00:00.000Z";
+
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "feature/test",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      envMode: "worktree",
+      startFromOrigin: true,
+    });
+    store.setPrompt(draftId, "retry this message");
+    store.addImage(draftId, makeImage({ id: "img-retry", previewUrl: "blob:retry" }));
+    store.markDraftThreadPromoting(draftId);
+
+    expect(
+      store.replaceFailedDraftThreadIdentity(draftId, {
+        failedThreadId: threadId,
+        nextThreadId: replacementThreadId,
+        createdAt: replacementCreatedAt,
+      }),
+    ).toBe(true);
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      threadId: replacementThreadId,
+      branch: "feature/test",
+      createdAt: replacementCreatedAt,
+      envMode: "worktree",
+      startFromOrigin: true,
+      promotedTo: null,
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
+      replacementThreadId,
+    );
+    expect(draftByKey(draftId)?.prompt).toBe("retry this message");
+    expect(draftByKey(draftId)?.images).toHaveLength(1);
+
+    expect(
+      useComposerDraftStore.getState().replaceFailedDraftThreadIdentity(draftId, {
+        failedThreadId: threadId,
+        nextThreadId: ThreadId.make("thread-stale-replacement"),
+        createdAt: "2026-01-03T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.threadId).toBe(
+      replacementThreadId,
+    );
+
+    expect(
+      useComposerDraftStore.getState().replaceFailedDraftThreadIdentity(draftId, {
+        failedThreadId: replacementThreadId,
+        nextThreadId: secondReplacementThreadId,
+        createdAt: "2026-01-04T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      threadId: secondReplacementThreadId,
+      branch: "feature/test",
+      envMode: "worktree",
+      startFromOrigin: true,
+      promotedTo: null,
+    });
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState());
+    const rehydratedState = persistApi
+      .getOptions()
+      .merge(persistedState, useComposerDraftStore.getInitialState());
+
+    expect(rehydratedState.draftThreadsByThreadKey[draftId]).toMatchObject({
+      threadId: secondReplacementThreadId,
+      branch: "feature/test",
+      envMode: "worktree",
+      startFromOrigin: true,
+      promotedTo: null,
+    });
+    expect(rehydratedState.draftsByThreadKey[draftId]?.prompt).toBe("retry this message");
+  });
+
   it("clears only matching project draft mapping entries", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });

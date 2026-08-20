@@ -1,12 +1,16 @@
 import {
   EnvironmentId,
   MessageId,
+  OrchestrationDispatchCommandError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import type { Thread, ThreadShell } from "../types";
 import {
@@ -26,12 +30,14 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveOptimisticMessageScopeKey,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
+  shouldReplaceFailedDraftThreadIdentity,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -72,6 +78,72 @@ describe("environment reconnect warning grace", () => {
     expect(hasEnvironmentReconnectWarningGraceElapsed(anotherEnvironmentId, environmentId)).toBe(
       false,
     );
+  });
+});
+
+describe("failed draft thread identity replacement", () => {
+  it("replaces an id only after the server acknowledges bootstrap failure", () => {
+    const result = AsyncResult.failure(
+      Cause.fail(
+        new OrchestrationDispatchCommandError({
+          message: "worktree bootstrap failed",
+          provisionalThreadRolledBack: true,
+        }),
+      ),
+    );
+
+    expect(
+      shouldReplaceFailedDraftThreadIdentity({
+        isLocalDraftThread: true,
+        draftId: "draft-1",
+        result,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps optimistic messages scoped to the stable draft across id replacement", () => {
+    expect(resolveOptimisticMessageScopeKey("draft-1", threadId)).toBe("draft-1");
+    expect(resolveOptimisticMessageScopeKey("draft-1", ThreadId.make("thread-replacement"))).toBe(
+      "draft-1",
+    );
+    expect(resolveOptimisticMessageScopeKey(null, threadId)).toBe(threadId);
+  });
+
+  it("keeps the id when a transport failure leaves the server outcome unknown", () => {
+    const result = AsyncResult.failure(
+      Cause.fail(
+        new EnvironmentRpcUnavailableError({
+          environmentId,
+          message: "connection lost",
+        }),
+      ),
+    );
+
+    expect(
+      shouldReplaceFailedDraftThreadIdentity({
+        isLocalDraftThread: true,
+        draftId: "draft-1",
+        result,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the id when the server cannot confirm provisional-thread rollback", () => {
+    const result = AsyncResult.failure(
+      Cause.fail(
+        new OrchestrationDispatchCommandError({
+          message: "worktree bootstrap interrupted",
+        }),
+      ),
+    );
+
+    expect(
+      shouldReplaceFailedDraftThreadIdentity({
+        isLocalDraftThread: true,
+        draftId: "draft-1",
+        result,
+      }),
+    ).toBe(false);
   });
 });
 

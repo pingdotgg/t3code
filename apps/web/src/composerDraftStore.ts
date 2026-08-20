@@ -416,6 +416,15 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  /** Replaces a rolled-back provisional thread identity without touching draft content. */
+  replaceFailedDraftThreadIdentity: (
+    draftId: DraftId,
+    input: {
+      failedThreadId: ThreadId;
+      nextThreadId: ThreadId;
+      createdAt: string;
+    },
+  ) => boolean;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadById: (
     projectRef: ScopedProjectRef,
@@ -2495,6 +2504,32 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               },
             };
           });
+        },
+        replaceFailedDraftThreadIdentity: (draftId, input) => {
+          let replaced = false;
+          set((state) => {
+            const existing = state.draftThreadsByThreadKey[draftId];
+            if (
+              !existing ||
+              existing.threadId !== input.failedThreadId ||
+              input.nextThreadId === input.failedThreadId
+            ) {
+              return state;
+            }
+            replaced = true;
+            return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [draftId]: {
+                  ...existing,
+                  threadId: input.nextThreadId,
+                  createdAt: input.createdAt || existing.createdAt,
+                  promotedTo: null,
+                },
+              },
+            };
+          });
+          return replaced;
         },
         clearProjectDraftThreadId: (projectRef) => {
           set((state) => {

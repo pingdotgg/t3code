@@ -325,10 +325,12 @@ import {
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveOptimisticMessageScopeKey,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
+  shouldReplaceFailedDraftThreadIdentity,
   startNewThreadForProject,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -1340,6 +1342,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const replaceFailedDraftThreadIdentity = useComposerDraftStore(
+    (store) => store.replaceFailedDraftThreadIdentity,
+  );
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
   );
@@ -4127,6 +4132,7 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
 
+  const optimisticMessageScopeKey = resolveOptimisticMessageScopeKey(draftId, threadId);
   useEffect(() => {
     setOptimisticUserMessages((existing) => {
       for (const message of existing) {
@@ -4136,7 +4142,7 @@ function ChatViewContent(props: ChatViewProps) {
     });
     resetLocalDispatch();
     setExpandedImage(null);
-  }, [draftId, resetLocalDispatch, threadId]);
+  }, [optimisticMessageScopeKey, resetLocalDispatch]);
 
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
@@ -5410,6 +5416,20 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (startResult._tag === "Failure") {
         failure = startResult;
+        if (
+          draftId !== null &&
+          shouldReplaceFailedDraftThreadIdentity({
+            isLocalDraftThread,
+            draftId,
+            result: startResult,
+          })
+        ) {
+          replaceFailedDraftThreadIdentity(draftId, {
+            failedThreadId: threadIdForSend,
+            nextThreadId: newThreadId(),
+            createdAt: new Date().toISOString(),
+          });
+        }
       } else {
         turnStartSucceeded = true;
         acknowledgeActiveThreadWoke();
