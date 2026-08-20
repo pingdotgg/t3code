@@ -238,6 +238,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
   },
   {
+    id: "prevent-automatic-sleep",
+    title: "Prevent automatic sleep",
+    to: "/settings/connections",
+    desktopOnly: true,
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",

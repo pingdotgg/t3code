@@ -32,6 +32,16 @@ That gives you:
 - transport security at the network layer
 - less exposure than opening the server to the public internet
 
+## Keeping the Desktop Host Awake
+
+In the desktop app, open **Settings** → **Connections** and turn on **Prevent automatic sleep**
+when this computer should remain available to remote clients. T3 Code then holds the operating
+system's native sleep-prevention assertion for as long as the desktop app is running. You do not
+need to run `caffeinate` or change the computer's system sleep schedule.
+
+The display can still turn off. Manually choosing Sleep or closing a laptop lid can still put the
+computer to sleep, which makes its T3 Code environment unavailable until the computer wakes.
+
 ## Enabling Network Access
 
 There are three ways to reach your server from another device: expose the desktop app's backend,
@@ -43,8 +53,9 @@ If you are already running the desktop app and want to make it reachable from ot
 
 1. Open **Settings** → **Connections**.
 2. Under **This environment**, toggle **Network access** on. This will restart the app and run the backend on all network interfaces.
-3. The settings panel will show the default reachable endpoint, with a `+N` control when more endpoints are available. Expand it to inspect alternatives such as loopback, LAN, private-network, or HTTPS endpoints.
-4. Use **Create Link** to generate a pairing link you can share with another device.
+3. Turn on **Prevent automatic sleep** if this computer should stay reachable while unattended.
+4. The settings panel will show the default reachable endpoint, with a `+N` control when more endpoints are available. Expand it to inspect alternatives such as loopback, LAN, private-network, or HTTPS endpoints.
+5. Use **Create Link** to generate a pairing link you can share with another device.
 
 The default endpoint controls the QR code and primary copy action for pairing links. You can change it from the expanded endpoint list. The preference is stored by endpoint type, so choosing the local LAN endpoint survives normal IP address changes when you move between networks.
 
