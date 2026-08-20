@@ -467,6 +467,68 @@ it.layer(GitSyncTestLayer)("GitSync", (it) => {
         expect(yield* gitSync.treeOfCommit(origin, applyBack.snapshotOid)).not.toBeNull();
       }),
     );
+
+    it.effect(
+      "a file-vs-directory type conflict resolves to the preferred side's whole subtree",
+      () =>
+        Effect.gen(function* () {
+          const gitSync = yield* GitSync.GitSync;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const origin = yield* makeTmpDir();
+          const mirror = yield* makeTmpDir();
+          yield* initOriginRepo(origin);
+          const seed = yield* seedMirror({ origin, mirror, syncId: "seed-7" });
+
+          // Mirror keeps editing the file; origin turns the same path into a
+          // directory with multiple files underneath.
+          yield* write(NodePath.join(mirror, "src/app.ts"), "host version\n");
+          yield* fileSystem.remove(NodePath.join(origin, "src/app.ts"));
+          yield* write(NodePath.join(origin, "src/app.ts/index.ts"), "export const a = 1;\n");
+          yield* write(NodePath.join(origin, "src/app.ts/helper.ts"), "export const b = 2;\n");
+
+          const next = yield* gitSync.createSnapshot({ root: origin, syncId: "sync-d" });
+          const bundlePath = NodePath.join(origin, "..", "sync-d.bundle");
+          yield* gitSync.createIncrementalBundle({
+            root: origin,
+            bundlePath,
+            baseOid: seed.snapshotOid,
+            snapshotRef: GitSync.mirrorSnapshotRef("sync-d"),
+          });
+          yield* gitSync.fetchBundle({
+            root: mirror,
+            bundlePath,
+            refspecs: ["+refs/t3/mirror/snapshots/*:refs/t3/mirror/snapshots/*"],
+          });
+          const apply = yield* gitSync.applySnapshot({
+            root: mirror,
+            syncId: "sync-d",
+            baseOid: seed.snapshotOid,
+            targetOid: next.snapshotOid,
+            conflictPreference: "target",
+          });
+
+          expect(apply.outcome).toBe("conflicted");
+          // merge-tree renames the losing blob aside (src/app.ts~<oid>) rather
+          // than reporting the plain directory path as conflicted.
+          expect(apply.conflictPaths).toHaveLength(1);
+          expect(apply.conflictPaths[0]).toMatch(/^src\/app\.ts~[0-9a-f]+$/);
+          // The origin's whole directory landed, not merge-tree's synthetic
+          // subtree and not a lingering renamed-aside blob.
+          expect(
+            Option.getOrNull(yield* readOption(NodePath.join(mirror, "src/app.ts/index.ts"))),
+          ).toBe("export const a = 1;\n");
+          expect(
+            Option.getOrNull(yield* readOption(NodePath.join(mirror, "src/app.ts/helper.ts"))),
+          ).toBe("export const b = 2;\n");
+          expect(
+            yield* fileSystem
+              .stat(NodePath.join(mirror, "src/app.ts"))
+              .pipe(Effect.map((info) => info.type)),
+          ).toBe("Directory");
+          const srcEntries = yield* fileSystem.readDirectory(NodePath.join(mirror, "src"));
+          expect(srcEntries.some((entry) => entry.startsWith("app.ts~"))).toBe(false);
+        }),
+    );
   });
 
   describe("branch updates", () => {

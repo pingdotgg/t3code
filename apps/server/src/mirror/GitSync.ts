@@ -518,39 +518,63 @@ export const make = Effect.gen(function* () {
         finalTree = yield* withTempIndex(input.root, (env) =>
           Effect.gen(function* () {
             yield* run({ root: input.root, args: ["read-tree", mergedTree], env });
-            const indexInfoLines: string[] = [];
+            const zeroOid = "0".repeat(mergedTree.length);
+            const indexInfoRecords: string[] = [];
             for (const conflictPath of conflictPaths) {
+              // -r: a conflict can be a file on one side and a directory on
+              // the other (e.g. a file replaced by a folder of the same
+              // name). Without -r, ls-tree on a directory path returns that
+              // one tree entry, which the blob/commit-only match below
+              // rejects, silently leaving merge-tree's synthetic subtree in
+              // finalTree instead of grafting in the preferred side. With
+              // -r, a file path still resolves to its single blob/gitlink
+              // entry, and a directory path expands to every blob/gitlink
+              // beneath it. -z avoids ls-tree quoting/escaping paths with
+              // tabs, newlines, or non-ASCII bytes, which would otherwise
+              // corrupt the path captured below.
               const lsTree = yield* run({
                 root: input.root,
-                args: ["ls-tree", preferredCommit, "--", conflictPath],
+                args: ["ls-tree", "-r", "-z", preferredCommit, "--", conflictPath],
               });
-              const entry = lsTree.stdout.trim();
-              if (entry.length === 0) {
+              const entries = lsTree.stdout.split("\0").filter((line) => line.length > 0);
+              if (entries.length === 0) {
                 // Deleted locally: drop it from the final tree too. The zero
                 // OID width must match the repo's hash algorithm (64 hex
                 // chars for SHA-256, not just SHA-1's 40) — mergedTree is a
                 // real oid from this same repo, so its length is authoritative.
-                indexInfoLines.push(`000000 ${"0".repeat(mergedTree.length)}\t${conflictPath}`);
-              } else {
+                indexInfoRecords.push(`000000 ${zeroOid}\t${conflictPath}`);
+                continue;
+              }
+              // conflictPath itself may currently be a single blob entry (from
+              // read-tree mergedTree) even though the preferred side has a
+              // directory there (or vice versa); a git index can't hold both
+              // a blob and nested entries at the same path, so clear it
+              // before grafting in the preferred side's entries below. A
+              // no-op when conflictPath was never a bare file entry.
+              indexInfoRecords.push(`000000 ${zeroOid}\t${conflictPath}`);
+              for (const entry of entries) {
                 // Matches both plain blobs and submodule gitlinks (mode
                 // 160000, type commit) — a conflicted gitlink otherwise
                 // produces no update-index instruction and keeps
                 // merge-tree's synthetic result instead of either side's
                 // real submodule pointer.
-                const match = entry.match(/^(\d{6}) (?:blob|commit) ([0-9a-f]+)\t/);
-                if (match?.[1] !== undefined && match[2] !== undefined) {
-                  indexInfoLines.push(`${match[1]} ${match[2]}\t${conflictPath}`);
+                const match = entry.match(/^(\d{6}) (?:blob|commit) ([0-9a-f]+)\t(.+)$/);
+                if (match?.[1] !== undefined && match[2] !== undefined && match[3] !== undefined) {
+                  indexInfoRecords.push(`${match[1]} ${match[2]}\t${match[3]}`);
                 }
               }
             }
-            if (indexInfoLines.length > 0) {
+            if (indexInfoRecords.length > 0) {
               const updateIndex = yield* runner
                 .run({
                   command: "git",
-                  args: ["update-index", "--index-info"],
+                  // -z: index-info records are NUL-terminated instead of
+                  // newline-terminated, so a conflicted path containing a
+                  // literal newline can't be split into two bad records.
+                  args: ["update-index", "-z", "--index-info"],
                   cwd: input.root,
                   env,
-                  stdin: `${indexInfoLines.join("\n")}\n`,
+                  stdin: `${indexInfoRecords.join("\0")}\0`,
                   timeout: GIT_TIMEOUT,
                 })
                 .pipe(
