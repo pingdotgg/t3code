@@ -10,7 +10,7 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -401,9 +401,13 @@ function RootStackLayout(props: {
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspacePathname = workspacePathFromState(props.state);
   const transitionKey = activeNavigationTransitionKey(props.state);
+  const navigationLocation = useMemo(
+    () => ({ pathname, transitionKey }),
+    [pathname, transitionKey],
+  );
 
   return (
-    <MobileNavigationHistoryProvider pathname={pathname} transitionKey={transitionKey}>
+    <MobileNavigationHistoryProvider location={navigationLocation}>
       <HardwareKeyboardCommandProvider pathname={pathname}>
         <ThreadOutboxDrainWorker />
         <ShowcaseCaptureCoordinator pathname={pathname} />
