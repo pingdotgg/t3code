@@ -61,12 +61,18 @@ to use, then authenticate it.
 | Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Z.ai       | [Claude Code](https://claude.com/product/claude-code) | `claude`       | Z.ai API key in Settings |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
+Codex and Claude are on by default. Cursor, Grok Build, OpenCode, and Z.ai are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
+
+Z.ai works differently from the rest: it has no CLI of its own. A Z.ai provider runs the Claude Code
+CLI against Z.ai's GLM Coding Plan endpoint, so it needs the `claude` binary installed but no Claude
+login. Paste an API key from your [Z.ai account](https://z.ai) into the Z.ai card in **Settings**,
+pick a GLM model, and go. Z.ai sessions keep their own history and settings, separate from Claude.
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.

@@ -10,6 +10,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  ZaiSettings,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
@@ -17,6 +18,7 @@ const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeZaiSettings = Schema.decodeUnknownSync(ZaiSettings);
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -180,6 +182,27 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("provider enabled defaults", () => {
+  it("decodes ZaiSettings with the Claude binary and no endpoint by default", () => {
+    const decoded = decodeZaiSettings({});
+    expect(decoded.enabled).toBe(false);
+    expect(decoded.binaryPath).toBe("claude");
+    expect(decoded.apiKey).toBe("");
+    expect(decoded.apiEndpoint).toBe("");
+    expect(decoded.homePath).toBe("");
+    expect(decoded.customModels).toEqual([]);
+
+    const configured = decodeZaiSettings({
+      enabled: true,
+      apiKey: "sk-test",
+      apiEndpoint: "https://open.bigmodel.cn/api/anthropic",
+      homePath: "~/.claude-zai",
+      customModels: ["glm-4.6"],
+    });
+    expect(configured.enabled).toBe(true);
+    expect(configured.apiKey).toBe("sk-test");
+    expect(configured.customModels).toEqual(["glm-4.6"]);
+  });
+
   it("enables only the stable bindings by default", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providers.codex.enabled).toBe(true);
@@ -187,11 +210,13 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.cursor.enabled).toBe(false);
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
+    expect(decoded.providers.zai.enabled).toBe(false);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("zai"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
   });

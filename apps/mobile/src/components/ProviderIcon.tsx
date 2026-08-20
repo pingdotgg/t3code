@@ -59,6 +59,23 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "zai") {
+    const fill = isDarkMode ? "#E5E5E5" : "#171717";
+    return (
+      <Svg width={size} height={size} viewBox="0 0 30 30" fill="none">
+        <Path
+          fill={fill}
+          d="M15.47 7.1l-1.3 1.85c-.2.29-.54.47-.9.47h-7.1V7.09C6.16 7.1 15.47 7.1 15.47 7.1z"
+        />
+        <Path fill={fill} d="M24.3 7.1 13.14 22.91H5.7L16.86 7.1z" />
+        <Path
+          fill={fill}
+          d="M14.53 22.91l1.31-1.86c.2-.29.54-.47.9-.47h7.09v2.33z"
+        />
+      </Svg>
+    );
+  }
+
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">

@@ -161,6 +161,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly driverKind?: ProviderDriverKind;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -172,6 +173,7 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.driverKind ? { driverKind: config.driverKind } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -297,6 +299,44 @@ describe("ClaudeAdapterLive", () => {
           issue: "Expected provider 'claudeAgent' but received 'codex'.",
         }),
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("stamps a custom driver kind onto sessions and runtime events", () => {
+    const zai = ProviderDriverKind.make("zai");
+    const harness = makeHarness({ driverKind: zai });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // The shared runtime must reject sessions for any other driver kind,
+      // naming the configured one in the error.
+      const rejected = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+      assert.equal(rejected._tag, "Failure");
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: zai,
+        runtimeMode: "full-access",
+      });
+      assert.equal(String(session.provider), "zai");
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(runtimeEvents[0]?.type, "session.started");
+      assert.equal(String(runtimeEvents[0]?.provider), "zai");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
