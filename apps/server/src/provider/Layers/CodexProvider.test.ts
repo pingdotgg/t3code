@@ -6,16 +6,28 @@ import {
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
 
-it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
+it("keeps current and access-gated Codex models out of legacy models", () => {
   assert.deepStrictEqual(
-    ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.4"].map((model) => [
-      model,
-      isLegacyCodexModel(model),
-    ]),
+    [
+      "gpt-5.6-luna",
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+      "gpt-daybreak-blue",
+      "gpt-daybreak-blue-latest",
+      "gpt-daybreak-red",
+      "gpt-daybreak-red-latest",
+      "gpt-5.5-cyber-preview",
+      "gpt-5.4",
+    ].map((model) => [model, isLegacyCodexModel(model)]),
     [
       ["gpt-5.6-luna", false],
       ["gpt-5.6-terra", false],
       ["gpt-5.6-sol", false],
+      ["gpt-daybreak-blue", false],
+      ["gpt-daybreak-blue-latest", false],
+      ["gpt-daybreak-red", false],
+      ["gpt-daybreak-red-latest", false],
+      ["gpt-5.5-cyber-preview", true],
       ["gpt-5.4", true],
     ],
   );
