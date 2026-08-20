@@ -1052,6 +1052,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-stop-pending-approval");
+      const turnStarted = yield* Deferred.make<void>();
       const approvalRequested = yield* Deferred.make<void>();
 
       const wrapperPath = yield* Effect.promise(() =>
@@ -1075,13 +1076,17 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
 
       const sendTurnFiber = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "run a tool call and then stop",
-          attachments: [],
-        })
+        .sendTurn(
+          {
+            threadId,
+            input: "run a tool call and then stop",
+            attachments: [],
+          },
+          { onTurnStarted: Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid) },
+        )
         .pipe(Effect.forkChild);
 
+      yield* Deferred.await(turnStarted);
       yield* Deferred.await(approvalRequested);
       yield* adapter.stopSession(threadId);
       yield* Fiber.await(sendTurnFiber);
@@ -1095,6 +1100,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-stop-pending-user-input");
+      const turnStarted = yield* Deferred.make<void>();
       const userInputRequested = yield* Deferred.make<void>();
 
       const wrapperPath = yield* Effect.promise(() =>
@@ -1118,13 +1124,17 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
 
       const sendTurnFiber = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "ask me a question and then stop",
-          attachments: [],
-        })
+        .sendTurn(
+          {
+            threadId,
+            input: "ask me a question and then stop",
+            attachments: [],
+          },
+          { onTurnStarted: Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid) },
+        )
         .pipe(Effect.forkChild);
 
+      yield* Deferred.await(turnStarted);
       yield* Deferred.await(userInputRequested);
       yield* adapter.stopSession(threadId);
       yield* Fiber.await(sendTurnFiber);

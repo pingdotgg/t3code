@@ -51,6 +51,7 @@ import {
 } from "../../observability/Metrics.ts";
 import {
   type ProviderAdapterError,
+  ProviderSessionNotFoundError,
   ProviderTurnChangedError,
   ProviderValidationError,
 } from "../Errors.ts";
@@ -238,6 +239,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
+  interface TurnStartMarker {
+    readonly threadId: ThreadId;
+    readonly lifecycleLock: Semaphore.Semaphore;
+    claimed: boolean;
+    lifecycleLockHeld: boolean;
+    observable: boolean;
+    baseTurnId: ProviderSession["activeTurnId"] | null;
+    baseSessionUpdatedAt: string | undefined;
+  }
+  const turnStartsByThreadId = new Map<ThreadId, Set<TurnStartMarker>>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   const getThreadLock = (threadId: ThreadId) =>
@@ -252,16 +263,78 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
 
   /**
-   * Every facade path that can recover or mutate a provider session shares a
-   * per-thread lock. This keeps a guarded interrupt's adapter-session check
-   * and interrupt atomic relative to session replacement, newer turns,
-   * responses, rollback, and stop.
+   * Session replacement, guarded interrupt, rollback, and stop share a
+   * per-thread lifecycle lock. Turn sends release it as soon as the adapter
+   * has made the new turn observable and committed to the provider prompt. The
+   * marker remains until sendTurn settles so guarded interrupts can reject a
+   * snapshot from before that start. Approval and user-input responses never
+   * take this lock because they may be what lets that prompt finish.
    */
   const withThreadLock = <A, E, R>(
     threadId: ThreadId,
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E, R> =>
     Effect.flatMap(getThreadLock(threadId), (lock) => lock.withPermit(effect));
+
+  const beginTurnStart = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const lifecycleLock = yield* getThreadLock(threadId);
+      yield* lifecycleLock.take(1);
+      return yield* Effect.sync(() => {
+        const marker: TurnStartMarker = {
+          threadId,
+          lifecycleLock,
+          claimed: false,
+          lifecycleLockHeld: true,
+          observable: false,
+          baseTurnId: null,
+          baseSessionUpdatedAt: undefined,
+        };
+        const markers = turnStartsByThreadId.get(threadId) ?? new Set<TurnStartMarker>();
+        markers.add(marker);
+        turnStartsByThreadId.set(threadId, markers);
+        return marker;
+      });
+    });
+
+  const observeTurnStart = (marker: TurnStartMarker) =>
+    Effect.gen(function* () {
+      const shouldRelease = yield* Effect.sync(() => {
+        marker.observable = true;
+        if (!marker.lifecycleLockHeld) {
+          return false;
+        }
+        marker.lifecycleLockHeld = false;
+        return true;
+      });
+      if (shouldRelease) {
+        yield* marker.lifecycleLock.release(1);
+      }
+    });
+
+  const completeTurnStart = (marker: TurnStartMarker) =>
+    Effect.gen(function* () {
+      const shouldRelease = yield* Effect.sync(() => {
+        if (!marker.lifecycleLockHeld) {
+          return false;
+        }
+        marker.lifecycleLockHeld = false;
+        return true;
+      });
+      const forgetMarker = Effect.sync(() => {
+        const markers = turnStartsByThreadId.get(marker.threadId);
+        markers?.delete(marker);
+        if (markers?.size === 0) {
+          turnStartsByThreadId.delete(marker.threadId);
+        }
+      });
+      if (shouldRelease) {
+        yield* forgetMarker;
+        yield* marker.lifecycleLock.release(1);
+        return;
+      }
+      yield* withThreadLock(marker.threadId, forgetMarker);
+    });
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
    *
@@ -745,6 +818,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const sendTurnUnlocked: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(
     function* (rawInput) {
+      const turnStart = yield* Effect.sync(() => {
+        const marker = Array.from(turnStartsByThreadId.get(rawInput.threadId) ?? []).find(
+          (candidate) => !candidate.claimed,
+        );
+        if (!marker) {
+          throw new Error(`Missing turn-start marker for thread '${rawInput.threadId}'.`);
+        }
+        marker.claimed = true;
+        return marker;
+      });
       const parsed = yield* decodeInputOrValidationError({
         operation: "ProviderService.sendTurn",
         schema: ProviderSendTurnInput,
@@ -805,6 +888,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         metricProvider = routed.adapter.provider;
         metricModel = input.modelSelection?.model;
+        const baseSession = (yield* routed.adapter.listSessions()).find(
+          (session) => session.threadId === input.threadId,
+        );
+        yield* Effect.sync(() => {
+          turnStart.baseTurnId = baseSession?.activeTurnId ?? null;
+          turnStart.baseSessionUpdatedAt = baseSession?.updatedAt;
+        });
         yield* Effect.annotateCurrentSpan({
           "provider.kind": routed.adapter.provider,
           ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
@@ -815,7 +905,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         // rather than issuing a new one: sessions that go a long time between
         // browser tool calls used to lose the toolkit outright.
         yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-        const turn = yield* routed.adapter.sendTurn(input);
+        const turn = yield* routed.adapter.sendTurn(input, {
+          onTurnStarted: observeTurnStart(turnStart),
+        });
+        yield* observeTurnStart(turnStart);
         yield* directory.upsert({
           threadId: input.threadId,
           provider: routed.adapter.provider,
@@ -886,12 +979,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             (candidate) => candidate.threadId === routed.threadId,
           );
           const actualTurnId = session?.activeTurnId ?? null;
+          const turnStartedAfterSnapshot = Array.from(
+            turnStartsByThreadId.get(input.threadId) ?? [],
+          ).some(
+            (marker) =>
+              !marker.observable ||
+              ((input.expectedTurnId === undefined || input.expectedTurnId === marker.baseTurnId) &&
+                (input.expectedSessionUpdatedAt === undefined ||
+                  input.expectedSessionUpdatedAt === marker.baseSessionUpdatedAt)),
+          );
           const turnChanged =
             input.expectedTurnId !== undefined && input.expectedTurnId !== actualTurnId;
           const sessionChanged =
             input.expectedSessionUpdatedAt !== undefined &&
             input.expectedSessionUpdatedAt !== session?.updatedAt;
-          if (!routed.isActive || session === undefined || turnChanged || sessionChanged) {
+          if (
+            turnStartedAfterSnapshot ||
+            !routed.isActive ||
+            session === undefined ||
+            turnChanged ||
+            sessionChanged
+          ) {
             return yield* new ProviderTurnChangedError({
               threadId: input.threadId,
               expectedTurnId: input.expectedTurnId ?? null,
@@ -915,45 +1023,48 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  const respondToRequestUnlocked: ProviderServiceMethod<"respondToRequest"> = Effect.fn(
-    "respondToRequest",
-  )(function* (rawInput) {
-    const input = yield* decodeInputOrValidationError({
-      operation: "ProviderService.respondToRequest",
-      schema: ProviderRespondToRequestInput,
-      payload: rawInput,
-    });
-    let metricProvider = "unknown";
-    return yield* Effect.gen(function* () {
-      const routed = yield* resolveRoutableSession({
-        threadId: input.threadId,
+  const respondToRequest: ProviderServiceMethod<"respondToRequest"> = Effect.fn("respondToRequest")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
         operation: "ProviderService.respondToRequest",
-        allowRecovery: true,
+        schema: ProviderRespondToRequestInput,
+        payload: rawInput,
       });
-      metricProvider = routed.adapter.provider;
-      yield* Effect.annotateCurrentSpan({
-        "provider.operation": "respond-to-request",
-        "provider.kind": routed.adapter.provider,
-        "provider.thread_id": input.threadId,
-        "provider.request_id": input.requestId,
-      });
-      yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
-      yield* analytics.record("provider.request.responded", {
-        provider: routed.adapter.provider,
-        decision: input.decision,
-      });
-    }).pipe(
-      withMetrics({
-        counter: providerTurnsTotal,
-        outcomeAttributes: () =>
-          providerMetricAttributes(metricProvider, {
-            operation: "approval-response",
-          }),
-      }),
-    );
-  });
+      let metricProvider = "unknown";
+      return yield* Effect.gen(function* () {
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.respondToRequest",
+          allowRecovery: false,
+        });
+        if (!routed.isActive) {
+          return yield* new ProviderSessionNotFoundError({ threadId: input.threadId });
+        }
+        metricProvider = routed.adapter.provider;
+        yield* Effect.annotateCurrentSpan({
+          "provider.operation": "respond-to-request",
+          "provider.kind": routed.adapter.provider,
+          "provider.thread_id": input.threadId,
+          "provider.request_id": input.requestId,
+        });
+        yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
+        yield* analytics.record("provider.request.responded", {
+          provider: routed.adapter.provider,
+          decision: input.decision,
+        });
+      }).pipe(
+        withMetrics({
+          counter: providerTurnsTotal,
+          outcomeAttributes: () =>
+            providerMetricAttributes(metricProvider, {
+              operation: "approval-response",
+            }),
+        }),
+      );
+    },
+  );
 
-  const respondToUserInputUnlocked: ProviderServiceMethod<"respondToUserInput"> = Effect.fn(
+  const respondToUserInput: ProviderServiceMethod<"respondToUserInput"> = Effect.fn(
     "respondToUserInput",
   )(function* (rawInput) {
     const input = yield* decodeInputOrValidationError({
@@ -966,8 +1077,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const routed = yield* resolveRoutableSession({
         threadId: input.threadId,
         operation: "ProviderService.respondToUserInput",
-        allowRecovery: true,
+        allowRecovery: false,
       });
+      if (!routed.isActive) {
+        return yield* new ProviderSessionNotFoundError({ threadId: input.threadId });
+      }
       metricProvider = routed.adapter.provider;
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "respond-to-user-input",
@@ -1232,13 +1346,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const startSession: ProviderServiceMethod<"startSession"> = (threadId, input) =>
     withThreadLock(threadId, startSessionUnlocked(threadId, input));
   const sendTurn: ProviderServiceMethod<"sendTurn"> = (input) =>
-    withThreadLock(input.threadId, sendTurnUnlocked(input));
+    Effect.acquireUseRelease(
+      beginTurnStart(input.threadId),
+      () => sendTurnUnlocked(input),
+      completeTurnStart,
+    );
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = (input) =>
     withThreadLock(input.threadId, interruptTurnUnlocked(input));
-  const respondToRequest: ProviderServiceMethod<"respondToRequest"> = (input) =>
-    withThreadLock(input.threadId, respondToRequestUnlocked(input));
-  const respondToUserInput: ProviderServiceMethod<"respondToUserInput"> = (input) =>
-    withThreadLock(input.threadId, respondToUserInputUnlocked(input));
   const stopSession: ProviderServiceMethod<"stopSession"> = (input) =>
     withThreadLock(input.threadId, stopSessionUnlocked(input));
   const rollbackConversation: ProviderServiceMethod<"rollbackConversation"> = (input) =>

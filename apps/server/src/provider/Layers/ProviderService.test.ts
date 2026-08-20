@@ -39,12 +39,16 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderSessionNotFoundError,
   ProviderTurnChangedError,
   ProviderUnsupportedError,
   ProviderValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterShape,
+  ProviderTurnStartObserver,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -120,6 +124,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
   const sendTurn = vi.fn(
     (
       input: ProviderSendTurnInput,
+      observer?: ProviderTurnStartObserver,
     ): Effect.Effect<ProviderTurnStartResult, ProviderAdapterError> => {
       if (!sessions.has(input.threadId)) {
         return Effect.fail(
@@ -130,9 +135,12 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         );
       }
 
-      return Effect.succeed({
-        threadId: input.threadId,
-        turnId: TurnId.make(`turn-${String(input.threadId)}`),
+      return Effect.gen(function* () {
+        yield* observer?.onTurnStarted ?? Effect.void;
+        return {
+          threadId: input.threadId,
+          turnId: TurnId.make(`turn-${String(input.threadId)}`),
+        };
       });
     },
   );
@@ -995,12 +1003,22 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }));
       routing.codex.interruptTurn.mockClear();
       routing.codex.sendTurn.mockClear();
+      const operationOrder: string[] = [];
       const interruptStarted = yield* Deferred.make<void>();
       const releaseInterrupt = yield* Deferred.make<void>();
       routing.codex.interruptTurn.mockImplementationOnce(() =>
         Effect.gen(function* () {
+          operationOrder.push("interrupt-started");
           yield* Deferred.succeed(interruptStarted, undefined);
           yield* Deferred.await(releaseInterrupt);
+          operationOrder.push("interrupt-finished");
+        }),
+      );
+      routing.codex.sendTurn.mockImplementationOnce((input, observer) =>
+        Effect.gen(function* () {
+          operationOrder.push("send-entered");
+          yield* observer?.onTurnStarted ?? Effect.void;
+          return { threadId: input.threadId, turnId: asTurnId("turn-new") };
         }),
       );
 
@@ -1019,12 +1037,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
         return yield* provider.sendTurn({ threadId, input: "new work", attachments: [] });
       }).pipe(Effect.forkChild);
       yield* Deferred.await(sendAttempted);
-      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
 
       yield* Deferred.succeed(releaseInterrupt, undefined);
       yield* Fiber.join(interruptFiber);
       yield* Fiber.join(sendFiber);
-      assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+      assert.deepEqual(operationOrder, ["interrupt-started", "interrupt-finished", "send-entered"]);
     }),
   );
 
@@ -1041,12 +1058,15 @@ routing.layer("ProviderServiceLive routing", (it) => {
       routing.codex.interruptTurn.mockClear();
       routing.codex.rollbackThread.mockClear();
 
+      const operationOrder: string[] = [];
       const interruptStarted = yield* Deferred.make<void>();
       const releaseInterrupt = yield* Deferred.make<void>();
       routing.codex.interruptTurn.mockImplementationOnce(() =>
         Effect.gen(function* () {
+          operationOrder.push("interrupt-started");
           yield* Deferred.succeed(interruptStarted, undefined);
           yield* Deferred.await(releaseInterrupt);
+          operationOrder.push("interrupt-finished");
         }),
       );
 
@@ -1060,11 +1080,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
       yield* Deferred.await(interruptStarted);
 
       const rollbackAttempted = yield* Deferred.make<void>();
-      const rollbackEnteredAdapter = yield* Deferred.make<void>();
       routing.codex.rollbackThread.mockImplementationOnce((rollbackThreadId) =>
-        Deferred.succeed(rollbackEnteredAdapter, undefined).pipe(
-          Effect.as({ threadId: rollbackThreadId, turns: [] as const }),
-        ),
+        Effect.sync(() => {
+          operationOrder.push("rollback-entered");
+          return { threadId: rollbackThreadId, turns: [] as const };
+        }),
       );
       const rollbackFiber = yield* Effect.gen(function* () {
         yield* Deferred.succeed(rollbackAttempted, undefined);
@@ -1072,14 +1092,207 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }).pipe(Effect.forkChild);
       yield* Deferred.await(rollbackAttempted);
 
-      assert.equal(Option.isNone(yield* Deferred.poll(rollbackEnteredAdapter)), true);
-
       yield* Deferred.succeed(releaseInterrupt, undefined);
       yield* Fiber.join(interruptFiber);
       yield* Fiber.join(rollbackFiber);
 
-      assert.equal(Option.isSome(yield* Deferred.poll(rollbackEnteredAdapter)), true);
+      assert.deepEqual(operationOrder, [
+        "interrupt-started",
+        "interrupt-finished",
+        "rollback-entered",
+      ]);
       assert.deepEqual(routing.codex.rollbackThread.mock.calls, [[threadId, 1]]);
+    }),
+  );
+
+  it.effect("rejects a turn-id-only interrupt while that turn is being steered", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-guarded-interrupt-steer");
+      const activeTurnId = asTurnId("turn-active");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.updateSession(threadId, (session) => ({
+        ...session,
+        status: "running",
+        activeTurnId,
+      }));
+      routing.codex.interruptTurn.mockClear();
+
+      const steerPromptWaiting = yield* Deferred.make<void>();
+      const releaseSteerPrompt = yield* Deferred.make<void>();
+      routing.codex.sendTurn.mockImplementationOnce((input, observer) =>
+        Effect.gen(function* () {
+          yield* observer?.onTurnStarted ?? Effect.void;
+          yield* Deferred.succeed(steerPromptWaiting, undefined);
+          yield* Deferred.await(releaseSteerPrompt);
+          return { threadId: input.threadId, turnId: activeTurnId };
+        }),
+      );
+
+      const sendFiber = yield* provider
+        .sendTurn({ threadId, input: "steer the active turn", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(steerPromptWaiting);
+
+      const error = yield* provider
+        .interruptTurn({ threadId, expectedTurnId: activeTurnId })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderTurnChangedError);
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, 0);
+      yield* Deferred.succeed(releaseSteerPrompt, undefined);
+      yield* Fiber.join(sendFiber);
+    }),
+  );
+
+  it.effect("delivers approval and user-input responses while sendTurn is awaiting them", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-interactive-prompt");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.respondToRequest.mockClear();
+      routing.codex.respondToUserInput.mockClear();
+
+      const approvalWaiting = yield* Deferred.make<void>();
+      const approvalResolved = yield* Deferred.make<void>();
+      routing.codex.sendTurn.mockImplementationOnce((input, observer) =>
+        Effect.gen(function* () {
+          yield* observer?.onTurnStarted ?? Effect.void;
+          yield* Deferred.succeed(approvalWaiting, undefined);
+          yield* Deferred.await(approvalResolved);
+          return { threadId: input.threadId, turnId: asTurnId("turn-approval") };
+        }),
+      );
+      routing.codex.respondToRequest.mockImplementationOnce(() =>
+        Deferred.succeed(approvalResolved, undefined).pipe(Effect.asVoid),
+      );
+
+      const approvalSend = yield* provider
+        .sendTurn({ threadId, input: "needs approval", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(approvalWaiting);
+      yield* provider.respondToRequest({
+        threadId,
+        requestId: asRequestId("approval-request"),
+        decision: "accept",
+      });
+      yield* Fiber.join(approvalSend);
+
+      const userInputWaiting = yield* Deferred.make<void>();
+      const userInputResolved = yield* Deferred.make<void>();
+      routing.codex.sendTurn.mockImplementationOnce((input, observer) =>
+        Effect.gen(function* () {
+          yield* observer?.onTurnStarted ?? Effect.void;
+          yield* Deferred.succeed(userInputWaiting, undefined);
+          yield* Deferred.await(userInputResolved);
+          return { threadId: input.threadId, turnId: asTurnId("turn-user-input") };
+        }),
+      );
+      routing.codex.respondToUserInput.mockImplementationOnce(() =>
+        Deferred.succeed(userInputResolved, undefined).pipe(Effect.asVoid),
+      );
+
+      const userInputSend = yield* provider
+        .sendTurn({ threadId, input: "needs an answer", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(userInputWaiting);
+      yield* provider.respondToUserInput({
+        threadId,
+        requestId: asRequestId("user-input-request"),
+        answers: { scope: "workspace" },
+      });
+      yield* Fiber.join(userInputSend);
+
+      assert.equal(routing.codex.respondToRequest.mock.calls.length, 1);
+      assert.equal(routing.codex.respondToUserInput.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("does not recover a stopped session to deliver an interactive response", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-stopped-interactive-response");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+      routing.codex.respondToRequest.mockClear();
+
+      const error = yield* provider
+        .respondToRequest({
+          threadId,
+          requestId: asRequestId("stale-approval"),
+          decision: "accept",
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderSessionNotFoundError);
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+      assert.equal(routing.codex.respondToRequest.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("stops a session while sendTurn is still awaiting provider work", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-stop-in-flight-prompt");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const promptWaiting = yield* Deferred.make<void>();
+      const promptCancelled = yield* Deferred.make<void>();
+      const stopEnteredAdapter = yield* Deferred.make<void>();
+      routing.codex.sendTurn.mockImplementationOnce((input, observer) =>
+        Effect.gen(function* () {
+          yield* observer?.onTurnStarted ?? Effect.void;
+          yield* Deferred.succeed(promptWaiting, undefined);
+          yield* Deferred.await(promptCancelled);
+          return yield* new ProviderAdapterSessionNotFoundError({
+            provider: CODEX_DRIVER,
+            threadId: input.threadId,
+          });
+        }),
+      );
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(stopEnteredAdapter, undefined);
+          yield* routing.codex.stopAll();
+          yield* Deferred.succeed(promptCancelled, undefined);
+        }),
+      );
+
+      const sendFiber = yield* provider
+        .sendTurn({ threadId, input: "long-running prompt", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(promptWaiting);
+      const stopFiber = yield* provider.stopSession({ threadId }).pipe(Effect.forkChild);
+      yield* Deferred.await(stopEnteredAdapter);
+      yield* Fiber.join(stopFiber);
+      const sendResult = yield* Effect.result(Fiber.join(sendFiber));
+
+      assert.equal(sendResult._tag, "Failure");
+      assert.equal(
+        (yield* provider.listSessions()).some((session) => session.threadId === threadId),
+        false,
+      );
     }),
   );
 

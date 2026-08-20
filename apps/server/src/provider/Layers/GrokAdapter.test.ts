@@ -771,6 +771,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const activeTurnIdRef = yield* Ref.make<TurnId | undefined>(undefined);
+      const turnStarted = yield* Deferred.make<void>();
       const trailingChunkTurnId = yield* Deferred.make<TurnId>();
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         Effect.gen(function* () {
@@ -801,13 +802,17 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       });
 
       const sendTurnFiber = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "cancel during completion drain",
-          attachments: [],
-        })
+        .sendTurn(
+          {
+            threadId,
+            input: "cancel during completion drain",
+            attachments: [],
+          },
+          { onTurnStarted: Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid) },
+        )
         .pipe(Effect.forkChild);
 
+      yield* Deferred.await(turnStarted);
       const turnId = yield* Deferred.await(trailingChunkTurnId).pipe(Effect.timeout("2 seconds"));
       yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("2 seconds"));
       yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("2 seconds"));
@@ -1059,6 +1064,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
+      const turnStarted = yield* Deferred.make<void>();
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         event.type === "request.opened"
           ? adapter.respondToRequest(
@@ -1075,7 +1081,14 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         cwd: process.cwd(),
         runtimeMode: "approval-required",
       });
-      yield* adapter.sendTurn({ threadId, input: "approve this", attachments: [] });
+      const sendTurnFiber = yield* adapter
+        .sendTurn(
+          { threadId, input: "approve this", attachments: [] },
+          { onTurnStarted: Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid) },
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(turnStarted);
+      yield* Fiber.join(sendTurnFiber);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       assert.isTrue(
@@ -1108,6 +1121,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.requested" }>>();
       const resolved =
         yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>>();
+      const turnStarted = yield* Deferred.make<void>();
 
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
         if (String(event.threadId) !== String(threadId)) {
@@ -1130,9 +1144,13 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       });
 
       const sendTurnFiber = yield* adapter
-        .sendTurn({ threadId, input: "ask before continuing", attachments: [] })
+        .sendTurn(
+          { threadId, input: "ask before continuing", attachments: [] },
+          { onTurnStarted: Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid) },
+        )
         .pipe(Effect.forkChild);
 
+      yield* Deferred.await(turnStarted);
       const requestedEvent = yield* Deferred.await(requested);
       assert.equal(requestedEvent.payload.questions.length, 1);
       assert.equal(requestedEvent.payload.questions[0]?.id, "Which scope should Grok use?");
