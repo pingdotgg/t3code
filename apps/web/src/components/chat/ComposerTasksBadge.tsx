@@ -148,15 +148,16 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
         </span>
         <TaskSegments className="w-20" steps={steps} />
       </button>
-      <button
-        type="button"
+      <Button
+        size="icon-micro"
+        variant="ghost-muted"
         aria-label="Dismiss tasks for this turn"
-        className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 hover:bg-muted/60 hover:text-foreground"
+        className="shrink-0"
         onClick={onDismiss}
         onPointerDown={(event) => event.preventDefault()}
       >
         <XIcon aria-hidden className="size-3" />
-      </button>
+      </Button>
     </div>
   );
 });
@@ -188,15 +189,16 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
             {progress.completedSteps}/{progress.totalSteps}
           </span>
         </button>
-        <button
-          type="button"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           aria-label="Dismiss tasks for this turn"
-          className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 hover:bg-muted/60 hover:text-foreground"
+          className="shrink-0"
           onClick={onDismiss}
           onPointerDown={(event) => event.preventDefault()}
         >
           <XIcon aria-hidden className="size-3" />
-        </button>
+        </Button>
       </div>
       <div className="space-y-px px-3 pb-4 sm:px-4" role="list">
         {keyedTaskSteps(steps).map(({ key, step }) => (

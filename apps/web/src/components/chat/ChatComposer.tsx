@@ -2360,12 +2360,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       steps={visibleTaskSteps}
     />
   ) : null;
+  const hasBlockingComposerTopDrawer =
+    activePendingApproval !== null || pendingUserInputs.length > 0;
 
   useEffect(() => {
     if (visibleTasksProgress === null || visibleTaskSteps === null) {
       setIsTasksDrawerOpen(false);
     }
   }, [visibleTaskSteps, visibleTasksProgress]);
+
+  useEffect(() => {
+    if (hasBlockingComposerTopDrawer) {
+      setIsTasksDrawerOpen(false);
+    }
+  }, [hasBlockingComposerTopDrawer]);
 
   useEffect(() => {
     setIsTasksDrawerOpen(false);
@@ -2809,7 +2817,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="mx-auto w-full min-w-0 max-w-3xl"
       data-chat-composer-form="true"
     >
-      {showComposerTopDrawer && !isTasksDrawerOpen ? (
+      {showComposerTopDrawer && (!isTasksDrawerOpen || hasBlockingComposerTopDrawer) ? (
         <div
           className="chat-composer-top-drawer"
           data-chat-composer-top-drawer="true"
@@ -2920,7 +2928,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ) : null}
         </div>
       ) : null}
-      {isTasksDrawerOpen && visibleTasksProgress && visibleTaskSteps ? (
+      {isTasksDrawerOpen &&
+      !hasBlockingComposerTopDrawer &&
+      visibleTasksProgress &&
+      visibleTaskSteps ? (
         <ComposerTasksDrawer
           onDismiss={dismissTasks}
           onCollapse={toggleTasksDrawer}

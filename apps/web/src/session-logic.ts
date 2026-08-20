@@ -614,21 +614,26 @@ function addPlanStepDurations(
     }
   }
 
+  const durationByKey = new Map<string, number>();
   let previousCompletedAt = planStartedAt;
+  for (const [key, timing] of [...timings.entries()].toSorted(
+    (left, right) => (left[1].completedAt ?? Infinity) - (right[1].completedAt ?? Infinity),
+  )) {
+    const completedAt = timing.completedAt;
+    const startedAt = timing.startedAt ?? previousCompletedAt;
+    if (completedAt === undefined) continue;
+    if (startedAt !== undefined && completedAt > startedAt) {
+      durationByKey.set(key, completedAt - startedAt);
+    }
+    previousCompletedAt = completedAt;
+  }
+
   return {
     ...plan,
     steps: keyedSteps(plan.steps).map(({ key, step }) => {
       if (step.status !== "completed") return step;
-      const timing = timings.get(key);
-      const completedAt = timing?.completedAt;
-      const startedAt = timing?.startedAt ?? previousCompletedAt;
-      if (completedAt !== undefined) {
-        previousCompletedAt = completedAt;
-      }
-      if (startedAt === undefined || completedAt === undefined || completedAt <= startedAt) {
-        return step;
-      }
-      return { ...step, durationMs: completedAt - startedAt };
+      const durationMs = durationByKey.get(key);
+      return durationMs === undefined ? step : { ...step, durationMs };
     }),
   };
 }
@@ -655,7 +660,10 @@ export function deriveActivePlanState(
   const matchingActivities = allPlanActivities.filter(
     (activity) => activity.turnId === latest.turnId,
   );
-  return addPlanStepDurations(plan, matchingActivities);
+  const latestClearIndex = matchingActivities.findLastIndex(
+    (activity) => planStateFromActivity(activity) === null,
+  );
+  return addPlanStepDurations(plan, matchingActivities.slice(latestClearIndex + 1));
 }
 
 export interface TurnPlanEntry {
