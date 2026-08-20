@@ -192,6 +192,23 @@ export interface GhosttyKeyboardLayoutMap {
   get(code: string): string | undefined;
 }
 
+interface GhosttyControlShortcutEvent {
+  readonly code: string;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+  readonly metaKey: boolean;
+}
+
+/** Returns the physical ASCII codepoint for legacy Emacs line movement chords. */
+export function ghosttyControlShortcutCodepoint(
+  event: GhosttyControlShortcutEvent,
+): number | undefined {
+  if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return undefined;
+  if (event.code !== "KeyA" && event.code !== "KeyE") return undefined;
+  return event.code.slice(-1).toLowerCase().codePointAt(0)!;
+}
+
 const shiftedToUnshiftedCharacter = new Map<string, string>([
   ["!", "1"],
   ["@", "2"],

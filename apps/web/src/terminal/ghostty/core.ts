@@ -1,5 +1,6 @@
 import {
   type GhosttyKeyboardLayoutMap,
+  ghosttyControlShortcutCodepoint,
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
@@ -466,13 +467,17 @@ export class GhosttyTerminalCore {
     this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
     this.runtime.call("ghostty_key_event_set_consumed_mods", this.keyEvent, 0);
     this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
+    const physicalControlCodepoint = ghosttyControlShortcutCodepoint(event);
     this.runtime.call(
       "ghostty_key_event_set_unshifted_codepoint",
       this.keyEvent,
-      ghosttyUnshiftedCodepoint(event, this.keyboardLayoutMap),
+      physicalControlCodepoint ?? ghosttyUnshiftedCodepoint(event, this.keyboardLayoutMap),
     );
 
-    const text = event.key.length === 1 ? event.key : "";
+    // Let Ghostty derive legacy control bytes and negotiated Kitty sequences
+    // from the physical key. Browser text would otherwise bypass Ctrl+A/E
+    // encoding, especially when the active layout produces a non-Latin letter.
+    const text = physicalControlCodepoint === undefined && event.key.length === 1 ? event.key : "";
     const textBytes = encoder.encode(text);
     const textPointer = textBytes.length === 0 ? 0 : this.runtime.alloc(textBytes.length);
     if (textPointer !== 0) this.runtime.bytes(textPointer, textBytes.length).set(textBytes);

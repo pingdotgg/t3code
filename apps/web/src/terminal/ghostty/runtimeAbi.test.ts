@@ -533,11 +533,6 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
     expect(call("ghostty_terminal_new", 0, terminalSlot, terminalOptions)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
-    const kittyMode = new TextEncoder().encode("\u001b[>1u");
-    const kittyModePointer = alloc(kittyMode.length);
-    new Uint8Array(memory.buffer, kittyModePointer, kittyMode.length).set(kittyMode);
-    call("ghostty_terminal_vt_write", terminal, kittyModePointer, kittyMode.length);
-
     const encoderSlot = call("ghostty_wasm_alloc_opaque");
     const eventSlot = call("ghostty_wasm_alloc_opaque");
     expect(call("ghostty_key_encoder_new", 0, encoderSlot)).toBe(0);
@@ -546,6 +541,91 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const keyEncoder = view.getUint32(encoderSlot, true);
     const keyEvent = view.getUint32(eventSlot, true);
     call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
+    call("ghostty_key_event_set_action", keyEvent, 1);
+    call("ghostty_key_event_set_key", keyEvent, ghosttyKeyForCode("KeyA"));
+    call("ghostty_key_event_set_mods", keyEvent, 1 << 1);
+    call("ghostty_key_event_set_consumed_mods", keyEvent, 0);
+    call("ghostty_key_event_set_composing", keyEvent, 0);
+    call("ghostty_key_event_set_unshifted_codepoint", keyEvent, "a".codePointAt(0)!);
+    call("ghostty_key_event_set_utf8", keyEvent, 0, 0);
+
+    const written = call("ghostty_wasm_alloc_usize");
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
+    const legacyControlSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    const legacyControlOutput = alloc(legacyControlSize);
+    expect(
+      call(
+        "ghostty_key_encoder_encode",
+        keyEncoder,
+        keyEvent,
+        legacyControlOutput,
+        legacyControlSize,
+        written,
+      ),
+    ).toBe(0);
+    const legacyControlLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    expect(
+      new TextDecoder().decode(
+        new Uint8Array(memory.buffer, legacyControlOutput, legacyControlLength),
+      ),
+    ).toBe("\u0001");
+
+    const kittyMode = new TextEncoder().encode("\u001b[>1u");
+    const kittyModePointer = alloc(kittyMode.length);
+    new Uint8Array(memory.buffer, kittyModePointer, kittyMode.length).set(kittyMode);
+    call("ghostty_terminal_vt_write", terminal, kittyModePointer, kittyMode.length);
+    call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
+
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
+    const kittyControlSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    const kittyControlOutput = alloc(kittyControlSize);
+    expect(
+      call(
+        "ghostty_key_encoder_encode",
+        keyEncoder,
+        keyEvent,
+        kittyControlOutput,
+        kittyControlSize,
+        written,
+      ),
+    ).toBe(0);
+    const kittyControlLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    expect(
+      new TextDecoder().decode(
+        new Uint8Array(memory.buffer, kittyControlOutput, kittyControlLength),
+      ),
+    ).toBe("\u001b[97;5u");
+
+    // Without the Kitty report-event-types flag a release encodes nothing.
+    call("ghostty_key_event_set_action", keyEvent, 0);
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(0);
+    expect(new DataView(memory.buffer, written, 4).getUint32(0, true)).toBe(0);
+
+    const reportEvents = new TextEncoder().encode("\u001b[>3u");
+    const reportEventsPointer = alloc(reportEvents.length);
+    new Uint8Array(memory.buffer, reportEventsPointer, reportEvents.length).set(reportEvents);
+    call("ghostty_terminal_vt_write", terminal, reportEventsPointer, reportEvents.length);
+    call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
+    const controlReleaseSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    const controlReleaseOutput = alloc(controlReleaseSize);
+    expect(
+      call(
+        "ghostty_key_encoder_encode",
+        keyEncoder,
+        keyEvent,
+        controlReleaseOutput,
+        controlReleaseSize,
+        written,
+      ),
+    ).toBe(0);
+    const controlReleaseLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+    expect(
+      new TextDecoder().decode(
+        new Uint8Array(memory.buffer, controlReleaseOutput, controlReleaseLength),
+      ),
+    ).toBe("\u001b[97;5:3u");
+
     call("ghostty_key_event_set_action", keyEvent, 1);
     call("ghostty_key_event_set_key", keyEvent, ghosttyKeyForCode("KeyC"));
     call("ghostty_key_event_set_mods", keyEvent, 1 << 1);
@@ -557,7 +637,6 @@ describe("vendored libghostty-vt WebAssembly", () => {
     new Uint8Array(memory.buffer, textPointer, text.length).set(text);
     call("ghostty_key_event_set_utf8", keyEvent, textPointer, text.length);
 
-    const written = call("ghostty_wasm_alloc_usize");
     expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
     const outputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
     const output = alloc(outputSize);
@@ -592,18 +671,8 @@ describe("vendored libghostty-vt WebAssembly", () => {
       new TextDecoder().decode(new Uint8Array(memory.buffer, remappedOutput, remappedOutputLength)),
     ).toBe("\u001b[106;5u");
 
-    // Without the Kitty report-event-types flag a release encodes nothing, so
-    // the surface's keyup handler stays silent for legacy sessions.
+    // With report-event-types enabled the release includes its event type.
     call("ghostty_key_event_set_action", keyEvent, 0);
-    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(0);
-    expect(new DataView(memory.buffer, written, 4).getUint32(0, true)).toBe(0);
-
-    // With report-event-types enabled the same release encodes an event-typed code.
-    const reportEvents = new TextEncoder().encode("\u001b[>3u");
-    const reportEventsPointer = alloc(reportEvents.length);
-    new Uint8Array(memory.buffer, reportEventsPointer, reportEvents.length).set(reportEvents);
-    call("ghostty_terminal_vt_write", terminal, reportEventsPointer, reportEvents.length);
-    call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
     expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
     const releaseSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
     const releaseOutput = alloc(releaseSize);
@@ -620,6 +689,9 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(remappedOutput, remappedOutputSize);
     free(remappedTextPointer, remappedText.length);
     free(output, outputSize);
+    free(controlReleaseOutput, controlReleaseSize);
+    free(kittyControlOutput, kittyControlSize);
+    free(legacyControlOutput, legacyControlSize);
     call("ghostty_wasm_free_usize", written);
     free(textPointer, text.length);
     call("ghostty_key_event_free", keyEvent);

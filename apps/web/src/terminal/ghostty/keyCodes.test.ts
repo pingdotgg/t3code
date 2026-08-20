@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
+import {
+  ghosttyControlShortcutCodepoint,
+  ghosttyKeyForCode,
+  ghosttyUnshiftedCodepoint,
+} from "./keyCodes";
 
 describe("ghosttyKeyForCode", () => {
   it("keeps the tail of the pinned Ghostty key enum in order", () => {
@@ -49,5 +53,33 @@ describe("ghosttyUnshiftedCodepoint", () => {
     expect(ghosttyUnshiftedCodepoint({ code: "KeyC", key: "J", shiftKey: true }, layoutMap)).toBe(
       "j".codePointAt(0),
     );
+  });
+});
+
+describe("ghosttyControlShortcutCodepoint", () => {
+  const event = (overrides: Partial<KeyboardEvent> = {}) => ({
+    code: "KeyA",
+    ctrlKey: true,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ...overrides,
+  });
+
+  it("uses physical A and E positions independently of the active layout", () => {
+    expect(ghosttyControlShortcutCodepoint(event({ code: "KeyA", key: "ф" }))).toBe(
+      "a".codePointAt(0),
+    );
+    expect(ghosttyControlShortcutCodepoint(event({ code: "KeyE", key: "ε" }))).toBe(
+      "e".codePointAt(0),
+    );
+  });
+
+  it("leaves other and additionally modified chords to normal encoding", () => {
+    expect(ghosttyControlShortcutCodepoint(event({ code: "KeyC" }))).toBeUndefined();
+    expect(ghosttyControlShortcutCodepoint(event({ shiftKey: true }))).toBeUndefined();
+    expect(ghosttyControlShortcutCodepoint(event({ altKey: true }))).toBeUndefined();
+    expect(ghosttyControlShortcutCodepoint(event({ metaKey: true }))).toBeUndefined();
+    expect(ghosttyControlShortcutCodepoint(event({ ctrlKey: false }))).toBeUndefined();
   });
 });
