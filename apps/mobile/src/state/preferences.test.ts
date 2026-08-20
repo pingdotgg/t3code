@@ -25,6 +25,7 @@ vi.mock("../lib/runtime", async () => {
 import type { Preferences } from "../persistence/mobile-preferences";
 import {
   createMobilePreferencesState,
+  mergeConfirmedPreferences,
   MobilePreferencesLoadError,
   MobilePreferencesSaveError,
   MobilePreferencesStore,
@@ -350,6 +351,50 @@ describe("mobile preferences state", () => {
       registry.dispose();
     }),
   );
+
+  it("keeps a newer in-memory reconciliation over an unrelated saved preference", () => {
+    expect(
+      mergeConfirmedPreferences(
+        {
+          baseFontSize: 18,
+          planModeEnabled: false,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:00:00.000Z",
+          },
+        },
+        {
+          planModeEnabled: true,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:01:00.000Z",
+          },
+        },
+      ),
+    ).toEqual({
+      baseFontSize: 18,
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-15T12:01:00.000Z",
+      },
+    });
+  });
+
+  it("accepts a successfully saved Plan Mode value at a newer stamp", () => {
+    const saved = {
+      planModeEnabled: false,
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-15T12:02:00.000Z",
+      },
+    } as const;
+
+    expect(
+      mergeConfirmedPreferences(saved, {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-15T12:01:00.000Z",
+        },
+      }),
+    ).toBe(saved);
+  });
 
   it.effect("rolls back to the last confirmed value after a later save fails", () =>
     Effect.gen(function* () {
