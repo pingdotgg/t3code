@@ -37,6 +37,29 @@ describe("resolveAssetUrlState", () => {
     ).toEqual({ _tag: "Disconnected" });
   });
 
+  it("treats a settled failure as disconnected when the environment is gone", () => {
+    expect(
+      resolveAssetUrlState({
+        httpBaseUrl: null,
+        requested: true,
+        result: AsyncResult.failure(Cause.fail(new Error("createUrl failed"))),
+      }),
+    ).toEqual({ _tag: "Disconnected" });
+  });
+
+  it("keeps a successful URL while the asset atom refreshes", () => {
+    expect(
+      resolveAssetUrlState({
+        httpBaseUrl: "https://environment.example/base/",
+        requested: true,
+        result: AsyncResult.success({ relativeUrl: RELATIVE_URL }, { waiting: true }),
+      }),
+    ).toEqual({
+      _tag: "Success",
+      url: "https://environment.example/api/assets/signed-token/preview.png",
+    });
+  });
+
   it("surfaces query failures instead of loading", () => {
     expect(
       resolveAssetUrlState({
