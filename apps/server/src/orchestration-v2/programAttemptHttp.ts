@@ -63,6 +63,16 @@ export const programAttemptHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "observeThread",
+        Effect.fn("environment.programAttempts.observeThread")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* attempts
+            .observeThread(args.params.threadId)
+            .pipe(Effect.catch(mapProgramAttemptError));
+        }),
+      )
+      .handle(
         "cancel",
         Effect.fn("environment.programAttempts.cancel")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

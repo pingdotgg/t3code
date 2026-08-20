@@ -27,6 +27,8 @@ export type ProgramAttemptProviderPolicy = typeof ProgramAttemptProviderPolicy.T
 export const ProgramAttemptLaunchInput = Schema.Struct({
   attemptId: ProgramAttemptId,
   requestId: ProgramAttemptRequestId,
+  programId: Schema.optional(TrimmedNonEmptyString),
+  taskId: Schema.optional(TrimmedNonEmptyString),
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   prompt: TrimmedNonEmptyString,
@@ -39,6 +41,11 @@ export const ProgramAttemptIdentityInput = Schema.Struct({
   attemptId: ProgramAttemptId,
 });
 export type ProgramAttemptIdentityInput = typeof ProgramAttemptIdentityInput.Type;
+
+export const ProgramAttemptThreadInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ProgramAttemptThreadInput = typeof ProgramAttemptThreadInput.Type;
 
 export const ProgramAttemptEffectInput = Schema.Struct({
   attemptId: ProgramAttemptId,
@@ -62,6 +69,10 @@ export type ProgramAttemptTerminalResult = typeof ProgramAttemptTerminalResult.T
 
 export const ProgramAttemptSnapshot = Schema.Struct({
   attemptId: ProgramAttemptId,
+  programId: Schema.NullOr(TrimmedNonEmptyString),
+  taskId: Schema.NullOr(TrimmedNonEmptyString),
+  title: TrimmedNonEmptyString,
+  checkout: PreparedWorktreeCheckout,
   projectId: ProjectId,
   threadId: ThreadId,
   runId: RunId,

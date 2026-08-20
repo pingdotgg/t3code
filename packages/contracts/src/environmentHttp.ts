@@ -38,6 +38,7 @@ import {
   ProgramAttemptIdentityInput,
   ProgramAttemptLaunchInput,
   ProgramAttemptSnapshot,
+  ProgramAttemptThreadInput,
 } from "./programAttempt.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
@@ -572,6 +573,14 @@ export class EnvironmentProgramAttemptsHttpApi extends HttpApiGroup.make("progra
       headers: OptionalBearerHeaders,
       payload: ProgramAttemptIdentityInput,
       success: ProgramAttemptSnapshot,
+      error: EnvironmentProgramAttemptErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("observeThread", "/api/program-attempts/threads/:threadId", {
+      headers: OptionalBearerHeaders,
+      params: ProgramAttemptThreadInput,
+      success: Schema.NullOr(ProgramAttemptSnapshot),
       error: EnvironmentProgramAttemptErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

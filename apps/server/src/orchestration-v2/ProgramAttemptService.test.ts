@@ -122,6 +122,8 @@ function makeProjection(status: OrchestrationV2RunStatus): OrchestrationV2Thread
 const launchInput = {
   attemptId,
   requestId: ProgramAttemptRequestId.make("request:s1:launch"),
+  programId: "agents-dlr",
+  taskId: "agents-dlr.2",
   projectId,
   title: "S1 disposable task",
   prompt: "Reply once, then stop.",
@@ -174,9 +176,16 @@ it.effect("replays one launch and retains one terminal result until acknowledgem
       const attempts = yield* ProgramAttemptService.ProgramAttemptService;
       const first = yield* attempts.launch(launchInput);
       const replay = yield* attempts.launch(launchInput);
+      const observedByThread = yield* attempts.observeThread(threadId);
+      const unrelatedThread = yield* attempts.observeThread(ThreadId.make("thread:unrelated"));
       assert.equal(first.threadId, threadId);
       assert.equal(first.runId, runId);
+      assert.equal(first.programId, "agents-dlr");
+      assert.equal(first.taskId, "agents-dlr.2");
+      assert.equal(first.checkout.startingCommit, "abc123");
       assert.equal(replay.threadId, threadId);
+      assert.equal(observedByThread?.attemptId, attemptId);
+      assert.isNull(unrelatedThread);
       assert.equal(harness.launch.mock.calls.length, 2);
 
       yield* Ref.set(harness.projection, makeProjection("completed"));

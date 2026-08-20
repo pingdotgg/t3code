@@ -71,6 +71,9 @@ export class ProgramAttemptService extends Context.Service<
     readonly observe: (
       attemptId: ProgramAttemptId,
     ) => Effect.Effect<ProgramAttemptSnapshot, ProgramAttemptError>;
+    readonly observeThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ProgramAttemptSnapshot | null, ProgramAttemptError>;
     readonly cancel: (
       input: ProgramAttemptCancelInput,
     ) => Effect.Effect<ProgramAttemptSnapshot, ProgramAttemptError>;
@@ -88,6 +91,9 @@ const encodeTerminalResult = Schema.encodeEffect(
   Schema.fromJsonString(ProgramAttemptTerminalResultSchema),
 );
 const encodeLaunchInput = Schema.encodeEffect(
+  Schema.fromJsonString(ProgramAttemptLaunchInputSchema),
+);
+const decodeLaunchInput = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ProgramAttemptLaunchInputSchema),
 );
 const encodeCancelInput = Schema.encodeEffect(
@@ -196,6 +202,11 @@ export const layer = Layer.effect(
       initialRow: ProgramAttemptRow,
     ) {
       const attemptId = ProgramAttemptId.make(initialRow.attempt_id);
+      const launchInput = yield* decodeLaunchInput(initialRow.launch_input_json).pipe(
+        Effect.mapError((cause) =>
+          error(attemptId, "invalid_record", "The retained launch request is invalid.", cause),
+        ),
+      );
       if (initialRow.thread_id === null || initialRow.run_id === null) {
         return yield* error(
           attemptId,
@@ -238,6 +249,10 @@ export const layer = Layer.effect(
             );
       return {
         attemptId,
+        programId: launchInput.programId ?? null,
+        taskId: launchInput.taskId ?? null,
+        title: launchInput.title,
+        checkout: launchInput.checkout,
         projectId: ProjectId.make(row.project_id),
         threadId,
         runId,
@@ -255,6 +270,29 @@ export const layer = Layer.effect(
       "ProgramAttemptService.observe",
     )(function* (attemptId) {
       return yield* snapshot(yield* load(attemptId));
+    });
+
+    const observeThread: ProgramAttemptService["Service"]["observeThread"] = Effect.fn(
+      "ProgramAttemptService.observeThread",
+    )(function* (threadId) {
+      const lookupId = ProgramAttemptId.make(`program-attempt:thread:${threadId}`);
+      const rows = yield* sql<ProgramAttemptRow>`
+        SELECT * FROM program_attempts
+        WHERE thread_id = ${threadId}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `.pipe(
+        Effect.mapError((cause) =>
+          error(
+            lookupId,
+            "persistence_failed",
+            "Could not load the Program Attempt for this thread.",
+            cause,
+          ),
+        ),
+      );
+      const row = rows[0];
+      return row === undefined ? null : yield* snapshot(row);
     });
 
     const retainProcessInterruptions: ProgramAttemptService["Service"]["retainProcessInterruptions"] =
@@ -525,6 +563,7 @@ export const layer = Layer.effect(
     return ProgramAttemptService.of({
       launch,
       observe,
+      observeThread,
       cancel,
       acknowledge,
       retainProcessInterruptions,

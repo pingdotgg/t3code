@@ -6,6 +6,7 @@ import {
   type ServerLifecycleStreamReadyEvent,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
+  type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -19,6 +20,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { HttpClient } from "effect/unstable/http";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import {
@@ -26,13 +28,16 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentQueryAtomFamily,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   isRpcClientError,
   request,
@@ -40,6 +45,8 @@ import {
   subscribe,
   type EnvironmentRpcInput,
 } from "../rpc/client.ts";
+import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
+import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type ServerUpdateStage = "downloading" | "installing" | "resuming";
@@ -110,6 +117,51 @@ export class ServerUpdateTerminalError extends Schema.TaggedErrorClass<ServerUpd
     return this.reason ?? `The t3@${this.targetVersion} update ${this.status}.`;
   }
 }
+
+export class ProgramAttemptConnectionNotReadyError extends Schema.TaggedErrorClass<ProgramAttemptConnectionNotReadyError>()(
+  "ProgramAttemptConnectionNotReadyError",
+  { message: Schema.String },
+) {}
+
+const loadProgramAttemptForThread = Effect.fn(
+  "clientRuntime.state.server.loadProgramAttemptForThread",
+)(function* (threadId: ThreadId) {
+  const supervisor = yield* EnvironmentSupervisor;
+  const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+  if (Option.isNone(prepared)) {
+    return yield* new ProgramAttemptConnectionNotReadyError({
+      message: "The environment HTTP connection is not ready.",
+    });
+  }
+  const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
+  if (Option.isNone(httpClient)) {
+    return yield* new ProgramAttemptConnectionNotReadyError({
+      message: "The environment HTTP client is unavailable.",
+    });
+  }
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const requestUrl = environmentEndpointUrl(
+    prepared.value.httpBaseUrl,
+    `/api/program-attempts/threads/${threadId}`,
+  );
+  return yield* Effect.gen(function* () {
+    const client = yield* makeEnvironmentHttpApiClient(prepared.value.httpBaseUrl);
+    const headers = yield* buildEnvironmentAuthHeaders(
+      prepared.value.httpAuthorization,
+      "GET",
+      requestUrl,
+      signer,
+    );
+    return yield* executeEnvironmentHttpRequest(
+      requestUrl,
+      6_000,
+      withEnvironmentCredentials(
+        prepared.value.httpAuthorization,
+        client.programAttempts.observeThread({ params: { threadId }, headers }),
+      ),
+    );
+  }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient.value));
+});
 
 // Covers the 120-second trial deadline and a final restart of the previous
 // version when the trial rolls back.
@@ -685,6 +737,12 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    programAttempt: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:program-attempt",
+      staleTimeMs: 5_000,
+      execute: (input: { readonly threadId: ThreadId }) =>
+        loadProgramAttemptForThread(input.threadId),
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
