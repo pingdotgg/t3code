@@ -2,7 +2,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   EnvironmentId,
   ThreadId,
@@ -132,13 +132,17 @@ function SelectedThreadLifecycleObserver(props: {
       selectedThreadKey !== null &&
       selectedThread !== null &&
       scopedThreadKey(selectedThread.environmentId, selectedThread.id) === selectedThreadKey;
+    const now = new Date().toISOString();
     const current = {
       key: selectedThreadKey,
       present: selectedShellMatchesRoute,
-      settled: selectedShellMatchesRoute && selectedThread.settledAt !== null,
-      snoozed:
+      settled:
         selectedShellMatchesRoute &&
-        effectiveSnoozed(selectedThread, { now: new Date().toISOString() }),
+        effectiveSettled(selectedThread, {
+          now,
+          autoSettleAfterDays: 3,
+        }),
+      snoozed: selectedShellMatchesRoute && effectiveSnoozed(selectedThread, { now }),
     };
     const previous = lifecycleRef.current;
     lifecycleRef.current = current;
