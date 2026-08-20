@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -149,6 +150,34 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",
     );
+  });
+
+  it("resolves a usage-limit wait before a failed session", () => {
+    const thread = makeThread({ id: ThreadId.make("waiting"), title: "Waiting" });
+    expect(
+      resolveThreadListV2Status({
+        ...thread,
+        usageLimitWait: {
+          waitId: CommandId.make("wait-1"),
+          blockedTurnId: TurnId.make("turn-1"),
+          provider: ProviderDriverKind.make("codex"),
+          modelSelection: thread.modelSelection,
+          resumeAt: "2026-06-02T05:00:00.000Z",
+          isEstimated: false,
+          createdAt: NOW,
+        },
+        session: {
+          threadId: thread.id,
+          status: "error",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Usage limit reached",
+          updatedAt: NOW,
+        },
+      }),
+    ).toBe("waiting");
   });
 });
 

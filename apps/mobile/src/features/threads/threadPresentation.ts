@@ -10,6 +10,7 @@ export function threadSortValue(thread: EnvironmentThreadShell): number {
 export type ThreadStatusKind =
   | "pending-approval"
   | "awaiting-input"
+  | "waiting"
   | "working"
   | "connecting"
   | "error"
@@ -69,6 +70,18 @@ export function resolveThreadStatus(
       textClassName: "text-indigo-700 dark:text-indigo-300",
       iconColor: "#5e5ce6",
       iconBackground: "rgba(94,92,230,0.22)",
+      pulse: false,
+    };
+  }
+
+  if (thread.usageLimitWait != null) {
+    return {
+      kind: "waiting",
+      label: "Waiting for reset",
+      pillClassName: "bg-amber-500/12 dark:bg-amber-500/16",
+      textClassName: "text-amber-700 dark:text-amber-300",
+      iconColor: "#ff9f0a",
+      iconBackground: "rgba(255,159,10,0.22)",
       pulse: false,
     };
   }

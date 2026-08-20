@@ -378,6 +378,7 @@ export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 export const OrchestrationUsageLimitWait = Schema.Struct({
   waitId: CommandId,
   blockedTurnId: TurnId,
+  queuedMessageIds: Schema.optional(Schema.Array(MessageId)),
   provider: ProviderDriverKind,
   providerInstanceId: Schema.optional(ProviderInstanceId),
   modelSelection: ModelSelection,
@@ -1326,6 +1327,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  queuedMessageIds: Schema.optional(Schema.Array(MessageId)),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

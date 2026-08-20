@@ -7,9 +7,11 @@ The thread shows when it will continue. If the provider gives an exact reset tim
 for that time and a short grace period. If no reset time is available, it shows an estimated retry
 time. Another limit response schedules the next attempt instead of abandoning the task.
 
-Choose **Cancel** in the thread notice when you want to continue manually, switch to another agent,
-or leave the task stopped. Sending a new message or changing the thread's agent also cancels the
-scheduled continuation.
+Messages sent during the wait stay queued on the thread. When the limit resets, T3 Code sends them
+to the agent in order, including image attachments, as part of one resumed turn.
+
+Choose **Cancel** in the thread notice when you want to leave the task stopped. Switching to another
+agent cancels the wait and starts the new turn immediately.
 
 The schedule is stored with the thread, so restarting the T3 Code server does not lose it. To turn
 the behavior off for the environment, disable **Automatically continue after usage limits reset**

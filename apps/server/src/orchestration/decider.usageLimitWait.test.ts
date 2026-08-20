@@ -149,6 +149,66 @@ it.layer(NodeServices.layer)("usage-limit wait decider", (it) => {
     }),
   );
 
+  it.effect("resumes once with every message queued during the wait", () =>
+    Effect.gen(function* () {
+      const queuedWait = {
+        ...WAIT,
+        queuedMessageIds: [MessageId.make("message-user-2"), MessageId.make("message-user-3")],
+      };
+      const baseReadModel = makeReadModel(queuedWait);
+      const thread = baseReadModel.threads[0];
+      if (!thread) return;
+      const readModel: OrchestrationReadModel = {
+        ...baseReadModel,
+        threads: [
+          {
+            ...thread,
+            messages: [
+              ...thread.messages,
+              {
+                id: MessageId.make("message-user-2"),
+                role: "user",
+                text: "Fix the navbar too",
+                turnId: null,
+                streaming: false,
+                createdAt: "2026-08-14T00:02:00.000Z",
+                updatedAt: "2026-08-14T00:02:00.000Z",
+              },
+              {
+                id: MessageId.make("message-user-3"),
+                role: "user",
+                text: "Check the image border",
+                turnId: null,
+                streaming: false,
+                createdAt: "2026-08-14T00:03:00.000Z",
+                updatedAt: "2026-08-14T00:03:00.000Z",
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.usage-limit-wait.resume",
+          commandId: CommandId.make("resume-wait-with-queue"),
+          threadId: THREAD_ID,
+          waitId: WAIT.waitId,
+          createdAt: WAIT.resumeAt,
+        },
+        readModel,
+      });
+      const events = Array.isArray(result) ? result : [result];
+      const start = events[1];
+      expect(start?.type).toBe("thread.turn-start-requested");
+      if (start?.type === "thread.turn-start-requested") {
+        expect(start.payload.messageId).toBe("message-user-3");
+        expect(start.payload.queuedMessageIds).toEqual(["message-user-2", "message-user-3"]);
+        expect(start.payload.promptOverride).toBeUndefined();
+      }
+    }),
+  );
+
   it.effect("cancels only the matching scheduled wait", () =>
     Effect.gen(function* () {
       const result = yield* decideOrchestrationCommand({
@@ -171,7 +231,40 @@ it.layer(NodeServices.layer)("usage-limit wait decider", (it) => {
     }),
   );
 
-  it.effect("a manual message supersedes the wait and starts immediately", () =>
+  it.effect("a manual message on the waiting model stays queued", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("manual-turn-queued-after-limit"),
+          threadId: THREAD_ID,
+          message: {
+            messageId: MessageId.make("message-user-2"),
+            role: "user",
+            text: "Fix the navbar too",
+            attachments: [],
+          },
+          modelSelection: MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-08-14T00:01:00.000Z",
+        },
+        readModel: makeReadModel(WAIT),
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.message-sent",
+        "thread.usage-limit-wait-scheduled",
+      ]);
+      const scheduled = events[1];
+      if (scheduled?.type === "thread.usage-limit-wait-scheduled") {
+        expect(scheduled.payload.wait.queuedMessageIds).toEqual(["message-user-2"]);
+      }
+    }),
+  );
+
+  it.effect("a manual message on another model supersedes the wait and starts immediately", () =>
     Effect.gen(function* () {
       const result = yield* decideOrchestrationCommand({
         command: {

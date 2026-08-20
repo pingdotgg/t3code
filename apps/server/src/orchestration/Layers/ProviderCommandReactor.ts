@@ -69,6 +69,31 @@ function toNonEmptyProviderInput(value: string | undefined): string | undefined 
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+type QueuedUsageLimitMessage = {
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+};
+
+export function buildQueuedUsageLimitTurnInput(messages: ReadonlyArray<QueuedUsageLimitMessage>): {
+  readonly messageText: string | undefined;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+} {
+  const messageText =
+    messages.length <= 1
+      ? messages[0]?.text
+      : [
+          "Continue the interrupted task and address each message the user sent while waiting for the usage limit to reset, in order.",
+          ...messages.map(
+            (message, index) =>
+              `Message ${index + 1}:\n${message.text.trim().length > 0 ? message.text : "(attachments only)"}`,
+          ),
+        ].join("\n\n");
+  return {
+    messageText,
+    attachments: messages.flatMap((message) => message.attachments ?? []),
+  };
+}
+
 function mapProviderSessionStatusToOrchestrationStatus(
   status: "connecting" | "ready" | "running" | "error" | "closed",
 ): OrchestrationSession["status"] {
@@ -1094,6 +1119,23 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const queuedMessages = event.payload.queuedMessageIds?.map((messageId) =>
+      thread.messages.find((entry) => entry.id === messageId && entry.role === "user"),
+    );
+    if (queuedMessages?.some((entry) => entry === undefined)) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail: "One or more queued usage-limit messages were not found for turn start request.",
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+    const resolvedQueuedMessages = queuedMessages?.filter((entry) => entry !== undefined) ?? [];
+    const queuedTurnInput = buildQueuedUsageLimitTurnInput(resolvedQueuedMessages);
+
     const isFirstUserMessageTurn =
       event.payload.origin !== "usage-limit-auto-resume" &&
       thread.messages.filter((entry) => entry.role === "user").length === 1;
@@ -1170,10 +1212,12 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: event.payload.promptOverride ?? message.text,
-      ...(event.payload.promptOverride === undefined && message.attachments !== undefined
-        ? { attachments: message.attachments }
-        : {}),
+      messageText: queuedTurnInput.messageText ?? event.payload.promptOverride ?? message.text,
+      ...(resolvedQueuedMessages.length > 0
+        ? { attachments: queuedTurnInput.attachments }
+        : event.payload.promptOverride === undefined && message.attachments !== undefined
+          ? { attachments: message.attachments }
+          : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),

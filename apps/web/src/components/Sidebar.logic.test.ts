@@ -38,10 +38,13 @@ import {
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
+  CommandId,
   OrchestrationLatestTurn,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 
 import {
@@ -1072,6 +1075,7 @@ describe("resolveThreadStatusPill", () => {
     latestTurn: null,
     lastVisitedAt: undefined,
     operatorWaitStartedAt: null,
+    usageLimitWait: null,
     session: {
       threadId: ThreadId.make("thread-1"),
       status: "running" as const,
@@ -1128,6 +1132,34 @@ describe("resolveThreadStatusPill", () => {
       pulse: false,
       colorClass: expect.stringContaining("amber"),
     });
+  });
+
+  it("shows waiting while a usage-limit reset is scheduled", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          usageLimitWait: {
+            waitId: CommandId.make("wait-1"),
+            blockedTurnId: TurnId.make("turn-1"),
+            provider: ProviderDriverKind.make("codex"),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            resumeAt: "2026-03-09T15:00:00.000Z",
+            isEstimated: false,
+            createdAt: "2026-03-09T10:00:00.000Z",
+          },
+          session: {
+            ...baseThread.session,
+            status: "error",
+            activeTurnId: null,
+            lastError: "Usage limit reached",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Waiting", pulse: false });
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {

@@ -547,14 +547,17 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
     input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
 
+  // A usage-limit wait accepts new messages without starting a provider turn.
+  // The projected message is still the server acknowledgement of the send.
+  if (latestUserMessageChanged) {
+    return true;
+  }
+
   if (input.phase === "running") {
     // Steering adds a user message to the current running turn without
     // necessarily changing any of the turn timestamps. Treat that projected
     // message as the server acknowledgment so the composer does not remain
     // stuck in its local "Sending" state until the turn settles.
-    if (latestUserMessageChanged) {
-      return true;
-    }
     if (!latestTurnChanged) {
       return false;
     }

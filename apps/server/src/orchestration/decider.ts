@@ -1078,6 +1078,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+      const queuesBehindUsageLimit =
+        targetThread.usageLimitWait != null &&
+        modelSelectionsEqual(
+          command.modelSelection ?? targetThread.modelSelection,
+          targetThread.usageLimitWait.modelSelection,
+        );
       const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1106,7 +1112,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // A snooze clears the same way — sending a message to a snoozed
       // thread is the user re-engaging, so the return ticket is spent.
       const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
-      if (targetThread.usageLimitWait != null) {
+      if (targetThread.usageLimitWait != null && !queuesBehindUsageLimit) {
         lifecycleResetEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",
@@ -1154,6 +1160,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             updatedAt: command.createdAt,
           },
         });
+      }
+      if (queuesBehindUsageLimit && targetThread.usageLimitWait != null) {
+        const queuedMessageIds = [
+          ...(targetThread.usageLimitWait.queuedMessageIds ?? []),
+          command.message.messageId,
+        ];
+        return [
+          ...lifecycleResetEvents,
+          userMessageEvent,
+          {
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.usage-limit-wait-scheduled",
+            payload: {
+              threadId: command.threadId,
+              wait: { ...targetThread.usageLimitWait, queuedMessageIds },
+              updatedAt: command.createdAt,
+            },
+          },
+        ];
       }
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
     }
@@ -1467,7 +1497,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (!canResume || wait == null) {
         return clearedEvent;
       }
-      const lastUserMessage = thread.messages.findLast((message) => message.role === "user");
+      const queuedMessageIds = wait.queuedMessageIds ?? [];
+      const queuedUserMessages = queuedMessageIds.flatMap((messageId) => {
+        const message = thread.messages.find(
+          (entry) => entry.id === messageId && entry.role === "user",
+        );
+        return message ? [message] : [];
+      });
+      const lastUserMessage =
+        queuedUserMessages.at(-1) ?? thread.messages.findLast((message) => message.role === "user");
       if (!lastUserMessage) {
         return {
           ...clearedEvent,
@@ -1490,7 +1528,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode: thread.runtimeMode,
           interactionMode: thread.interactionMode,
           origin: "usage-limit-auto-resume",
-          promptOverride: AUTO_CONTINUE_AFTER_USAGE_LIMIT_PROMPT,
+          ...(queuedMessageIds.length > 0
+            ? { queuedMessageIds }
+            : { promptOverride: AUTO_CONTINUE_AFTER_USAGE_LIMIT_PROMPT }),
           createdAt: command.createdAt,
         },
       };

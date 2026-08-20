@@ -156,6 +156,7 @@ type ThreadStatusInput = Pick<
   | "session"
   | "backgroundLiveness"
   | "operatorWaitStartedAt"
+  | "usageLimitWait"
 > & {
   lastVisitedAt?: string | undefined;
 };
@@ -478,6 +479,7 @@ type SidebarThreadStatusInput = Pick<
   | "session"
   | "backgroundLiveness"
   | "operatorWaitStartedAt"
+  | "usageLimitWait"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
@@ -486,6 +488,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   if (thread.hasPendingUserInput) {
     return "input";
+  }
+  if (thread.usageLimitWait != null) {
+    return "waiting";
   }
   if (
     (thread.session?.status === "running" || thread.session?.status === "starting") &&
@@ -668,6 +673,15 @@ export function resolveThreadStatusPill(input: {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.usageLimitWait != null) {
+    return {
+      label: "Waiting",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
     };
   }

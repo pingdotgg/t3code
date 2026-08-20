@@ -121,6 +121,9 @@ export function useThreadComposerState() {
     if (!selectedThread) {
       return null;
     }
+    if (selectedThread.usageLimitWait != null) {
+      return null;
+    }
 
     return deriveActiveWorkStartedAt(
       selectedThread.latestTurn,
