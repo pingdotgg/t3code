@@ -109,6 +109,8 @@ export function ThemeSearchSection({
     requestRef.current?.abort();
     requestRef.current = null;
     if (open) {
+      lastSearchKeyRef.current = null;
+      prevSearchKeyRef.current = null;
       setQuery("");
       setSortBy("downloadCount");
       setResults(null);
