@@ -145,6 +145,7 @@ export function ThemeSearchSection({
         }
       } catch (cause) {
         if (!controller.signal.aborted) {
+          setResults(null);
           setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
         }
       }
@@ -281,11 +282,11 @@ export function ThemeSearchSection({
             {SUGGESTED_SEARCHES.map((suggestion) => (
               <Button
                 key={suggestion}
+                disabled={installingId !== null}
                 size="xs"
                 variant="ghost"
                 onClick={() => {
                   if (query.trim() === suggestion) {
-                    if (installingId !== null) return;
                     void runSearch(suggestion);
                   } else {
                     setQuery(suggestion);
