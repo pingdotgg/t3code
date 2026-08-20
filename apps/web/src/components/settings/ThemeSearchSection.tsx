@@ -53,7 +53,7 @@ function SourceLinkIcon({ url }: { url: string }) {
     if (host === "github.com" || host.endsWith(".github.com"))
       return <GitHubIcon className="size-3.5" />;
     if (host === "gitlab.com" || host.endsWith(".gitlab.com"))
-      return <GitLabIcon className="size-3.5" />;
+      return <GitLabIcon className="size-3.5" monochrome />;
   } catch {
     // Fall through to the generic external-link icon.
   }
