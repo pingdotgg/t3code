@@ -3,12 +3,15 @@ import {
   type ProviderInteractionMode,
   ProviderDriverKind,
   type RuntimeMode,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpClient from "effect-acp/client";
@@ -38,6 +41,83 @@ interface KimiAcpRuntimeInput extends Omit<
   readonly kimiSettings: KimiAcpRuntimeKimiSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
 }
+
+export interface KimiTurnActivity {
+  readonly markActive: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly markIdle: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly activeCount: Effect.Effect<number>;
+  readonly awaitIdle: Effect.Effect<void>;
+}
+
+interface KimiTurnActivityState {
+  readonly activeThreadIds: ReadonlySet<ThreadId>;
+  readonly idle: Deferred.Deferred<void>;
+}
+
+export const makeKimiTurnActivity: Effect.Effect<KimiTurnActivity> = Effect.gen(function* () {
+  const initialIdle = yield* Deferred.make<void>();
+  yield* Deferred.succeed(initialIdle, undefined);
+  const state = yield* SynchronizedRef.make<KimiTurnActivityState>({
+    activeThreadIds: new Set<ThreadId>(),
+    idle: initialIdle,
+  });
+
+  const markActive = (threadId: ThreadId): Effect.Effect<void> =>
+    SynchronizedRef.modifyEffect(
+      state,
+      (current): Effect.Effect<readonly [void, KimiTurnActivityState]> => {
+        if (current.activeThreadIds.has(threadId)) {
+          return Effect.succeed([undefined, current] as const);
+        }
+        return Effect.gen(function* () {
+          const activeThreadIds = new Set(current.activeThreadIds);
+          activeThreadIds.add(threadId);
+          const idle =
+            current.activeThreadIds.size === 0 ? yield* Deferred.make<void>() : current.idle;
+          return [undefined, { activeThreadIds, idle }] as const;
+        });
+      },
+    );
+
+  const markIdle = (threadId: ThreadId): Effect.Effect<void> =>
+    SynchronizedRef.modify(
+      state,
+      (current): readonly [Deferred.Deferred<void> | null, KimiTurnActivityState] => {
+        if (!current.activeThreadIds.has(threadId)) {
+          return [null, current] as const;
+        }
+        const activeThreadIds = new Set(current.activeThreadIds);
+        activeThreadIds.delete(threadId);
+        return [
+          activeThreadIds.size === 0 ? current.idle : null,
+          { ...current, activeThreadIds },
+        ] as const;
+      },
+    ).pipe(
+      Effect.flatMap((idle) =>
+        idle ? Deferred.succeed(idle, undefined).pipe(Effect.asVoid) : Effect.void,
+      ),
+    );
+
+  const awaitIdle: Effect.Effect<void> = Effect.gen(function* () {
+    while (true) {
+      const current = yield* SynchronizedRef.get(state);
+      if (current.activeThreadIds.size === 0) {
+        return;
+      }
+      yield* Deferred.await(current.idle);
+    }
+  });
+
+  return {
+    markActive,
+    markIdle,
+    activeCount: SynchronizedRef.get(state).pipe(
+      Effect.map((current) => current.activeThreadIds.size),
+    ),
+    awaitIdle,
+  } satisfies KimiTurnActivity;
+});
 
 export function resolveKimiHomePath(
   kimiSettings: Pick<KimiSettings, "homePath"> | null | undefined,

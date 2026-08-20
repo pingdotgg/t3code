@@ -69,6 +69,7 @@ import {
   shouldKimiAdapterAutoApprove,
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
+  type KimiTurnActivity,
 } from "../acp/KimiAcpSupport.ts";
 import { type KimiAdapterShape } from "../Services/KimiAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -88,6 +89,7 @@ export interface KimiAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  readonly turnActivity?: KimiTurnActivity;
 }
 
 interface PendingApproval {
@@ -246,6 +248,16 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
     );
     const nextEventId = Effect.map(randomUUIDv4, (id) => EventId.make(id));
     const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
+    const setPromptsInFlight = (ctx: KimiSessionContext, count: number) =>
+      Effect.gen(function* () {
+        ctx.promptsInFlight = Math.max(0, count);
+        if (!options?.turnActivity) {
+          return;
+        }
+        yield* ctx.promptsInFlight > 0
+          ? options.turnActivity.markActive(ctx.threadId)
+          : options.turnActivity.markIdle(ctx.threadId);
+      });
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
@@ -336,7 +348,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
         }
         let settleTurnId = turnId;
         if (options?.settleAllPrompts) {
-          liveCtx.promptsInFlight = 0;
+          yield* setPromptsInFlight(liveCtx, 0);
           if (liveCtx.activeTurnId !== turnId && liveCtx.session.activeTurnId !== turnId) {
             const fallbackTurnId = liveCtx.activeTurnId ?? liveCtx.session.activeTurnId;
             if (!fallbackTurnId) {
@@ -361,10 +373,10 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             liveCtx.activeTurnId !== settleTurnId ||
             liveCtx.session.activeTurnId !== settleTurnId
           ) {
-            liveCtx.promptsInFlight = remainingPrompts;
+            yield* setPromptsInFlight(liveCtx, remainingPrompts);
             return;
           }
-          liveCtx.promptsInFlight = remainingPrompts;
+          yield* setPromptsInFlight(liveCtx, remainingPrompts);
         }
         const updatedAt = yield* nowIso;
         const canEmitTurnCompletion =
@@ -488,6 +500,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        yield* setPromptsInFlight(ctx, 0);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
@@ -899,7 +912,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             // Count this prompt immediately so a superseded in-flight prompt
             // resolving from here on does not settle the turn; decremented on
             // preparation failure here, and after the prompt below otherwise.
-            ctx.promptsInFlight += 1;
+            yield* setPromptsInFlight(ctx, ctx.promptsInFlight + 1);
             // Bind the turn id before cooperative yields so interruptTurn can
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
@@ -1176,7 +1189,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
               };
               const remainingPrompts = Math.max(0, ctx.promptsInFlight - 1);
-              ctx.promptsInFlight = remainingPrompts;
+              yield* setPromptsInFlight(ctx, remainingPrompts);
 
               // Only the last remaining prompt settles the turn. A steer-
               // superseded prompt resolving while another is in flight or
@@ -1366,7 +1379,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               ctx.session.status === "connecting"
             ) {
               const updatedAt = yield* nowIso;
-              ctx.promptsInFlight = 0;
+              yield* setPromptsInFlight(ctx, 0);
               ctx.activeTurnId = undefined;
               const { activeTurnId: _activeTurnId, ...readySession } = ctx.session;
               ctx.session = {

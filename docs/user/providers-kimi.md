@@ -17,6 +17,9 @@ Kimi CLI. For first-time setup of T3 Code itself, see [Install T3 Code](./instal
 
   or npm: `npm install -g @moonshot-ai/kimi-code`
 
+  Binary resolution uses an explicit provider Binary path first, then the official
+  `~/.kimi-code/bin/kimi` install (`kimi.exe` on Windows), then `kimi` from PATH.
+
 - On Windows, the Kimi CLI requires [Git for Windows](https://git-scm.com/downloads/win) for its
   shell environment. If Git Bash is installed in a custom location, set the `KIMI_SHELL_PATH`
   environment variable to your `bash.exe`.
@@ -34,21 +37,46 @@ Signing in from a terminal works too:
 kimi login
 ```
 
-Both paths store the same credential, and the Kimi CLI keeps it refreshed from then on. To sign
-out, run `kimi logout`.
+Both paths store the same credential, and the Kimi CLI keeps it refreshed from then on. After a
+successful sign-in, T3 Code refreshes the provider automatically. Temporary CLI startup delays do
+not discard an already healthy connection.
 
 ## Models
 
-T3 Code discovers the models your subscription offers when the provider is checked. Current plans
-include:
+T3 Code discovers the exact model aliases your Kimi CLI advertises, including managed Kimi Code
+aliases and Moonshot model IDs. Pick a model from the model picker like any other provider.
 
-```text
-k3                          Kimi K3 (default)
-kimi-for-coding             Kimi K2.7 Coding
-kimi-for-coding-highspeed   Kimi K2.7 Coding Highspeed
-```
+You can switch between Kimi models in an active conversation without starting a new thread. A Kimi
+conversation remains bound to its Kimi provider instance; switching it to a different provider still
+requires a new thread.
 
-Pick the model per thread from the model picker, like any other provider.
+## Plan And Permission Modes
+
+Kimi uses its native session modes for T3 Code's interaction and runtime controls:
+
+| T3 Code control   | Kimi behavior                          |
+| ----------------- | -------------------------------------- |
+| Plan              | Read-only planning                     |
+| Supervised        | Manual approvals                       |
+| Auto-accept edits | Automatically approves safe operations |
+| Auto              | Automatically approves safe operations |
+| Full access       | Automatically approves all operations  |
+
+Plan uses the separate Build/Plan toggle in the composer footer, not the access dropdown. On a
+compact composer, open **More composer controls** (`…`) and choose **Mode → Plan**. If the toggle is
+hidden, enable **Plan mode (legacy)** under Settings → General → Legacy features. **Auto** maps to Kimi's native auto mode,
+while **Full access** maps to Kimi's native YOLO mode.
+
+Leaving Plan restores the selected runtime mode. Approval requests that Kimi does not handle
+natively continue to appear in T3 Code.
+
+## Thinking
+
+The model picker shows a **Thinking** option when the selected model advertises one. Choices are
+model-specific: K3 models commonly offer Low, High, and Max, while K2.7 Coding models advertise a
+narrower set. T3 Code uses only the choices reported by the CLI and refreshes them after a model
+switch. If a previously selected value is unavailable on the new model, Kimi's advertised default is
+used instead.
 
 ## Separate Accounts Or Sandboxes
 

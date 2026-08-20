@@ -1,4 +1,7 @@
+import * as NodeOS from "node:os";
+
 import { KimiSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +16,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeKimiTextGeneration } from "../../textGeneration/KimiTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeKimiTurnActivity, type KimiTurnActivity } from "../acp/KimiAcpSupport.ts";
 import { makeKimiAdapter } from "../Layers/KimiAdapter.ts";
 import {
   buildInitialKimiProviderSnapshot,
@@ -42,6 +46,45 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 const decodeKimiSettings = Schema.decodeSync(KimiSettings);
+
+export const resolveKimiDriverBinaryPath = Effect.fn("resolveKimiDriverBinaryPath")(function* (
+  config: Pick<KimiSettings, "binaryPath">,
+  options?: { readonly homeDirectory?: string },
+) {
+  const configuredBinaryPath = config.binaryPath.trim();
+  if (configuredBinaryPath && configuredBinaryPath !== "kimi") {
+    return configuredBinaryPath;
+  }
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const officialBinaryPath = path.join(
+    options?.homeDirectory ?? NodeOS.homedir(),
+    ".kimi-code",
+    "bin",
+    platform === "win32" ? "kimi.exe" : "kimi",
+  );
+  const officialBinaryExists = yield* fileSystem
+    .exists(officialBinaryPath)
+    .pipe(Effect.orElseSucceed(() => false));
+  return officialBinaryExists ? officialBinaryPath : configuredBinaryPath || "kimi";
+});
+
+export function runKimiProbeWithActiveTurnDeferral<A, E, R>(input: {
+  readonly turnActivity: KimiTurnActivity;
+  readonly probe: Effect.Effect<A, E, R>;
+}): Effect.Effect<A, E, R> {
+  return Effect.gen(function* () {
+    const activeCount = yield* input.turnActivity.activeCount;
+    if (activeCount > 0) {
+      yield* Effect.logDebug("Deferring Kimi provider probe until active turns settle.", {
+        activeTurnCount: activeCount,
+      });
+      yield* input.turnActivity.awaitIdle;
+    }
+    return yield* input.probe;
+  });
+}
 
 const DRIVER_KIND = ProviderDriverKind.make("kimi");
 // The Kimi CLI installs via Moonshot's install script (or a global npm
@@ -122,7 +165,15 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies KimiSettings;
+      const resolvedBinaryPath = yield* resolveKimiDriverBinaryPath(config);
+      const effectiveConfig = {
+        ...config,
+        binaryPath: resolvedBinaryPath,
+        enabled,
+      } satisfies KimiSettings;
+      const turnActivity = yield* makeKimiTurnActivity;
+      const lastKnownGoodRef = yield* Ref.make<ServerProvider | null>(null);
+      const discoveryCacheRef = yield* Ref.make<KimiModelDiscoveryCache | undefined>(undefined);
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -132,12 +183,11 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        turnActivity,
       });
       const textGeneration = yield* makeKimiTextGeneration(effectiveConfig, processEnv);
 
-      const lastKnownGoodRef = yield* Ref.make<ServerProvider | null>(null);
-      const discoveryCacheRef = yield* Ref.make<KimiModelDiscoveryCache | undefined>(undefined);
-      const checkProvider = Effect.gen(function* () {
+      const probeProvider = Effect.gen(function* () {
         const discoveryCache = yield* Ref.get(discoveryCacheRef);
         const result = yield* probeKimiProviderStatus(
           effectiveConfig,
@@ -157,6 +207,10 @@ export const KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv> = {
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
+      const checkProvider = runKimiProbeWithActiveTurnDeferral({
+        turnActivity,
+        probe: probeProvider,
+      });
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const managedSnapshot = yield* makeManagedServerProvider<

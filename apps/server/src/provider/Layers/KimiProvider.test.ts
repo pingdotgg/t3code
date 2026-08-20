@@ -1,21 +1,29 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   KimiSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 
-import { stabilizeKimiProviderProbe } from "../Drivers/KimiDriver.ts";
-import { kimiModelStateFromSessionSetup } from "../acp/KimiAcpSupport.ts";
+import {
+  resolveKimiDriverBinaryPath,
+  runKimiProbeWithActiveTurnDeferral,
+  stabilizeKimiProviderProbe,
+} from "../Drivers/KimiDriver.ts";
+import { kimiModelStateFromSessionSetup, makeKimiTurnActivity } from "../acp/KimiAcpSupport.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   buildInitialKimiProviderSnapshot,
@@ -133,6 +141,72 @@ describe("buildInitialKimiProviderSnapshot", () => {
         "kimi-for-coding",
         "kimi-for-coding-highspeed",
       ]);
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("Kimi driver probe controls", (it) => {
+  it.effect("prefers explicit paths, then the official installer, then PATH", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-kimi-home-" });
+        const fallbackHomeDirectory = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3code-kimi-home-fallback-",
+        });
+        const officialDirectory = path.join(homeDirectory, ".kimi-code", "bin");
+        const officialBinaryPath = path.join(officialDirectory, "kimi.exe");
+        yield* fs.makeDirectory(officialDirectory, { recursive: true });
+        yield* fs.writeFileString(officialBinaryPath, "fixture");
+
+        const explicitBinaryPath = "C:\\tools\\custom-kimi.exe";
+        expect(
+          yield* resolveKimiDriverBinaryPath(
+            { binaryPath: explicitBinaryPath },
+            { homeDirectory },
+          ).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+        ).toBe(explicitBinaryPath);
+        expect(
+          yield* resolveKimiDriverBinaryPath({ binaryPath: "kimi" }, { homeDirectory }).pipe(
+            Effect.provideService(HostProcessPlatform, "win32"),
+          ),
+        ).toBe(officialBinaryPath);
+        expect(
+          yield* resolveKimiDriverBinaryPath(
+            { binaryPath: "kimi" },
+            { homeDirectory: fallbackHomeDirectory },
+          ).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+        ).toBe("kimi");
+      }),
+    ),
+  );
+
+  it.effect("defers a probe during an active turn and resumes when the turn settles", () =>
+    Effect.gen(function* () {
+      const turnActivity = yield* makeKimiTurnActivity;
+      const threadId = ThreadId.make("thread-active");
+      const probedSnapshot = stampTestProvider({
+        ...(yield* buildInitialKimiProviderSnapshot(decodeKimiSettings({}))),
+        status: "ready",
+        auth: { status: "authenticated" },
+        message: "probe completed",
+      });
+      const probeStarted = yield* Deferred.make<void>();
+      yield* turnActivity.markActive(threadId);
+
+      const probeFiber = yield* runKimiProbeWithActiveTurnDeferral({
+        turnActivity,
+        probe: Deferred.succeed(probeStarted, undefined).pipe(Effect.as(probedSnapshot)),
+      }).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      expect(yield* turnActivity.activeCount).toBe(1);
+      expect(yield* Deferred.isDone(probeStarted)).toBe(false);
+      yield* turnActivity.markIdle(threadId);
+      expect(yield* Fiber.join(probeFiber)).toBe(probedSnapshot);
+      expect(yield* Deferred.isDone(probeStarted)).toBe(true);
+      expect(yield* turnActivity.activeCount).toBe(0);
     }),
   );
 });
@@ -508,17 +582,22 @@ it.layer(NodeServices.layer)("checkKimiProviderStatus", (it) => {
   it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
     Effect.gen(function* () {
       const secretStderr = "broken kimi install: secret-token-value";
+      const platform = yield* HostProcessPlatform;
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-kimi-version-" });
-          const kimiPath = path.join(dir, "kimi");
+          const kimiPath = path.join(dir, platform === "win32" ? "kimi.cmd" : "kimi");
           yield* fs.writeFileString(
             kimiPath,
-            ["#!/bin/sh", `printf "%s\\n" "${secretStderr}" >&2`, "exit 2", ""].join("\n"),
+            platform === "win32"
+              ? ["@echo off", `echo ${secretStderr} 1>&2`, "exit /b 2"].join("\r\n")
+              : ["#!/bin/sh", `printf "%s\\n" "${secretStderr}" >&2`, "exit 2"].join("\n"),
           );
-          yield* fs.chmod(kimiPath, 0o755);
+          if (platform !== "win32") {
+            yield* fs.chmod(kimiPath, 0o755);
+          }
 
           return yield* checkKimiProviderStatus(
             decodeKimiSettings({ enabled: true, binaryPath: kimiPath }),
@@ -534,34 +613,54 @@ it.layer(NodeServices.layer)("checkKimiProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
+  it.effect("reports a transient warning when ACP model discovery is unavailable", () =>
     Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-kimi-success-" });
-          const kimiPath = path.join(dir, "kimi");
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-kimi-acp-" });
+          const kimiPath = path.join(dir, platform === "win32" ? "kimi.cmd" : "kimi");
           yield* fs.writeFileString(
             kimiPath,
-            ["#!/bin/sh", 'printf "kimi-cli 1.49.0\\n"', "exit 0", ""].join("\n"),
+            platform === "win32"
+              ? [
+                  "@echo off",
+                  'if "%~1"=="--version" (',
+                  "  echo kimi-cli 1.49.0",
+                  "  exit /b 0",
+                  ")",
+                  "echo not-json",
+                  "exit /b 0",
+                ].join("\r\n")
+              : [
+                  "#!/bin/sh",
+                  'if [ "$1" = "--version" ]; then',
+                  '  printf "kimi-cli 1.49.0\\n"',
+                  "  exit 0",
+                  "fi",
+                  'printf "not-json\\n"',
+                  "exit 0",
+                ].join("\n"),
           );
-          yield* fs.chmod(kimiPath, 0o755);
-
+          if (platform !== "win32") {
+            yield* fs.chmod(kimiPath, 0o755);
+          }
           return yield* checkKimiProviderStatus(
             decodeKimiSettings({ enabled: true, binaryPath: kimiPath }),
           );
         }),
       );
 
-      expect(snapshot.status).toBe("error");
+      expect(snapshot.status).toBe("warning");
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual([
         "k3",
         "kimi-for-coding",
         "kimi-for-coding-highspeed",
       ]);
-      expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.message).toContain("failed temporarily");
     }),
   );
 });

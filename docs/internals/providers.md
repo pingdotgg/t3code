@@ -23,6 +23,15 @@ sign-in is unusual: the CLI's ACP `authenticate` only validates the stored OAuth
 also ships a server-side device flow (`kimiAuth.signIn`, [`kimi/KimiOAuth.ts`][kimioauth]) that
 writes the credential file the CLI expects and leaves refreshes to the CLI.
 
+Kimi health checks retain the last healthy snapshot across transient process timeouts and defer ACP
+probes while any Kimi turn is active. Without an explicit binary path, the driver prefers the official
+`~/.kimi-code/bin` installation before PATH. Model discovery reads the ACP model config option and
+uses one scoped session to collect each model's advertised thinking choices; the result is cached by
+CLI version, resolved binary, home, and provider settings. Active sessions apply mode, model,
+refreshed config, and thinking in that order. Kimi-local config state consumes
+`config_option_update` notifications so model-specific values stay truthful without adding
+provider-specific behavior to the shared ACP runtime.
+
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
 `apps/server/src/provider/Layers/` (`CodexAdapter.ts`, `ClaudeAdapter.ts`, and so on) and conform to
