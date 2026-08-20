@@ -1048,9 +1048,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const guardDecision = hasGuard
         ? {
             outcome:
-              (command.expectedTurnId !== undefined && command.expectedTurnId !== actualTurnId) ||
+              (command.expectedTurnId !== undefined &&
+                (command.expectedSessionUpdatedAt === undefined ||
+                  command.expectedTurnId !== actualTurnId)) ||
               (command.expectedSessionUpdatedAt !== undefined &&
-                command.expectedSessionUpdatedAt !== thread.session?.updatedAt)
+                command.expectedSessionUpdatedAt !== thread.session?.providerLifecycleUpdatedAt)
                 ? ("work-changed" as const)
                 : ("matched" as const),
             actualTurnId,

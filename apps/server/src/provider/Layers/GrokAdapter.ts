@@ -1033,17 +1033,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ...(displayModel ? { model: displayModel } : {}),
               };
 
-              if (steeringTurnId === undefined) {
-                yield* offerRuntimeEvent({
-                  type: "turn.started",
-                  ...(yield* makeEventStamp()),
-                  provider: PROVIDER,
-                  threadId: input.threadId,
-                  turnId,
-                  payload: displayModel ? { model: displayModel } : {},
-                });
-              }
-
               return {
                 acp: ctx.acp,
                 acpSessionId: ctx.acpSessionId,
@@ -1076,10 +1065,23 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         const promptFailureMessageRef = yield* Ref.make<string | undefined>(undefined);
 
         return yield* Effect.gen(function* () {
+          const turnStartedStamp = yield* makeEventStamp();
+          const publishTurnStarted = offerRuntimeEvent({
+            type: "turn.started",
+            ...turnStartedStamp,
+            provider: PROVIDER,
+            threadId: input.threadId,
+            turnId: prepared.turnId,
+            payload: prepared.displayModel ? { model: prepared.displayModel } : {},
+          });
           const result = yield* prepared.acp
             .prompt(
               { prompt: prepared.promptParts },
-              { onRegistered: observer?.onTurnStarted ?? Effect.void },
+              {
+                onRegistered: (observer?.onTurnStarted ?? Effect.void).pipe(
+                  Effect.andThen(publishTurnStarted),
+                ),
+              },
             )
             .pipe(
               Effect.tap((promptResult) =>

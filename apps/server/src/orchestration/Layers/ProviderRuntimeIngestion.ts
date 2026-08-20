@@ -1657,9 +1657,10 @@ const make = Effect.gen(function* () {
                   (session) => session.threadId === thread.id,
                 )
               : undefined;
-          const lifecycleUpdatedAt = sameId(providerSession?.activeTurnId, eventTurnId)
-            ? (providerSession?.updatedAt ?? now)
-            : now;
+          const providerLifecycleUpdatedAt =
+            providerSession !== undefined && sameId(providerSession.activeTurnId, eventTurnId)
+              ? providerSession.updatedAt
+              : undefined;
           const nextSession: OrchestrationSession = {
             threadId: thread.id,
             status,
@@ -1667,10 +1668,17 @@ const make = Effect.gen(function* () {
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
             activeTurnId: nextActiveTurnId,
             lastError,
-            updatedAt: lifecycleUpdatedAt,
+            updatedAt: now,
           };
           if (event.providerInstanceId !== undefined) {
             Object.assign(nextSession, { providerInstanceId: event.providerInstanceId });
+          }
+          const authoritativeLifecycleUpdatedAt =
+            providerLifecycleUpdatedAt ?? thread.session?.providerLifecycleUpdatedAt;
+          if (authoritativeLifecycleUpdatedAt !== undefined) {
+            Object.assign(nextSession, {
+              providerLifecycleUpdatedAt: authoritativeLifecycleUpdatedAt,
+            });
           }
           const currentSession = thread.session;
           const sessionStateUnchanged =
@@ -1680,7 +1688,8 @@ const make = Effect.gen(function* () {
             currentSession.providerInstanceId === nextSession.providerInstanceId &&
             currentSession.runtimeMode === nextSession.runtimeMode &&
             currentSession.activeTurnId === nextSession.activeTurnId &&
-            currentSession.lastError === nextSession.lastError;
+            currentSession.lastError === nextSession.lastError &&
+            currentSession.providerLifecycleUpdatedAt === nextSession.providerLifecycleUpdatedAt;
 
           if (!sessionStateUnchanged) {
             const command = {
@@ -1937,22 +1946,28 @@ const make = Effect.gen(function* () {
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
+          const errorSession: OrchestrationSession = {
+            threadId: thread.id,
+            status: "error",
+            providerName: event.provider,
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: eventTurnId ?? null,
+            lastError: runtimeErrorMessage,
+            updatedAt: now,
+          };
+          if (event.providerInstanceId !== undefined) {
+            Object.assign(errorSession, { providerInstanceId: event.providerInstanceId });
+          }
+          if (thread.session?.providerLifecycleUpdatedAt !== undefined) {
+            Object.assign(errorSession, {
+              providerLifecycleUpdatedAt: thread.session.providerLifecycleUpdatedAt,
+            });
+          }
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "runtime-error-session-set"),
             threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "error",
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: eventTurnId ?? null,
-              lastError: runtimeErrorMessage,
-              updatedAt: now,
-            },
+            session: errorSession,
             createdAt: now,
           });
         }

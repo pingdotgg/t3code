@@ -660,6 +660,70 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("keeps provider lifecycle time separate from the starting state edge", () =>
+    Effect.gen(function* () {
+      const startingProjected = yield* Deferred.make<OrchestrationSession>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          onSessionSet: (session) =>
+            session.status === "starting"
+              ? Deferred.succeed(startingProjected, session).pipe(Effect.asVoid)
+              : Effect.void,
+        }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const lifecycleUpdatedAt = "2026-01-01T00:00:00.001Z";
+      const turnStartedAt = "2026-01-01T00:00:00.002Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-before-existing-turn"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          providerLifecycleUpdatedAt: lifecycleUpdatedAt,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      harness.runtimeSessions.push({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        status: "ready",
+        runtimeMode: "approval-required",
+        threadId,
+        model: "gpt-5-codex",
+        createdAt: lifecycleUpdatedAt,
+        updatedAt: lifecycleUpdatedAt,
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-existing-session-turn"),
+        threadId,
+        message: {
+          messageId: asMessageId("user-message-existing-session-turn"),
+          role: "user",
+          text: "continue existing session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: turnStartedAt,
+      });
+
+      const startingSession = yield* Deferred.await(startingProjected);
+      expect(startingSession.providerLifecycleUpdatedAt).toBe(lifecycleUpdatedAt);
+      expect(startingSession.updatedAt).toBe(turnStartedAt);
+    }),
+  );
+
   effectIt.effect("settles a failed provider startup and allows a clean retry", () =>
     Effect.gen(function* () {
       let failStartup = true;
@@ -2648,6 +2712,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-2"),
           lastError: null,
+          providerLifecycleUpdatedAt: currentUpdatedAt,
           updatedAt: currentUpdatedAt,
         },
         createdAt: currentUpdatedAt,
@@ -2776,6 +2841,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
+          providerLifecycleUpdatedAt: now,
           updatedAt: now,
         },
         createdAt: now,
@@ -2857,6 +2923,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
+          providerLifecycleUpdatedAt: initialUpdatedAt,
           updatedAt: initialUpdatedAt,
         },
         createdAt: initialUpdatedAt,
@@ -2914,6 +2981,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
+          providerLifecycleUpdatedAt: now,
           updatedAt: now,
         },
         createdAt: now,
@@ -2975,6 +3043,68 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("fails closed when a turn-id-only guard omits its lifecycle snapshot", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const commandId = CommandId.make("cmd-turn-interrupt-turn-only");
+    const interruptResolved = Effect.runSync(Deferred.make<void>());
+    const harness = await createHarness({
+      onInterruptReceipt: (receipt) =>
+        receipt.commandId === commandId
+          ? Deferred.succeed(interruptResolved, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-turn-only-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("turn-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId,
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(Deferred.await(interruptResolved));
+
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId,
+      outcome: "work-changed",
+      expectedTurnId: "turn-1",
+      actualTurnId: "turn-1",
+      createdAt: expect.any(String),
+    });
+  });
+
   it("passes the lifecycle snapshot owned by the accepted orchestration session", async () => {
     const sessionUpdatedAt = "2026-01-01T00:00:00.000Z";
     const providerUpdatedAt = "2026-01-01T00:00:01.000Z";
@@ -2992,6 +3122,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
+          providerLifecycleUpdatedAt: sessionUpdatedAt,
           updatedAt: sessionUpdatedAt,
         },
         createdAt: sessionUpdatedAt,
@@ -3070,7 +3201,7 @@ describe("ProviderCommandReactor", () => {
           ? Deferred.succeed(interruptResolved, undefined).pipe(Effect.asVoid)
           : Effect.void,
       onSessionSet: (session) =>
-        session.updatedAt === postSteerLifecycle
+        session.providerLifecycleUpdatedAt === postSteerLifecycle
           ? Deferred.succeed(lifecycleRefreshed, undefined).pipe(Effect.asVoid)
           : Effect.void,
     });
@@ -3088,7 +3219,8 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId,
           lastError: null,
-          updatedAt: preSteerLifecycle,
+          providerLifecycleUpdatedAt: preSteerLifecycle,
+          updatedAt: sessionUpdatedAt,
         },
         createdAt: sessionUpdatedAt,
       }),
@@ -3176,7 +3308,7 @@ describe("ProviderCommandReactor", () => {
     await harness.runEffect(Deferred.await(lifecycleRefreshed));
     await harness.drain();
     const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
-    expect(thread?.session?.updatedAt).toBe(postSteerLifecycle);
+    expect(thread?.session?.providerLifecycleUpdatedAt).toBe(postSteerLifecycle);
   });
 
   it("rejects a guarded interrupt when provider work changes at dispatch time", async () => {
@@ -3208,6 +3340,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
+          providerLifecycleUpdatedAt: initialUpdatedAt,
           updatedAt: initialUpdatedAt,
         },
         createdAt: initialUpdatedAt,
@@ -3266,6 +3399,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
+          providerLifecycleUpdatedAt: now,
           updatedAt: now,
         },
         createdAt: now,

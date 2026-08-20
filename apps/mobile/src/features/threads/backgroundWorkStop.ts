@@ -89,7 +89,11 @@ export function buildBackgroundWorkInterruptInput(
   commandId: CommandId,
   guardedInterrupt: boolean | undefined,
 ): InterruptThreadTurnInput | null {
-  if (guardedInterrupt !== true || thread.session?.status === "starting") {
+  if (
+    guardedInterrupt !== true ||
+    thread.session?.status === "starting" ||
+    thread.session?.providerLifecycleUpdatedAt === undefined
+  ) {
     return null;
   }
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
@@ -101,9 +105,9 @@ export function buildBackgroundWorkInterruptInput(
     Object.assign(input, { turnId: runningTurnId });
   }
   Object.assign(input, { expectedTurnId: thread.session?.activeTurnId ?? null });
-  if (thread.session !== null) {
-    Object.assign(input, { expectedSessionUpdatedAt: thread.session.updatedAt });
-  }
+  Object.assign(input, {
+    expectedSessionUpdatedAt: thread.session.providerLifecycleUpdatedAt,
+  });
   return input;
 }
 

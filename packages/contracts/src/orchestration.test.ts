@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import {
@@ -269,6 +270,15 @@ it.effect("decodes additive thread interrupt preconditions without changing lega
       expectedSessionUpdatedAt: "2026-01-01T00:00:01.000Z",
       createdAt: "2026-01-01T00:00:02.000Z",
     });
+    const incompleteGuard = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.turn.interrupt",
+        commandId: "cmd-interrupt-incomplete",
+        threadId: "thread-1",
+        expectedTurnId: "turn-1",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
 
     if (legacy.type !== "thread.turn.interrupt") {
       throw new Error("Expected legacy interrupt command");
@@ -280,6 +290,7 @@ it.effect("decodes additive thread interrupt preconditions without changing lega
     }
     assert.strictEqual(conditional.expectedTurnId, null);
     assert.strictEqual(conditional.expectedSessionUpdatedAt, "2026-01-01T00:00:01.000Z");
+    assert.isTrue(Exit.isFailure(incompleteGuard));
   }),
 );
 

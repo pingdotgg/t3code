@@ -672,7 +672,11 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
   it.effect("stamps interrupt guards from the serialized current session state", () =>
     Effect.gen(function* () {
       const activeTurnId = TurnId.make("turn-current");
-      const session = { ...makeSession("running"), activeTurnId };
+      const session = {
+        ...makeSession("running"),
+        activeTurnId,
+        providerLifecycleUpdatedAt: NOW,
+      };
       const decideInterrupt = (input: {
         readonly commandId: string;
         readonly expectedTurnId: TurnId;

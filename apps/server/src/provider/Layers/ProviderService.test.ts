@@ -1250,7 +1250,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("rejects a turn-id-only interrupt while that turn is being steered", () =>
+  it.effect("guards a same-turn steer with its current lifecycle snapshot", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-guarded-interrupt-steer");
@@ -1266,6 +1266,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
         status: "running",
         activeTurnId,
       }));
+      const staleSnapshot = (yield* provider.listSessions()).find(
+        (session) => session.threadId === threadId,
+      );
+      assert.isDefined(staleSnapshot);
       routing.codex.interruptTurn.mockClear();
 
       const steerPromptWaiting = yield* Deferred.make<void>();
@@ -1284,12 +1288,30 @@ routing.layer("ProviderServiceLive routing", (it) => {
         .pipe(Effect.forkChild);
       yield* Deferred.await(steerPromptWaiting);
 
-      const error = yield* provider
+      const turnOnlyError = yield* provider
         .interruptTurn({ threadId, expectedTurnId: activeTurnId })
         .pipe(Effect.flip);
+      const staleSnapshotError = yield* provider
+        .interruptTurn({
+          threadId,
+          expectedTurnId: activeTurnId,
+          expectedSessionUpdatedAt: staleSnapshot.updatedAt,
+        })
+        .pipe(Effect.flip);
+      const currentSnapshot = (yield* provider.listSessions()).find(
+        (session) => session.threadId === threadId,
+      );
+      assert.isDefined(currentSnapshot);
+      yield* provider.interruptTurn({
+        threadId,
+        expectedTurnId: activeTurnId,
+        expectedSessionUpdatedAt: currentSnapshot.updatedAt,
+      });
 
-      assert.instanceOf(error, ProviderTurnChangedError);
-      assert.equal(routing.codex.interruptTurn.mock.calls.length, 0);
+      assert.instanceOf(turnOnlyError, ProviderTurnChangedError);
+      assert.instanceOf(staleSnapshotError, ProviderTurnChangedError);
+      assert.notEqual(currentSnapshot.updatedAt, staleSnapshot.updatedAt);
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, 1);
       yield* Deferred.succeed(releaseSteerPrompt, undefined);
       yield* Fiber.join(sendFiber);
     }),

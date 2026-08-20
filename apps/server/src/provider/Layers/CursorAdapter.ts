@@ -955,17 +955,6 @@ export function makeCursorAdapter(
             updatedAt: yield* nowIso,
           };
 
-          if (steeringTurnId === undefined) {
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: { model: resolvedModel },
-            });
-          }
-
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
             promptParts.push({ type: "text", text: input.input.trim() });
@@ -1010,10 +999,23 @@ export function makeCursorAdapter(
             });
           }
 
+          const turnStartedStamp = yield* makeEventStamp();
+          const publishTurnStarted = offerRuntimeEvent({
+            type: "turn.started",
+            ...turnStartedStamp,
+            provider: PROVIDER,
+            threadId: input.threadId,
+            turnId,
+            payload: { model: resolvedModel },
+          });
           const result = yield* ctx.acp
             .prompt(
               { prompt: promptParts },
-              { onRegistered: observer?.onTurnStarted ?? Effect.void },
+              {
+                onRegistered: (observer?.onTurnStarted ?? Effect.void).pipe(
+                  Effect.andThen(publishTurnStarted),
+                ),
+              },
             )
             .pipe(
               Effect.mapError((error) =>

@@ -444,8 +444,14 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         FROM projection_state
         ORDER BY projector ASC
       `;
-      assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
-      for (const row of stateRows) {
+      const orchestrationProjectorNames = new Set<string>(
+        Object.values(ORCHESTRATION_PROJECTOR_NAMES),
+      );
+      const orchestrationStateRows = stateRows.filter((row) =>
+        orchestrationProjectorNames.has(row.projector),
+      );
+      assert.equal(orchestrationStateRows.length, orchestrationProjectorNames.size);
+      for (const row of orchestrationStateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
 
@@ -1567,7 +1573,12 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         SELECT MAX(sequence) AS "maxSequence" FROM orchestration_events
       `;
       const maxSequence = maxSequenceRows[0]?.maxSequence ?? 0;
-      for (const row of stateRows) {
+      const orchestrationProjectorNames = new Set<string>(
+        Object.values(ORCHESTRATION_PROJECTOR_NAMES),
+      );
+      for (const row of stateRows.filter((state) =>
+        orchestrationProjectorNames.has(state.projector),
+      )) {
         assert.equal(row.lastAppliedSequence, maxSequence);
       }
     }),

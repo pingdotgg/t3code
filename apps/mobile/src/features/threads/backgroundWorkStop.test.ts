@@ -52,6 +52,7 @@ describe("backgroundWorkStopConfirmation", () => {
       runtimeMode: "full-access" as const,
       activeTurnId: null,
       lastError: null,
+      providerLifecycleUpdatedAt: "2026-08-14T12:00:00.001Z",
       updatedAt: "2026-08-14T12:00:00.000Z",
     };
 
@@ -88,6 +89,7 @@ describe("backgroundWorkStopConfirmation", () => {
       runtimeMode: "full-access" as const,
       activeTurnId: null,
       lastError: null,
+      providerLifecycleUpdatedAt: "2026-08-14T12:00:00.001Z",
       updatedAt: "2026-08-14T12:00:00.000Z",
     };
 
@@ -95,7 +97,7 @@ describe("backgroundWorkStopConfirmation", () => {
       threadId,
       commandId,
       expectedTurnId: null,
-      expectedSessionUpdatedAt: session.updatedAt,
+      expectedSessionUpdatedAt: session.providerLifecycleUpdatedAt,
     });
     expect(
       buildBackgroundWorkInterruptInput(
@@ -111,7 +113,7 @@ describe("backgroundWorkStopConfirmation", () => {
       commandId,
       turnId: activeTurnId,
       expectedTurnId: activeTurnId,
-      expectedSessionUpdatedAt: session.updatedAt,
+      expectedSessionUpdatedAt: session.providerLifecycleUpdatedAt,
     });
   });
 
@@ -137,17 +139,26 @@ describe("backgroundWorkStopConfirmation", () => {
     ).toBeNull();
   });
 
-  it("guards a null-session snapshot on servers with conditional Stop support", () => {
+  it("fails closed without a provider lifecycle snapshot", () => {
     const threadId = ThreadId.make("thread-background");
     const commandId = CommandId.make("stop-command");
+    const legacySession = {
+      threadId,
+      status: "ready" as const,
+      providerName: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: "full-access" as const,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    };
 
     expect(
       buildBackgroundWorkInterruptInput({ id: threadId, session: null }, commandId, true),
-    ).toEqual({
-      threadId,
-      commandId,
-      expectedTurnId: null,
-    });
+    ).toBeNull();
+    expect(
+      buildBackgroundWorkInterruptInput({ id: threadId, session: legacySession }, commandId, true),
+    ).toBeNull();
   });
 
   it("surfaces only the correlated reactor outcome", () => {

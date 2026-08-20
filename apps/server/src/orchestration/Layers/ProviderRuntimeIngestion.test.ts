@@ -377,14 +377,15 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(startedThread?.session?.status).toBe("running");
     expect(startedThread?.session?.activeTurnId).toBe(asTurnId("turn-1"));
-    expect(startedThread?.session?.updatedAt).toBe(lifecycleUpdatedAt);
+    expect(startedThread?.session?.updatedAt).toBe(now);
+    expect(startedThread?.session?.providerLifecycleUpdatedAt).toBe(lifecycleUpdatedAt);
 
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed"),
       provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
-      createdAt: "2026-01-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.002Z",
       turnId: asTurnId("turn-1"),
       payload: {
         state: "failed",
@@ -401,6 +402,110 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+    expect(thread.session?.updatedAt).toBe("2026-01-01T00:00:00.002Z");
+    expect(thread.session?.providerLifecycleUpdatedAt).toBe(lifecycleUpdatedAt);
+  });
+
+  it("refreshes the lifecycle snapshot when an active turn starts again", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-steered");
+    const previousUpdatedAt = "2026-01-01T00:00:00.001Z";
+    const currentUpdatedAt = "2026-01-01T00:00:00.002Z";
+    const eventCreatedAt = "2026-01-01T00:00:00.003Z";
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-before-steer-started"),
+      threadId,
+      session: {
+        threadId,
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: turnId,
+        providerLifecycleUpdatedAt: previousUpdatedAt,
+        updatedAt: previousUpdatedAt,
+        lastError: null,
+      },
+      createdAt: previousUpdatedAt,
+    });
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      activeTurnId: turnId,
+      createdAt: previousUpdatedAt,
+      updatedAt: currentUpdatedAt,
+    });
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-after-steer"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      createdAt: eventCreatedAt,
+      turnId,
+    });
+
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session).toMatchObject({
+      status: "running",
+      activeTurnId: turnId,
+      providerLifecycleUpdatedAt: currentUpdatedAt,
+      updatedAt: eventCreatedAt,
+    });
+  });
+
+  it("does not churn the lifecycle snapshot for a provider heartbeat", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-heartbeat");
+    const lifecycleUpdatedAt = "2026-01-01T00:00:00.001Z";
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-before-heartbeat"),
+      threadId,
+      session: {
+        threadId,
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: turnId,
+        providerLifecycleUpdatedAt: lifecycleUpdatedAt,
+        updatedAt: lifecycleUpdatedAt,
+        lastError: null,
+      },
+      createdAt: lifecycleUpdatedAt,
+    });
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      activeTurnId: turnId,
+      createdAt: lifecycleUpdatedAt,
+      updatedAt: lifecycleUpdatedAt,
+    });
+    const before = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-heartbeat"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: { state: "running" },
+    });
+
+    await harness.drain();
+    const after = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(after?.session?.updatedAt).toBe(lifecycleUpdatedAt);
+    expect(after?.session?.providerLifecycleUpdatedAt).toBe(lifecycleUpdatedAt);
+    expect(after?.updatedAt).toBe(before?.updatedAt);
   });
 
   effectIt.effect("does not overwrite a Stop while resolving a turn lifecycle snapshot", () =>
@@ -675,6 +780,15 @@ describe("ProviderRuntimeIngestion", () => {
         expect(thread.session?.status).toBe("starting");
         expect(thread.session?.activeTurnId).toBeNull();
 
+        harness.setProviderSession({
+          provider: ProviderDriverKind.make("codex"),
+          status: "running",
+          runtimeMode: "approval-required",
+          threadId,
+          activeTurnId: asTurnId("turn-after-reconnect"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:04.000Z",
+        });
         harness.emit({
           type: "turn.started",
           eventId: asEventId("evt-turn-started-pending-reconnect"),
@@ -2811,6 +2925,24 @@ describe("ProviderRuntimeIngestion", () => {
   it("maps runtime.error into errored session state", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
+    const lifecycleUpdatedAt = "2026-01-01T00:00:00.001Z";
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-before-runtime-error"),
+      threadId: asThreadId("thread-1"),
+      session: {
+        threadId: asThreadId("thread-1"),
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("turn-3"),
+        lastError: null,
+        providerLifecycleUpdatedAt: lifecycleUpdatedAt,
+        updatedAt: now,
+      },
+      createdAt: now,
+    });
 
     harness.emit({
       type: "runtime.error",
@@ -2824,15 +2956,13 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) =>
-        entry.session?.status === "error" &&
-        entry.session?.activeTurnId === "turn-3" &&
-        entry.session?.lastError === "runtime exploded",
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
     );
-    expect(thread.session?.status).toBe("error");
-    expect(thread.session?.lastError).toBe("runtime exploded");
+    expect(thread?.session?.status).toBe("error");
+    expect(thread?.session?.lastError).toBe("runtime exploded");
+    expect(thread?.session?.providerLifecycleUpdatedAt).toBe(lifecycleUpdatedAt);
   });
 
   it("records runtime.error activities from the typed payload message", async () => {

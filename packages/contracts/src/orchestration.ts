@@ -304,6 +304,7 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  providerLifecycleUpdatedAt: Schema.optional(IsoDateTime),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -862,8 +863,10 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-// Optional compare-and-swap guard. Absent preserves the legacy
-// session-scoped interrupt; null explicitly expects no active turn.
+// Optional compare-and-swap fields remain additive for legacy wire decoding.
+// A guarded interrupt requires expectedSessionUpdatedAt; expectedTurnId is an
+// optional strengthening, and null explicitly expects no active turn. With
+// neither field present, the server preserves legacy session-scoped behavior.
 const ThreadTurnInterruptGuardFields = {
   expectedTurnId: Schema.optional(Schema.NullOr(TurnId)),
   expectedSessionUpdatedAt: Schema.optional(IsoDateTime),
@@ -876,7 +879,14 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   turnId: Schema.optional(TurnId),
   ...ThreadTurnInterruptGuardFields,
   createdAt: IsoDateTime,
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.expectedTurnId === undefined ||
+      input.expectedSessionUpdatedAt !== undefined ||
+      "expectedTurnId requires expectedSessionUpdatedAt",
+  ),
+);
 
 const ThreadApprovalRespondCommand = Schema.Struct({
   type: Schema.Literal("thread.approval.respond"),

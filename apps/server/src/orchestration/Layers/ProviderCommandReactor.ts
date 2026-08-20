@@ -624,18 +624,24 @@ const make = Effect.gen(function* () {
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
     if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
+      const startingSession: OrchestrationSession = {
+        threadId,
+        status: "starting",
+        providerName: activeSession?.provider ?? preferredProvider,
+        providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+        runtimeMode: desiredRuntimeMode,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      };
+      if (activeSession !== undefined) {
+        Object.assign(startingSession, {
+          providerLifecycleUpdatedAt: activeSession.updatedAt,
+        });
+      }
       yield* setThreadSession({
         threadId,
-        session: {
-          threadId,
-          status: "starting",
-          providerName: activeSession?.provider ?? preferredProvider,
-          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
-          runtimeMode: desiredRuntimeMode,
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: activeSession?.updatedAt ?? createdAt,
-        },
+        session: startingSession,
         createdAt,
       });
     }
@@ -720,7 +726,8 @@ const make = Effect.gen(function* () {
             // Provider turn ids are not orchestration turn ids.
             activeTurnId: null,
             lastError: session.lastError ?? null,
-            updatedAt: session.updatedAt,
+            providerLifecycleUpdatedAt: session.updatedAt,
+            updatedAt: createdAt,
           },
           createdAt,
         });
@@ -862,9 +869,10 @@ const make = Effect.gen(function* () {
     if (input.interactionMode !== undefined) {
       Object.assign(request, { interactionMode: input.interactionMode });
     }
+    const currentThread = yield* resolveThread(input.threadId);
     return {
       request,
-      expectedSessionUpdatedAt: activeSession?.updatedAt ?? thread.session?.updatedAt,
+      expectedSessionUpdatedAt: currentThread?.session?.updatedAt,
     };
   });
 
@@ -881,7 +889,10 @@ const make = Effect.gen(function* () {
     const providerSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === threadId,
     );
-    if (providerSession === undefined || thread.session.updatedAt === providerSession.updatedAt) {
+    if (
+      providerSession === undefined ||
+      thread.session.providerLifecycleUpdatedAt === providerSession.updatedAt
+    ) {
       return;
     }
     const updatedAt = yield* nowIso;
@@ -889,7 +900,8 @@ const make = Effect.gen(function* () {
       threadId,
       session: {
         ...thread.session,
-        updatedAt: providerSession.updatedAt,
+        providerLifecycleUpdatedAt: providerSession.updatedAt,
+        updatedAt,
       },
       expectedSessionUpdatedAt: thread.session.updatedAt,
       createdAt: updatedAt,
@@ -1381,7 +1393,7 @@ const make = Effect.gen(function* () {
       event.payload.expectedTurnId !== undefined && event.payload.expectedTurnId !== actualTurnId;
     const sessionChanged =
       event.payload.expectedSessionUpdatedAt !== undefined &&
-      event.payload.expectedSessionUpdatedAt !== thread.session?.updatedAt;
+      event.payload.expectedSessionUpdatedAt !== thread.session?.providerLifecycleUpdatedAt;
     const hasSession = thread.session && thread.session.status !== "stopped";
     if (!hasSession) {
       const failure: ProviderFailureActivityInput = {
