@@ -2,12 +2,12 @@ import {
   ExternalLinkIcon,
   GithubIcon,
   GitlabIcon,
+  Loader2Icon,
   PackagePlusIcon,
   PaletteIcon,
   RefreshCwIcon,
   SearchIcon,
 } from "lucide-react";
-import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   importOpenVsxThemeExtension,
@@ -15,6 +15,7 @@ import {
   type OpenVsxThemeExtension,
   type OpenVsxThemeSort,
 } from "../../openVsxThemes";
+import { useDebouncedValue } from "../../state/queries";
 import {
   getCustomThemes,
   getStoredCustomThemeCollection,
@@ -46,6 +47,7 @@ const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = 
   { value: "timestamp", label: "Newest" },
   { value: "relevance", label: "Most relevant" },
 ];
+const SEARCH_DEBOUNCE_MS = 350;
 
 function SourceLinkIcon({ url }: { url: string }) {
   try {
@@ -145,25 +147,25 @@ export function ThemeSearchSection({
     [sortBy],
   );
 
-  const handleSearch = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      void runSearch(query);
-    },
-    [query, runSearch],
-  );
+  const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
 
-  const handleSortChange = useCallback(
-    (value: OpenVsxThemeSort | null) => {
-      const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
-      if (!nextSort) return;
-      setSortBy(nextSort);
-      if ((results !== null || isSearching) && query.trim()) {
-        void runSearch(query, nextSort);
-      }
-    },
-    [isSearching, query, results, runSearch],
-  );
+  useEffect(() => {
+    if (!debouncedQuery) {
+      requestRef.current?.abort();
+      requestRef.current = null;
+      setResults(null);
+      setError(null);
+      setIsSearching(false);
+      return;
+    }
+    void runSearch(debouncedQuery);
+  }, [debouncedQuery, runSearch]);
+
+  const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
+    const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
+    if (!nextSort) return;
+    setSortBy(nextSort);
+  }, []);
 
   const handleInstall = useCallback(
     async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
@@ -216,31 +218,24 @@ export function ThemeSearchSection({
           Find open-source themes from Open VSX.
         </p>
       </div>
-      <form className="flex gap-2" onSubmit={handleSearch}>
-        <InputGroup>
-          <InputGroupAddon>
-            <SearchIcon />
-          </InputGroupAddon>
-          <InputGroupInput
-            aria-label="Search Open VSX themes"
-            autoFocus
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search themes..."
-            size="lg"
-            type="search"
-            value={query}
-          />
-        </InputGroup>
-        <Button
-          disabled={!query.trim() || isSearching || installingId !== null}
+      <InputGroup>
+        <InputGroupAddon>
+          {isSearching ? (
+            <Loader2Icon aria-hidden className="animate-spin" />
+          ) : (
+            <SearchIcon aria-hidden />
+          )}
+        </InputGroupAddon>
+        <InputGroupInput
+          aria-label="Search Open VSX themes"
+          autoFocus
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder="Search themes..."
           size="lg"
-          type="submit"
-          variant="outline"
-        >
-          {isSearching ? <Spinner /> : <SearchIcon />}
-          Search
-        </Button>
-      </form>
+          type="search"
+          value={query}
+        />
+      </InputGroup>
 
       {!isSearching ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -251,7 +246,7 @@ export function ThemeSearchSection({
                 key={suggestion}
                 size="xs"
                 variant="ghost"
-                onClick={() => void runSearch(suggestion)}
+                onClick={() => setQuery(suggestion)}
               >
                 {suggestion}
               </Button>
