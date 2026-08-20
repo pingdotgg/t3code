@@ -1349,7 +1349,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.timeoutOption(executionBudgetMs),
       Effect.flatMap((result) =>
         Option.isNone(result)
-          ? Effect.fail(new PreviewAutomationTimeoutError({ tabId, timeoutMs }))
+          ? Effect.fail(new PreviewAutomationTimeoutError({ operation: action, tabId, timeoutMs }))
           : Effect.succeed(result.value),
       ),
     );
@@ -2542,6 +2542,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const remainingTimeoutMs = deadline.expiresAt - (yield* currentMillis);
         if (remainingTimeoutMs <= 0) {
           return yield* new PreviewAutomationTimeoutError({
+            operation: "set-color-scheme",
             tabId,
             timeoutMs: deadline.timeoutMs,
           });
@@ -2614,7 +2615,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (timeoutMs === undefined) return yield* mutation;
     const result = yield* mutation.pipe(Effect.timeoutOption(timeoutMs));
     if (Option.isSome(result)) return;
-    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
+    return yield* new PreviewAutomationTimeoutError({
+      operation: "set-color-scheme",
+      tabId,
+      timeoutMs,
+    });
   });
 
   const setAudioMuted = Effect.fn("PreviewManager.setAudioMuted")(function* (
@@ -3207,7 +3212,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       // settling, while the IPC caller receives its bounded timeout response.
       yield* Fiber.await(cleanupFiber).pipe(Effect.timeoutOption(cleanupBudgetMs));
     }
-    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
+    return yield* new PreviewAutomationTimeoutError({
+      operation: "start-recording",
+      tabId,
+      timeoutMs,
+    });
   });
 
   const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (
@@ -3227,7 +3236,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (Exit.isFailure(result.value)) return yield* Effect.failCause(result.value.cause);
       return;
     }
-    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
+    return yield* new PreviewAutomationTimeoutError({
+      operation: "stop-recording",
+      tabId,
+      timeoutMs,
+    });
   });
 
   const performSaveRecording = Effect.fn("PreviewManager.performSaveRecording")(function* (
@@ -3283,7 +3296,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (timeoutMs === undefined) return yield* save;
     const result = yield* save.pipe(Effect.timeoutOption(automationExecutionBudget(timeoutMs)));
     if (Option.isSome(result)) return result.value;
-    return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
+    return yield* new PreviewAutomationTimeoutError({
+      operation: "save-recording",
+      tabId,
+      timeoutMs,
+    });
   });
 
   const automationStatus = Effect.fn("PreviewManager.automationStatus")(function* (tabId: string) {
@@ -3651,6 +3668,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const primaryFailure = Exit.isFailure(primaryScreenshotResult)
           ? primaryScreenshotResult.cause
           : new PreviewAutomationTimeoutError({
+              operation: background
+                ? "snapshot.capture-target-screenshot"
+                : "snapshot.capture-screenshot",
               tabId,
               timeoutMs: boundedPrimaryScreenshotTimeoutMs,
             });
@@ -3677,6 +3697,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const backgroundFailure = Exit.isFailure(backgroundScreenshotResult)
             ? backgroundScreenshotResult.cause
             : new PreviewAutomationTimeoutError({
+                operation: "snapshot.capture-page",
                 tabId,
                 timeoutMs: boundedFallbackScreenshotTimeoutMs,
               });
@@ -4223,6 +4244,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* Effect.sleep(100);
     }
     return yield* new PreviewAutomationTimeoutError({
+      operation: "waitFor.condition",
       tabId,
       timeoutMs,
     });
@@ -4557,12 +4579,13 @@ export class PreviewAutomationResultTooLargeError extends Schema.TaggedErrorClas
 export class PreviewAutomationTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationTimeoutError>()(
   "PreviewAutomationTimeoutError",
   {
+    operation: Schema.String,
     tabId: Schema.String,
     timeoutMs: Schema.Number,
   },
 ) {
   override get message(): string {
-    return `Preview condition did not match within ${this.timeoutMs}ms in tab ${this.tabId}`;
+    return `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms in tab ${this.tabId}`;
   }
 }
 

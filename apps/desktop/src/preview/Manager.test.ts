@@ -724,11 +724,16 @@ describe("PreviewManager", () => {
 
         expect(Exit.isFailure(timedOut)).toBe(true);
         if (Exit.isFailure(timedOut)) {
-          expect(Option.getOrThrow(Cause.findErrorOption(timedOut.cause))).toMatchObject({
+          const error = Option.getOrThrow(Cause.findErrorOption(timedOut.cause));
+          expect(error).toMatchObject({
             _tag: "PreviewAutomationTimeoutError",
+            operation: "evaluate",
             tabId: "tab_timeout",
             timeoutMs: 1_000,
           });
+          expect((error as Error).message).toBe(
+            "Preview automation evaluate timed out after 1000ms in tab tab_timeout",
+          );
         }
         expect(detach).toHaveBeenCalledOnce();
 
@@ -1768,6 +1773,7 @@ describe("PreviewManager", () => {
         if (Exit.isFailure(result)) {
           expect(Option.getOrThrow(Cause.findErrorOption(result.cause))).toMatchObject({
             _tag: "PreviewAutomationTimeoutError",
+            operation: "set-color-scheme",
             tabId: "tab_scheme_timeout",
             timeoutMs: 100,
           });
@@ -2539,6 +2545,7 @@ describe("PreviewManager", () => {
         if (Exit.isFailure(exit)) {
           expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
             _tag: "PreviewAutomationTimeoutError",
+            operation: "start-recording",
             tabId: "tab_recording_start_cleanup_timeout",
             timeoutMs: 1_000,
           });
@@ -2584,6 +2591,7 @@ describe("PreviewManager", () => {
         if (Exit.isFailure(exit)) {
           expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
             _tag: "PreviewAutomationTimeoutError",
+            operation: "stop-recording",
             tabId: "tab_recording_stop_cleanup_timeout",
             timeoutMs: 1_000,
           });
