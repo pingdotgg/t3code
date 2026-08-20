@@ -37,6 +37,7 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  normalizeOpenCodeTokenUsage,
 } from "./OpenCodeAdapter.ts";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
@@ -68,6 +69,8 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    providerListCalls: 0,
+    providerList: [] as unknown[],
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -88,6 +91,8 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.providerListCalls = 0;
+    this.state.providerList = [];
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -211,6 +216,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             }
           })(),
         }),
+      },
+      provider: {
+        list: async () => {
+          runtimeMock.state.providerListCalls += 1;
+          return { data: { all: runtimeMock.state.providerList } };
+        },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -1439,6 +1450,230 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions.length, 1);
       NodeAssert.equal(sessions[0]?.threadId, "thread-native-log-failure");
       NodeAssert.deepEqual(closeCallsDuringRun, []);
+    }),
+  );
+
+  it.effect(
+    "emits thread.token-usage.updated with the model context window for completed assistant messages",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-opencode-tokens");
+        runtimeMock.state.providerList = [
+          {
+            id: "anthropic",
+            models: {
+              "claude-sonnet-4-6": { limit: { context: 200000 } },
+            },
+          },
+        ];
+        runtimeMock.state.subscribedEvents = [
+          {
+            type: "message.updated",
+            properties: {
+              sessionID: "http://127.0.0.1:9999/session",
+              info: {
+                id: "msg-tokens-1",
+                role: "assistant",
+                providerID: "anthropic",
+                modelID: "claude-sonnet-4-6",
+                time: { created: 1, completed: 2 },
+                tokens: {
+                  input: 1200,
+                  output: 300,
+                  reasoning: 50,
+                  cache: { read: 9000, write: 400 },
+                },
+              },
+            },
+          },
+        ];
+
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId),
+          Stream.take(3),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+        const usageEvent = events.find((event) => event.type === "thread.token-usage.updated");
+        NodeAssert.ok(usageEvent);
+        if (usageEvent.type === "thread.token-usage.updated") {
+          NodeAssert.deepEqual(usageEvent.payload.usage, {
+            usedTokens: 10950,
+            lastUsedTokens: 10950,
+            maxTokens: 200000,
+            inputTokens: 1200,
+            lastInputTokens: 1200,
+            cachedInputTokens: 9000,
+            lastCachedInputTokens: 9000,
+            outputTokens: 300,
+            lastOutputTokens: 300,
+            reasoningOutputTokens: 50,
+            lastReasoningOutputTokens: 50,
+            compactsAutomatically: true,
+          });
+        }
+        NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
+      }),
+  );
+
+  it.effect("does not emit token usage for assistant messages without token data", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-no-tokens");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-no-tokens",
+              role: "assistant",
+            },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started"],
+      );
+      NodeAssert.equal(runtimeMock.state.providerListCalls, 0);
+    }),
+  );
+
+  it.effect("emits token usage once per message and reuses the cached context window", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-token-cache");
+      runtimeMock.state.providerList = [
+        {
+          id: "anthropic",
+          models: {
+            "claude-sonnet-4-6": { limit: { context: 200000 } },
+          },
+        },
+        {
+          id: "openai",
+          models: {
+            "gpt-5": { limit: { context: 400000 } },
+          },
+        },
+      ];
+      const completedAssistant = (
+        id: string,
+        providerID: string,
+        modelID: string,
+        input: number,
+      ) => ({
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id,
+            role: "assistant",
+            providerID,
+            modelID,
+            time: { created: 1, completed: 2 },
+            tokens: {
+              input,
+              output: 100,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+          },
+        },
+      });
+      runtimeMock.state.subscribedEvents = [
+        completedAssistant("msg-cache-a", "anthropic", "claude-sonnet-4-6", 1000),
+        completedAssistant("msg-cache-a", "anthropic", "claude-sonnet-4-6", 1000),
+        completedAssistant("msg-cache-b", "openai", "gpt-5", 2000),
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.filter((event) => event.type === "thread.token-usage.updated"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.length, 2);
+      NodeAssert.equal(
+        events[0]?.type === "thread.token-usage.updated"
+          ? events[0].payload.usage.maxTokens
+          : undefined,
+        200000,
+      );
+      NodeAssert.equal(
+        events[1]?.type === "thread.token-usage.updated"
+          ? events[1].payload.usage.maxTokens
+          : undefined,
+        400000,
+      );
+      NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
+    }),
+  );
+
+  it.effect("caps usedTokens at the model context window and drops zero-token usage", () =>
+    Effect.sync(() => {
+      NodeAssert.equal(
+        normalizeOpenCodeTokenUsage({
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        }),
+        undefined,
+      );
+      NodeAssert.deepEqual(
+        normalizeOpenCodeTokenUsage(
+          {
+            input: 250000,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          200000,
+        ),
+        {
+          usedTokens: 200000,
+          lastUsedTokens: 200000,
+          maxTokens: 200000,
+          inputTokens: 250000,
+          lastInputTokens: 250000,
+          compactsAutomatically: true,
+        },
+      );
     }),
   );
 });
