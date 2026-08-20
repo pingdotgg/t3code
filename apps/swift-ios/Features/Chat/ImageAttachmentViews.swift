@@ -39,6 +39,15 @@ struct FeatureAttachmentPreparationState: Equatable {
     mutating func finish(_ operation: Operation) {
         pendingItemsByOperation.removeValue(forKey: operation)
     }
+
+    mutating func completeItem(_ operation: Operation) {
+        guard let pendingCount = pendingItemsByOperation[operation] else { return }
+        if pendingCount > 1 {
+            pendingItemsByOperation[operation] = pendingCount - 1
+        } else {
+            pendingItemsByOperation.removeValue(forKey: operation)
+        }
+    }
 }
 
 struct FeatureImageAttachmentPicker: View {
@@ -222,6 +231,7 @@ struct FeatureImageAttachmentPicker: View {
                 } catch {
                     errorMessage = error.localizedDescription
                 }
+                preparationState.completeItem(operation)
             }
         }
     }
@@ -247,6 +257,7 @@ struct FeatureImageAttachmentPicker: View {
                     return data
                 }.value
                 try await appendImage(data)
+                preparationState.completeItem(operation)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -274,6 +285,7 @@ struct FeatureImageAttachmentPicker: View {
                             return try Data(contentsOf: url, options: .mappedIfSafe)
                         }.value
                         try await appendImage(data)
+                        preparationState.completeItem(operation)
                     } catch {
                         errorMessage = error.localizedDescription
                         break

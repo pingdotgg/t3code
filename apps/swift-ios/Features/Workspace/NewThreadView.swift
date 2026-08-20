@@ -77,6 +77,7 @@ public struct NewThreadView: View {
                         text: $prompt,
                         selection: selectionBinding,
                         attachments: $attachments,
+                        attachmentContextID: projectID,
                         providers: creationProviders,
                         threadSelection: nil,
                         isSending: isSubmitting,

@@ -61,24 +61,20 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         let shouldApplySelection = selectionRequest.map {
             context.coordinator.lastAppliedSelectionRequestID != $0.id
         } ?? false
-        if textView.text != text {
-            let previousText = textView.text ?? ""
-            let selectedRange = textView.selectedRange
-            textView.text = text
-            if !shouldApplySelection {
-                let location = FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
-                    previousText: previousText,
-                    newText: text,
-                    selectedLocation: selectedRange.location
-                )
-                let length = previousText.isEmpty
-                    ? 0
-                    : min(selectedRange.length, text.utf16.count - location)
-                textView.selectedRange = NSRange(location: location, length: length)
-                textView.scrollRangeToVisible(textView.selectedRange)
-            }
+        let hasMarkedText = textView.markedTextRange != nil
+        if case .applyExternal(let externalText) = context.coordinator.reconciliation
+            .externalTextDidChange(
+                editorText: textView.text,
+                bindingText: text,
+                hasMarkedText: hasMarkedText
+            ) {
+            context.coordinator.apply(
+                externalText,
+                to: textView,
+                preserveSelection: !shouldApplySelection
+            )
         }
-        if shouldApplySelection, let selectionRequest {
+        if shouldApplySelection, !hasMarkedText, let selectionRequest {
             let location = min(selectionRequest.location, textView.text.utf16.count)
             textView.selectedRange = NSRange(location: location, length: 0)
             textView.scrollRangeToVisible(textView.selectedRange)
@@ -129,14 +125,46 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         var parent: FeatureComposerTextInput
         var lastAppliedFocus: Bool?
         var lastAppliedSelectionRequestID: UUID?
+        var reconciliation = FeatureComposerTextReconciliation()
 
         init(_ parent: FeatureComposerTextInput) {
             self.parent = parent
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            guard parent.text != textView.text else { return }
-            parent.text = textView.text
+            switch reconciliation.editorTextDidChange(
+                textView.text,
+                hasMarkedText: textView.markedTextRange != nil
+            ) {
+            case .none:
+                break
+            case .applyExternal(let text):
+                apply(text, to: textView, preserveSelection: true)
+            case .publish(let text):
+                guard parent.text != text else { return }
+                parent.text = text
+            }
+        }
+
+        func apply(
+            _ text: String,
+            to textView: UITextView,
+            preserveSelection: Bool
+        ) {
+            let previousText = textView.text ?? ""
+            let selectedRange = textView.selectedRange
+            textView.text = text
+            guard preserveSelection else { return }
+            let location = FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
+                previousText: previousText,
+                newText: text,
+                selectedLocation: selectedRange.location
+            )
+            let length = previousText.isEmpty
+                ? 0
+                : min(selectedRange.length, text.utf16.count - location)
+            textView.selectedRange = NSRange(location: location, length: length)
+            textView.scrollRangeToVisible(textView.selectedRange)
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -155,8 +183,44 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     }
 }
 
+struct FeatureComposerTextReconciliation {
+    enum Action: Equatable {
+        case none
+        case applyExternal(String)
+        case publish(String)
+    }
+
+    private(set) var pendingExternalText: String?
+
+    mutating func externalTextDidChange(
+        editorText: String,
+        bindingText: String,
+        hasMarkedText: Bool
+    ) -> Action {
+        guard editorText != bindingText else {
+            pendingExternalText = nil
+            return .none
+        }
+        guard !hasMarkedText else {
+            pendingExternalText = bindingText
+            return .none
+        }
+        pendingExternalText = nil
+        return .applyExternal(bindingText)
+    }
+
+    mutating func editorTextDidChange(_ editorText: String, hasMarkedText: Bool) -> Action {
+        if let pendingExternalText {
+            guard !hasMarkedText else { return .none }
+            self.pendingExternalText = nil
+            return editorText == pendingExternalText ? .none : .applyExternal(pendingExternalText)
+        }
+        return .publish(editorText)
+    }
+}
+
 /// Advertises image support to the paste menu and routes image pastes out to
-/// the attachment pipeline. Text-only pastes fall through to UIKit untouched.
+/// the attachment pipeline. Text-only pastes are normalized to composer style.
 final class FeatureComposerUITextView: UITextView {
     var acceptsImages = false {
         didSet {
@@ -285,17 +349,53 @@ final class FeatureComposerUITextView: UITextView {
     // attached screenshot reads as a bug.
     override func paste(_ sender: Any?) {
         guard acceptsImages else {
-            super.paste(sender)
+            pastePlainText(sender)
             return
         }
         let imageProviders = UIPasteboard.general.itemProviders.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
         }
         guard !imageProviders.isEmpty else {
-            super.paste(sender)
+            pastePlainText(sender)
             return
         }
         onPasteImages?(imageProviders)
+    }
+
+    private func pastePlainText(_ sender: Any?) {
+        let plainFont = font ?? UIFont.preferredFont(forTextStyle: .body)
+        let plainTextColor = textColor ?? .label
+        super.paste(sender)
+        if restorePlainTextStyle(font: plainFont, textColor: plainTextColor) {
+            delegate?.textViewDidChange?(self)
+        }
+    }
+
+    /// Removes pasted inline attachments together with their object-replacement
+    /// characters before stripping rich-text styling from the draft.
+    @discardableResult
+    func restorePlainTextStyle(font: UIFont, textColor: UIColor) -> Bool {
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        var attachmentRanges: [NSRange] = []
+        textStorage.enumerateAttribute(.attachment, in: fullRange) { value, range, _ in
+            if value != nil {
+                attachmentRanges.append(range)
+            }
+        }
+        for range in attachmentRanges.reversed() {
+            textStorage.deleteCharacters(in: range)
+        }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor,
+        ]
+        textStorage.setAttributes(
+            attributes,
+            range: NSRange(location: 0, length: textStorage.length)
+        )
+        typingAttributes = attributes
+        return !attachmentRanges.isEmpty
     }
 }
 
@@ -385,11 +485,16 @@ enum FeatureComposerTextSelectionPolicy {
 /// previous answer, so scaling by them feeds back and collapses the input.
 enum FeatureComposerTextInputSizing {
     static let maximumLines: CGFloat = 12
+    private static let minimumInputHeight = T3Metrics.minimumTapTarget
 
     static func height(
         fittingHeight: CGFloat,
         lineHeight: CGFloat
     ) -> CGFloat {
-        min(fittingHeight, lineHeight * maximumLines)
+        let lineHeight = lineHeight > 0 ? lineHeight : 22
+        return min(
+            max(fittingHeight, lineHeight, minimumInputHeight),
+            lineHeight * maximumLines
+        )
     }
 }

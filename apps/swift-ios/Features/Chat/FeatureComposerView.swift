@@ -10,6 +10,10 @@ struct FeatureComposerView: View {
     @State private var pathSearchError: String?
     @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @State private var imageIntakeErrorMessage: String?
+    @State private var activeAttachmentContextID: String
+    @State private var imageIntakeTasks: [
+        FeatureAttachmentPreparationState.Operation: Task<Void, Never>
+    ] = [:]
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
@@ -26,6 +30,7 @@ struct FeatureComposerView: View {
     private let pendingUserInputs: [FeatureUserInput]
     private let isResolvingRequest: Bool
     private let powerFeatures: FeatureComposerPowerFeatures
+    private let attachmentContextID: String
     private let onSend: () -> Void
     private let onStop: () -> Void
     private let onDismissKeyboard: (() -> Void)?
@@ -36,6 +41,7 @@ struct FeatureComposerView: View {
         text: Binding<String>,
         selection: Binding<FeatureSelection?>,
         attachments: Binding<[FeatureDraftAttachment]>,
+        attachmentContextID: String,
         providers: [FeatureProvider],
         threadSelection: FeatureSelection?,
         materializesDefaultSelection: Bool = true,
@@ -57,6 +63,8 @@ struct FeatureComposerView: View {
         _text = text
         _selection = selection
         _attachments = attachments
+        _activeAttachmentContextID = State(initialValue: attachmentContextID)
+        self.attachmentContextID = attachmentContextID
         self.providers = providers
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
@@ -128,6 +136,13 @@ struct FeatureComposerView: View {
             }
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
+            }
+            .onChange(of: attachmentContextID) { _, attachmentContextID in
+                activeAttachmentContextID = attachmentContextID
+                cancelImageIntake()
+            }
+            .onDisappear {
+                cancelImageIntake()
             }
             .alert(
                 "Couldn’t add image",
@@ -527,8 +542,12 @@ struct FeatureComposerView: View {
             Result { try FeatureImageItemProviderLoader.start(from: provider) }
         }
         let operation = attachmentPreparation.begin(itemCount: accepted.count)
-        Task { @MainActor in
-            defer { attachmentPreparation.finish(operation) }
+        let startedContextID = activeAttachmentContextID
+        let task = Task { @MainActor in
+            defer {
+                attachmentPreparation.finish(operation)
+                imageIntakeTasks.removeValue(forKey: operation)
+            }
             for (offset, load) in loads.enumerated() {
                 do {
                     let data = try await load.get().data()
@@ -538,12 +557,34 @@ struct FeatureComposerView: View {
                             ordinal: plan.firstOrdinal + offset
                         )
                     }.value
+                    guard FeatureComposerImageIntakeLifecycle.acceptsResult(
+                        startedContextID: startedContextID,
+                        activeContextID: activeAttachmentContextID,
+                        isCancelled: Task.isCancelled
+                    ) else { return }
                     attachments.append(attachment)
+                } catch is CancellationError {
+                    return
                 } catch {
+                    guard FeatureComposerImageIntakeLifecycle.acceptsResult(
+                        startedContextID: startedContextID,
+                        activeContextID: activeAttachmentContextID,
+                        isCancelled: Task.isCancelled
+                    ) else { return }
                     imageIntakeErrorMessage = error.localizedDescription
                 }
+                attachmentPreparation.completeItem(operation)
             }
         }
+        imageIntakeTasks[operation] = task
+    }
+
+    private func cancelImageIntake() {
+        for (operation, task) in imageIntakeTasks {
+            task.cancel()
+            attachmentPreparation.finish(operation)
+        }
+        imageIntakeTasks.removeAll()
     }
 
     /// A drop is refused outright when images are not accepted, so the drag
@@ -552,6 +593,16 @@ struct FeatureComposerView: View {
         guard imagesAllowed, !providers.isEmpty else { return false }
         attachImageProviders(providers)
         return true
+    }
+}
+
+enum FeatureComposerImageIntakeLifecycle {
+    static func acceptsResult(
+        startedContextID: String,
+        activeContextID: String,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && startedContextID == activeContextID
     }
 }
 
