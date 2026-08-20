@@ -177,6 +177,7 @@ export function ThemeSearchSection({
       // error irrelevant, so an install error on an unchanged query survives.
       requestRef.current?.abort();
       requestRef.current = null;
+      setIsSearching(false);
       if (keyChanged) setError(null);
       return;
     }
