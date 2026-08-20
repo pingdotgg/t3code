@@ -66,6 +66,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as PluginCommandCatalog from "./plugins/PluginCommandCatalog.ts";
+import * as PluginPackageManager from "./plugins/PluginPackageManager.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import {
   projectActivityEvent,
@@ -354,6 +355,7 @@ const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   pluginCommands: PluginCommandCatalog.PluginCommandCatalog["Service"],
+  pluginPackages: PluginPackageManager.PluginPackageManager["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -1455,6 +1457,22 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.pluginCommandsInvoke, pluginCommands.invoke(input), {
             "rpc.aggregate": "pluginCommands",
           }),
+        [WS_METHODS.pluginPackagesStatus]: (_input) =>
+          observeRpcEffect(WS_METHODS.pluginPackagesStatus, pluginPackages.status, {
+            "rpc.aggregate": "pluginPackages",
+          }),
+        [WS_METHODS.pluginPackagesEnable]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginPackagesEnable, pluginPackages.enable(input.id), {
+            "rpc.aggregate": "pluginPackages",
+          }),
+        [WS_METHODS.pluginPackagesDisable]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginPackagesDisable, pluginPackages.disable(input.id), {
+            "rpc.aggregate": "pluginPackages",
+          }),
+        [WS_METHODS.pluginPackagesReload]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginPackagesReload, pluginPackages.reload(input.id), {
+            "rpc.aggregate": "pluginPackages",
+          }),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
@@ -2316,6 +2334,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const pluginCommands = yield* PluginCommandCatalog.PluginCommandCatalog;
+    const pluginPackages = yield* PluginPackageManager.PluginPackageManager;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     return HttpRouter.add(
@@ -2337,7 +2356,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker, pluginCommands).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, pluginCommands, pluginPackages).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
@@ -2381,4 +2400,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       ),
     );
   }),
-).pipe(Layer.provide(PluginCommandCatalog.layer.pipe(Layer.orDie)));
+).pipe(
+  Layer.provide(
+    PluginPackageManager.layer.pipe(Layer.provideMerge(PluginCommandCatalog.layer), Layer.orDie),
+  ),
+);

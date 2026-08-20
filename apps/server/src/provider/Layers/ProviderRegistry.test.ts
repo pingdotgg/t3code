@@ -324,6 +324,11 @@ function makeMutableServerSettingsService(
           yield* PubSub.publish(changes, next);
           return next;
         }),
+      setEnabledPluginIds: (ids) =>
+        Ref.updateAndGet(settingsRef, (current) => ({
+          ...current,
+          enabledPluginIds: [...ids],
+        })),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

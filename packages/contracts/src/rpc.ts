@@ -76,6 +76,12 @@ import {
   PluginCommandNotFoundError,
 } from "./pluginCommands.ts";
 import {
+  PluginPackageActionInput,
+  PluginPackageNotFoundError,
+  PluginPackageOperationError,
+  PluginPackageStatusSnapshot,
+} from "./pluginPackages.ts";
+import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -286,6 +292,12 @@ export const WS_METHODS = {
   pluginCommandsList: "pluginCommands.list",
   pluginCommandsInvoke: "pluginCommands.invoke",
 
+  // Plugin package lifecycle methods
+  pluginPackagesStatus: "pluginPackages.status",
+  pluginPackagesEnable: "pluginPackages.enable",
+  pluginPackagesDisable: "pluginPackages.disable",
+  pluginPackagesReload: "pluginPackages.reload",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -368,6 +380,27 @@ export const WsPluginCommandsInvokeRpc = Rpc.make(WS_METHODS.pluginCommandsInvok
     EnvironmentAuthorizationError,
   ]),
 });
+
+export const WsPluginPackagesStatusRpc = Rpc.make(WS_METHODS.pluginPackagesStatus, {
+  payload: Schema.Struct({}),
+  success: PluginPackageStatusSnapshot,
+  error: Schema.Union([PluginPackageOperationError, EnvironmentAuthorizationError]),
+});
+
+const pluginPackageActionRpc = <const Method extends string>(method: Method) =>
+  Rpc.make(method, {
+    payload: PluginPackageActionInput,
+    success: PluginPackageStatusSnapshot,
+    error: Schema.Union([
+      PluginPackageNotFoundError,
+      PluginPackageOperationError,
+      EnvironmentAuthorizationError,
+    ]),
+  });
+
+export const WsPluginPackagesEnableRpc = pluginPackageActionRpc(WS_METHODS.pluginPackagesEnable);
+export const WsPluginPackagesDisableRpc = pluginPackageActionRpc(WS_METHODS.pluginPackagesDisable);
+export const WsPluginPackagesReloadRpc = pluginPackageActionRpc(WS_METHODS.pluginPackagesReload);
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
   payload: Schema.Struct({
@@ -1024,6 +1057,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsPluginCommandsListRpc,
   WsPluginCommandsInvokeRpc,
+  WsPluginPackagesStatusRpc,
+  WsPluginPackagesEnableRpc,
+  WsPluginPackagesDisableRpc,
+  WsPluginPackagesReloadRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsServerUpdateServerRpc,

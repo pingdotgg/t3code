@@ -4636,6 +4636,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes plugin package status and lifecycle errors over websocket rpc", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const status = yield* client[WS_METHODS.pluginPackagesStatus]({});
+            const missing = yield* Effect.flip(
+              client[WS_METHODS.pluginPackagesEnable]({ id: "com.acme.missing" }),
+            );
+            return { missing, status };
+          }),
+        ),
+      );
+
+      assert.deepEqual(result.status, { errors: [], packages: [] });
+      assert.deepInclude(result.missing, {
+        _tag: "PluginPackageNotFoundError",
+        id: "com.acme.missing",
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
       const nextProviders = [

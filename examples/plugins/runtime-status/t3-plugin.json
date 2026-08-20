@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "id": "com.t3code.runtime-status-example",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entrypoints": {
+    "server": "./index.mjs"
+  },
+  "capabilities": ["t3.commands@1"],
+  "contributes": {
+    "commands": ["example.runtime-status"]
+  }
+}

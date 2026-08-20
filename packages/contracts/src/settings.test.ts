@@ -231,6 +231,19 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings enabled plugin packages", () => {
+  it("defaults to no enabled packages without exposing lifecycle state in public patches", () => {
+    expect(decodeServerSettings({}).enabledPluginIds).toEqual([]);
+    expect(
+      decodeServerSettings({ enabledPluginIds: ["com.acme.runtime-status"] }).enabledPluginIds,
+    ).toEqual(["com.acme.runtime-status"]);
+    expect(() => decodeServerSettings({ enabledPluginIds: ["runtime-status"] })).toThrow();
+    expect(decodeServerSettingsPatch({ enabledPluginIds: ["com.acme.runtime-status"] })).toEqual(
+      {},
+    );
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});

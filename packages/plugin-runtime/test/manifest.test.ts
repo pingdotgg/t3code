@@ -6,13 +6,15 @@ import { PluginManifest } from "../src/manifest.ts";
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
 const validManifest = {
+  manifestVersion: 1,
   id: "com.acme.linear",
   version: "1.2.0",
-  engines: { t3: "^0.1.0" },
+  apiVersion: 1,
   entrypoints: {
     server: "./dist/server.js",
     web: "./dist/web.js",
   },
+  capabilities: ["t3.commands@1"],
   requires: ["t3.commands@1", "t3.secrets@1"],
   provides: ["com.acme.linear@1"],
   permissions: ["network:https://api.linear.app", "secrets:linear-token"],
@@ -24,12 +26,19 @@ const validManifest = {
 };
 
 describe("PluginManifest", () => {
-  it("decodes a namespaced multi-surface plugin manifest", () => {
+  it("decodes a versioned namespaced multi-surface plugin manifest", () => {
     expect(decodeManifest(validManifest)).toEqual(validManifest);
+  });
+
+  it("rejects unsupported manifest and api versions", () => {
+    expect(() => decodeManifest({ ...validManifest, manifestVersion: 2 })).toThrow();
+    expect(() => decodeManifest({ ...validManifest, apiVersion: 2 })).toThrow();
+    expect(() => decodeManifest({ ...validManifest, engines: { t3: "^0.1.0" } })).toThrow();
   });
 
   it("rejects unnamespaced plugin and contribution ids", () => {
     expect(() => decodeManifest({ ...validManifest, id: "linear" })).toThrow();
+    expect(() => decodeManifest({ ...validManifest, id: `com.${"a".repeat(252)}` })).toThrow();
     expect(() =>
       decodeManifest({
         ...validManifest,
