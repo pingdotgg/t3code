@@ -46,7 +46,7 @@ overrides:
   '@clerk/clerk-js>@solana/wallet-adapter-react': '-'
   '@clerk/clerk-js>@solana/wallet-standard': '-'
   '@clerk/clerk-js>@wallet-standard/core': '-'
-  '@clerk/electron': 0.0.33
+  '@clerk/electron': 0.0.34
   '@clerk/electron-passkeys': 0.0.3
   '@clerk/expo': 4.2.0
   '@clerk/react': 6.14.4
@@ -114,8 +114,8 @@ importers:
   apps/desktop:
     dependencies:
       '@clerk/electron':
-        specifier: 0.0.33
-        version: 0.0.33(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 0.0.34
+        version: 0.0.34(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/electron-passkeys':
         specifier: 0.0.3
         version: 0.0.3
@@ -520,8 +520,8 @@ importers:
         specifier: ^1.4.1
         version: 1.5.0(@types/react@19.2.16)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/electron':
-        specifier: 0.0.33
-        version: 0.0.33(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 0.0.34
+        version: 0.0.34(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/react':
         specifier: 6.14.4
         version: 6.14.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -1745,8 +1745,8 @@ packages:
     resolution: {integrity: sha512-OHhIe88qDL+FxyBalXdXNHAS5eEramr6Rerp+6iNkfkjqT8rx4hHNmfpmjg5/T1/am8QfknbOBZkqoXZlCrjPg==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/electron@0.0.33':
-    resolution: {integrity: sha512-lP2B7wGHwKWrCAh4zPWPfRUIHoxQ1rwG8iiFeLmI8jBjSGcSoPX1N9bIKUCWL+Z9POmC2aRn6yXvL7e9yzfEVw==}
+  '@clerk/electron@0.0.34':
+    resolution: {integrity: sha512-ZY6v8G1ArieIWvutMEt5HBJtpHN4ys4F4newNlOTElv//cpW29zaeZ65M8WuKttKr7fB+MH6wzzCoX/Ha+fiSg==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       '@clerk/electron-passkeys': 0.0.3
@@ -11601,7 +11601,7 @@ snapshots:
       '@clerk/electron-passkeys-win32-arm64-msvc': 0.0.3
       '@clerk/electron-passkeys-win32-x64-msvc': 0.0.3
 
-  '@clerk/electron@0.0.33(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/electron@0.0.34(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@clerk/clerk-js': 6.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/react': 6.14.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
