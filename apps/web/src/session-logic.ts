@@ -1410,6 +1410,8 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
+  // Claude completed activities carry the tool input as `data.input`.
+  const dataInput = asRecord(data?.input);
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
   const candidates: unknown[] = [
@@ -1417,6 +1419,7 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     itemInput?.command,
     itemResult?.command,
     data?.command,
+    dataInput?.command,
     itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
 
@@ -1463,6 +1466,32 @@ function normalizePreviewForComparison(value: string | null | undefined): string
     return null;
   }
   return normalizeCompactToolLabel(normalizeInlinePreview(normalized)).toLowerCase();
+}
+
+/**
+ * True when a normalized `detail` only repeats the normalized command.
+ * Claude writes the command into `detail` as `Bash: <command>`, and the server
+ * truncates long details with a trailing `...`, so both are allowed here.
+ */
+function detailRepeatsCommand(
+  normalizedDetail: string | null,
+  normalizedCommand: string | null,
+): boolean {
+  if (!normalizedDetail || !normalizedCommand) {
+    return false;
+  }
+  if (normalizedDetail === normalizedCommand) {
+    return true;
+  }
+  const withoutToolPrefix = normalizedDetail.replace(/^[a-z][\w.-]*:\s+/, "");
+  if (withoutToolPrefix === normalizedCommand) {
+    return true;
+  }
+  const ellipsis = /\s*(?:\.\.\.|…)$/.exec(withoutToolPrefix);
+  if (!ellipsis || ellipsis.index === 0) {
+    return false;
+  }
+  return normalizedCommand.startsWith(withoutToolPrefix.slice(0, ellipsis.index));
 }
 
 function summarizeToolTextOutput(value: string): string | null {
@@ -1605,7 +1634,8 @@ function extractToolDetail(
     detail &&
     normalizedHeading !== normalizedDetail &&
     (!commandTool ||
-      (normalizedCommand !== normalizedDetail && normalizedRawCommand !== normalizedDetail))
+      (!detailRepeatsCommand(normalizedDetail, normalizedCommand) &&
+        !detailRepeatsCommand(normalizedDetail, normalizedRawCommand)))
   ) {
     return detail;
   }
