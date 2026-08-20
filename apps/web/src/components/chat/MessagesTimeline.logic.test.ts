@@ -3,10 +3,55 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  findTextRanges,
+  findTextMatches,
   normalizeCompactToolLabel,
+  renderMarkdownSearchText,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
+
+describe("findTextMatches", () => {
+  it("finds every case-insensitive occurrence and identifies it within its text", () => {
+    expect(findTextMatches(["One one", null, "another ONE"], "one")).toEqual([
+      { textIndex: 0, occurrenceIndex: 0 },
+      { textIndex: 0, occurrenceIndex: 1 },
+      { textIndex: 2, occurrenceIndex: 0 },
+    ]);
+    expect(findTextMatches(["anything"], "")).toEqual([]);
+  });
+
+  it("uses original string offsets when case folding expands a Unicode character", () => {
+    expect(findTextRanges("İstanbul", "İ")).toEqual([{ start: 0, end: 1 }]);
+  });
+
+  it("optionally matches exact casing", () => {
+    expect(findTextMatches(["One one ONE"], "One", true)).toEqual([
+      { textIndex: 0, occurrenceIndex: 0 },
+    ]);
+    expect(findTextMatches(["One one ONE"], "one", true)).toEqual([
+      { textIndex: 0, occurrenceIndex: 0 },
+    ]);
+  });
+
+  it("searches rendered Markdown text rather than hidden link destinations", () => {
+    const text = renderMarkdownSearchText("Read [the docs](https://example.com/hidden) now");
+    expect(findTextMatches([text], "docs")).toHaveLength(1);
+    expect(findTextMatches([text], "hidden")).toHaveLength(0);
+  });
+
+  it("preserves matches that span adjacent inline Markdown nodes", () => {
+    const text = renderMarkdownSearchText("**foo**bar");
+    expect(text).toBe("foobar");
+    expect(findTextMatches([text], "oob")).toHaveLength(1);
+  });
+
+  it("searches inline and fenced code in prompts and responses", () => {
+    const text = renderMarkdownSearchText("Run `pnpm test`:\n\n```ts\nconst answer = 42;\n```");
+    expect(findTextMatches([text], "pnpm test")).toHaveLength(1);
+    expect(findTextMatches([text], "answer = 42")).toHaveLength(1);
+  });
+});
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {

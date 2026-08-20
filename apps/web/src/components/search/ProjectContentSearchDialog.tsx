@@ -66,9 +66,9 @@ function SearchOptionButton(props: {
           <Toggle
             aria-label={props.label}
             pressed={props.active}
-            className="size-8 rounded-[5px] font-mono text-muted-foreground data-pressed:text-foreground sm:size-7"
+            className="size-8 rounded-[5px] font-mono text-muted-foreground sm:size-7"
             size="compact"
-            variant="ghost"
+            variant="primary"
             onClick={props.onClick}
           />
         }

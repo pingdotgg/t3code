@@ -39,6 +39,7 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
+import { isElectron } from "../../env";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -59,13 +60,17 @@ import {
   PaintbrushIcon,
   MinusIcon,
   SquarePenIcon,
+  SearchIcon,
   TerminalIcon,
   Undo2Icon,
   WrenchIcon,
   XIcon,
+  ChevronUpIcon,
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { Toggle } from "../ui/toggle";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -74,7 +79,10 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
+  findTextRanges,
+  findTextMatches,
   normalizeCompactToolLabel,
+  renderMarkdownSearchText,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -143,6 +151,7 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
+  activeFindMessageId: MessageId | null;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
 }
@@ -188,6 +197,8 @@ function TimelineLoadEarlierHeader({
   );
 }
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const THREAD_FIND_HIGHLIGHT = "thread-find";
+const THREAD_FIND_ACTIVE_HIGHLIGHT = "thread-find-active";
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
@@ -420,10 +431,235 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
-  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findMatchCursor, setFindMatchIndex] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  const findMessageEntries = useMemo(
+    () => timelineEntries.filter((entry) => entry.kind === "message"),
+    [timelineEntries],
+  );
+  const findTexts = useMemo(
+    () => findMessageEntries.map((entry) => renderMarkdownSearchText(entry.message.text)),
+    [findMessageEntries],
+  );
+  const findMatches = useMemo(
+    () => findTextMatches(findTexts, findQuery, findCaseSensitive),
+    [findCaseSensitive, findQuery, findTexts],
+  );
+  const findMatchIndex = Math.min(findMatchCursor, Math.max(0, findMatches.length - 1));
+  const activeFindMessageId =
+    findOpen && findQuery
+      ? (findMessageEntries[findMatches[findMatchIndex]?.textIndex ?? -1]?.message.id ?? null)
+      : null;
+  const updateFindQuery = useCallback(
+    (query: string) => {
+      setFindQuery(query);
+      setFindMatchIndex(0);
+      if (findTextMatches(findTexts, query, findCaseSensitive).length > 0) onManualNavigation();
+    },
+    [findCaseSensitive, findTexts, onManualNavigation],
+  );
+  const goToFindMatch = useCallback(
+    (delta: number) => {
+      if (findMatches.length === 0) return;
+      const next = (findMatchIndex + delta + findMatches.length) % findMatches.length;
+      setFindMatchIndex(next);
+      onManualNavigation();
+    },
+    [findMatchIndex, findMatches, onManualNavigation],
+  );
+
+  useEffect(() => {
+    const handleFindShortcut = (event: globalThis.KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (
+        !timelineViewportElement ||
+        timelineViewportElement.getBoundingClientRect().width === 0 ||
+        timelineViewportElement.closest('[data-chat-column-maximized-away="true"]')
+      ) {
+        return;
+      }
+
+      if (key === "escape") {
+        if (
+          !findOpen ||
+          (event.target instanceof Element &&
+            event.target.closest('[role="dialog"], [data-terminal-owner]'))
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setFindOpen(false);
+        return;
+      }
+      if (
+        event.target instanceof Element &&
+        event.target !== document.body &&
+        (event.target.closest("[data-terminal-owner]") ||
+          !timelineViewportElement
+            .closest("[data-chat-column-maximized-away]")
+            ?.contains(event.target))
+      ) {
+        return;
+      }
+      if ((key !== "f" && key !== "g") || (!event.metaKey && !event.ctrlKey) || event.altKey) {
+        return;
+      }
+
+      const inputFocused = document.activeElement === findInputRef.current;
+      if (key === "g") {
+        if (inputFocused) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!findOpen) setFindOpen(true);
+        goToFindMatch(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.shiftKey || (!isElectron && findOpen && inputFocused)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (findOpen) {
+        findInputRef.current?.focus();
+      } else {
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleFindShortcut, true);
+    return () => window.removeEventListener("keydown", handleFindShortcut, true);
+  }, [findOpen, goToFindMatch, timelineViewportElement]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    const frame = requestAnimationFrame(() => findInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [findOpen]);
+
+  useEffect(() => {
+    CSS.highlights.delete(THREAD_FIND_HIGHLIGHT);
+    CSS.highlights.delete(THREAD_FIND_ACTIVE_HIGHLIGHT);
+    const match = findMatches[findMatchIndex];
+    const entry = match === undefined ? undefined : findMessageEntries[match.textIndex];
+    if (!findOpen || !findQuery || !match || !entry || !timelineViewportElement) return;
+
+    const rowIndex = rows.findIndex((row) => row.id === entry.id);
+    if (rowIndex === -1) {
+      const turnId = entry.message.turnId;
+      if (turnId && !expandedTurnIds.has(turnId)) {
+        suspendEndScrollMaintenanceForDisclosure(`turn-fold:${turnId}`);
+        setExpandedTurnIds((existing) => new Set(existing).add(turnId));
+      }
+      return;
+    }
+
+    void listRef.current?.scrollToIndex({ index: rowIndex, animated: false, viewOffset: 80 });
+
+    let paintFrame = 0;
+    let repaintFrame = 0;
+    const paintHighlights = () => {
+      const allRanges: Range[] = [];
+      let activeRange: Range | undefined;
+      for (const [textIndex, messageEntry] of findMessageEntries.entries()) {
+        const root = timelineViewportElement?.querySelector(
+          `[data-timeline-row-id="${CSS.escape(messageEntry.id)}"]`,
+        );
+        if (!root) continue;
+
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const textNodes: Array<{ node: Text; start: number; end: number }> = [];
+        let text = "";
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const value = node.textContent ?? "";
+          textNodes.push({
+            node: node as Text,
+            start: text.length,
+            end: text.length + value.length,
+          });
+          text += value;
+        }
+        for (const [occurrenceIndex, textRange] of findTextRanges(
+          text,
+          findQuery,
+          findCaseSensitive,
+        ).entries()) {
+          const startNode = textNodes.find(
+            ({ start, end }) => start <= textRange.start && textRange.start < end,
+          );
+          const endNode = textNodes.find(
+            ({ start, end }) => start < textRange.end && textRange.end <= end,
+          );
+          if (!startNode || !endNode) continue;
+          const range = new Range();
+          range.setStart(startNode.node, textRange.start - startNode.start);
+          range.setEnd(endNode.node, textRange.end - endNode.start);
+          allRanges.push(range);
+          if (textIndex === match.textIndex && occurrenceIndex === match.occurrenceIndex) {
+            activeRange = range;
+          }
+        }
+      }
+      CSS.highlights.set(THREAD_FIND_HIGHLIGHT, new Highlight(...allRanges));
+      if (activeRange) {
+        CSS.highlights.set(THREAD_FIND_ACTIVE_HIGHLIGHT, new Highlight(activeRange));
+      }
+      return activeRange;
+    };
+    const scheduleRepaint = () => {
+      cancelAnimationFrame(repaintFrame);
+      repaintFrame = requestAnimationFrame(() => paintHighlights());
+    };
+    const observer = new MutationObserver(scheduleRepaint);
+    observer.observe(timelineViewportElement, { childList: true, subtree: true });
+    const mountFrame = requestAnimationFrame(() => {
+      paintFrame = requestAnimationFrame(() => {
+        const activeRange = paintHighlights();
+        const root = timelineViewportElement.querySelector(
+          `[data-timeline-row-id="${CSS.escape(entry.id)}"]`,
+        );
+        if (!root || !activeRange) return;
+
+        let scrollParent = root.parentElement;
+        while (scrollParent && !/(auto|scroll)/u.test(getComputedStyle(scrollParent).overflowY)) {
+          scrollParent = scrollParent.parentElement;
+        }
+        if (scrollParent) {
+          const matchRect = activeRange.getBoundingClientRect();
+          const viewportRect = scrollParent.getBoundingClientRect();
+          if (matchRect.top < viewportRect.top || matchRect.bottom > viewportRect.bottom) {
+            scrollParent.scrollTop +=
+              matchRect.top - viewportRect.top - scrollParent.clientHeight / 2;
+          }
+        }
+      });
+    });
+    return () => {
+      cancelAnimationFrame(mountFrame);
+      cancelAnimationFrame(paintFrame);
+      cancelAnimationFrame(repaintFrame);
+      observer.disconnect();
+      CSS.highlights.delete(THREAD_FIND_HIGHLIGHT);
+      CSS.highlights.delete(THREAD_FIND_ACTIVE_HIGHLIGHT);
+    };
+  }, [
+    expandedTurnIds,
+    findCaseSensitive,
+    findMatchIndex,
+    findMatches,
+    findMessageEntries,
+    findOpen,
+    findQuery,
+    listRef,
+    rows,
+    suspendEndScrollMaintenanceForDisclosure,
+    timelineViewportElement,
+  ]);
+  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const handleAnchorReady = useCallback(
@@ -516,6 +752,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      activeFindMessageId,
       agentPanelModel,
       onOpenAgents,
     }),
@@ -532,6 +769,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      activeFindMessageId,
       agentPanelModel,
       onOpenAgents,
     ],
@@ -573,6 +811,76 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
         <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+          {findOpen ? (
+            <div className="absolute right-4 top-3 z-30 w-[calc(100%-2rem)] max-w-sm rounded-[var(--control-radius)] shadow-lg">
+              <InputGroup className="w-full dark:bg-background">
+                <InputGroupAddon>
+                  <SearchIcon aria-hidden="true" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  ref={findInputRef}
+                  value={findQuery}
+                  onChange={(event) => updateFindQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") goToFindMatch(event.shiftKey ? -1 : 1);
+                  }}
+                  aria-label="Find in thread"
+                  placeholder="Find in thread"
+                />
+                <InputGroupAddon align="inline-end" className="gap-1">
+                  <Toggle
+                    pressed={findCaseSensitive}
+                    size="xs"
+                    variant="primary"
+                    className="font-mono text-[11px] sm:text-[11px]"
+                    aria-label="Match case"
+                    title="Match case"
+                    onPressedChange={(pressed) => {
+                      setFindCaseSensitive(pressed);
+                      setFindMatchIndex(0);
+                      onManualNavigation();
+                    }}
+                  >
+                    Aa
+                  </Toggle>
+                  <span className="min-w-12 text-center text-xs text-muted-foreground">
+                    {findQuery
+                      ? `${findMatches.length ? findMatchIndex + 1 : 0}/${findMatches.length}`
+                      : ""}
+                  </span>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    disabled={findMatches.length === 0}
+                    aria-label="Previous match"
+                    onClick={() => goToFindMatch(-1)}
+                  >
+                    <ChevronUpIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    disabled={findMatches.length === 0}
+                    aria-label="Next match"
+                    onClick={() => goToFindMatch(1)}
+                  >
+                    <ChevronDownIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Close find"
+                    onClick={() => setFindOpen(false)}
+                  >
+                    <XIcon />
+                  </Button>
+                </InputGroupAddon>
+              </InputGroup>
+            </div>
+          ) : null}
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}
@@ -1033,6 +1341,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
+          forceExpanded={ctx.activeFindMessageId === row.message.id}
         />
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -1602,9 +1911,13 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   terminalContexts: ParsedTerminalContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
+  forceExpanded?: boolean;
   footer?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (props.forceExpanded) setExpanded(true);
+  }, [props.forceExpanded]);
   const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
   const isCollapsed = canCollapse && !expanded;

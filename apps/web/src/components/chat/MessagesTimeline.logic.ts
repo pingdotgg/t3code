@@ -1,4 +1,8 @@
 import * as Equal from "effect/Equal";
+import { toString } from "mdast-util-to-string";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import {
   formatDuration,
   workEntryIndicatesToolNeutralStatus,
@@ -240,6 +244,77 @@ export function computeMessageDurationStart(
 
 export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+}
+
+export interface TextMatch {
+  readonly textIndex: number;
+  readonly occurrenceIndex: number;
+}
+
+export interface TextRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+const markdownSearchTextProcessor = unified().use(remarkParse).use(remarkGfm);
+
+export function renderMarkdownSearchText(markdown: string): string {
+  return toString(markdownSearchTextProcessor.parse(markdown), { includeImageAlt: false });
+}
+
+export function findTextRanges(text: string, query: string, caseSensitive = false): TextRange[] {
+  if (caseSensitive) {
+    if (!query) return [];
+    const ranges: TextRange[] = [];
+    for (let offset = 0; (offset = text.indexOf(query, offset)) !== -1; offset += query.length) {
+      ranges.push({ start: offset, end: offset + query.length });
+    }
+    return ranges;
+  }
+
+  const normalizedOffsets: TextRange[] = [];
+  let normalizedText = "";
+  for (let start = 0; start < text.length; ) {
+    const codePoint = text.codePointAt(start)!;
+    const end = start + (codePoint > 0xffff ? 2 : 1);
+    const normalized = text.slice(start, end).toLowerCase();
+    normalizedText += normalized;
+    for (let index = 0; index < normalized.length; index += 1) {
+      normalizedOffsets.push({ start, end });
+    }
+    start = end;
+  }
+
+  const needle = query.toLowerCase();
+  if (!needle) return [];
+
+  const ranges: TextRange[] = [];
+  for (
+    let offset = 0;
+    (offset = normalizedText.indexOf(needle, offset)) !== -1;
+    offset += needle.length
+  ) {
+    const first = normalizedOffsets[offset];
+    const last = normalizedOffsets[offset + needle.length - 1];
+    if (first && last) ranges.push({ start: first.start, end: last.end });
+  }
+  return ranges;
+}
+
+export function findTextMatches(
+  texts: ReadonlyArray<string | null | undefined>,
+  query: string,
+  caseSensitive = false,
+): TextMatch[] {
+  if (!query) return [];
+
+  const matches: TextMatch[] = [];
+  texts.forEach((text, textIndex) => {
+    findTextRanges(text ?? "", query, caseSensitive).forEach((_, occurrenceIndex) => {
+      matches.push({ textIndex, occurrenceIndex });
+    });
+  });
+  return matches;
 }
 
 export function resolveAssistantMessageCopyState({
