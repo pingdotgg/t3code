@@ -15,7 +15,7 @@ export function createPlanModePreferencePatchRequest(
   updatedAt: SyncedClientPreferencesUpdatedAt,
 ): PatchSyncedClientPreferencesRequest {
   return {
-    commandId: CommandId.make(`client-preferences:${updatedAt}`),
+    commandId: CommandId.make(`client-preferences:${updatedAt}:${value ? "1" : "0"}`),
     patch: { planModeEnabled: value },
     updatedAt,
   };

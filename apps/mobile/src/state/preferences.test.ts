@@ -29,6 +29,7 @@ import {
   MobilePreferencesSaveError,
   MobilePreferencesStore,
 } from "./preferences";
+import { resolvePlanModeLocalPatchPersistence } from "./synced-client-preferences-model";
 
 function deferred<A>() {
   let resolve!: (value: A) => void;
@@ -274,6 +275,71 @@ describe("mobile preferences state", () => {
           );
         }),
       );
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("does not retry a failed reconciliation through its optimistic null window", () =>
+    Effect.gen(function* () {
+      const updatedAt = "2026-08-15T12:01:00.000Z";
+      let saveCount = 0;
+      const releaseSave = deferred<void>();
+      const state = makePreferencesState({
+        load: Effect.succeed({
+          planModeEnabled: false,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:00:00.000Z",
+          },
+        }),
+        savePatch: () => {
+          saveCount += 1;
+          return Effect.promise(() => releaseSave.promise).pipe(
+            Effect.andThen(
+              Effect.fail(new MobilePreferencesSaveError({ cause: new Error("write failed") })),
+            ),
+          );
+        },
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      const localPatch = {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: { planModeEnabled: updatedAt },
+      } as const;
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+      const first = resolvePlanModeLocalPatchPersistence({
+        attemptedKey: null,
+        localPatch,
+      });
+      registry.set(state.updatePreferencesAtom, localPatch);
+      const optimistic = Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)));
+      expect(optimistic.planModeEnabled).toBe(true);
+      const optimisticWindow = resolvePlanModeLocalPatchPersistence({
+        attemptedKey: first.nextAttemptedKey,
+        localPatch: null,
+      });
+      releaseSave.resolve();
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(
+            Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))
+              .planModeEnabled,
+          ).toBe(false);
+        }),
+      );
+      const afterRollback = resolvePlanModeLocalPatchPersistence({
+        attemptedKey: optimisticWindow.nextAttemptedKey,
+        localPatch,
+      });
+
+      expect(afterRollback.shouldPersist).toBe(false);
+      expect(saveCount).toBe(1);
 
       unmountUpdate();
       unmountPreferences();

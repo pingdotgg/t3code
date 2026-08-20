@@ -98,8 +98,17 @@ import {
   __resetClientSettingsPersistenceForTests,
   SyncedPlanModeEnvironmentSync,
   useEnvironmentSettings,
+  useUpdateClientSettings,
   useUpdateEnvironmentSettings,
 } from "./useSettings";
+
+function deferred() {
+  let resolve!: (value: undefined) => void;
+  const promise = new Promise<undefined>((resume) => {
+    resolve = resume;
+  });
+  return { promise, resolve } as const;
+}
 
 describe("useUpdateEnvironmentSettings", () => {
   beforeEach(() => {
@@ -142,6 +151,41 @@ describe("useUpdateEnvironmentSettings", () => {
         updatedAt: expect.any(String),
       },
     });
+  });
+
+  it("persists the Plan Mode value and watermark atomically", async () => {
+    const secondaryEnvironmentId = EnvironmentId.make("secondary");
+    hooks.beginRender();
+    const updateSettings = useUpdateEnvironmentSettings(secondaryEnvironmentId);
+
+    updateSettings({ planModeEnabled: true });
+
+    await vi.waitFor(() => expect(testState.setClientSettings).toHaveBeenCalledOnce());
+    expect(testState.setClientSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planModeEnabled: true,
+        planModeUpdatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
+      }),
+    );
+  });
+
+  it("serializes whole-document client settings persistence", async () => {
+    const firstWrite = deferred();
+    testState.setClientSettings
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValueOnce(undefined);
+    hooks.beginRender();
+    const updateSettings = useUpdateClientSettings();
+
+    updateSettings({ wordWrap: false });
+    updateSettings({ wordWrap: true });
+    await vi.waitFor(() => expect(testState.setClientSettings).toHaveBeenCalledOnce());
+
+    firstWrite.resolve(undefined);
+    await vi.waitFor(() => expect(testState.setClientSettings).toHaveBeenCalledTimes(2));
+    expect(testState.setClientSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ wordWrap: true }),
+    );
   });
 
   it("checks synced-preference access in the supplied secondary environment", () => {

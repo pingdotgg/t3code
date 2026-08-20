@@ -61,6 +61,7 @@ let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
+let clientSettingsPersistenceQueue = Promise.resolve();
 const EMPTY_SYNCED_CLIENT_PREFERENCES_ATOM = Atom.make(SHELL_NOT_LIVE);
 const EMPTY_AUTH_SESSION_ATOM = Atom.make(null);
 
@@ -161,14 +162,24 @@ async function hydrateClientSettings(): Promise<void> {
 
 function persistClientSettings(settings: ClientSettings): void {
   replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
+  clientSettingsPersistenceQueue = clientSettingsPersistenceQueue
+    .then(() => ensureLocalApi().persistence.setClientSettings(settings))
     .catch((error) => {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
         operation: "persist",
         ...safeErrorLogAttributes(error),
       });
     });
+}
+
+function persistSyncedPlanMode(value: boolean, updatedAt: string): void {
+  const current = getClientSettingsSnapshot();
+  if (current.planModeEnabled === value && current.planModeUpdatedAt === updatedAt) return;
+  persistClientSettings({
+    ...current,
+    planModeEnabled: value,
+    planModeUpdatedAt: updatedAt,
+  });
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -317,7 +328,10 @@ function useCanPatchSyncedClientPreferences(environmentId: EnvironmentId | null)
   );
 }
 
-function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
+function useSyncedPlanModeHydration(
+  environmentId: EnvironmentId | null,
+  onHydrated: (() => void) | undefined,
+) {
   const clientSettings = useClientSettingsValue();
   const clientHydrated = useClientSettingsHydrated();
   const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
@@ -327,16 +341,7 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
     label: "synced client preferences seed",
     reportFailure: false,
   });
-  const persistSyncedPlanMode = useCallback((value: boolean) => {
-    if (getClientSettingsSnapshot().planModeEnabled !== value) {
-      persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
-    }
-  }, []);
-  const persistSyncedPlanModeUpdatedAt = useCallback((updatedAt: string) => {
-    if (getClientSettingsSnapshot().planModeUpdatedAt !== updatedAt) {
-      persistClientSettings({ ...getClientSettingsSnapshot(), planModeUpdatedAt: updatedAt });
-    }
-  }, []);
+  const persistPlanMode = useCallback(persistSyncedPlanMode, []);
 
   useSyncedPlanModeHydrationEffect(syncedPlanModeHydrationController, {
     environmentId,
@@ -349,8 +354,8 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
     canPatch,
     now: new Date().toISOString(),
     patch: patchPreferences,
-    persist: persistSyncedPlanMode,
-    persistUpdatedAt: persistSyncedPlanModeUpdatedAt,
+    persist: persistPlanMode,
+    onHydrated,
   });
 
   return {
@@ -372,8 +377,9 @@ function useSyncedPlanModeState(environmentId: EnvironmentId | null) {
 
 export function SyncedPlanModeEnvironmentSync(props: {
   readonly environmentId: EnvironmentId;
+  readonly onHydrated?: (() => void) | undefined;
 }): null {
-  useSyncedPlanModeHydration(props.environmentId);
+  useSyncedPlanModeHydration(props.environmentId, props.onHydrated);
   return null;
 }
 
@@ -496,10 +502,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           });
         }
       }
-      if (Object.keys(clientPatch).length > 0) {
+      const clientPatchWithoutPlanMode = Struct.omit(clientPatch, ["planModeEnabled"]);
+      if (Struct.keys(clientPatchWithoutPlanMode).length > 0) {
         persistClientSettings({
           ...getClientSettingsSnapshot(),
-          ...clientPatch,
+          ...clientPatchWithoutPlanMode,
         });
       }
       if (clientPatch.planModeEnabled !== undefined) {
@@ -510,19 +517,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           canPatch: canPatchSyncedPreferences,
           now: new Date().toISOString(),
           patch: patchSyncedClientPreferences,
-          persist: (value) => {
-            if (getClientSettingsSnapshot().planModeEnabled !== value) {
-              persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
-            }
-          },
-          persistUpdatedAt: (updatedAt) => {
-            if (getClientSettingsSnapshot().planModeUpdatedAt !== updatedAt) {
-              persistClientSettings({
-                ...getClientSettingsSnapshot(),
-                planModeUpdatedAt: updatedAt,
-              });
-            }
-          },
+          persist: persistSyncedPlanMode,
         });
       }
     },
@@ -560,6 +555,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
+  clientSettingsPersistenceQueue = Promise.resolve();
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
   syncedPlanModeHydrationController.reset();

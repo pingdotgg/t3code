@@ -11,12 +11,21 @@ import {
   type EnvironmentId,
   type PatchSyncedClientPreferencesRequest,
   type SyncedClientPreferences,
+  SyncedClientPreferencesUpdatedAt,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo } from "react";
 
 export const SHELL_NOT_LIVE = Symbol("shell-not-live");
+const isSyncedClientPreferencesUpdatedAt = Schema.is(SyncedClientPreferencesUpdatedAt);
+
+function validSyncedClientPreferencesUpdatedAt(updatedAt: string | undefined): string | undefined {
+  return updatedAt !== undefined && isSyncedClientPreferencesUpdatedAt(updatedAt)
+    ? updatedAt
+    : undefined;
+}
 
 export function createSyncedClientPreferencesSliceAtom(
   shellStateAtom: Atom.Atom<EnvironmentShellState>,
@@ -38,10 +47,11 @@ export function createSyncedPlanModeWrite(input: {
     input.serverPreferences,
     "planModeEnabled",
   );
+  const pendingUpdatedAt = validSyncedClientPreferencesUpdatedAt(input.pendingUpdatedAt);
   const currentUpdatedAt =
-    input.pendingUpdatedAt !== undefined &&
-    (serverUpdatedAt === undefined || input.pendingUpdatedAt > serverUpdatedAt)
-      ? input.pendingUpdatedAt
+    pendingUpdatedAt !== undefined &&
+    (serverUpdatedAt === undefined || pendingUpdatedAt > serverUpdatedAt)
+      ? pendingUpdatedAt
       : serverUpdatedAt;
   const updatedAt = nextSyncedClientPreferencesUpdatedAt([currentUpdatedAt], input.now);
   return { request: createPlanModePreferencePatchRequest(input.value, updatedAt) } as const;
@@ -67,14 +77,28 @@ export interface SyncedPlanModeHydrationInput<E> {
   readonly canPatch: boolean;
   readonly now: string;
   readonly patch: SyncedPlanModePatch<E>;
-  readonly persist: (value: boolean) => void;
-  readonly persistUpdatedAt?: ((updatedAt: string) => void) | undefined;
+  readonly persist: (value: boolean, updatedAt: string) => void;
+  readonly onHydrated?: (() => void) | undefined;
 }
 
 export type SyncedPlanModeHydrationAction =
   | { readonly type: "none" }
   | { readonly type: "adopt"; readonly value: boolean; readonly updatedAt: string }
   | { readonly type: "seed"; readonly value: boolean; readonly updatedAt: string };
+
+export function resolveSyncedPlanModeCoordinatorEnvironmentIds(input: {
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly hydratedPrimaryEnvironmentId: EnvironmentId | null;
+}): ReadonlyArray<EnvironmentId> {
+  if (input.primaryEnvironmentId === null) return [];
+  if (input.hydratedPrimaryEnvironmentId !== input.primaryEnvironmentId) {
+    return input.environmentIds.includes(input.primaryEnvironmentId)
+      ? [input.primaryEnvironmentId]
+      : [];
+  }
+  return input.environmentIds;
+}
 
 export function resolveSyncedPlanModeHydrationAction(input: {
   readonly clientHydrated: boolean;
@@ -194,8 +218,8 @@ export function createSyncedPlanModeHydrationController(
     readonly environmentId: EnvironmentId;
     readonly requestedUpdatedAt: string;
     readonly result: AtomCommandResult<SyncedClientPreferences, E>;
-    readonly persist: (value: boolean) => void;
-    readonly persistUpdatedAt: ((updatedAt: string) => void) | undefined;
+    readonly persist: (value: boolean, updatedAt: string) => void;
+    readonly onHydrated: (() => void) | undefined;
   }) => {
     const state = stateByEnvironment.get(input.environmentId);
     if (state === undefined) return;
@@ -232,16 +256,16 @@ export function createSyncedPlanModeHydrationController(
       state.pendingAdoption = { value: resultValue, updatedAt: resultUpdatedAt };
     }
     if (getSynchronizeAgain(state) === undefined || state.pendingAdoption === undefined) return;
-    input.persist(state.pendingAdoption.value);
-    input.persistUpdatedAt?.(state.pendingAdoption.updatedAt);
+    input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt);
     markAdopted(state, state.pendingAdoption.updatedAt);
+    input.onHydrated?.();
   };
 
   const dispatchPatch = <E>(input: {
     readonly target: SyncedPlanModePatchTarget;
     readonly patch: SyncedPlanModePatch<E>;
-    readonly persist: (value: boolean) => void;
-    readonly persistUpdatedAt: ((updatedAt: string) => void) | undefined;
+    readonly persist: (value: boolean, updatedAt: string) => void;
+    readonly onHydrated: (() => void) | undefined;
   }) => {
     const { environmentId } = input.target;
     const requestedUpdatedAt = input.target.input.updatedAt;
@@ -254,7 +278,7 @@ export function createSyncedPlanModeHydrationController(
         requestedUpdatedAt,
         result,
         persist: input.persist,
-        persistUpdatedAt: input.persistUpdatedAt,
+        onHydrated: input.onHydrated,
       });
     });
   };
@@ -287,14 +311,15 @@ export function createSyncedPlanModeHydrationController(
       input.serverPreferences,
       "planModeEnabled",
     );
+    const clientUpdatedAt = validSyncedClientPreferencesUpdatedAt(input.clientUpdatedAt);
     if (
       state.writePending === undefined &&
-      input.clientUpdatedAt !== undefined &&
-      (serverUpdatedAt === undefined || serverUpdatedAt < input.clientUpdatedAt)
+      clientUpdatedAt !== undefined &&
+      (serverUpdatedAt === undefined || serverUpdatedAt < clientUpdatedAt)
     ) {
       state.writePending = {
         value: input.clientValue,
-        updatedAt: input.clientUpdatedAt,
+        updatedAt: clientUpdatedAt,
       };
     }
     const pendingWrite = state.writePending;
@@ -313,10 +338,12 @@ export function createSyncedPlanModeHydrationController(
         state.pendingAdoption.updatedAt > state.adoptedUpdatedAt)
     ) {
       if (input.clientValue !== state.pendingAdoption.value) {
-        input.persist(state.pendingAdoption.value);
+        input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt);
+      } else if (clientUpdatedAt !== state.pendingAdoption.updatedAt) {
+        input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt);
       }
-      input.persistUpdatedAt?.(state.pendingAdoption.updatedAt);
       markAdopted(state, state.pendingAdoption.updatedAt);
+      input.onHydrated?.();
     }
     if (
       pendingWrite !== undefined &&
@@ -347,7 +374,7 @@ export function createSyncedPlanModeHydrationController(
         },
         patch: input.patch,
         persist: input.persist,
-        persistUpdatedAt: input.persistUpdatedAt,
+        onHydrated: input.onHydrated,
       });
     }
     let hydrationInput: Parameters<typeof resolveSyncedPlanModeHydrationAction>[0] = {
@@ -372,29 +399,47 @@ export function createSyncedPlanModeHydrationController(
         const next = createSyncedPlanModeWrite({
           value: input.clientValue,
           serverPreferences: input.serverPreferences,
-          pendingUpdatedAt: input.clientUpdatedAt,
+          pendingUpdatedAt: clientUpdatedAt,
           now: input.now,
         });
         state.writePending = {
           value: input.clientValue,
           updatedAt: next.request.updatedAt,
         };
-        input.persistUpdatedAt?.(next.request.updatedAt);
+        input.persist(input.clientValue, next.request.updatedAt);
         dispatchPatch<E>({
           target: { environmentId, input: next.request },
           patch: input.patch,
           persist: input.persist,
-          persistUpdatedAt: input.persistUpdatedAt,
+          onHydrated: input.onHydrated,
         });
         return deactivateSynchronization;
       }
-      if (!input.canPatch) return deactivateSynchronization;
+      if (!input.canPatch) {
+        input.onHydrated?.();
+        return deactivateSynchronization;
+      }
       markAdopted(state, action.updatedAt);
-      if (input.clientValue !== action.value) input.persist(action.value);
-      input.persistUpdatedAt?.(action.updatedAt);
+      if (input.clientValue !== action.value || clientUpdatedAt !== action.updatedAt) {
+        input.persist(action.value, action.updatedAt);
+      }
+      input.onHydrated?.();
       return deactivateSynchronization;
     }
-    if (action.type !== "seed" || !input.canPatch) return deactivateSynchronization;
+    if (action.type !== "seed") {
+      if (
+        environmentId === input.primaryEnvironmentId &&
+        state.writePending === undefined &&
+        state.writeInFlightUpdatedAt === undefined
+      ) {
+        input.onHydrated?.();
+      }
+      return deactivateSynchronization;
+    }
+    if (!input.canPatch) {
+      input.onHydrated?.();
+      return deactivateSynchronization;
+    }
 
     state.seedPendingUpdatedAt = action.updatedAt;
     dispatchPatch<E>({
@@ -404,7 +449,7 @@ export function createSyncedPlanModeHydrationController(
       },
       patch: input.patch,
       persist: input.persist,
-      persistUpdatedAt: input.persistUpdatedAt,
+      onHydrated: input.onHydrated,
     });
 
     return deactivateSynchronization;
@@ -417,8 +462,7 @@ export function createSyncedPlanModeHydrationController(
     readonly canPatch: boolean;
     readonly now: string;
     readonly patch: SyncedPlanModePatch<E>;
-    readonly persist: (value: boolean) => void;
-    readonly persistUpdatedAt?: ((updatedAt: string) => void) | undefined;
+    readonly persist: (value: boolean, updatedAt: string) => void;
   }) => {
     if (input.environmentId === null) return;
     const environmentId = input.environmentId;
@@ -451,14 +495,14 @@ export function createSyncedPlanModeHydrationController(
       value: input.value,
       updatedAt: next.request.updatedAt,
     };
-    input.persistUpdatedAt?.(next.request.updatedAt);
+    input.persist(input.value, next.request.updatedAt);
     delete state.pendingAdoption;
     if (!input.canPatch) return;
     dispatchPatch<E>({
       target: { environmentId, input: next.request },
       patch: input.patch,
       persist: input.persist,
-      persistUpdatedAt: input.persistUpdatedAt,
+      onHydrated: undefined,
     });
   };
 
@@ -497,7 +541,7 @@ export function useSyncedPlanModeHydrationEffect<E>(
       input.live,
       input.patch,
       input.persist,
-      input.persistUpdatedAt,
+      input.onHydrated,
       input.primaryEnvironmentId,
       input.serverPreferences,
       synchronizationOwner,

@@ -15,12 +15,90 @@ import {
   createSyncedClientPreferencesSliceAtom,
   createSyncedPlanModeHydrationController,
   createSyncedPlanModeWrite,
+  resolveSyncedPlanModeCoordinatorEnvironmentIds,
   resolveSyncedPlanModeHydrationAction,
   type SyncedPlanModeHydrationInput,
 } from "./synced-plan-mode";
 import { mergeEnvironmentSettings, resolveEnvironmentIdentificationMode } from "./useSettings";
 
 describe("synced plan mode", () => {
+  it("hydrates the primary before exposing secondary environments", () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const secondaryEnvironmentId = EnvironmentId.make("secondary");
+    const environmentIds = [primaryEnvironmentId, secondaryEnvironmentId];
+
+    expect(
+      resolveSyncedPlanModeCoordinatorEnvironmentIds({
+        environmentIds,
+        primaryEnvironmentId,
+        hydratedPrimaryEnvironmentId: null,
+      }),
+    ).toEqual([primaryEnvironmentId]);
+    expect(
+      resolveSyncedPlanModeCoordinatorEnvironmentIds({
+        environmentIds,
+        primaryEnvironmentId,
+        hydratedPrimaryEnvironmentId: primaryEnvironmentId,
+      }),
+    ).toEqual(environmentIds);
+
+    const events: string[] = [];
+    createSyncedPlanModeHydrationController().synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: true,
+      serverPreferences: {
+        planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist: (value, updatedAt) => {
+        events.push(`persist:${value}:${updatedAt}`);
+      },
+      onHydrated: () => events.push("hydrated"),
+    });
+
+    expect(events).toEqual(["persist:true:2026-08-14T12:00:00.000Z", "hydrated"]);
+  });
+
+  it("ignores a malformed durable Plan Mode watermark", () => {
+    const serverPreferences = {
+      planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    expect(
+      createSyncedPlanModeWrite({
+        value: true,
+        serverPreferences,
+        pendingUpdatedAt: "not-a-timestamp",
+        now: "2026-08-14T12:01:00.000Z",
+      }).request.updatedAt,
+    ).toBe("2026-08-14T12:01:00.000Z");
+
+    const persist = vi.fn();
+    createSyncedPlanModeHydrationController().synchronize({
+      environmentId: EnvironmentId.make("primary"),
+      primaryEnvironmentId: EnvironmentId.make("primary"),
+      clientHydrated: true,
+      clientValue: true,
+      clientUpdatedAt: "not-a-timestamp",
+      live: true,
+      serverPreferences,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist,
+    });
+
+    expect(persist).toHaveBeenCalledWith(false, "2026-08-14T12:00:00.000Z");
+  });
+
   it("adopts an environment value over the local cache", () => {
     expect(
       resolveSyncedPlanModeHydrationAction({
@@ -79,7 +157,7 @@ describe("synced plan mode", () => {
       }),
     ).toEqual({
       request: {
-        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z:0",
         patch: { planModeEnabled: false },
         updatedAt: "2026-08-14T12:01:00.000Z",
       },
@@ -176,7 +254,7 @@ describe("synced plan mode", () => {
     expect(patch).toHaveBeenCalledWith({
       environmentId: secondaryEnvironmentId,
       input: {
-        commandId: "client-preferences:2026-08-14T12:02:00.001Z",
+        commandId: "client-preferences:2026-08-14T12:02:00.001Z:1",
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:02:00.001Z",
       },
@@ -365,7 +443,7 @@ describe("synced plan mode", () => {
     expect(patch).toHaveBeenCalledWith({
       environmentId: primaryEnvironmentId,
       input: {
-        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z:1",
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:01:00.000Z",
       },
@@ -387,8 +465,7 @@ describe("synced plan mode", () => {
       canPatch: false,
       now: "2026-08-14T12:01:00.000Z",
       patch: vi.fn(),
-      persist: vi.fn(),
-      persistUpdatedAt: (updatedAt) => {
+      persist: (_value, updatedAt) => {
         persistedUpdatedAt = updatedAt;
       },
     });
@@ -418,7 +495,7 @@ describe("synced plan mode", () => {
     expect(patch).toHaveBeenCalledWith({
       environmentId: primaryEnvironmentId,
       input: {
-        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z:1",
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:01:00.000Z",
       },
@@ -453,7 +530,7 @@ describe("synced plan mode", () => {
     expect(patch).toHaveBeenCalledWith({
       environmentId: secondaryEnvironmentId,
       input: {
-        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z:1",
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:01:00.000Z",
       },
@@ -687,11 +764,11 @@ describe("synced plan mode", () => {
     await Promise.resolve();
 
     expect(patch).toHaveBeenCalledOnce();
-    expect(persist).not.toHaveBeenCalled();
+    expect(persist).toHaveBeenCalledExactlyOnceWith(false, "2026-08-14T12:01:00.000Z");
   });
 
   it.each([
-    { switchPrimary: true, expectedPersisted: [] },
+    { switchPrimary: true, expectedPersisted: [false] },
     { switchPrimary: false, expectedPersisted: [true] },
   ])(
     "persists a successful patch only while its environment remains active ($switchPrimary)",
@@ -809,6 +886,7 @@ describe("synced plan mode", () => {
       patch,
       persist,
     });
+    persisted.length = 0;
     deactivate?.();
     resolvePatch(
       AsyncResult.success({
@@ -835,7 +913,7 @@ describe("synced plan mode", () => {
     });
 
     expect(localValue).toBe(true);
-    expect(persisted).toEqual([]);
+    expect(persisted).toEqual([true]);
     expect(patch).toHaveBeenCalledOnce();
   });
 
@@ -882,6 +960,7 @@ describe("synced plan mode", () => {
       value: localValue,
       now: "2026-08-14T12:01:00.000Z",
     });
+    persisted.length = 0;
     deactivate?.();
     resolvePatch(
       AsyncResult.success({
@@ -942,6 +1021,7 @@ describe("synced plan mode", () => {
       patch,
       persist,
     });
+    expect(persisted).toEqual([false, true]);
     controller.write({
       environmentId: primaryEnvironmentId,
       value: false,
@@ -951,6 +1031,8 @@ describe("synced plan mode", () => {
       patch,
       persist,
     });
+    expect(persisted).toEqual([false, true, false]);
+    persisted.length = 0;
 
     expect(targets.map((target) => target.input.updatedAt)).toEqual([
       "2026-08-14T12:00:00.001Z",
@@ -1012,6 +1094,8 @@ describe("synced plan mode", () => {
       patch,
       persist,
     });
+    expect(persisted).toEqual([true]);
+    persisted.length = 0;
 
     resolvePatches[0]?.(
       AsyncResult.success({

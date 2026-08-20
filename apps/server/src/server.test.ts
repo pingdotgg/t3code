@@ -5994,7 +5994,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         updatedAt: "2026-08-14T12:00:00.000Z",
       } as const;
       let patchedEvent: OrchestrationEvent | null = null;
-      const dispatchedCommandIds: CommandId[] = [];
+      const dispatchedCommands: Array<{
+        readonly commandId: CommandId;
+        readonly planModeEnabled: boolean | undefined;
+      }> = [];
 
       yield* buildAppUnderTest({
         layers: {
@@ -6002,7 +6005,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             dispatch: (command) =>
               Effect.sync(() => {
                 if (command.type === "client-preferences.patch") {
-                  dispatchedCommandIds.push(command.commandId);
+                  dispatchedCommands.push({
+                    commandId: command.commandId,
+                    planModeEnabled: command.patch.planModeEnabled,
+                  });
                   patchedEvent = {
                     sequence: 1,
                     eventId: EventId.make("event-client-preferences-patched"),
@@ -6033,16 +6039,35 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
+      const patchPreferences = (value: boolean) => ({
+        commandId: CommandId.make(
+          `client-preferences:${canonicalPreferences.updatedAt}:${value ? "1" : "0"}`,
+        ),
+        patch: { planModeEnabled: value },
+        updatedAt: canonicalPreferences.updatedAt,
+      });
+      const truePatch = patchPreferences(true);
+      const falsePatch = patchPreferences(false);
       const ack = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.syncedClientPreferencesPatch]({
-            commandId: CommandId.make("client-preferences:replay"),
-            patch: { planModeEnabled: true },
-            updatedAt: canonicalPreferences.updatedAt,
-          }),
+          client[WS_METHODS.syncedClientPreferencesPatch](truePatch),
         ),
       );
-      assert.deepEqual(dispatchedCommandIds, ["client-preferences:replay"]);
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.syncedClientPreferencesPatch](falsePatch),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.syncedClientPreferencesPatch](falsePatch),
+        ),
+      );
+      assert.deepEqual(dispatchedCommands, [
+        { commandId: truePatch.commandId, planModeEnabled: true },
+        { commandId: falsePatch.commandId, planModeEnabled: false },
+        { commandId: falsePatch.commandId, planModeEnabled: false },
+      ]);
       const legacyItems = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.subscribeShell]({

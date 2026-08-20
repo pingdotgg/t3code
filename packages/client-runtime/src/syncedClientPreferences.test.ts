@@ -6,12 +6,18 @@ import {
 } from "./syncedClientPreferences.js";
 
 describe("synced client preferences", () => {
-  it("reuses the field stamp as the idempotent command identity", () => {
-    expect(createPlanModePreferencePatchRequest(true, "2026-08-14T12:00:00.000Z")).toEqual({
-      commandId: "client-preferences:2026-08-14T12:00:00.000Z",
+  it("keys idempotency by the field stamp and canonical payload", () => {
+    const first = createPlanModePreferencePatchRequest(true, "2026-08-14T12:00:00.000Z");
+    const retry = createPlanModePreferencePatchRequest(true, "2026-08-14T12:00:00.000Z");
+    const distinctValue = createPlanModePreferencePatchRequest(false, "2026-08-14T12:00:00.000Z");
+
+    expect(first).toEqual({
+      commandId: "client-preferences:2026-08-14T12:00:00.000Z:1",
       patch: { planModeEnabled: true },
       updatedAt: "2026-08-14T12:00:00.000Z",
     });
+    expect(retry.commandId).toBe(first.commandId);
+    expect(distinctValue.commandId).toBe("client-preferences:2026-08-14T12:00:00.000Z:0");
   });
 
   it("uses the shared exponential retry policy", () => {

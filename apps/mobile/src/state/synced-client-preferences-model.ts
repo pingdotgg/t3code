@@ -509,14 +509,17 @@ export function reconcileSyncedClientPreferences(input: {
   };
   const environmentPatches: PlanModePreferencePatchTarget[] = [];
   let localChanged = false;
-  const hasPatchableEnvironment = input.environments.some(
+  const sortedEnvironments = [...input.environments].sort((left, right) =>
+    left.environmentId.localeCompare(right.environmentId),
+  );
+  const hasPatchableEnvironment = sortedEnvironments.some(
     (environment) => environment.canPatch !== false,
   );
 
   for (const field of input.fields ?? SYNCED_CLIENT_PREFERENCE_FIELDS) {
     const localValue = input.local.values[field];
     const localUpdatedAt = localPreferenceUpdatedAt(input.local, field);
-    const environmentCandidates = input.environments.flatMap((environment) => {
+    const environmentCandidates = sortedEnvironments.flatMap((environment) => {
       const value = environment.preferences?.[field];
       const updatedAt = getSyncedClientPreferenceUpdatedAt(environment.preferences, field);
       return value === undefined ||
@@ -549,8 +552,19 @@ export function reconcileSyncedClientPreferences(input: {
           boundedLocalUpdatedAt === latestEnvironment.updatedAt));
     const value = localWins ? localValue : (latestEnvironment?.value ?? localValue);
     if (value === undefined) continue;
-    const updatedAt =
+    const winningUpdatedAt =
       (localWins ? boundedLocalUpdatedAt : latestEnvironment?.updatedAt) ?? input.now;
+    const hasEqualStampConflict =
+      latestEnvironment !== undefined &&
+      ((boundedLocalUpdatedAt === latestEnvironment.updatedAt && localValue !== value) ||
+        (!localWins &&
+          environmentCandidates.some(
+            (candidate) =>
+              candidate.updatedAt === latestEnvironment.updatedAt && candidate.value !== value,
+          )));
+    const updatedAt = hasEqualStampConflict
+      ? nextMobileSyncedPreferencesUpdatedAt([], winningUpdatedAt, [winningUpdatedAt])
+      : winningUpdatedAt;
 
     if (localValue !== value || localUpdatedAt !== updatedAt) {
       setPreferenceValue(localValues, field, value);
@@ -558,7 +572,7 @@ export function reconcileSyncedClientPreferences(input: {
       localChanged = true;
     }
 
-    for (const environment of input.environments) {
+    for (const environment of sortedEnvironments) {
       if (environment.canPatch === false) continue;
       if (
         environment.preferences?.[field] === value &&
@@ -625,7 +639,7 @@ export function resolvePlanModeLocalPatchPersistence(input: {
   readonly localPatch: ReturnType<typeof reconcilePlanModePreferences>["localPatch"];
 }) {
   if (input.localPatch === null) {
-    return { shouldPersist: false, nextAttemptedKey: null } as const;
+    return { shouldPersist: false, nextAttemptedKey: input.attemptedKey } as const;
   }
   const nextAttemptedKey = JSON.stringify(input.localPatch);
   return {
