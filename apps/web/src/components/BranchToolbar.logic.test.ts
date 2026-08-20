@@ -1,9 +1,17 @@
-import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type VcsRef,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { deriveProviderInstanceEntries } from "../providerInstances";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
+  buildEnvironmentOption,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
@@ -14,6 +22,7 @@ import {
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
+  resolveMobileRunContextPopupClass,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   sanitizeNewRefName,
@@ -24,6 +33,159 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+function provider(input: {
+  instanceId: string;
+  driver: "codex" | "claudeAgent";
+  enabled: boolean;
+  defaultModel: string;
+  displayName?: string;
+  modelName?: string;
+  modelShortName?: string;
+}): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(input.instanceId),
+    driver: ProviderDriverKind.make(input.driver),
+    enabled: input.enabled,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+    models: [
+      {
+        slug: input.defaultModel,
+        name: input.modelName ?? input.defaultModel,
+        ...(input.modelShortName ? { shortName: input.modelShortName } : {}),
+        isCustom: false,
+        isDefault: true,
+        capabilities: {},
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  };
+}
+
+describe("buildEnvironmentOption", () => {
+  it("joins physical project defaults with the saved machine profile", () => {
+    const option = buildEnvironmentOption({
+      environmentId: remoteEnvironmentId,
+      projectId: "project-remote" as never,
+      label: "Mini PC",
+      isPrimary: false,
+      workspaceRoot: "C:/repo",
+      defaultModelSelection: { instanceId: "codex" as never, model: "gpt-5.4" },
+      profile: {
+        environmentId: remoteEnvironmentId,
+        projectId: "project-remote" as never,
+        branch: "feature/remote",
+        worktreePath: "C:/repo/.t3/worktrees/remote",
+        envMode: "worktree",
+        startFromOrigin: true,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        activeProvider: "codex" as never,
+        modelSelectionByProvider: {
+          ["codex" as never]: { instanceId: "codex" as never, model: "o3" },
+        },
+      },
+      connectionStatusLabel: "Connected",
+      isAvailable: true,
+    });
+
+    expect(option).toMatchObject({
+      label: "Mini PC",
+      workspaceRoot: "C:/repo",
+      connection: "connected",
+      profile: {
+        branchLabel: "feature/remote",
+        workspaceLabel: "C:/repo/.t3/worktrees/remote",
+        modelLabel: "o3",
+        executionLabel: "Full access · Build · origin",
+      },
+    });
+  });
+
+  it("marks an unavailable remote without hiding its profile", () => {
+    expect(
+      buildEnvironmentOption({
+        environmentId: remoteEnvironmentId,
+        projectId: "project-remote" as never,
+        label: "Mini PC",
+        isPrimary: false,
+        workspaceRoot: "C:/repo",
+        defaultModelSelection: null,
+        profile: null,
+        connectionStatusLabel: "Reconnecting...",
+        isAvailable: false,
+      }),
+    ).toMatchObject({
+      connection: "unavailable",
+      connectionStatusLabel: "Reconnecting...",
+      profile: { branchLabel: "Current checkout" },
+    });
+  });
+
+  it("does not preview a saved model from a disabled target provider", () => {
+    const staleInstanceId = ProviderInstanceId.make("codex_disabled");
+    const fallbackInstanceId = ProviderInstanceId.make("claudeAgent");
+    const option = buildEnvironmentOption({
+      environmentId: remoteEnvironmentId,
+      projectId: "project-remote" as never,
+      label: "Mini PC",
+      isPrimary: false,
+      workspaceRoot: "C:/repo",
+      defaultModelSelection: { instanceId: fallbackInstanceId, model: "claude-sonnet-4" },
+      profile: {
+        environmentId: remoteEnvironmentId,
+        projectId: "project-remote" as never,
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        startFromOrigin: false,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        activeProvider: staleInstanceId,
+        modelSelectionByProvider: {
+          [staleInstanceId]: { instanceId: staleInstanceId, model: "stale-model" },
+        },
+      },
+      providerEntries: deriveProviderInstanceEntries([
+        provider({
+          instanceId: staleInstanceId,
+          driver: "codex",
+          enabled: false,
+          defaultModel: "gpt-5.4",
+        }),
+        provider({
+          instanceId: fallbackInstanceId,
+          driver: "claudeAgent",
+          enabled: true,
+          defaultModel: "claude-sonnet-4",
+          displayName: "Remote Claude",
+          modelName: "Claude Sonnet 4",
+          modelShortName: "Sonnet 4",
+        }),
+      ]),
+      connectionStatusLabel: "Connected",
+      isAvailable: true,
+    });
+
+    expect(option.profile).toMatchObject({
+      providerLabel: "Remote Claude",
+      modelLabel: "Sonnet 4",
+    });
+  });
+});
+
+describe("resolveMobileRunContextPopupClass", () => {
+  it("uses the detail width only when machine profiles are rendered", () => {
+    expect(resolveMobileRunContextPopupClass(true)).toBe("w-[min(28rem,calc(100vw-2rem))]");
+    expect(resolveMobileRunContextPopupClass(false)).toBe("w-64");
+  });
+});
 
 describe("resolvePreviousWorktreeSeed", () => {
   it("picks the most recently updated worktree thread", () => {

@@ -2,7 +2,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
-import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { MACHINE_PROFILE_POPUP_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
+import { MachineProfileRow } from "./MachineProfileRow";
 import {
   Select,
   SelectGroup,
@@ -103,19 +104,16 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           </span>
         </span>
       </SelectTrigger>
-      <SelectPopup>
+      <SelectPopup popupClassName={MACHINE_PROFILE_POPUP_CLASS}>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
           {availableEnvironments.map((env) => (
-            <SelectItem key={env.environmentId} value={env.environmentId}>
-              <span className="inline-flex items-center gap-1.5">
-                {env.isPrimary ? (
-                  <MonitorIcon className="size-3" />
-                ) : (
-                  <CloudIcon className="size-3" />
-                )}
-                {env.label}
-              </span>
+            <SelectItem
+              key={env.environmentId}
+              value={env.environmentId}
+              disabled={env.connection !== "connected"}
+            >
+              <MachineProfileRow environment={env} />
             </SelectItem>
           ))}
         </SelectGroup>

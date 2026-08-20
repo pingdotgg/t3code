@@ -1,16 +1,134 @@
-import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ModelSelection, ProjectId, VcsRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
+import {
+  resolveSelectableProviderInstanceEntry,
+  type ProviderInstanceEntry,
+} from "../providerInstances";
+import {
+  resolveMachineProfileSummary,
+  type MachineDraftProfile,
+  type MachineProfileSummary,
+} from "../machineDraftProfile";
+import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
 } from "@t3tools/shared/git";
+
+export { resolveMachineProfileSummary } from "../machineDraftProfile";
+export type { MachineDraftProfile, MachineProfileSummary } from "../machineDraftProfile";
+
+export const MACHINE_PROFILE_POPUP_CLASS = "w-[min(28rem,calc(100vw-2rem))]";
+
+export function resolveMobileRunContextPopupClass(showMachineProfiles: boolean): string {
+  return showMachineProfiles ? MACHINE_PROFILE_POPUP_CLASS : "w-64";
+}
+
+export type EnvironmentConnectionState = "connected" | "unavailable";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   label: string;
   isPrimary: boolean;
+  workspaceRoot: string;
+  connection: EnvironmentConnectionState;
+  connectionStatusLabel: string;
+  profile: MachineProfileSummary;
+}
+
+function resolveEnvironmentModelPreview(input: {
+  defaultModelSelection: ModelSelection | null | undefined;
+  profile: MachineDraftProfile | null | undefined;
+  providerEntries: readonly ProviderInstanceEntry[];
+}): { selection: ModelSelection; providerLabel: string; modelLabel: string } | null {
+  const profile = input.profile ?? null;
+  const candidateInstanceIds = [profile?.activeProvider, input.defaultModelSelection?.instanceId];
+  let selectedEntry: ProviderInstanceEntry | undefined;
+  for (const candidateInstanceId of candidateInstanceIds) {
+    if (!candidateInstanceId) continue;
+    selectedEntry = input.providerEntries.find(
+      (entry) => entry.instanceId === candidateInstanceId && entry.enabled && entry.isAvailable,
+    );
+    if (selectedEntry) break;
+  }
+  selectedEntry ??= resolveSelectableProviderInstanceEntry(input.providerEntries, undefined);
+  if (!selectedEntry) return null;
+
+  const savedSelection = profile?.modelSelectionByProvider[selectedEntry.instanceId];
+  let selection =
+    savedSelection ??
+    (input.defaultModelSelection?.instanceId === selectedEntry.instanceId
+      ? input.defaultModelSelection
+      : null);
+  if (!selection) {
+    const defaultModel =
+      selectedEntry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+      selectedEntry.models.find((model) => !model.isCustom)?.slug ??
+      selectedEntry.models[0]?.slug;
+    selection = defaultModel ? { instanceId: selectedEntry.instanceId, model: defaultModel } : null;
+  }
+  if (!selection) return null;
+
+  const selectedModel = selectedEntry.models.find((model) => model.slug === selection.model);
+  return {
+    selection,
+    providerLabel: selectedEntry.displayName,
+    modelLabel: selectedModel ? getTriggerDisplayModelLabel(selectedModel) : selection.model,
+  };
+}
+
+export function buildEnvironmentOption(input: {
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+  label: string;
+  isPrimary: boolean;
+  workspaceRoot: string;
+  defaultModelSelection: ModelSelection | null | undefined;
+  profile: MachineDraftProfile | null | undefined;
+  fallbackExecutionProfile?: Pick<
+    MachineDraftProfile,
+    "runtimeMode" | "interactionMode" | "startFromOrigin"
+  > | null;
+  providerEntries?: readonly ProviderInstanceEntry[] | null;
+  isAvailable: boolean;
+  connectionStatusLabel: string;
+}): EnvironmentOption {
+  const modelPreview = input.providerEntries
+    ? resolveEnvironmentModelPreview({
+        defaultModelSelection: input.defaultModelSelection,
+        profile: input.profile,
+        providerEntries: input.providerEntries,
+      })
+    : undefined;
+  const summary = resolveMachineProfileSummary({
+    workspaceRoot: input.workspaceRoot,
+    defaultModelSelection: input.defaultModelSelection,
+    profile: input.profile,
+    ...(modelPreview !== undefined
+      ? { modelSelectionOverride: modelPreview?.selection ?? null }
+      : {}),
+    ...(input.fallbackExecutionProfile !== undefined
+      ? { fallbackExecutionProfile: input.fallbackExecutionProfile }
+      : {}),
+  });
+  return {
+    environmentId: input.environmentId,
+    projectId: input.projectId,
+    label: input.label,
+    isPrimary: input.isPrimary,
+    workspaceRoot: input.workspaceRoot,
+    connection: input.isAvailable ? "connected" : "unavailable",
+    connectionStatusLabel: input.connectionStatusLabel,
+    profile: modelPreview
+      ? {
+          ...summary,
+          providerLabel: modelPreview.providerLabel,
+          modelLabel: modelPreview.modelLabel,
+        }
+      : summary,
+  };
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);

@@ -23,6 +23,7 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import {
+  connectionStatusText,
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
@@ -188,7 +189,12 @@ import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -217,6 +223,7 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import { physicalProjectProfileKey, type MachineDraftProfile } from "../machineDraftProfile";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -269,6 +276,8 @@ import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import {
+  buildEnvironmentOption,
+  type EnvironmentOption,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -326,6 +335,7 @@ import {
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveEnvironmentSwitch,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -368,6 +378,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_MODEL_SELECTION_BY_PROVIDER: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -1322,6 +1333,11 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionByProvider = useComposerDraftStore(
+    (store) =>
+      store.getComposerDraft(composerDraftTarget)?.modelSelectionByProvider ??
+      EMPTY_MODEL_SELECTION_BY_PROVIDER,
+  );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -1341,6 +1357,22 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const switchDraftProject = useComposerDraftStore((store) => store.switchDraftProject);
+  const activeDraftMachineProfile = useMemo<MachineDraftProfile | null>(() => {
+    if (!draftThread) return null;
+    return {
+      environmentId: draftThread.environmentId,
+      projectId: draftThread.projectId,
+      branch: draftThread.branch,
+      worktreePath: draftThread.worktreePath,
+      envMode: draftThread.envMode,
+      startFromOrigin: draftThread.startFromOrigin,
+      runtimeMode: draftThread.runtimeMode,
+      interactionMode: draftThread.interactionMode,
+      modelSelectionByProvider: composerModelSelectionByProvider,
+      activeProvider: composerActiveProvider,
+    };
+  }, [composerActiveProvider, composerModelSelectionByProvider, draftThread]);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
   );
@@ -1887,23 +1919,48 @@ function ChatViewContent(props: ChatViewProps) {
       (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
     );
     const seen = new Set<string>();
-    const envs: Array<{
-      environmentId: EnvironmentId;
-      projectId: ProjectId;
-      label: string;
-      isPrimary: boolean;
-    }> = [];
+    const activeDraftProfileKey = draftThread
+      ? physicalProjectProfileKey(draftThread.environmentId, draftThread.projectId)
+      : null;
+    const envs: EnvironmentOption[] = [];
     for (const p of memberProjects) {
       if (seen.has(p.environmentId)) continue;
       seen.add(p.environmentId);
       const isPrimary = p.environmentId === primaryEnvironmentId;
-      const label = environmentById.get(p.environmentId)?.label ?? p.environmentId;
-      envs.push({
-        environmentId: p.environmentId,
-        projectId: p.id,
-        label,
-        isPrimary,
-      });
+      const environment = environmentById.get(p.environmentId);
+      const label = environment?.label ?? p.environmentId;
+      const profileKey = physicalProjectProfileKey(p.environmentId, p.id);
+      const profile =
+        profileKey === activeDraftProfileKey
+          ? activeDraftMachineProfile
+          : (draftThread?.machineProfilesByProjectKey[profileKey] ?? null);
+      const connectionPhase = environment?.connection.phase;
+      const targetServerConfig = environment?.serverConfig;
+      const providerEntries = targetServerConfig
+        ? sortProviderInstanceEntries(
+            applyProviderInstanceSettings(
+              deriveProviderInstanceEntries(targetServerConfig.providers),
+              targetServerConfig.settings,
+            ),
+          )
+        : null;
+      envs.push(
+        buildEnvironmentOption({
+          environmentId: p.environmentId,
+          projectId: p.id,
+          label,
+          isPrimary,
+          workspaceRoot: p.workspaceRoot,
+          defaultModelSelection: p.defaultModelSelection,
+          profile,
+          fallbackExecutionProfile: activeDraftMachineProfile,
+          providerEntries,
+          isAvailable: connectionPhase === "connected",
+          connectionStatusLabel: environment
+            ? connectionStatusText(environment.connection)
+            : "Unavailable",
+        }),
+      );
     }
     // Sort: primary first, then alphabetical
     envs.sort((a, b) => {
@@ -1911,7 +1968,15 @@ function ChatViewContent(props: ChatViewProps) {
       return a.label.localeCompare(b.label);
     });
     return envs;
-  }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
+  }, [
+    activeDraftMachineProfile,
+    activeProject,
+    allProjects,
+    draftThread,
+    environmentById,
+    primaryEnvironmentId,
+    projectGroupingSettings,
+  ]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
@@ -2764,21 +2829,22 @@ function ChatViewContent(props: ChatViewProps) {
       (activeThread.session !== null && activeThread.session.status !== "stopped")),
   );
 
-  // Handle environment change for draft threads.  When the user picks a
-  // different environment we update the draft context to point at the physical
-  // project in that environment while keeping the same logical project.
+  // Handle environment change for draft threads. The store snapshots and
+  // restores the full machine profile atomically so each physical project
+  // keeps its own checkout, model, and execution choices.
   const onEnvironmentChange = useCallback(
     (nextEnvironmentId: EnvironmentId) => {
-      if (envLocked || !draftId) return;
-      const target = logicalProjectEnvironments.find(
-        (env) => env.environmentId === nextEnvironmentId,
-      );
-      if (!target) return;
-      setDraftThreadContext(draftId, {
-        projectRef: scopeProjectRef(target.environmentId, target.projectId),
+      if (!draftId) return;
+      const target = resolveEnvironmentSwitch({
+        envLocked,
+        draftId,
+        nextEnvironmentId,
+        environments: logicalProjectEnvironments,
       });
+      if (!target) return;
+      switchDraftProject(draftId, target);
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [draftId, envLocked, logicalProjectEnvironments, switchDraftProject],
   );
 
   const activeTerminalGroup =

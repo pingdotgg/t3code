@@ -21,6 +21,7 @@ import {
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
   resolveLockedWorkspaceLabel,
+  resolveMobileRunContextPopupClass,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   shouldShowEnvironmentIndicator,
@@ -28,6 +29,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { MachineProfileRow } from "./MachineProfileRow";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -123,6 +125,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       </span>
     </>
   );
+  const showMachineProfiles =
+    showEnvironmentPicker &&
+    availableEnvironments !== undefined &&
+    onEnvironmentChange !== undefined;
 
   if (isLocked) {
     return (
@@ -141,8 +147,12 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         {triggerContent}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
-      <MenuPopup align="start" side="top" className="w-64">
-        {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
+      <MenuPopup
+        align="start"
+        side="top"
+        className={resolveMobileRunContextPopupClass(showMachineProfiles)}
+      >
+        {showMachineProfiles ? (
           <>
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
@@ -151,17 +161,13 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
               >
                 {availableEnvironments.map((env) => {
-                  const Icon = env.isPrimary ? MonitorIcon : CloudIcon;
                   return (
                     <MenuRadioItem
                       key={env.environmentId}
-                      disabled={envLocked}
+                      disabled={envLocked || env.connection !== "connected"}
                       value={env.environmentId}
                     >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <Icon className="size-3" />
-                        <span className="min-w-0 truncate">{env.label}</span>
-                      </span>
+                      <MachineProfileRow environment={env} />
                     </MenuRadioItem>
                   );
                 })}

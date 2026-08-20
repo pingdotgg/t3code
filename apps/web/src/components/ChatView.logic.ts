@@ -51,6 +51,21 @@ export function startNewThreadForProject(
   return true;
 }
 
+export function resolveEnvironmentSwitch(input: {
+  envLocked: boolean;
+  draftId: string | null;
+  nextEnvironmentId: EnvironmentId;
+  environments: ReadonlyArray<Pick<ScopedProjectRef, "environmentId" | "projectId">>;
+}): ScopedProjectRef | null {
+  if (input.envLocked || input.draftId === null) {
+    return null;
+  }
+  const target = input.environments.find(
+    (environment) => environment.environmentId === input.nextEnvironmentId,
+  );
+  return target ? { environmentId: target.environmentId, projectId: target.projectId } : null;
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;

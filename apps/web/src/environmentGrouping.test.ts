@@ -13,6 +13,12 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "./sidebarProjectGrouping";
+import {
+  acknowledgeProjectGroupingPrompt,
+  findProjectGroupingPromptCandidate,
+  resolveProjectGroupingEnvironmentLabels,
+  separateProjectGroup,
+} from "./projectGroupingPrompt.logic";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
 import type { Project } from "./types";
@@ -51,6 +57,88 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("environment grouping", () => {
+  it("offers a prompt for a repository that spans environments", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) =>
+        environmentId === primaryEnvironmentId ? "This device" : "MiniPC",
+    });
+
+    expect(findProjectGroupingPromptCandidate([group!], new Set())).toBe(group);
+  });
+
+  it("does not prompt for an acknowledged repository", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(findProjectGroupingPromptCandidate([group!], new Set([group!.projectKey]))).toBeNull();
+  });
+
+  it("separates every physical checkout when requested", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(separateProjectGroup(group!, { existing: "repository" })).toEqual({
+      existing: "repository",
+      "env-primary:/tmp/shared-repo": "separate",
+      "env-remote:/tmp/shared-repo": "separate",
+    });
+  });
+
+  it("acknowledges a prompt key only once", () => {
+    expect(acknowledgeProjectGroupingPrompt(["existing"], "repo")).toEqual(["existing", "repo"]);
+    expect(acknowledgeProjectGroupingPrompt(["existing", "repo"], "repo")).toEqual([
+      "existing",
+      "repo",
+    ]);
+  });
+
+  it("deduplicates environment labels for the prompt", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) =>
+        environmentId === primaryEnvironmentId ? "This device" : "MiniPC",
+    });
+
+    expect(resolveProjectGroupingEnvironmentLabels(group!)).toEqual(["This device", "MiniPC"]);
+  });
+
   it("groups matching repository identities across environments", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({

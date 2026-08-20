@@ -122,6 +122,18 @@ npx t3 serve --tailscale-serve --tailscale-serve-port 8443
 Once paired, add projects normally: open the Command Palette and choose **Add Project**, then pick
 the environment the project lives on. Every saved environment is offered, not only the local one.
 
+### Run one repository across machines
+
+When the same repository is added on more than one connected environment, T3 Code can group those
+projects into one sidebar project. The first time this is detected, choose **Group projects** in the
+sidebar prompt, or enable **Project grouping** in Settings → General.
+
+New threads show a **Run on** control beside the workspace and branch controls. Open it to choose a
+machine and review its path, checkout, workspace, model, provider, and execution settings. Each
+machine keeps its own draft choices, so switching away and back restores that machine's context.
+Machine selection is available only before a thread starts; started threads remain attached to the
+environment that ran them.
+
 ### Option 3: Desktop-Managed SSH Launch
 
 Use this when you want the desktop app to start or reuse T3 Code on another machine over SSH.
