@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Struct from "effect/Struct";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import {
   SYNCED_CLIENT_PREFERENCE_FIELDS,
@@ -17,6 +18,18 @@ export {
 interface OptimisticPreferences {
   readonly values: Partial<Preferences>;
   readonly versions: Partial<Record<keyof Preferences, number>>;
+}
+
+function clearSettledOptimisticPreferences(
+  optimistic: OptimisticPreferences,
+  patch: Partial<Preferences>,
+  version: number,
+): OptimisticPreferences {
+  const keys = Struct.keys(patch).filter((key) => optimistic.versions[key] === version);
+  return {
+    values: Struct.omit(optimistic.values, keys),
+    versions: Struct.omit(optimistic.versions, keys),
+  };
 }
 
 export interface ReconciledPreferencesPatch {
@@ -96,35 +109,19 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
             Effect.sync(() => {
               get.set(confirmedPreferencesAtom, saved);
               const optimistic = get(optimisticPatchAtom);
-              const values = { ...optimistic.values } as Record<string, unknown>;
-              const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(normalizedPatch) as Array<keyof Preferences>) {
-                if (optimistic.versions[key] === version) {
-                  delete values[key];
-                  delete currentVersions[key];
-                }
-              }
-              get.set(optimisticPatchAtom, {
-                values: values as Partial<Preferences>,
-                versions: currentVersions as Partial<Record<keyof Preferences, number>>,
-              });
+              get.set(
+                optimisticPatchAtom,
+                clearSettledOptimisticPreferences(optimistic, normalizedPatch, version),
+              );
             }),
           ),
           Effect.tapError(() =>
             Effect.sync(() => {
               const optimistic = get(optimisticPatchAtom);
-              const values = { ...optimistic.values } as Record<string, unknown>;
-              const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(normalizedPatch) as Array<keyof Preferences>) {
-                if (optimistic.versions[key] === version) {
-                  delete values[key];
-                  delete currentVersions[key];
-                }
-              }
-              get.set(optimisticPatchAtom, {
-                values: values as Partial<Preferences>,
-                versions: currentVersions as Partial<Record<keyof Preferences, number>>,
-              });
+              get.set(
+                optimisticPatchAtom,
+                clearSettledOptimisticPreferences(optimistic, normalizedPatch, version),
+              );
             }),
           ),
         );

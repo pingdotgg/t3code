@@ -5,12 +5,90 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   createSyncedClientPreferenceHydrationController,
   createSyncedClientPreferenceWrite,
+  resolveSyncedPlanModeCoordinatorEnvironmentIds,
   resolveSyncedClientPreferenceHydrationAction,
 } from "./synced-client-preferences";
 
 const UPDATED_AT = "2026-08-14T12:00:00.000Z";
 
 describe("synced client preferences", () => {
+  it("hydrates the primary before exposing secondary environments", () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const secondaryEnvironmentId = EnvironmentId.make("secondary");
+    const environmentIds = [primaryEnvironmentId, secondaryEnvironmentId];
+
+    expect(
+      resolveSyncedPlanModeCoordinatorEnvironmentIds({
+        environmentIds,
+        primaryEnvironmentId,
+        hydratedPrimaryEnvironmentId: null,
+      }),
+    ).toEqual([primaryEnvironmentId]);
+    expect(
+      resolveSyncedPlanModeCoordinatorEnvironmentIds({
+        environmentIds,
+        primaryEnvironmentId,
+        hydratedPrimaryEnvironmentId: primaryEnvironmentId,
+      }),
+    ).toEqual(environmentIds);
+
+    const events: string[] = [];
+    createSyncedClientPreferenceHydrationController("planModeEnabled").synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: true,
+      serverPreferences: {
+        planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: UPDATED_AT },
+        updatedAt: UPDATED_AT,
+      },
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist: (value, updatedAt) => events.push(`persist:${value}:${updatedAt}`),
+      onHydrated: () => events.push("hydrated"),
+    });
+
+    expect(events).toEqual([`persist:true:${UPDATED_AT}`, "hydrated"]);
+  });
+
+  it("ignores malformed durable field clocks", () => {
+    const serverPreferences = {
+      planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: UPDATED_AT },
+      updatedAt: UPDATED_AT,
+    } as const;
+    expect(
+      createSyncedClientPreferenceWrite({
+        field: "planModeEnabled",
+        value: true,
+        serverPreferences,
+        pendingUpdatedAt: "not-a-timestamp",
+        now: "2026-08-14T12:01:00.000Z",
+      }).request.updatedAt,
+    ).toBe("2026-08-14T12:01:00.000Z");
+
+    const environmentId = EnvironmentId.make("primary");
+    const persist = vi.fn();
+    createSyncedClientPreferenceHydrationController("planModeEnabled").synchronize({
+      environmentId,
+      primaryEnvironmentId: environmentId,
+      clientHydrated: true,
+      clientValue: true,
+      clientUpdatedAt: "not-a-timestamp",
+      live: true,
+      serverPreferences,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist,
+    });
+
+    expect(persist).toHaveBeenCalledWith(false, UPDATED_AT);
+  });
+
   it("creates independent theme-half writes with collision-safe command ids", () => {
     const light = createSyncedClientPreferenceWrite({
       field: "lightThemeId",
@@ -58,7 +136,6 @@ describe("synced client preferences", () => {
       }),
     );
     const persist = vi.fn();
-    const persistUpdatedAt = vi.fn();
 
     controller.write({
       environmentId,
@@ -68,7 +145,6 @@ describe("synced client preferences", () => {
       now: UPDATED_AT,
       patch,
       persist,
-      persistUpdatedAt,
     });
     expect(patch).not.toHaveBeenCalled();
 
@@ -84,7 +160,6 @@ describe("synced client preferences", () => {
       now: UPDATED_AT,
       patch,
       persist,
-      persistUpdatedAt,
     });
     await Promise.resolve();
 

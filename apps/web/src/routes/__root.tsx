@@ -1,4 +1,4 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { type EnvironmentId, type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -8,7 +8,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -31,6 +31,7 @@ import {
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { SyncedPlanModeEnvironmentSync, useClientSettings } from "../hooks/useSettings";
+import { resolveSyncedPlanModeCoordinatorEnvironmentIds } from "../hooks/synced-client-preferences";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -155,10 +156,23 @@ function RootRouteView() {
 
 function SyncedPlanModeCoordinator() {
   const { environments } = useEnvironments();
-  return environments.map((environment) => (
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const [hydratedPrimaryEnvironmentId, setHydratedPrimaryEnvironmentId] =
+    useState<EnvironmentId | null>(null);
+  const markPrimaryHydrated = useCallback(() => {
+    setHydratedPrimaryEnvironmentId(primaryEnvironmentId);
+  }, [primaryEnvironmentId]);
+  const environmentIds = resolveSyncedPlanModeCoordinatorEnvironmentIds({
+    environmentIds: environments.map(({ environmentId }) => environmentId),
+    primaryEnvironmentId,
+    hydratedPrimaryEnvironmentId,
+  });
+
+  return environmentIds.map((environmentId) => (
     <SyncedPlanModeEnvironmentSync
-      key={environment.environmentId}
-      environmentId={environment.environmentId}
+      key={environmentId}
+      environmentId={environmentId}
+      onHydrated={environmentId === primaryEnvironmentId ? markPrimaryHydrated : undefined}
     />
   ));
 }

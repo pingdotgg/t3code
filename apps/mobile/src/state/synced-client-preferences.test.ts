@@ -1,5 +1,4 @@
 import { CommandId, EnvironmentId } from "@t3tools/contracts";
-import { createSyncedClientPreferencesPatchRequest } from "@t3tools/client-runtime/synced-client-preferences";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -19,8 +18,6 @@ import {
 } from "./synced-client-preferences-model";
 
 const environmentId = (value: string) => EnvironmentId.make(value);
-const planModeCommandId = (value: boolean, updatedAt: string) =>
-  createSyncedClientPreferencesPatchRequest({ planModeEnabled: value }, updatedAt).commandId;
 const livePlanModeEnvironment = (id: string, value: boolean, updatedAt: string) => ({
   environmentId: environmentId(id),
   connectionState: "connected" as const,
@@ -437,7 +434,7 @@ describe("synced client preferences", () => {
       {
         environmentId: environmentId("environment-1"),
         input: {
-          commandId: planModeCommandId(true, "2026-08-14T12:02:00.001Z"),
+          commandId: CommandId.make("client-preferences:2026-08-14T12:02:00.001Z:1"),
           patch: { planModeEnabled: true },
           updatedAt: "2026-08-14T12:02:00.001Z",
         },
@@ -445,7 +442,7 @@ describe("synced client preferences", () => {
       {
         environmentId: environmentId("environment-2"),
         input: {
-          commandId: planModeCommandId(true, "2026-08-14T12:02:00.001Z"),
+          commandId: CommandId.make("client-preferences:2026-08-14T12:02:00.001Z:1"),
           patch: { planModeEnabled: true },
           updatedAt: "2026-08-14T12:02:00.001Z",
         },
@@ -587,7 +584,7 @@ describe("synced client preferences", () => {
         {
           environmentId: environmentId("environment-1"),
           input: {
-            commandId: planModeCommandId(true, "2026-08-14T12:30:00.000Z"),
+            commandId: CommandId.make("client-preferences:2026-08-14T12:30:00.000Z:1"),
             patch: { planModeEnabled: true },
             updatedAt: "2026-08-14T12:30:00.000Z",
           },
@@ -631,6 +628,7 @@ describe("synced client preferences", () => {
 
   it("reconciles the deterministic equal-stamp winner after topology changes", async () => {
     const updatedAt = "2026-08-14T12:00:00.000Z";
+    const promotedUpdatedAt = "2026-08-14T12:00:00.001Z";
     const lowerEnvironmentId = environmentId("environment-1");
     const higherEnvironmentId = environmentId("environment-2");
     const initial = reconcilePlanModePreferences({
@@ -687,15 +685,23 @@ describe("synced client preferences", () => {
     const expected = {
       localPatch: {
         planModeEnabled: true,
-        syncedClientPreferencesUpdatedAtByField: { planModeEnabled: updatedAt },
+        syncedClientPreferencesUpdatedAtByField: { planModeEnabled: promotedUpdatedAt },
       },
       environmentPatches: [
         {
           environmentId: lowerEnvironmentId,
           input: {
-            commandId: planModeCommandId(true, updatedAt),
+            commandId: CommandId.make(`client-preferences:${promotedUpdatedAt}:1`),
             patch: { planModeEnabled: true },
-            updatedAt,
+            updatedAt: promotedUpdatedAt,
+          },
+        },
+        {
+          environmentId: higherEnvironmentId,
+          input: {
+            commandId: CommandId.make(`client-preferences:${promotedUpdatedAt}:1`),
+            patch: { planModeEnabled: true },
+            updatedAt: promotedUpdatedAt,
           },
         },
       ],
@@ -711,7 +717,7 @@ describe("synced client preferences", () => {
         {
           environmentId: lowerEnvironmentId,
           input: {
-            commandId: planModeCommandId(false, updatedAt),
+            commandId: CommandId.make(`client-preferences:${updatedAt}:0`),
             patch: { planModeEnabled: false },
             updatedAt,
           },
@@ -719,23 +725,49 @@ describe("synced client preferences", () => {
         {
           environmentId: lowerEnvironmentId,
           input: {
-            commandId: planModeCommandId(true, updatedAt),
+            commandId: CommandId.make(`client-preferences:${promotedUpdatedAt}:1`),
             patch: { planModeEnabled: true },
-            updatedAt,
+            updatedAt: promotedUpdatedAt,
           },
         },
       ],
     });
   });
 
-  it("keeps the applied equal-stamp winner after its environment disconnects", () => {
+  it("preserves the promoted equal-stamp winner across restart and topology changes", () => {
     const updatedAt = "2026-08-14T12:00:00.000Z";
-    const reconciliation = reconcilePlanModePreferences({
-      localPlanModeEnabled: true,
-      localUpdatedAt: updatedAt,
+    const promotedUpdatedAt = "2026-08-14T12:00:00.001Z";
+    const lowerEnvironmentId = environmentId("environment-1");
+    const higherEnvironmentId = environmentId("environment-2");
+    const initial = reconcilePlanModePreferences({
+      localPlanModeEnabled: undefined,
+      localUpdatedAt: undefined,
       environments: [
         {
-          environmentId: environmentId("remaining"),
+          environmentId: lowerEnvironmentId,
+          preferences: {
+            planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: updatedAt },
+            updatedAt,
+          },
+        },
+        {
+          environmentId: higherEnvironmentId,
+          preferences: {
+            planModeEnabled: true,
+            updatedAtByField: { planModeEnabled: updatedAt },
+            updatedAt,
+          },
+        },
+      ],
+      now: updatedAt,
+    });
+    const afterRestart = reconcilePlanModePreferences({
+      localPlanModeEnabled: initial.localPatch?.planModeEnabled,
+      localUpdatedAt: initial.localPatch?.syncedClientPreferencesUpdatedAtByField?.planModeEnabled,
+      environments: [
+        {
+          environmentId: lowerEnvironmentId,
           preferences: {
             planModeEnabled: false,
             updatedAtByField: { planModeEnabled: updatedAt },
@@ -743,21 +775,36 @@ describe("synced client preferences", () => {
           },
         },
       ],
-      now: updatedAt,
-      preserveLocalOnEqualStamp: true,
+      now: promotedUpdatedAt,
+    });
+    const afterReconnect = reconcilePlanModePreferences({
+      localPlanModeEnabled: initial.localPatch?.planModeEnabled,
+      localUpdatedAt: initial.localPatch?.syncedClientPreferencesUpdatedAtByField?.planModeEnabled,
+      environments: [
+        {
+          environmentId: higherEnvironmentId,
+          preferences: {
+            planModeEnabled: true,
+            updatedAtByField: { planModeEnabled: updatedAt },
+            updatedAt,
+          },
+        },
+      ],
+      now: promotedUpdatedAt,
     });
 
-    expect(reconciliation.localPatch).toBeNull();
-    expect(reconciliation.environmentPatches).toEqual([
-      {
-        environmentId: environmentId("remaining"),
-        input: {
-          commandId: planModeCommandId(true, updatedAt),
-          patch: { planModeEnabled: true },
-          updatedAt,
-        },
-      },
-    ]);
+    expect(initial.localPatch).toEqual({
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAtByField: { planModeEnabled: promotedUpdatedAt },
+    });
+    for (const reconciliation of [afterRestart, afterReconnect]) {
+      expect(reconciliation.localPatch).toBeNull();
+      expect(reconciliation.environmentPatches[0]?.input).toEqual({
+        commandId: CommandId.make(`client-preferences:${promotedUpdatedAt}:1`),
+        patch: { planModeEnabled: true },
+        updatedAt: promotedUpdatedAt,
+      });
+    }
   });
 
   it("attempts the same local reconciliation patch only once until it changes", () => {
@@ -772,8 +819,12 @@ describe("synced client preferences", () => {
       attemptedKey: first.nextAttemptedKey,
       localPatch: patch,
     });
-    const changed = resolvePlanModeLocalPatchPersistence({
+    const optimisticWindow = resolvePlanModeLocalPatchPersistence({
       attemptedKey: repeated.nextAttemptedKey,
+      localPatch: null,
+    });
+    const changed = resolvePlanModeLocalPatchPersistence({
+      attemptedKey: optimisticWindow.nextAttemptedKey,
       localPatch: { ...patch, planModeEnabled: false },
     });
 
@@ -782,6 +833,7 @@ describe("synced client preferences", () => {
       false,
       true,
     ]);
+    expect(optimisticWindow.nextAttemptedKey).toBe(first.nextAttemptedKey);
   });
 
   it("reconciles when ES2023 change-by-copy array methods are unavailable", () => {
@@ -936,7 +988,7 @@ describe("synced client preferences", () => {
           {
             environmentId: environmentId("observed"),
             input: {
-              commandId: planModeCommandId(true, localUpdatedAt),
+              commandId: CommandId.make(`client-preferences:${localUpdatedAt}:1`),
               patch: { planModeEnabled: true },
               updatedAt: localUpdatedAt,
             },
@@ -949,7 +1001,7 @@ describe("synced client preferences", () => {
           {
             environmentId: environmentId("later"),
             input: {
-              commandId: planModeCommandId(true, localUpdatedAt),
+              commandId: CommandId.make(`client-preferences:${localUpdatedAt}:1`),
               patch: { planModeEnabled: true },
               updatedAt: localUpdatedAt,
             },
@@ -987,7 +1039,7 @@ describe("synced client preferences", () => {
       {
         environmentId: environmentId("environment-1"),
         input: {
-          commandId: planModeCommandId(true, "2026-08-14T12:00:00.001Z"),
+          commandId: CommandId.make("client-preferences:2026-08-14T12:00:00.001Z:1"),
           patch: { planModeEnabled: true },
           updatedAt: "2026-08-14T12:00:00.001Z",
         },

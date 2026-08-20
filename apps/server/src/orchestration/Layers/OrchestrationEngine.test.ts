@@ -102,7 +102,10 @@ const hasMetricSnapshot = (
 describe("OrchestrationEngine", () => {
   it("receipts and projects synced client preference patches with LWW stamps", async () => {
     const system = await createOrchestrationSystem();
-    const freshCommandId = CommandId.make("client-preferences-fresh");
+    const freshCommandId = CommandId.make("client-preferences:2026-08-14T12:00:00.000Z:1");
+    const equalStampDistinctValueCommandId = CommandId.make(
+      "client-preferences:2026-08-14T12:00:00.000Z:0",
+    );
     const staleCommandId = CommandId.make("client-preferences-stale");
 
     try {
@@ -143,6 +146,43 @@ describe("OrchestrationEngine", () => {
         },
       });
 
+      const equalStampDistinctValueCommand = {
+        type: "client-preferences.patch",
+        commandId: equalStampDistinctValueCommandId,
+        patch: { planModeEnabled: false },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      } as const;
+      const distinctValueResult = await system.run(
+        system.engine.dispatch(equalStampDistinctValueCommand),
+      );
+      const retryResult = await system.run(system.engine.dispatch(equalStampDistinctValueCommand));
+      const eventsAfterRetry = Array.from(
+        await system.run(Stream.runCollect(system.engine.readEvents(0, 10))),
+      );
+
+      expect(distinctValueResult.sequence).not.toBe(freshResult.sequence);
+      expect(retryResult.sequence).toBe(distinctValueResult.sequence);
+      expect(
+        Option.getOrThrow(await system.commandReceipt(equalStampDistinctValueCommandId)),
+      ).toMatchObject({
+        resultSequence: distinctValueResult.sequence,
+        status: "accepted",
+      });
+      expect(eventsAfterRetry).toHaveLength(2);
+      expect(eventsAfterRetry[1]).toMatchObject({
+        type: "client-preferences.patched",
+        payload: {
+          patch: { planModeEnabled: false },
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      });
+      await expect(system.shellSnapshot()).resolves.toMatchObject({
+        syncedClientPreferences: {
+          planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+        },
+      });
+
       const staleResult = await system.run(
         system.engine.dispatch({
           type: "client-preferences.patch",
@@ -158,7 +198,7 @@ describe("OrchestrationEngine", () => {
       await expect(system.shellSnapshot()).resolves.toMatchObject({
         snapshotSequence: staleResult.sequence,
         syncedClientPreferences: {
-          planModeEnabled: true,
+          planModeEnabled: false,
           updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
           updatedAt: "2026-08-14T12:00:00.000Z",
         },

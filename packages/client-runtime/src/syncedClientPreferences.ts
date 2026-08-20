@@ -22,9 +22,17 @@ export function createSyncedClientPreferencesPatchRequest(
   patch: SyncedClientPreferencesPatch,
   updatedAt: SyncedClientPreferencesUpdatedAt,
 ): PatchSyncedClientPreferencesRequest {
-  const fields = Object.keys(patch).sort().join(",");
+  const fields = Object.keys(patch).sort();
+  const identity =
+    fields.length === 1 && fields[0] === "planModeEnabled" && patch.planModeEnabled !== undefined
+      ? patch.planModeEnabled
+        ? "1"
+        : "0"
+      : JSON.stringify(
+          fields.map((field) => [field, patch[field as keyof SyncedClientPreferencesPatch]]),
+        );
   return {
-    commandId: CommandId.make(`client-preferences:${fields}:${updatedAt}:${JSON.stringify(patch)}`),
+    commandId: CommandId.make(`client-preferences:${updatedAt}:${identity}`),
     patch,
     updatedAt,
   };
