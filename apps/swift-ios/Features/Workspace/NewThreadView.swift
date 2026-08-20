@@ -32,7 +32,9 @@ public struct NewThreadView: View {
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
-    @FocusState private var promptFocused: Bool
+    // Plain state, not `FocusState`; see the note on `composerFocused` in
+    // ThreadDetailView.
+    @State private var promptFocused = false
 
     public init(
         model: FeatureRootModel,
@@ -83,7 +85,8 @@ public struct NewThreadView: View {
                         onSend: startTask,
                         onStop: {},
                         forceExpanded: true,
-                        powerFeatures: composerPowerFeatures
+                        powerFeatures: composerPowerFeatures,
+                        onDismissKeyboard: { promptFocused = false }
                     )
                 }
                 .background(T3Colors.background)
@@ -171,7 +174,9 @@ public struct NewThreadView: View {
             }
         }
         .alert("Couldn’t start task", isPresented: $submissionFailed) {
-            Button("OK") {}
+            // Refocus on dismissal, not on failure: the alert takes first
+            // responder, so an earlier refocus never survives it.
+            Button("OK") { promptFocused = true }
         } message: {
             Text("Check your connection and try again.")
         }
@@ -573,7 +578,6 @@ public struct NewThreadView: View {
             } else {
                 isSubmitting = false
                 submissionFailed = true
-                promptFocused = true
             }
         }
     }

@@ -1,50 +1,170 @@
 import SwiftUI
 import Testing
 import UIKit
+import UniformTypeIdentifiers
 @testable import T3Code
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
-    @MainActor
     @Test(
         "Composer input grows past the former seven-line cap",
         .bug("https://github.com/saphid/t3code-personal/issues/105")
     )
     func composerTextInputGrowsBeyondSevenLines() {
-        let sevenLineHeight = composerTextInputHeight(lineCount: 7)
-        let thirtyLineHeight = composerTextInputHeight(lineCount: 30)
-
-        #expect(thirtyLineHeight > sevenLineHeight + 300)
-    }
-
-    @MainActor
-    @Test(
-        "A very tall composer input yields to its viewport",
-        .bug("https://github.com/saphid/t3code-personal/issues/105")
-    )
-    func composerTextInputYieldsToAvailableViewport() {
-        let viewportHeight: CGFloat = 500
-
-        #expect(composerTextInputHeight(lineCount: 100, maximumHeight: viewportHeight) <= viewportHeight)
-    }
-
-    @MainActor
-    private func composerTextInputHeight(
-        lineCount: Int,
-        maximumHeight: CGFloat = .greatestFiniteMagnitude
-    ) -> CGFloat {
-        let text = Array(repeating: "A full visible prompt line", count: lineCount)
-            .joined(separator: "\n")
-        let controller = UIHostingController(
-            rootView: TextField("Ask anything…", text: .constant(text), axis: .vertical)
-                .font(T3Typography.composer)
-                .modifier(FeatureComposerGrowingTextInput())
-                .frame(width: 320)
+        let lineHeight: CGFloat = 22
+        let sevenLines = FeatureComposerTextInputSizing.height(
+            fittingHeight: lineHeight * 7,
+            lineHeight: lineHeight
+        )
+        let elevenLines = FeatureComposerTextInputSizing.height(
+            fittingHeight: lineHeight * 11,
+            lineHeight: lineHeight
         )
 
-        return controller.sizeThatFits(
-            in: CGSize(width: 320, height: maximumHeight)
-        ).height
+        #expect(sevenLines == lineHeight * 7)
+        #expect(elevenLines == lineHeight * 11)
+    }
+
+    @Test(
+        "A very tall composer input caps at its line bound and scrolls inside",
+        .bug("https://github.com/saphid/t3code-personal/issues/105")
+    )
+    func composerTextInputCapsAtItsLineBound() {
+        #expect(
+            FeatureComposerTextInputSizing.height(
+                fittingHeight: 2_200,
+                lineHeight: 22
+            ) == 22 * FeatureComposerTextInputSizing.maximumLines
+        )
+    }
+
+    @Test
+    func replacementCursorLandsAfterInsertedTextInUTF16() {
+        // "🧪 " occupies three characters but four UTF-16 units; the caret
+        // location must count the latter or it drifts on emoji-bearing drafts.
+        let original = "🧪 Use $dep please"
+        let range = 6..<10
+
+        #expect(
+            FeatureComposerTextSelectionPolicy.cursorLocation(
+                afterReplacing: range,
+                in: original,
+                with: "$dependency "
+            ) == "🧪 Use $dependency ".utf16.count
+        )
+    }
+
+    @Test
+    func restoredDraftPlacesCaretAtUTF16End() {
+        #expect(
+            FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
+                previousText: "",
+                newText: "🧪 restored draft",
+                selectedLocation: 0
+            ) == "🧪 restored draft".utf16.count
+        )
+    }
+
+    @Test
+    func externalRewriteClampsCaretIntoTheNewText() {
+        #expect(
+            FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
+                previousText: "a much longer draft",
+                newText: "short",
+                selectedLocation: 19
+            ) == 5
+        )
+    }
+
+    @Test
+    @MainActor
+    func imageCapableComposerAdvertisesImagesToTheNativePasteMenu() {
+        let textView = FeatureComposerUITextView()
+
+        textView.acceptsImages = true
+
+        #expect(
+            textView.pasteConfiguration?.acceptableTypeIdentifiers.contains(
+                UTType.image.identifier
+            ) == true
+        )
+        #expect(
+            textView.pasteConfiguration?.acceptableTypeIdentifiers.contains(
+                UTType.text.identifier
+            ) == true
+        )
+
+        textView.acceptsImages = false
+
+        #expect(textView.pasteConfiguration == nil)
+    }
+
+    @Test
+    @MainActor
+    func textViewDeclinesImageDropsSoTheComposerSurfaceOwnsThem() {
+        let textView = FeatureComposerUITextView()
+        textView.acceptsImages = true
+
+        let image = NSItemProvider()
+        image.registerDataRepresentation(
+            forTypeIdentifier: UTType.png.identifier,
+            visibility: .all
+        ) { completion in
+            completion(Data([0x89, 0x50, 0x4E, 0x47]), nil)
+            return nil
+        }
+        let text = NSItemProvider(object: "caption" as NSString)
+
+        #expect(!textView.canPaste([image]))
+        #expect(!textView.canPaste([text, image]))
+        #expect(textView.canPaste([text]))
+    }
+
+    @Test
+    func downwardDragDismissalRespectsDraftScrolling() {
+        #expect(FeatureComposerDragDismissPolicy.shouldDismiss(
+            translationX: 2, translationY: 20, isScrollable: false, isAtTop: true
+        ))
+        // Scrolling back through a capped draft must not drop the keyboard…
+        #expect(!FeatureComposerDragDismissPolicy.shouldDismiss(
+            translationX: 2, translationY: 20, isScrollable: true, isAtTop: false
+        ))
+        // …but a drag that begins at the top of the draft only rubber-bands,
+        // and is the capped composer's one escape hatch.
+        #expect(FeatureComposerDragDismissPolicy.shouldDismiss(
+            translationX: 2, translationY: 20, isScrollable: true, isAtTop: true
+        ))
+        // Mostly-horizontal drags are caret adjustments, not dismissals.
+        #expect(!FeatureComposerDragDismissPolicy.shouldDismiss(
+            translationX: 30, translationY: 12, isScrollable: false, isAtTop: true
+        ))
+        #expect(!FeatureComposerDragDismissPolicy.shouldDismiss(
+            translationX: 0, translationY: 8, isScrollable: false, isAtTop: true
+        ))
+    }
+
+    @Test
+    func nativePasteDetectionUsesImageTypeConformance() {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.items = [
+            [UTType.heic.identifier: Data([0x00])],
+        ]
+
+        #expect(!pasteboard.hasImages)
+        #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
+    }
+
+    @Test
+    func nativePasteDetectionChecksEveryPasteboardItem() {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.items = [
+            [UTType.plainText.identifier: "caption"],
+            [UTType.png.identifier: Data([0x89, 0x50, 0x4E, 0x47])],
+        ]
+
+        #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
     }
 
     @Test
