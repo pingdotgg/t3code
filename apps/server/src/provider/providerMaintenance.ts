@@ -40,6 +40,12 @@ const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(()
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  /**
+   * Cask or formula name when the install is Homebrew-managed. `brew upgrade`
+   * can only reach what Homebrew has published, so latest-version checks for
+   * these installs ask Homebrew instead of npm.
+   */
+  readonly homebrewFormula: string | null;
   readonly update: ProviderMaintenanceCommandAction | null;
 }
 
@@ -89,6 +95,12 @@ export const ProviderVersionCache = Context.Reference<Map<string, ProviderVersio
 const NpmLatestVersionResponse = Schema.Struct({
   version: Schema.optional(Schema.String),
 });
+const HomebrewCaskResponse = Schema.Struct({
+  version: Schema.optional(Schema.String),
+});
+const HomebrewFormulaResponse = Schema.Struct({
+  versions: Schema.optional(Schema.Struct({ stable: Schema.optional(Schema.String) })),
+});
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -97,6 +109,7 @@ function nonEmptyString(value: unknown): string | null {
 export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  readonly homebrewFormula?: string | null;
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
@@ -113,6 +126,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   return {
     provider: input.provider,
     packageName: input.packageName,
+    homebrewFormula: input.homebrewFormula ?? null,
     update,
   };
 }
@@ -201,6 +215,7 @@ function makeHomebrewProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    homebrewFormula: definition.homebrewFormula,
     updateExecutable: "brew",
     updateArgs: ["upgrade", definition.homebrewFormula],
     updateLockKey: "homebrew",
@@ -430,11 +445,14 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
-const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
+const fetchJson = Effect.fn("fetchJson")(function* <A>(
+  url: string,
+  schema: Schema.Codec<A, unknown>,
+) {
   const client = yield* HttpClient.HttpClient;
-  const request = HttpClientRequest.get(
-    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
-  ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
+  const request = HttpClientRequest.get(url).pipe(
+    HttpClientRequest.setHeader("accept", "application/json"),
+  );
   const response = yield* client.execute(request).pipe(
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
     Effect.orElseSucceed(() => Option.none()),
@@ -446,30 +464,82 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   if (httpResponse.status < 200 || httpResponse.status >= 300) {
     return null;
   }
-  const payload = yield* httpResponse.json.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
+  return yield* httpResponse.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(schema)),
     Effect.orElseSucceed(() => null),
+  );
+});
+
+const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
+  const payload = yield* fetchJson(
+    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+    NpmLatestVersionResponse,
   );
   return payload ? nonEmptyString(payload.version) : null;
 });
 
+// formulae.brew.sh is the same JSON API `brew` itself installs from, so its
+// version is exactly what `brew upgrade` can deliver. Casks are tried first
+// because every Homebrew-packaged provider today ships as a cask.
+const fetchHomebrewLatestVersion = Effect.fn("fetchHomebrewLatestVersion")(function* (
+  name: string,
+) {
+  const encoded = encodeURIComponent(name);
+  const cask = yield* fetchJson(
+    `https://formulae.brew.sh/api/cask/${encoded}.json`,
+    HomebrewCaskResponse,
+  );
+  // Cask versions may carry a build suffix ("1.2.3,4567") that semver cannot read.
+  const caskVersion = cask ? nonEmptyString(cask.version?.split(",")[0]) : null;
+  if (caskVersion) {
+    return caskVersion;
+  }
+  const formula = yield* fetchJson(
+    `https://formulae.brew.sh/api/formula/${encoded}.json`,
+    HomebrewFormulaResponse,
+  );
+  return formula ? nonEmptyString(formula.versions?.stable) : null;
+});
+
+type ProviderLatestVersionSource =
+  | { readonly kind: "npm"; readonly packageName: string }
+  | { readonly kind: "homebrew"; readonly name: string };
+
+// Third-party taps ("owner/tap/name") are not on formulae.brew.sh, so npm
+// stays the only signal we have for them.
+function resolveLatestVersionSource(
+  capabilities: ProviderMaintenanceCapabilities,
+): ProviderLatestVersionSource | null {
+  if (capabilities.homebrewFormula && !capabilities.homebrewFormula.includes("/")) {
+    return { kind: "homebrew", name: capabilities.homebrewFormula };
+  }
+  if (capabilities.packageName) {
+    return { kind: "npm", packageName: capabilities.packageName };
+  }
+  return null;
+}
+
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
-  const packageName = maintenanceCapabilities.packageName;
-  if (!packageName) {
+  const source = resolveLatestVersionSource(maintenanceCapabilities);
+  if (!source) {
     return null;
   }
 
   const latestVersionCache = yield* ProviderVersionCache;
-  const cached = latestVersionCache.get(packageName);
+  const cacheKey = source.kind === "npm" ? source.packageName : `homebrew:${source.name}`;
+  const cached = latestVersionCache.get(cacheKey);
   const now = DateTime.toEpochMillis(yield* DateTime.now);
   if (cached && cached.expiresAt > now) {
     return cached.version;
   }
 
-  const version = yield* fetchNpmLatestVersion(packageName);
-  latestVersionCache.set(packageName, {
+  const version =
+    source.kind === "npm"
+      ? yield* fetchNpmLatestVersion(source.packageName)
+      : yield* fetchHomebrewLatestVersion(source.name);
+  latestVersionCache.set(cacheKey, {
     expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
     version,
   });
