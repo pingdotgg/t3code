@@ -20,14 +20,7 @@ import {
 } from "../../vscodeThemeImport";
 import { Alert } from "../ui/alert";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
+import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
@@ -536,6 +529,15 @@ export function ThemeImportDialog({
                   {fileInput}
                 </div>
                 {editorSection()}
+                <div className="flex items-center justify-end gap-2">
+                  <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                    Cancel
+                  </Button>
+                  <Button disabled={!json.trim() || isReading} onClick={handleSubmit}>
+                    <PlusIcon />
+                    Add theme
+                  </Button>
+                </div>
               </div>
             );
           })()}
@@ -546,15 +548,6 @@ export function ThemeImportDialog({
             </Alert>
           ) : null}
         </DialogPanel>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!json.trim() || isReading} onClick={handleSubmit}>
-            <PlusIcon />
-            Add theme
-          </Button>
-        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
