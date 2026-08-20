@@ -1,22 +1,15 @@
 import type {
   EditorId,
   EnvironmentId,
-  OrchestrationV2RunStatus,
-  ProgramAttemptSnapshot,
   ProjectScript,
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { AlertTriangleIcon, ExternalLinkIcon, XIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { AlertTriangleIcon, XIcon } from "lucide-react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
-import { useThreadProjection } from "../../state/entities";
-import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
 import type { EnvMode, EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import { BranchToolbarEnvironmentSelector } from "../BranchToolbarEnvironmentSelector";
@@ -31,190 +24,12 @@ import { cn } from "../../lib/utils";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadProgramAttemptPanel } from "./ThreadProgramAttemptPanel";
 
 interface VersionMismatchIssue {
   readonly clientVersion: string;
   readonly serverVersion: string;
   readonly serverLabel: string;
-}
-
-const PROGRAM_STATUS_LABELS: Record<OrchestrationV2RunStatus, string> = {
-  preparing: "Preparing",
-  queued: "Queued",
-  starting: "Starting",
-  running: "Running",
-  waiting: "Waiting",
-  completed: "Completed",
-  interrupted: "Interrupted",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  rolled_back: "Rolled back",
-};
-
-const PROGRAM_STATUS_DOT_CLASSES: Record<OrchestrationV2RunStatus, string> = {
-  preparing: "bg-info",
-  queued: "bg-muted-foreground/45",
-  starting: "bg-info",
-  running: "bg-success",
-  waiting: "bg-warning",
-  completed: "bg-success",
-  interrupted: "bg-warning",
-  failed: "bg-destructive",
-  cancelled: "bg-muted-foreground/45",
-  rolled_back: "bg-warning",
-};
-
-export function programAttemptAttention(
-  attempt: ProgramAttemptSnapshot,
-  status: OrchestrationV2RunStatus,
-): string {
-  const failure = attempt.terminalResult?.failure;
-  if (failure?.message) return failure.message;
-  switch (status) {
-    case "interrupted":
-      return "T3 restarted. Dirtyloops will decide whether this Task retries.";
-    case "failed":
-      return "The T3 run failed. Inspect the Dirtyloops record before retrying.";
-    case "cancelled":
-      return "The T3 run was cancelled.";
-    case "rolled_back":
-      return "The T3 run was rolled back.";
-    case "preparing":
-    case "queued":
-    case "starting":
-    case "running":
-    case "waiting":
-    case "completed":
-      return "None";
-  }
-}
-
-function ProgramDetailRow(props: { readonly label: string; readonly children: ReactNode }) {
-  return (
-    <div className="grid min-w-0 grid-cols-[4.75rem_minmax(0,1fr)] gap-2 border-b border-border/45 py-1.5 last:border-b-0">
-      <dt className="text-[11px] text-muted-foreground">{props.label}</dt>
-      <dd className="min-w-0 text-[11px] text-foreground/80">{props.children}</dd>
-    </div>
-  );
-}
-
-export function ProgramAttemptSummary(props: {
-  readonly attempt: ProgramAttemptSnapshot;
-  readonly environmentId: EnvironmentId;
-  readonly status: OrchestrationV2RunStatus;
-  readonly loadError?: string | null;
-}) {
-  const { attempt, status } = props;
-  const threadHref = `/${encodeURIComponent(props.environmentId)}/${encodeURIComponent(attempt.threadId)}`;
-  const stopTarget = attempt.taskId ?? attempt.attemptId;
-  return (
-    <section
-      aria-labelledby="thread-details-dirtyloops-heading"
-      className="border-t border-border/65 px-3.5 pb-3 pt-3"
-      data-thread-program-attempt
-    >
-      <h3
-        id="thread-details-dirtyloops-heading"
-        className="mb-1.5 text-[11px] font-medium text-muted-foreground"
-      >
-        Dirtyloops task
-      </h3>
-      <dl className="m-0 min-w-0">
-        {attempt.programId ? (
-          <ProgramDetailRow label="Program">
-            <span className="block truncate" title={attempt.programId}>
-              {attempt.programId}
-            </span>
-          </ProgramDetailRow>
-        ) : null}
-        {attempt.taskId ? (
-          <ProgramDetailRow label="Task">
-            <span className="block truncate" title={attempt.taskId}>
-              {attempt.taskId}
-            </span>
-          </ProgramDetailRow>
-        ) : null}
-        <ProgramDetailRow label="State">
-          <span className="inline-flex items-center gap-1.5 font-medium">
-            <span
-              aria-hidden
-              className={cn("size-1.5 shrink-0 rounded-full", PROGRAM_STATUS_DOT_CLASSES[status])}
-            />
-            {PROGRAM_STATUS_LABELS[status]}
-          </span>
-        </ProgramDetailRow>
-        <ProgramDetailRow label="Attention">
-          <span className="break-words">{programAttemptAttention(attempt, status)}</span>
-        </ProgramDetailRow>
-        <ProgramDetailRow label="Worktree">
-          <span
-            className="block break-all font-mono text-[10px]"
-            title={attempt.checkout.worktreePath}
-          >
-            {attempt.checkout.worktreePath}
-          </span>
-        </ProgramDetailRow>
-        <ProgramDetailRow label="Branch">
-          <span className="block truncate font-mono text-[10px]" title={attempt.checkout.branch}>
-            {attempt.checkout.branch}
-          </span>
-        </ProgramDetailRow>
-        <ProgramDetailRow label="Start">
-          <span className="font-mono text-[10px]" title={attempt.checkout.startingCommit}>
-            {attempt.checkout.startingCommit.slice(0, 12)}
-          </span>
-        </ProgramDetailRow>
-        <ProgramDetailRow label="T3 run">
-          <a
-            href={threadHref}
-            className="inline-flex max-w-full items-center gap-1 text-foreground/85 underline decoration-border underline-offset-2 hover:decoration-foreground/70"
-          >
-            <span className="truncate font-mono text-[10px]" title={attempt.runId}>
-              {attempt.runId}
-            </span>
-            <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          </a>
-        </ProgramDetailRow>
-      </dl>
-      {props.loadError ? (
-        <p className="mt-2 text-[11px] leading-relaxed text-warning">
-          Live details may be stale: {props.loadError}
-        </p>
-      ) : null}
-      <div className="mt-2 border-t border-border/45 pt-2">
-        <p className="text-[10px] leading-relaxed text-muted-foreground">
-          Program controls run in the prepared checkout.
-        </p>
-        <code className="mt-1 block whitespace-pre-wrap break-words text-[10px] leading-relaxed text-foreground/70">
-          {`dirtyloops inspect\ndirtyloops run <proposal.json>\ndirtyloops stop ${stopTarget}`}
-        </code>
-      </div>
-    </section>
-  );
-}
-
-function ThreadProgramAttemptPanel(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-}) {
-  const attemptQuery = useEnvironmentQuery(
-    serverEnvironment.programAttempt({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId },
-    }),
-  );
-  const projection = useThreadProjection(scopeThreadRef(props.environmentId, props.threadId));
-  const attempt = attemptQuery.data;
-  if (attempt === null) return null;
-  const liveStatus = projection?.projection.runs.find((run) => run.id === attempt.runId)?.status;
-  return (
-    <ProgramAttemptSummary
-      attempt={attempt}
-      environmentId={props.environmentId}
-      status={liveStatus ?? attempt.runStatus}
-      loadError={attemptQuery.error}
-    />
-  );
 }
 
 export interface ThreadDetailsPanelProps {

@@ -31,6 +31,18 @@ const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.6-sol" } as const;
 const now = DateTime.makeUnsafe("2026-08-19T00:00:00.000Z");
 
+it.effect("retries the launch receipt gap without remounting the thread panel", () =>
+  Effect.gen(function* () {
+    let requests = 0;
+    const result = yield* ProgramAttemptService.retryProgramAttemptReceipt(
+      () => Effect.sync(() => (++requests === 1 ? null : "snapshot")),
+      { attempts: 3, delay: Effect.void },
+    );
+    assert.strictEqual(result, "snapshot");
+    assert.strictEqual(requests, 2);
+  }),
+);
+
 function makeProjection(status: OrchestrationV2RunStatus): OrchestrationV2ThreadProjection {
   const terminal = ThreadManagementService.isTerminalRunStatus(status);
   return {
@@ -156,7 +168,8 @@ function makeHarness() {
     const services = Layer.mergeAll(
       Layer.succeed(ThreadLaunchService.ThreadLaunchService, { launch }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
-        getThreadProjection: () => Ref.get(projection),
+        getThreadProjection: (requestedThreadId) =>
+          requestedThreadId === threadId ? Ref.get(projection) : Effect.die("missing test thread"),
         interruptThread,
       }),
     );

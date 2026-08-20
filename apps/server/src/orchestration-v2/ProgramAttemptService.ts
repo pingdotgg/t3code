@@ -19,6 +19,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -251,6 +252,10 @@ export const layer = Layer.effect(
         attemptId,
         programId: launchInput.programId ?? null,
         taskId: launchInput.taskId ?? null,
+        attemptKind: launchInput.attemptKind ?? null,
+        candidateId: launchInput.candidateId ?? null,
+        reviewId: launchInput.reviewId ?? null,
+        reviewKind: launchInput.reviewKind ?? null,
         title: launchInput.title,
         checkout: launchInput.checkout,
         projectId: ProjectId.make(row.project_id),
@@ -276,23 +281,30 @@ export const layer = Layer.effect(
       "ProgramAttemptService.observeThread",
     )(function* (threadId) {
       const lookupId = ProgramAttemptId.make(`program-attempt:thread:${threadId}`);
-      const rows = yield* sql<ProgramAttemptRow>`
-        SELECT * FROM program_attempts
-        WHERE thread_id = ${threadId}
-        ORDER BY created_at DESC
-        LIMIT 1
-      `.pipe(
-        Effect.mapError((cause) =>
-          error(
-            lookupId,
-            "persistence_failed",
-            "Could not load the Program Attempt for this thread.",
-            cause,
+      const visible = yield* threads
+        .getThreadProjection(threadId)
+        .pipe(Effect.exit, Effect.map(Exit.isSuccess));
+      if (!visible) return null;
+      return yield* retryProgramAttemptReceipt(() =>
+        sql<ProgramAttemptRow>`
+          SELECT * FROM program_attempts
+          WHERE thread_id = ${threadId}
+          ORDER BY created_at DESC
+          LIMIT 1
+        `.pipe(
+          Effect.mapError((cause) =>
+            error(
+              lookupId,
+              "persistence_failed",
+              "Could not load the Program Attempt for this thread.",
+              cause,
+            ),
+          ),
+          Effect.flatMap((rows) =>
+            rows[0] === undefined ? Effect.succeed(null) : snapshot(rows[0]),
           ),
         ),
       );
-      const row = rows[0];
-      return row === undefined ? null : yield* snapshot(row);
     });
 
     const retainProcessInterruptions: ProgramAttemptService["Service"]["retainProcessInterruptions"] =
@@ -570,3 +582,18 @@ export const layer = Layer.effect(
     });
   }),
 );
+export function retryProgramAttemptReceipt<A, E, R>(
+  lookup: () => Effect.Effect<A | null, E, R>,
+  options: { readonly attempts?: number; readonly delay?: Effect.Effect<void> } = {},
+): Effect.Effect<A | null, E, R> {
+  const attempts = options.attempts ?? 12;
+  const delay = options.delay ?? Effect.sleep("250 millis");
+  return Effect.gen(function* () {
+    for (let index = 0; index < attempts; index += 1) {
+      const result = yield* lookup();
+      if (result !== null || index === attempts - 1) return result;
+      yield* delay;
+    }
+    return null;
+  });
+}
