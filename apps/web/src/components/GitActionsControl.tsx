@@ -1018,7 +1018,7 @@ export default function GitActionsControl({
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
   );
-  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
+  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<boolean>;
 
   const updateActiveProgressToast = useCallback(() => {
     const progress = activeGitActionProgressRef.current;
@@ -1290,7 +1290,7 @@ export default function GitActionsControl({
           action !== "commit_push" &&
           action !== "commit_push_pr"
         ) {
-          return;
+          return false;
         }
         setPendingDefaultBranchAction({
           action,
@@ -1300,7 +1300,7 @@ export default function GitActionsControl({
           ...(onConfirmed ? { onConfirmed } : {}),
           ...(filePaths ? { filePaths } : {}),
         });
-        return;
+        return false;
       }
       onConfirmed?.();
 
@@ -1417,7 +1417,7 @@ export default function GitActionsControl({
       if (result._tag === "Failure") {
         if (isAtomCommandInterrupted(result)) {
           toastManager.close(resolvedProgressToastId);
-          return;
+          return false;
         }
 
         const error = squashAtomCommandFailure(result);
@@ -1430,7 +1430,7 @@ export default function GitActionsControl({
             ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
           }),
         );
-        return;
+        return false;
       }
 
       const actionResult = result.value;
@@ -1492,6 +1492,7 @@ export default function GitActionsControl({
           data: successToastData,
         });
       }
+      return true;
     },
   );
 
@@ -1522,22 +1523,24 @@ export default function GitActionsControl({
     });
   };
 
-  const runDialogActionOnNewBranch = () => {
+  const runDialogActionOnNewBranch = async () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
 
     setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
 
-    void runGitActionWithToast({
+    const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
+    if (committed) {
+      setDialogCommitMessage("");
+      setExcludedFiles(new Set());
+      setIsEditingFiles(false);
+    }
   };
 
   const runQuickAction = () => {
@@ -1622,18 +1625,20 @@ export default function GitActionsControl({
     setIsCommitDialogOpen(true);
   };
 
-  const runDialogAction = () => {
+  const runDialogAction = async () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
     setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    void runGitActionWithToast({
+    const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });
+    if (committed) {
+      setDialogCommitMessage("");
+      setExcludedFiles(new Set());
+      setIsEditingFiles(false);
+    }
   };
 
   const openChangedFileInEditor = useCallback(
@@ -1988,11 +1993,11 @@ export default function GitActionsControl({
               variant="outline"
               size="sm"
               disabled={noneSelected}
-              onClick={runDialogActionOnNewBranch}
+              onClick={() => void runDialogActionOnNewBranch()}
             >
               Commit on new refName
             </Button>
-            <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
+            <Button size="sm" disabled={noneSelected} onClick={() => void runDialogAction()}>
               Commit
             </Button>
           </DialogFooter>
