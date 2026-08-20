@@ -64,6 +64,13 @@ A few more macOS notes:
 
 **Windows** is not supported yet.
 
+## Port Conflicts with the Desktop App
+
+The service and the desktop app both serve T3 Code on port 3773 by default. If the desktop app's
+backend cannot start because that port is already in use, the app says so instead of leaving you on
+a loading screen. Quit whatever is holding the port — this service is a common candidate — then
+start the app again.
+
 ## Using It with T3 Connect
 
 T3 Connect may offer to install the service during setup so the host stays reachable in the

@@ -60,6 +60,23 @@ const MAX_RESTART_DELAY = Duration.seconds(10);
 // failures may instead provide their own larger retryLimit when they should
 // self-heal for a while but must not leave the app connecting forever.
 const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
+// A child that spawns and then exits before the readiness probe ever answers
+// is not healed by being spawned again. After this many consecutive such exits
+// the instance stops and reports what the child printed instead of restarting
+// in silence. Same allowance as the preflight cap, which with the backoff above
+// is roughly 7.5s of quiet retrying before the user hears about it: long enough
+// for a port that is about to be released, short enough that nobody stares at a
+// dead app for a minute.
+const MAX_CRASH_BEFORE_READY_ATTEMPTS = 5;
+// Child output kept in memory per run so a crash can be explained by more than
+// its exit code. Only the tail matters (whatever it printed on the way down),
+// and the bound keeps a chatty backend from growing the manager's heap.
+const CRASH_OUTPUT_TAIL_CHARS = 4096;
+// How much of that tail reaches the user. A wall of stack frames in a dialog is
+// worse than the last few lines.
+const CRASH_OUTPUT_REPORT_LINES = 3;
+const CRASH_OUTPUT_REPORT_CHARS = 500;
+const PORT_IN_USE_PATTERN = /EADDRINUSE|address already in use/i;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
@@ -110,6 +127,17 @@ export interface PreflightFailure {
   readonly reason: string;
   readonly fatal: boolean;
   readonly retryLimit?: number;
+}
+
+// A child that spawned fine and then died before ever answering the readiness
+// probe, MAX_CRASH_BEFORE_READY_ATTEMPTS times in a row. `reason` is written
+// for a person: it ends up in the primary's error dialog and in the WSL row of
+// Connections settings, so it names the port conflict when the child said
+// EADDRINUSE and otherwise carries the exit reason plus the tail of what the
+// child printed.
+export interface BackendCrashLoopFailure {
+  readonly reason: string;
+  readonly attempts: number;
 }
 
 interface BackendProcessExit {
@@ -294,6 +322,12 @@ export interface BackendInstanceSpec {
   // retries. Returns true when the callback changed configuration and the
   // manager should resolve once more; false stops the failed instance.
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
+  // Fired once the child has crashed before readiness
+  // MAX_CRASH_BEFORE_READY_ATTEMPTS times in a row. Returns true when the
+  // callback fixed something and the manager should keep restarting; false —
+  // and the default when no callback is wired — stops the instance until
+  // someone calls start again.
+  readonly onCrashLoop?: (failure: BackendCrashLoopFailure) => Effect.Effect<boolean>;
 }
 
 interface ActiveBackendRun {
@@ -314,6 +348,9 @@ interface BackendManagerState {
   // Consecutive bounded/fatal preflight failures, reset on a clean or
   // unbounded-transient preflight. restartAttempt counts all restarts.
   readonly preflightFailureAttempt: number;
+  // Consecutive runs whose child exited without ever becoming ready, reset
+  // once a run reports ready.
+  readonly crashAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -325,6 +362,7 @@ const initialState: BackendManagerState = {
   active: Option.none(),
   restartAttempt: 0,
   preflightFailureAttempt: 0,
+  crashAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -341,6 +379,43 @@ const withActiveRun =
 
 const calculateRestartDelay = (attempt: number): Duration.Duration =>
   Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
+
+// Chunks are decoded one at a time, so a multi-byte character split across a
+// chunk boundary degrades to a replacement character. That is fine for a
+// diagnostic tail and matches how the child log file decodes the same chunks.
+const crashOutputDecoder = new TextDecoder();
+
+const appendCrashOutputTail = (tail: string, chunk: Uint8Array): string => {
+  const next = tail + crashOutputDecoder.decode(chunk);
+  return next.length > CRASH_OUTPUT_TAIL_CHARS
+    ? next.slice(next.length - CRASH_OUTPUT_TAIL_CHARS)
+    : next;
+};
+
+const describeCrashLoop = (input: {
+  readonly attempts: number;
+  readonly port: number;
+  readonly exitReason: string;
+  readonly output: string;
+  readonly portInUse: boolean;
+}): string => {
+  if (input.portInUse) {
+    return `Port ${input.port} is already in use, so the backend could not start. Another program is listening on it, often a "t3" server started from a terminal or installed as a background service. Stop it, then start T3 Code again.`;
+  }
+
+  const printed = input.output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(-CRASH_OUTPUT_REPORT_LINES)
+    .join("\n");
+  const tail =
+    printed.length > CRASH_OUTPUT_REPORT_CHARS
+      ? `…${printed.slice(printed.length - CRASH_OUTPUT_REPORT_CHARS)}`
+      : printed;
+  const detail = tail.length > 0 ? `\n\nLast output:\n${tail}` : "";
+  return `The backend exited ${input.attempts} times in a row before it was ready (${input.exitReason}).${detail}`;
+};
 
 const closeRun = (
   run: ActiveBackendRun,
@@ -721,15 +796,19 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           .exists(config.value.entryPath)
           .pipe(Effect.orElseSucceed(() => false));
 
-        const resetFatalPreflightCounter =
-          !current.desiredRunning && current.preflightFailureAttempt > 0;
+        // An explicit start on an instance that was not running — a first
+        // launch, or a retry after a failure cap stopped it — gets a fresh
+        // allowance on both failure counters. That is the way back from a
+        // surfaced crash loop.
+        const startedFresh = !current.desiredRunning;
         yield* cancelRestart;
         yield* Ref.update(state, (latest) => ({
           ...latest,
           desiredRunning: true,
           ready: false,
           config: Option.some(config.value),
-          preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          preflightFailureAttempt: startedFresh ? 0 : latest.preflightFailureAttempt,
+          crashAttempt: startedFresh ? 0 : latest.crashAttempt,
         }));
 
         const preflightFailure = config.value.preflightFailure;
@@ -804,6 +883,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           return;
         }
 
+        // Tail of what this run's child printed, so an exit can be explained
+        // with more than its code. Per run: each child starts clean.
+        const crashOutputTail = yield* Ref.make("");
         const runScope = yield* Scope.make("sequential");
         const runId = yield* Ref.modify(state, (latest) => [
           latest.nextRunId,
@@ -826,55 +908,86 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         ) {
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
-              const { isCurrentRun, nextState, pid, exitObserved, stopRequested, wasReady } =
-                yield* Ref.modify(
-                  state,
-                  (
-                    latest,
-                  ): readonly [
-                    {
-                      readonly isCurrentRun: boolean;
-                      readonly nextState: BackendManagerState;
-                      readonly pid: Option.Option<number>;
-                      readonly exitObserved: boolean;
-                      readonly stopRequested: boolean;
-                      readonly wasReady: boolean;
-                    },
-                    BackendManagerState,
-                  ] => {
-                    const currentRun = Option.getOrUndefined(latest.active);
-                    if (currentRun?.id !== runId) {
-                      return [
-                        {
-                          isCurrentRun: false,
-                          nextState: latest,
-                          pid: Option.none<number>(),
-                          exitObserved: false,
-                          stopRequested: false,
-                          wasReady: false,
-                        },
-                        latest,
-                      ] as const;
-                    }
-
-                    const next = {
-                      ...latest,
-                      active: Option.none<ActiveBackendRun>(),
-                      ready: false,
-                    };
+              // Read before the state update below consults it: the output
+              // fibers have already drained by the time finalizeRun runs.
+              const output = yield* Ref.get(crashOutputTail);
+              const portInUse = PORT_IN_USE_PATTERN.test(output);
+              const {
+                isCurrentRun,
+                nextState,
+                pid,
+                exitObserved,
+                stopRequested,
+                wasReady,
+                crashAttempt,
+              } = yield* Ref.modify(
+                state,
+                (
+                  latest,
+                ): readonly [
+                  {
+                    readonly isCurrentRun: boolean;
+                    readonly nextState: BackendManagerState;
+                    readonly pid: Option.Option<number>;
+                    readonly exitObserved: boolean;
+                    readonly stopRequested: boolean;
+                    readonly wasReady: boolean;
+                    readonly crashAttempt: number;
+                  },
+                  BackendManagerState,
+                ] => {
+                  const currentRun = Option.getOrUndefined(latest.active);
+                  if (currentRun?.id !== runId) {
                     return [
                       {
-                        isCurrentRun: true,
-                        nextState: next,
-                        pid: currentRun.pid,
-                        exitObserved: currentRun.exitObserved,
-                        stopRequested: currentRun.stopRequested,
-                        wasReady: latest.ready,
+                        isCurrentRun: false,
+                        nextState: latest,
+                        pid: Option.none<number>(),
+                        exitObserved: false,
+                        stopRequested: false,
+                        wasReady: false,
+                        crashAttempt: 0,
                       },
-                      next,
+                      latest,
                     ] as const;
-                  },
-                );
+                  }
+
+                  // A child we spawned, that we did not ask to stop, that died
+                  // without ever serving. Anything else (a stop, a backend that
+                  // was up and then fell over) leaves the plain restart loop in
+                  // charge.
+                  //
+                  // `ready` is not proof that *this* child served: the probe is
+                  // an unauthenticated GET against the port, so whoever already
+                  // holds it answers 200 on our behalf — precisely the case
+                  // where our child dies on a bind failure. Its own output
+                  // saying the address is taken outranks that, since only this
+                  // child could have printed it.
+                  const crashedBeforeReady =
+                    Option.isSome(currentRun.pid) &&
+                    currentRun.exitObserved &&
+                    !currentRun.stopRequested &&
+                    (!latest.ready || portInUse);
+                  const next = {
+                    ...latest,
+                    active: Option.none<ActiveBackendRun>(),
+                    ready: false,
+                    crashAttempt: crashedBeforeReady ? latest.crashAttempt + 1 : 0,
+                  };
+                  return [
+                    {
+                      isCurrentRun: true,
+                      nextState: next,
+                      pid: currentRun.pid,
+                      exitObserved: currentRun.exitObserved,
+                      stopRequested: currentRun.stopRequested,
+                      wasReady: latest.ready,
+                      crashAttempt: next.crashAttempt,
+                    },
+                    next,
+                  ] as const;
+                },
+              );
 
               if (isCurrentRun) {
                 yield* desktopTelemetryPublisher.removeControlSource(spec.id);
@@ -893,6 +1006,34 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
+                if (crashAttempt >= MAX_CRASH_BEFORE_READY_ATTEMPTS) {
+                  const failure: BackendCrashLoopFailure = {
+                    reason: describeCrashLoop({
+                      attempts: crashAttempt,
+                      port: config.value.bootstrap.port,
+                      exitReason: reason,
+                      output,
+                      portInUse,
+                    }),
+                    attempts: crashAttempt,
+                  };
+                  yield* logInstanceError("backend kept exiting before readiness", {
+                    reason: failure.reason,
+                    attempts: failure.attempts,
+                  });
+                  const shouldRestart = yield* spec.onCrashLoop?.(failure) ?? Effect.succeed(false);
+                  // Either way the counter starts over, so a handler that keeps
+                  // us running hears about the next streak instead of every
+                  // crash after the cap.
+                  yield* Ref.update(state, (latest) =>
+                    shouldRestart
+                      ? { ...latest, crashAttempt: 0 }
+                      : { ...latest, crashAttempt: 0, desiredRunning: false, ready: false },
+                  );
+                  if (!shouldRestart) {
+                    return;
+                  }
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -950,7 +1091,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               });
             },
           ),
-          onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
+          onOutput: (streamName, chunk) =>
+            Ref.update(crashOutputTail, (tail) => appendCrashOutputTail(tail, chunk)).pipe(
+              Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk)),
+            ),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),
