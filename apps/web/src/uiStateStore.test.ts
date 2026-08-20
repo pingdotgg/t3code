@@ -10,6 +10,7 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  reorderThreads,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
@@ -21,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    threadOrderBySection: { active: [], snoozed: [], settled: [] },
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -116,6 +118,53 @@ describe("uiStateStore pure functions", () => {
     );
   });
 
+  it("reorders threads independently within each sidebar section", () => {
+    const state = makeUiState({
+      threadOrderBySection: {
+        active: ["active-a", "active-b"],
+        snoozed: ["snoozed-a"],
+        settled: ["settled-a"],
+      },
+    });
+
+    const next = reorderThreads(
+      state,
+      "active",
+      ["active-a", "active-b", "active-c"],
+      "active-c",
+      "active-a",
+    );
+
+    expect(next.threadOrderBySection).toEqual({
+      active: ["active-c", "active-a", "active-b"],
+      snoozed: ["snoozed-a"],
+      settled: ["settled-a"],
+    });
+    expect(
+      reorderThreads(next, "active", next.threadOrderBySection.active, "active-a", "active-a"),
+    ).toBe(next);
+  });
+
+  it("preserves hidden thread positions when reordering a filtered section", () => {
+    const state = makeUiState({
+      threadOrderBySection: {
+        active: ["hidden-a", "visible-a", "hidden-b", "visible-b"],
+        snoozed: [],
+        settled: [],
+      },
+    });
+
+    expect(
+      reorderThreads(
+        state,
+        "active",
+        ["visible-a", "visible-b", "visible-new"],
+        "visible-new",
+        "visible-a",
+      ).threadOrderBySection.active,
+    ).toEqual(["hidden-a", "visible-new", "hidden-b", "visible-a", "visible-b"]);
+  });
+
   it("stores explicit changed-file expansion choices", () => {
     const threadId = ThreadId.make("thread-1");
     const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
@@ -154,6 +203,10 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      threadOrderBySection: {
+        active: ["environment:thread-2", "", "environment:thread-1"],
+        snoozed: ["environment:thread-3", "environment:thread-3"],
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -173,6 +226,11 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrderBySection: {
+        active: ["environment:thread-2", "environment:thread-1"],
+        snoozed: ["environment:thread-3"],
+        settled: [],
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -292,6 +350,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrderBySection: { active: [], snoozed: [], settled: [] },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

@@ -17,9 +17,12 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v1",
 ] as const;
 
+export type SidebarThreadSection = "active" | "snoozed" | "settled";
+
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  threadOrderBySection?: Partial<Record<SidebarThreadSection, string[]>>;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -35,6 +38,7 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
+  threadOrderBySection: Record<SidebarThreadSection, string[]>;
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
@@ -48,6 +52,7 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  threadOrderBySection: { active: [], snoozed: [], settled: [] },
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -70,6 +75,16 @@ function sanitizeStringArray(value: unknown): string[] {
       value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
     ),
   ];
+}
+
+function sanitizeThreadOrderBySection(
+  value: PersistedUiState["threadOrderBySection"],
+): Record<SidebarThreadSection, string[]> {
+  return {
+    active: sanitizeStringArray(value?.active),
+    snoozed: sanitizeStringArray(value?.snoozed),
+    settled: sanitizeStringArray(value?.settled),
+  };
 }
 
 function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
@@ -125,6 +140,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    threadOrderBySection: sanitizeThreadOrderBySection(parsed.threadOrderBySection),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -203,6 +219,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        threadOrderBySection: state.threadOrderBySection,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -337,6 +354,43 @@ export function setProjectExpanded(
   };
 }
 
+export function reorderThreads(
+  state: UiState,
+  section: SidebarThreadSection,
+  currentThreadOrder: readonly string[],
+  draggedThreadId: string,
+  targetThreadId: string,
+): UiState {
+  const draggedIndex = currentThreadOrder.indexOf(draggedThreadId);
+  const targetIndex = currentThreadOrder.indexOf(targetThreadId);
+  if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) {
+    return state;
+  }
+
+  const reorderedVisibleThreads = [...currentThreadOrder];
+  const [dragged] = reorderedVisibleThreads.splice(draggedIndex, 1);
+  reorderedVisibleThreads.splice(targetIndex, 0, dragged!);
+
+  // A project filter can hide threads from this section. Keep those ids in
+  // their existing slots while replacing only the visible ids, then append
+  // any visible threads that did not have a persisted slot yet.
+  const visibleThreadIds = new Set(currentThreadOrder);
+  let nextVisibleIndex = 0;
+  const threadOrder = state.threadOrderBySection[section].map((threadId) => {
+    if (!visibleThreadIds.has(threadId)) return threadId;
+    return reorderedVisibleThreads[nextVisibleIndex++]!;
+  });
+  threadOrder.push(...reorderedVisibleThreads.slice(nextVisibleIndex));
+
+  return {
+    ...state,
+    threadOrderBySection: {
+      ...state.threadOrderBySection,
+      [section]: threadOrder,
+    },
+  };
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
@@ -387,6 +441,12 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  reorderThreads: (
+    section: SidebarThreadSection,
+    currentThreadOrder: readonly string[],
+    draggedThreadId: string,
+    targetThreadId: string,
+  ) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -406,6 +466,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  reorderThreads: (section, currentThreadOrder, draggedThreadId, targetThreadId) =>
+    set((state) =>
+      reorderThreads(state, section, currentThreadOrder, draggedThreadId, targetThreadId),
+    ),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
