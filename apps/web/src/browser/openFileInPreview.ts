@@ -52,25 +52,17 @@ export async function openUrlInPreview<E>(input: {
   });
 }
 
-export async function openFileInPreview<AssetError, PreviewError>(input: {
+type CreateAssetUrl<AssetError> = (input: {
+  readonly environmentId: EnvironmentId;
+  readonly input: { readonly resource: AssetResource };
+}) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
+
+async function createWorkspaceFileAssetUrl<AssetError>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly filePath: string;
   readonly httpBaseUrl: string;
-  readonly createAssetUrl: (input: {
-    readonly environmentId: EnvironmentId;
-    readonly input: { readonly resource: AssetResource };
-  }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
-  readonly openPreview: OpenPreviewMutation<PreviewError>;
-}): Promise<AtomCommandResult<void, AssetError | PreviewError | BrowserPreviewUnavailableError>> {
-  if (!isPreviewSupportedInRuntime()) {
-    return AsyncResult.failure(
-      Cause.fail(
-        new BrowserPreviewUnavailableError({
-          message: "The integrated browser is unavailable in this runtime.",
-        }),
-      ),
-    );
-  }
+  readonly createAssetUrl: CreateAssetUrl<AssetError>;
+}): Promise<AtomCommandResult<string, AssetError>> {
   const assetResult = await input.createAssetUrl({
     environmentId: input.threadRef.environmentId,
     input: {
@@ -90,9 +82,53 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       Cause.die(new Error("The environment returned an invalid asset URL.")),
     );
   }
+  return AsyncResult.success(assetUrl);
+}
+
+export async function openFileInPreview<AssetError, PreviewError>(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly filePath: string;
+  readonly httpBaseUrl: string;
+  readonly createAssetUrl: CreateAssetUrl<AssetError>;
+  readonly openPreview: OpenPreviewMutation<PreviewError>;
+}): Promise<AtomCommandResult<void, AssetError | PreviewError | BrowserPreviewUnavailableError>> {
+  if (!isPreviewSupportedInRuntime()) {
+    return AsyncResult.failure(
+      Cause.fail(
+        new BrowserPreviewUnavailableError({
+          message: "The integrated browser is unavailable in this runtime.",
+        }),
+      ),
+    );
+  }
+  const assetUrl = await createWorkspaceFileAssetUrl(input);
+  if (assetUrl._tag === "Failure") {
+    return AsyncResult.failure(assetUrl.cause);
+  }
   return openUrlInPreview({
     threadRef: input.threadRef,
-    url: assetUrl,
+    url: assetUrl.value,
     openPreview: input.openPreview,
   });
+}
+
+/**
+ * Open a workspace file in the user's real browser: the system default in the
+ * desktop app, a new tab in the web client. Workspace-file asset URLs carry
+ * their own signed token, so the target browser needs no T3 session — the URL
+ * works wherever the client's own connection to the environment works.
+ */
+export async function openFileInExternalBrowser<AssetError>(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly filePath: string;
+  readonly httpBaseUrl: string;
+  readonly createAssetUrl: CreateAssetUrl<AssetError>;
+  readonly openExternal: (url: string) => Promise<void>;
+}): Promise<AtomCommandResult<void, AssetError>> {
+  const assetUrl = await createWorkspaceFileAssetUrl(input);
+  if (assetUrl._tag === "Failure") {
+    return AsyncResult.failure(assetUrl.cause);
+  }
+  await input.openExternal(assetUrl.value);
+  return AsyncResult.success(undefined);
 }
