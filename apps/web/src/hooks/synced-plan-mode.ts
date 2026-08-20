@@ -1,6 +1,11 @@
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import {
+  createPlanModePreferencePatchRequest,
+  SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS,
+  syncedClientPreferenceRetryDelayMs,
+} from "@t3tools/client-runtime/synced-client-preferences";
+import {
   getSyncedClientPreferenceUpdatedAt,
   nextSyncedClientPreferencesUpdatedAt,
   type EnvironmentId,
@@ -26,7 +31,7 @@ export function createSyncedClientPreferencesSliceAtom(
 export function createSyncedPlanModeWrite(input: {
   readonly value: boolean;
   readonly serverPreferences: SyncedClientPreferences | undefined;
-  readonly pendingUpdatedAt?: string;
+  readonly pendingUpdatedAt?: string | undefined;
   readonly now: string;
 }) {
   const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(
@@ -38,13 +43,8 @@ export function createSyncedPlanModeWrite(input: {
     (serverUpdatedAt === undefined || input.pendingUpdatedAt > serverUpdatedAt)
       ? input.pendingUpdatedAt
       : serverUpdatedAt;
-  return {
-    clientPatch: { planModeEnabled: input.value },
-    request: {
-      patch: { planModeEnabled: input.value },
-      updatedAt: nextSyncedClientPreferencesUpdatedAt([currentUpdatedAt], input.now),
-    },
-  } as const;
+  const updatedAt = nextSyncedClientPreferencesUpdatedAt([currentUpdatedAt], input.now);
+  return { request: createPlanModePreferencePatchRequest(input.value, updatedAt) } as const;
 }
 
 type SyncedPlanModePatchTarget = {
@@ -61,12 +61,14 @@ export interface SyncedPlanModeHydrationInput<E> {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly clientHydrated: boolean;
   readonly clientValue: boolean;
+  readonly clientUpdatedAt?: string | undefined;
   readonly live: boolean;
   readonly serverPreferences: SyncedClientPreferences | undefined;
   readonly canPatch: boolean;
   readonly now: string;
   readonly patch: SyncedPlanModePatch<E>;
   readonly persist: (value: boolean) => void;
+  readonly persistUpdatedAt?: ((updatedAt: string) => void) | undefined;
 }
 
 export type SyncedPlanModeHydrationAction =
@@ -113,9 +115,6 @@ export function resolveSyncedPlanModeHydrationAction(input: {
   };
 }
 
-const SYNCED_PLAN_MODE_RETRY_DELAY_MS = 1_000;
-const SYNCED_PLAN_MODE_MAX_ATTEMPTS = 3;
-
 type SyncedPlanModeRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
 const scheduleSyncedPlanModeRetry: SyncedPlanModeRetryScheduler = (retry, delayMs) => {
@@ -135,6 +134,8 @@ export function createSyncedPlanModeHydrationController(
     readonly synchronizeAgainByOwner: Map<symbol, () => void>;
     cancelRetry?: () => void;
     patchAttempt: number;
+    retryEpochActive: boolean;
+    lastCanPatch: boolean;
   }
 
   const imperativeSynchronizationOwner = Symbol();
@@ -145,6 +146,8 @@ export function createSyncedPlanModeHydrationController(
     const state: SyncedPlanModeEnvironmentState = {
       synchronizeAgainByOwner: new Map(),
       patchAttempt: 0,
+      retryEpochActive: false,
+      lastCanPatch: false,
     };
     stateByEnvironment.set(environmentId, state);
     return state;
@@ -169,13 +172,13 @@ export function createSyncedPlanModeHydrationController(
   };
   const requestRetry = (state: SyncedPlanModeEnvironmentState) => {
     if (
-      state.patchAttempt >= SYNCED_PLAN_MODE_MAX_ATTEMPTS ||
+      state.patchAttempt >= SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS ||
       state.cancelRetry !== undefined ||
       getSynchronizeAgain(state) === undefined
     ) {
       return;
     }
-    const delayMs = SYNCED_PLAN_MODE_RETRY_DELAY_MS * 2 ** (state.patchAttempt - 1);
+    const delayMs = syncedClientPreferenceRetryDelayMs(state.patchAttempt);
     state.cancelRetry = scheduleRetry(() => {
       delete state.cancelRetry;
       getSynchronizeAgain(state)?.();
@@ -192,6 +195,7 @@ export function createSyncedPlanModeHydrationController(
     readonly requestedUpdatedAt: string;
     readonly result: AtomCommandResult<SyncedClientPreferences, E>;
     readonly persist: (value: boolean) => void;
+    readonly persistUpdatedAt: ((updatedAt: string) => void) | undefined;
   }) => {
     const state = stateByEnvironment.get(input.environmentId);
     if (state === undefined) return;
@@ -229,6 +233,7 @@ export function createSyncedPlanModeHydrationController(
     }
     if (getSynchronizeAgain(state) === undefined || state.pendingAdoption === undefined) return;
     input.persist(state.pendingAdoption.value);
+    input.persistUpdatedAt?.(state.pendingAdoption.updatedAt);
     markAdopted(state, state.pendingAdoption.updatedAt);
   };
 
@@ -236,6 +241,7 @@ export function createSyncedPlanModeHydrationController(
     readonly target: SyncedPlanModePatchTarget;
     readonly patch: SyncedPlanModePatch<E>;
     readonly persist: (value: boolean) => void;
+    readonly persistUpdatedAt: ((updatedAt: string) => void) | undefined;
   }) => {
     const { environmentId } = input.target;
     const requestedUpdatedAt = input.target.input.updatedAt;
@@ -243,7 +249,13 @@ export function createSyncedPlanModeHydrationController(
     state.patchAttempt += 1;
     state.writeInFlightUpdatedAt = requestedUpdatedAt;
     void input.patch(input.target).then((result) => {
-      settlePatch({ environmentId, requestedUpdatedAt, result, persist: input.persist });
+      settlePatch({
+        environmentId,
+        requestedUpdatedAt,
+        result,
+        persist: input.persist,
+        persistUpdatedAt: input.persistUpdatedAt,
+      });
     });
   };
 
@@ -253,21 +265,39 @@ export function createSyncedPlanModeHydrationController(
   ) => {
     const environmentId = input.environmentId;
     if (environmentId === null) return;
+    const state = stateFor(environmentId);
     if (!input.live) {
+      state.retryEpochActive = false;
+      state.lastCanPatch = input.canPatch;
       deactivate(environmentId, owner);
       return;
     }
-    const state = stateFor(environmentId);
+    if (!state.retryEpochActive || (!state.lastCanPatch && input.canPatch)) {
+      cancelRetry(state);
+      state.patchAttempt = 0;
+    }
+    state.retryEpochActive = true;
+    state.lastCanPatch = input.canPatch;
     state.synchronizeAgainByOwner.set(owner, () => synchronize(input, owner));
     const deactivateSynchronization = () => deactivate(environmentId, owner);
     if (input.serverPreferences?.planModeEnabled !== undefined) {
       delete state.seedPendingUpdatedAt;
     }
-    const pendingWrite = state.writePending;
     const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(
       input.serverPreferences,
       "planModeEnabled",
     );
+    if (
+      state.writePending === undefined &&
+      input.clientUpdatedAt !== undefined &&
+      (serverUpdatedAt === undefined || serverUpdatedAt < input.clientUpdatedAt)
+    ) {
+      state.writePending = {
+        value: input.clientValue,
+        updatedAt: input.clientUpdatedAt,
+      };
+    }
+    const pendingWrite = state.writePending;
     if (
       state.pendingAdoption !== undefined &&
       serverUpdatedAt !== undefined &&
@@ -285,6 +315,7 @@ export function createSyncedPlanModeHydrationController(
       if (input.clientValue !== state.pendingAdoption.value) {
         input.persist(state.pendingAdoption.value);
       }
+      input.persistUpdatedAt?.(state.pendingAdoption.updatedAt);
       markAdopted(state, state.pendingAdoption.updatedAt);
     }
     if (
@@ -301,7 +332,7 @@ export function createSyncedPlanModeHydrationController(
     if (
       input.canPatch &&
       activePendingWrite !== undefined &&
-      state.patchAttempt < SYNCED_PLAN_MODE_MAX_ATTEMPTS &&
+      state.patchAttempt < SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS &&
       (serverUpdatedAt === undefined || serverUpdatedAt < activePendingWrite.updatedAt) &&
       state.writeInFlightUpdatedAt !== activePendingWrite.updatedAt &&
       state.cancelRetry === undefined
@@ -309,17 +340,16 @@ export function createSyncedPlanModeHydrationController(
       dispatchPatch<E>({
         target: {
           environmentId,
-          input: {
-            patch: { planModeEnabled: activePendingWrite.value },
-            updatedAt: activePendingWrite.updatedAt,
-          },
+          input: createPlanModePreferencePatchRequest(
+            activePendingWrite.value,
+            activePendingWrite.updatedAt,
+          ),
         },
         patch: input.patch,
         persist: input.persist,
+        persistUpdatedAt: input.persistUpdatedAt,
       });
     }
-    if (environmentId !== input.primaryEnvironmentId) return deactivateSynchronization;
-
     let hydrationInput: Parameters<typeof resolveSyncedPlanModeHydrationAction>[0] = {
       clientHydrated: input.clientHydrated,
       clientValue: input.clientValue,
@@ -335,9 +365,33 @@ export function createSyncedPlanModeHydrationController(
     }
     const action = resolveSyncedPlanModeHydrationAction(hydrationInput);
     if (action.type === "adopt") {
+      if (environmentId !== input.primaryEnvironmentId) {
+        if (!input.canPatch || input.clientValue === action.value) {
+          return deactivateSynchronization;
+        }
+        const next = createSyncedPlanModeWrite({
+          value: input.clientValue,
+          serverPreferences: input.serverPreferences,
+          pendingUpdatedAt: input.clientUpdatedAt,
+          now: input.now,
+        });
+        state.writePending = {
+          value: input.clientValue,
+          updatedAt: next.request.updatedAt,
+        };
+        input.persistUpdatedAt?.(next.request.updatedAt);
+        dispatchPatch<E>({
+          target: { environmentId, input: next.request },
+          patch: input.patch,
+          persist: input.persist,
+          persistUpdatedAt: input.persistUpdatedAt,
+        });
+        return deactivateSynchronization;
+      }
       if (!input.canPatch) return deactivateSynchronization;
       markAdopted(state, action.updatedAt);
       if (input.clientValue !== action.value) input.persist(action.value);
+      input.persistUpdatedAt?.(action.updatedAt);
       return deactivateSynchronization;
     }
     if (action.type !== "seed" || !input.canPatch) return deactivateSynchronization;
@@ -346,13 +400,11 @@ export function createSyncedPlanModeHydrationController(
     dispatchPatch<E>({
       target: {
         environmentId,
-        input: {
-          patch: { planModeEnabled: action.value },
-          updatedAt: action.updatedAt,
-        },
+        input: createPlanModePreferencePatchRequest(action.value, action.updatedAt),
       },
       patch: input.patch,
       persist: input.persist,
+      persistUpdatedAt: input.persistUpdatedAt,
     });
 
     return deactivateSynchronization;
@@ -366,6 +418,7 @@ export function createSyncedPlanModeHydrationController(
     readonly now: string;
     readonly patch: SyncedPlanModePatch<E>;
     readonly persist: (value: boolean) => void;
+    readonly persistUpdatedAt?: ((updatedAt: string) => void) | undefined;
   }) => {
     if (input.environmentId === null) return;
     const environmentId = input.environmentId;
@@ -398,12 +451,14 @@ export function createSyncedPlanModeHydrationController(
       value: input.value,
       updatedAt: next.request.updatedAt,
     };
+    input.persistUpdatedAt?.(next.request.updatedAt);
     delete state.pendingAdoption;
     if (!input.canPatch) return;
     dispatchPatch<E>({
       target: { environmentId, input: next.request },
       patch: input.patch,
       persist: input.persist,
+      persistUpdatedAt: input.persistUpdatedAt,
     });
   };
 
@@ -436,11 +491,13 @@ export function useSyncedPlanModeHydrationEffect<E>(
       controller,
       input.canPatch,
       input.clientHydrated,
+      input.clientUpdatedAt,
       input.clientValue,
       input.environmentId,
       input.live,
       input.patch,
       input.persist,
+      input.persistUpdatedAt,
       input.primaryEnvironmentId,
       input.serverPreferences,
       synchronizationOwner,

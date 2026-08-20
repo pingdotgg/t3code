@@ -86,6 +86,8 @@ import {
   PullRequestReviewerCandidateList,
   PullRequestReviewerRequestInput,
   PullRequestSubmitReviewInput,
+  PullRequestThreadCommentsInput,
+  PullRequestThreadCommentsResult,
   PullRequestThreadReplyInput,
   PullRequestThreadResolutionInput,
   PullRequestUnavailableError,
@@ -180,7 +182,6 @@ import {
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
-  GetSyncedClientPreferencesRequest,
   PatchSyncedClientPreferencesRequest,
   SyncedClientPreferences,
 } from "./syncedClientPreferences.ts";
@@ -265,7 +266,6 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
-  syncedClientPreferencesGet: "syncedClientPreferences.get",
   syncedClientPreferencesPatch: "syncedClientPreferences.patch",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
@@ -288,6 +288,7 @@ export const WS_METHODS = {
   pullRequestsListStats: "pullRequests.listStats",
   pullRequestsDetail: "pullRequests.detail",
   pullRequestsActivity: "pullRequests.activity",
+  pullRequestsThreadComments: "pullRequests.threadComments",
   pullRequestsDiffFileContents: "pullRequests.diffFileContents",
   pullRequestsRunAction: "pullRequests.runAction",
   pullRequestsUpdate: "pullRequests.update",
@@ -389,12 +390,6 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
-});
-
-export const WsGetSyncedClientPreferencesRpc = Rpc.make(WS_METHODS.syncedClientPreferencesGet, {
-  payload: GetSyncedClientPreferencesRequest,
-  success: Schema.NullOr(SyncedClientPreferences),
-  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
 });
 
 export const WsPatchSyncedClientPreferencesRpc = Rpc.make(WS_METHODS.syncedClientPreferencesPatch, {
@@ -522,6 +517,12 @@ export const WsPullRequestsDetailRpc = Rpc.make(WS_METHODS.pullRequestsDetail, {
 export const WsPullRequestsActivityRpc = Rpc.make(WS_METHODS.pullRequestsActivity, {
   payload: PullRequestRef,
   success: PullRequestActivity,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsThreadCommentsRpc = Rpc.make(WS_METHODS.pullRequestsThreadComments, {
+  payload: PullRequestThreadCommentsInput,
+  success: PullRequestThreadCommentsResult,
   error: PullRequestRpcError,
 });
 
@@ -1007,7 +1008,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
-  WsGetSyncedClientPreferencesRpc,
   WsPatchSyncedClientPreferencesRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
@@ -1026,6 +1026,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsListStatsRpc,
   WsPullRequestsDetailRpc,
   WsPullRequestsActivityRpc,
+  WsPullRequestsThreadCommentsRpc,
   WsPullRequestsDiffFileContentsRpc,
   WsPullRequestsRunActionRpc,
   WsPullRequestsUpdateRpc,

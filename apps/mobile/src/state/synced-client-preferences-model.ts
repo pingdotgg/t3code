@@ -9,6 +9,11 @@ import {
   type SyncedClientPreferencesPatch,
   type SyncedClientPreferencesUpdatedAtByField,
 } from "@t3tools/contracts";
+import {
+  createPlanModePreferencePatchRequest,
+  SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS,
+  syncedClientPreferenceRetryDelayMs,
+} from "@t3tools/client-runtime/synced-client-preferences";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
@@ -17,8 +22,6 @@ import * as Schema from "effect/Schema";
 import type { Preferences } from "../persistence/mobile-preferences";
 
 const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
-const PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS = 3;
-
 type PlanModePreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
 const schedulePlanModePreferenceRetry: PlanModePreferenceRetryScheduler = (retry, delayMs) => {
@@ -145,6 +148,19 @@ export function isPlanModePreferenceReconciliationReady(input: {
   return current[0] === applied[0] && current[2] === applied[2];
 }
 
+export function shouldPreservePlanModeLocalValue(input: {
+  readonly currentKey: string;
+  readonly appliedKey: string | null;
+}): boolean {
+  if (input.appliedKey === null) return false;
+  return (
+    comparePlanModePreferenceReconciliationIdentities(
+      parsePlanModePreferenceReconciliationKey(input.currentKey),
+      parsePlanModePreferenceReconciliationKey(input.appliedKey),
+    ) < 0
+  );
+}
+
 export function hasPlanModePreferenceReconciliationAttempted(
   states: ReadonlyArray<{
     readonly connectionState: EnvironmentConnectionPhase;
@@ -218,6 +234,7 @@ export function createPlanModePreferenceReconciliationController(
   interface EnvironmentReconciliation {
     reconciliation?: Reconciliation;
     settledKey?: string;
+    exhaustedKey?: string;
   }
 
   const environmentReconciliations = new Map<EnvironmentId, EnvironmentReconciliation>();
@@ -230,11 +247,12 @@ export function createPlanModePreferenceReconciliationController(
     const { environmentId } = reconciliation.target;
     const state = environmentReconciliations.get(environmentId);
     if (state?.reconciliation !== reconciliation) return;
-    if (reconciliation.attempt >= PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS) {
+    if (reconciliation.attempt >= SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS) {
       state.reconciliation = undefined;
+      state.exhaustedKey = reconciliation.key;
       return;
     }
-    const delayMs = 1_000 * 2 ** (reconciliation.attempt - 1);
+    const delayMs = syncedClientPreferenceRetryDelayMs(reconciliation.attempt);
     reconciliation.cancelRetry = scheduleRetry(() => {
       reconciliation.cancelRetry = undefined;
       if (environmentReconciliations.get(environmentId)?.reconciliation === reconciliation) {
@@ -255,6 +273,7 @@ export function createPlanModePreferenceReconciliationController(
         }
         state.reconciliation = undefined;
         state.settledKey = reconciliation.key;
+        state.exhaustedKey = undefined;
         const localPatch = canonicalPlanModePreferencePatch(preferences);
         if (localPatch !== null) reconciliation.persist(localPatch);
       },
@@ -284,6 +303,10 @@ export function createPlanModePreferenceReconciliationController(
       const reconciliation = environmentReconciliations.get(environmentId)?.reconciliation;
       const observedKey = reconciliationKey(value, updatedAt);
       if (observedKey !== undefined && reconciliation?.key === observedKey) cancel(environmentId);
+      const state = environmentReconciliations.get(environmentId);
+      if (observedKey !== undefined && state?.exhaustedKey === observedKey) {
+        state.exhaustedKey = undefined;
+      }
     },
     reconcile<E>(input: {
       readonly target: PlanModePreferencePatchTarget;
@@ -295,7 +318,10 @@ export function createPlanModePreferenceReconciliationController(
       const { environmentId } = input.target;
       const state = environmentReconciliations.get(environmentId);
       const key = targetReconciliationKey(input.target);
-      if (state === undefined || (key !== undefined && state.settledKey === key)) {
+      if (
+        state === undefined ||
+        (key !== undefined && (state.settledKey === key || state.exhaustedKey === key))
+      ) {
         return;
       }
       const current = state.reconciliation;
@@ -309,6 +335,7 @@ export function createPlanModePreferenceReconciliationController(
       }
       if (current !== undefined) cancel(environmentId);
       state.settledKey = undefined;
+      state.exhaustedKey = undefined;
       const reconciliation: Reconciliation = {
         target: input.target,
         key,
@@ -382,7 +409,11 @@ export function createSyncedClientPreferencesWrite(input: {
     ...input.currentUpdatedAtByField,
   };
   for (const field of fields) setPreferenceUpdatedAt(updatedAtByField, field, updatedAt);
-  const request = { patch: input.patch, updatedAt };
+  const planModeEnabled = input.patch.planModeEnabled;
+  if (planModeEnabled === undefined) {
+    throw new Error("Plan Mode writes require a planModeEnabled value");
+  }
+  const request = createPlanModePreferencePatchRequest(planModeEnabled, updatedAt);
   return {
     localPatch: { values: input.patch, updatedAtByField },
     environmentPatches: input.connectedEnvironmentIds.map((environmentId) => ({
@@ -466,6 +497,7 @@ export function reconcileSyncedClientPreferences(input: {
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
   readonly fields?: ReadonlyArray<SyncedClientPreferenceField>;
+  readonly preserveLocalOnEqualStamp?: boolean;
 }) {
   if (input.environments.length === 0) {
     return { localPatch: null, environmentPatches: [] };
@@ -511,7 +543,10 @@ export function reconcileSyncedClientPreferences(input: {
     const localWins =
       localValue !== undefined &&
       boundedLocalUpdatedAt !== undefined &&
-      (latestEnvironment === undefined || boundedLocalUpdatedAt > latestEnvironment.updatedAt);
+      (latestEnvironment === undefined ||
+        boundedLocalUpdatedAt > latestEnvironment.updatedAt ||
+        (input.preserveLocalOnEqualStamp === true &&
+          boundedLocalUpdatedAt === latestEnvironment.updatedAt));
     const value = localWins ? localValue : (latestEnvironment?.value ?? localValue);
     if (value === undefined) continue;
     const updatedAt =
@@ -531,11 +566,9 @@ export function reconcileSyncedClientPreferences(input: {
       ) {
         continue;
       }
-      const patch: MutableSyncedClientPreferencesPatch = {};
-      setPreferenceValue(patch, field, value);
       environmentPatches.push({
         environmentId: environment.environmentId,
-        input: { patch, updatedAt },
+        input: createPlanModePreferencePatchRequest(value, updatedAt),
       });
     }
   }
@@ -553,6 +586,7 @@ export function reconcilePlanModePreferences(input: {
   readonly localUpdatedAt: string | undefined;
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
+  readonly preserveLocalOnEqualStamp?: boolean;
 }) {
   let local: LocalSyncedClientPreferencesState = {
     values:
@@ -571,6 +605,7 @@ export function reconcilePlanModePreferences(input: {
     environments: input.environments,
     now: input.now,
     fields: ["planModeEnabled"],
+    preserveLocalOnEqualStamp: input.preserveLocalOnEqualStamp,
   });
   const planModeEnabled = reconciliation.localPatch?.values.planModeEnabled;
   return {
@@ -583,4 +618,18 @@ export function reconcilePlanModePreferences(input: {
           },
     environmentPatches: reconciliation.environmentPatches,
   };
+}
+
+export function resolvePlanModeLocalPatchPersistence(input: {
+  readonly attemptedKey: string | null;
+  readonly localPatch: ReturnType<typeof reconcilePlanModePreferences>["localPatch"];
+}) {
+  if (input.localPatch === null) {
+    return { shouldPersist: false, nextAttemptedKey: null } as const;
+  }
+  const nextAttemptedKey = JSON.stringify(input.localPatch);
+  return {
+    shouldPersist: nextAttemptedKey !== input.attemptedKey,
+    nextAttemptedKey,
+  } as const;
 }

@@ -205,6 +205,17 @@ export function getClientSettings(): ClientSettings {
   return getClientSettingsSnapshot();
 }
 
+/**
+ * Resolves once client settings have been read from disk.
+ *
+ * The pre-hydration snapshot is just the schema defaults, so imperative paths
+ * that open a preview must await this or they bake the built-in viewport, zoom
+ * and appearance into a tab that never picks up the user's saved values.
+ */
+export function ensureClientSettingsHydrated(): Promise<void> {
+  return hydrateClientSettings();
+}
+
 export function useClientSettingsHydrated(): boolean {
   return useSyncExternalStore(
     subscribeClientSettingsHydration,
@@ -321,18 +332,25 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
       persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
     }
   }, []);
+  const persistSyncedPlanModeUpdatedAt = useCallback((updatedAt: string) => {
+    if (getClientSettingsSnapshot().planModeUpdatedAt !== updatedAt) {
+      persistClientSettings({ ...getClientSettingsSnapshot(), planModeUpdatedAt: updatedAt });
+    }
+  }, []);
 
   useSyncedPlanModeHydrationEffect(syncedPlanModeHydrationController, {
     environmentId,
     primaryEnvironmentId,
     clientHydrated,
     clientValue: clientSettings.planModeEnabled,
+    clientUpdatedAt: clientSettings.planModeUpdatedAt,
     live: synced.live,
     serverPreferences: synced.preferences,
     canPatch,
     now: new Date().toISOString(),
     patch: patchPreferences,
     persist: persistSyncedPlanMode,
+    persistUpdatedAt: persistSyncedPlanModeUpdatedAt,
   });
 
   return {
@@ -340,6 +358,23 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
     canPatch,
     pendingWrite: syncedPlanModeHydrationController.getPendingWrite(environmentId),
   } as const;
+}
+
+function useSyncedPlanModeState(environmentId: EnvironmentId | null) {
+  const synced = useEnvironmentSyncedClientPreferences(environmentId);
+  const canPatch = useCanPatchSyncedClientPreferences(environmentId);
+  return {
+    ...synced,
+    canPatch,
+    pendingWrite: syncedPlanModeHydrationController.getPendingWrite(environmentId),
+  } as const;
+}
+
+export function SyncedPlanModeEnvironmentSync(props: {
+  readonly environmentId: EnvironmentId;
+}): null {
+  useSyncedPlanModeHydration(props.environmentId);
+  return null;
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -404,7 +439,7 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  const synced = useSyncedPlanModeHydration(environmentId);
+  const synced = useSyncedPlanModeState(environmentId);
   return useMergedSettings(
     serverSettings ?? DEFAULT_SERVER_SETTINGS,
     synced.preferences,
@@ -419,7 +454,7 @@ export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
-  const synced = useSyncedPlanModeHydration(environmentId);
+  const synced = useSyncedPlanModeState(environmentId);
   return useMergedSettings(
     useAtomValue(primaryServerSettingsAtom),
     synced.preferences,
@@ -478,6 +513,14 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           persist: (value) => {
             if (getClientSettingsSnapshot().planModeEnabled !== value) {
               persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
+            }
+          },
+          persistUpdatedAt: (updatedAt) => {
+            if (getClientSettingsSnapshot().planModeUpdatedAt !== updatedAt) {
+              persistClientSettings({
+                ...getClientSettingsSnapshot(),
+                planModeUpdatedAt: updatedAt,
+              });
             }
           },
         });

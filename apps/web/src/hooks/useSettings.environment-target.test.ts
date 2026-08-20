@@ -48,6 +48,7 @@ vi.mock("@effect/atom-react", () => ({
           }
         : {
             planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
 }));
@@ -95,6 +96,7 @@ vi.mock("~/state/use-atom-command", () => ({
 
 import {
   __resetClientSettingsPersistenceForTests,
+  SyncedPlanModeEnvironmentSync,
   useEnvironmentSettings,
   useUpdateEnvironmentSettings,
 } from "./useSettings";
@@ -111,6 +113,7 @@ describe("useUpdateEnvironmentSettings", () => {
       }) =>
         AsyncResult.success({
           planModeEnabled: target.input.patch.planModeEnabled,
+          updatedAtByField: { planModeEnabled: target.input.updatedAt },
           updatedAt: target.input.updatedAt,
         }),
     );
@@ -134,6 +137,7 @@ describe("useUpdateEnvironmentSettings", () => {
     expect(testState.patchPreferences).toHaveBeenCalledWith({
       environmentId: secondaryEnvironmentId,
       input: {
+        commandId: expect.stringMatching(/^client-preferences:/u),
         patch: { planModeEnabled: true },
         updatedAt: expect.any(String),
       },
@@ -172,9 +176,12 @@ describe("useUpdateEnvironmentSettings", () => {
       .mockImplementationOnce(async (target) =>
         AsyncResult.success({
           planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: target.input.updatedAt },
           updatedAt: target.input.updatedAt,
         }),
       );
+    hooks.beginRender();
+    SyncedPlanModeEnvironmentSync({ environmentId: secondaryEnvironmentId });
     hooks.beginRender();
     useEnvironmentSettings(secondaryEnvironmentId);
     hooks.beginRender();

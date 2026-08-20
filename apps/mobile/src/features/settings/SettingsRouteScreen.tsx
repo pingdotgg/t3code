@@ -35,7 +35,7 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { usePlanModeEnabled } from "../threads/use-plan-mode-enabled";
+import { useLegacyPlanModeEnabled } from "../threads/use-legacy-plan-mode-enabled";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
   type AppUpdateCheckState,
@@ -553,7 +553,7 @@ function GeneralSettingsSection() {
 function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const updatePlanModePreference = useUpdatePlanModePreference();
-  const planModeEnabled = usePlanModeEnabled();
+  const planModeEnabled = useLegacyPlanModeEnabled();
   const threadListV2Enabled = useThreadListV2Enabled();
 
   return (

@@ -28,6 +28,7 @@ describe("synced plan mode", () => {
         clientValue: false,
         serverPreferences: {
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
         seedPending: false,
@@ -45,10 +46,7 @@ describe("synced plan mode", () => {
       resolveSyncedPlanModeHydrationAction({
         clientHydrated: true,
         clientValue: true,
-        serverPreferences: {
-          appearanceMode: "dark",
-          updatedAt: "2026-08-14T12:00:00.000Z",
-        },
+        serverPreferences: undefined,
         seedPending: false,
         now: "2026-08-14T11:00:00.000Z",
       }),
@@ -74,36 +72,17 @@ describe("synced plan mode", () => {
         value: false,
         serverPreferences: {
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
         now: "2026-08-14T12:01:00.000Z",
       }),
     ).toEqual({
-      clientPatch: { planModeEnabled: false },
       request: {
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
         patch: { planModeEnabled: false },
         updatedAt: "2026-08-14T12:01:00.000Z",
       },
-    });
-  });
-
-  it("advances writes from the plan clock instead of a newer appearance clock", () => {
-    expect(
-      createSyncedPlanModeWrite({
-        value: false,
-        serverPreferences: {
-          planModeEnabled: true,
-          appearanceMode: "dark",
-          updatedAtByField: {
-            planModeEnabled: "2026-08-14T12:00:00.000Z",
-            appearanceMode: "2026-08-14T13:00:00.000Z",
-          },
-          updatedAt: "2026-08-14T13:00:00.000Z",
-        },
-        now: "2026-08-14T12:30:00.000Z",
-      }),
-    ).toMatchObject({
-      request: { updatedAt: "2026-08-14T12:30:00.000Z" },
     });
   });
 
@@ -114,6 +93,7 @@ describe("synced plan mode", () => {
         clientValue: false,
         serverPreferences: {
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
         seedPending: false,
@@ -126,7 +106,7 @@ describe("synced plan mode", () => {
     ).toEqual({ type: "none" });
   });
 
-  it("keeps divergent values stable across primary and secondary synchronization", async () => {
+  it("reconciles a divergent secondary environment to the primary preference", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const secondaryEnvironmentId = EnvironmentId.make("secondary");
     const controller = createSyncedPlanModeHydrationController();
@@ -140,6 +120,7 @@ describe("synced plan mode", () => {
     const patch = vi.fn(async () =>
       AsyncResult.success({
         planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
         updatedAt: "2026-08-14T12:00:00.000Z",
       }),
     );
@@ -157,6 +138,7 @@ describe("synced plan mode", () => {
           live: true,
           serverPreferences: {
             planModeEnabled: true,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
           canPatch: true,
@@ -175,6 +157,7 @@ describe("synced plan mode", () => {
           live: true,
           serverPreferences: {
             planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:02:00.000Z" },
             updatedAt: "2026-08-14T12:02:00.000Z",
           },
           canPatch: true,
@@ -189,7 +172,15 @@ describe("synced plan mode", () => {
 
     expect(localValue).toBe(true);
     expect(persisted).toEqual([true]);
-    expect(patch).not.toHaveBeenCalled();
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch).toHaveBeenCalledWith({
+      environmentId: secondaryEnvironmentId,
+      input: {
+        commandId: "client-preferences:2026-08-14T12:02:00.001Z",
+        patch: { planModeEnabled: true },
+        updatedAt: "2026-08-14T12:02:00.001Z",
+      },
+    });
   });
 
   it("settles a pending write from an older canonical ack without re-patching", async () => {
@@ -201,10 +192,12 @@ describe("synced plan mode", () => {
     };
     const canonical = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:30.000Z" },
       updatedAt: "2026-08-14T12:00:30.000Z",
     } as const;
     const previous = {
       planModeEnabled: true,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const patch = vi.fn(async () => AsyncResult.success(canonical));
@@ -271,6 +264,7 @@ describe("synced plan mode", () => {
     const patch = vi.fn(async () =>
       AsyncResult.success({
         planModeEnabled: false,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
         updatedAt: "2026-08-14T12:00:00.000Z",
       }),
     );
@@ -316,6 +310,7 @@ describe("synced plan mode", () => {
       live: true,
       serverPreferences: {
         planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
         updatedAt: "2026-08-14T12:00:00.000Z",
       },
       canPatch: false,
@@ -333,11 +328,13 @@ describe("synced plan mode", () => {
     const controller = createSyncedPlanModeHydrationController();
     const previous = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const patch = vi.fn(async (target) =>
       AsyncResult.success({
         planModeEnabled: target.input.patch.planModeEnabled,
+        updatedAtByField: { planModeEnabled: target.input.updatedAt },
         updatedAt: target.input.updatedAt,
       }),
     );
@@ -368,6 +365,95 @@ describe("synced plan mode", () => {
     expect(patch).toHaveBeenCalledWith({
       environmentId: primaryEnvironmentId,
       input: {
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
+        patch: { planModeEnabled: true },
+        updatedAt: "2026-08-14T12:01:00.000Z",
+      },
+    });
+  });
+
+  it("restores a durable offline write after the controller restarts", async () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const previous = {
+      planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    let persistedUpdatedAt: string | undefined;
+    createSyncedPlanModeHydrationController().write({
+      environmentId: primaryEnvironmentId,
+      value: true,
+      serverPreferences: previous,
+      canPatch: false,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist: vi.fn(),
+      persistUpdatedAt: (updatedAt) => {
+        persistedUpdatedAt = updatedAt;
+      },
+    });
+
+    const patch = vi.fn(async (target) =>
+      AsyncResult.success({
+        planModeEnabled: target.input.patch.planModeEnabled,
+        updatedAtByField: { planModeEnabled: target.input.updatedAt },
+        updatedAt: target.input.updatedAt,
+      }),
+    );
+    createSyncedPlanModeHydrationController().synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: true,
+      clientUpdatedAt: persistedUpdatedAt,
+      live: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: "2026-08-14T12:02:00.000Z",
+      patch,
+      persist: vi.fn(),
+    });
+    await Promise.resolve();
+
+    expect(patch).toHaveBeenCalledWith({
+      environmentId: primaryEnvironmentId,
+      input: {
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
+        patch: { planModeEnabled: true },
+        updatedAt: "2026-08-14T12:01:00.000Z",
+      },
+    });
+  });
+
+  it("seeds a missing secondary environment from the global preference", async () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const secondaryEnvironmentId = EnvironmentId.make("secondary");
+    const patch = vi.fn(async (target) =>
+      AsyncResult.success({
+        planModeEnabled: target.input.patch.planModeEnabled,
+        updatedAtByField: { planModeEnabled: target.input.updatedAt },
+        updatedAt: target.input.updatedAt,
+      }),
+    );
+
+    createSyncedPlanModeHydrationController().synchronize({
+      environmentId: secondaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: true,
+      live: true,
+      serverPreferences: undefined,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist: vi.fn(),
+    });
+    await Promise.resolve();
+
+    expect(patch).toHaveBeenCalledWith({
+      environmentId: secondaryEnvironmentId,
+      input: {
+        commandId: "client-preferences:2026-08-14T12:01:00.000Z",
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:01:00.000Z",
       },
@@ -383,6 +469,7 @@ describe("synced plan mode", () => {
     });
     const previous = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const patch = vi
@@ -391,6 +478,7 @@ describe("synced plan mode", () => {
       .mockImplementation(async (target) =>
         AsyncResult.success({
           planModeEnabled: target.input.patch.planModeEnabled,
+          updatedAtByField: { planModeEnabled: target.input.updatedAt },
           updatedAt: target.input.updatedAt,
         }),
       );
@@ -437,6 +525,7 @@ describe("synced plan mode", () => {
     });
     const previous = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
@@ -474,7 +563,7 @@ describe("synced plan mode", () => {
     controller.reset();
   });
 
-  it("resets an exhausted retry budget only for a new write", async () => {
+  it("resets an exhausted retry budget after reconnecting", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const scheduledRetries: Array<() => void> = [];
     const controller = createSyncedPlanModeHydrationController((retry) => {
@@ -483,6 +572,7 @@ describe("synced plan mode", () => {
     });
     const previous = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
@@ -523,14 +613,14 @@ describe("synced plan mode", () => {
 
     expect(patch).toHaveBeenCalledTimes(3);
 
-    controller.write({
-      environmentId: primaryEnvironmentId,
-      value: false,
-      serverPreferences: previous,
-      canPatch: true,
+    controller.synchronize({
+      ...hydrationInput,
+      live: false,
       now: "2026-08-14T12:03:00.000Z",
-      patch,
-      persist: hydrationInput.persist,
+    });
+    controller.synchronize({
+      ...hydrationInput,
+      now: "2026-08-14T12:04:00.000Z",
     });
     await Promise.resolve();
 
@@ -557,6 +647,7 @@ describe("synced plan mode", () => {
       .mockResolvedValue(
         AsyncResult.success({
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:02:00.000Z" },
           updatedAt: "2026-08-14T12:02:00.000Z",
         }),
       );
@@ -586,6 +677,7 @@ describe("synced plan mode", () => {
         primaryEnvironmentId: nextPrimaryEnvironmentId,
         serverPreferences: {
           planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:01:00.000Z" },
           updatedAt: "2026-08-14T12:01:00.000Z",
         },
       },
@@ -644,6 +736,7 @@ describe("synced plan mode", () => {
             clientValue: false,
             serverPreferences: {
               planModeEnabled: false,
+              updatedAtByField: { planModeEnabled: "2026-08-14T12:01:00.000Z" },
               updatedAt: "2026-08-14T12:01:00.000Z",
             },
           },
@@ -654,6 +747,7 @@ describe("synced plan mode", () => {
       resolvePatch(
         AsyncResult.success({
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
           updatedAt: "2026-08-14T12:00:00.000Z",
         }),
       );
@@ -669,10 +763,12 @@ describe("synced plan mode", () => {
     const controller = createSyncedPlanModeHydrationController();
     const previous = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const stale = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:01:00.000Z" },
       updatedAt: "2026-08-14T12:01:00.000Z",
     } as const;
     let resolvePatch!: (
@@ -717,6 +813,7 @@ describe("synced plan mode", () => {
     resolvePatch(
       AsyncResult.success({
         planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:02:00.000Z" },
         updatedAt: "2026-08-14T12:02:00.000Z",
       }),
     );
@@ -747,6 +844,7 @@ describe("synced plan mode", () => {
     const controller = createSyncedPlanModeHydrationController();
     const previous = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     let resolvePatch!: (
@@ -788,6 +886,7 @@ describe("synced plan mode", () => {
     resolvePatch(
       AsyncResult.success({
         planModeEnabled: false,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:02:00.000Z" },
         updatedAt: "2026-08-14T12:02:00.000Z",
       }),
     );
@@ -807,6 +906,7 @@ describe("synced plan mode", () => {
     const controller = createSyncedPlanModeHydrationController();
     const previous = {
       planModeEnabled: false,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const targets: Array<Parameters<SyncedPlanModeHydrationInput<never>["patch"]>[0]> = [];
@@ -857,11 +957,19 @@ describe("synced plan mode", () => {
       "2026-08-14T12:00:00.002Z",
     ]);
     resolvePatches[1]?.(
-      AsyncResult.success({ planModeEnabled: false, updatedAt: targets[1]!.input.updatedAt }),
+      AsyncResult.success({
+        planModeEnabled: false,
+        updatedAtByField: { planModeEnabled: targets[1]!.input.updatedAt },
+        updatedAt: targets[1]!.input.updatedAt,
+      }),
     );
     await Promise.resolve();
     resolvePatches[0]?.(
-      AsyncResult.success({ planModeEnabled: true, updatedAt: targets[0]!.input.updatedAt }),
+      AsyncResult.success({
+        planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: targets[0]!.input.updatedAt },
+        updatedAt: targets[0]!.input.updatedAt,
+      }),
     );
     await Promise.resolve();
 
@@ -906,13 +1014,21 @@ describe("synced plan mode", () => {
     });
 
     resolvePatches[0]?.(
-      AsyncResult.success({ planModeEnabled: false, updatedAt: targets[0]!.input.updatedAt }),
+      AsyncResult.success({
+        planModeEnabled: false,
+        updatedAtByField: { planModeEnabled: targets[0]!.input.updatedAt },
+        updatedAt: targets[0]!.input.updatedAt,
+      }),
     );
     await Promise.resolve();
     expect(persisted).toEqual([]);
 
     resolvePatches[1]?.(
-      AsyncResult.success({ planModeEnabled: true, updatedAt: targets[1]!.input.updatedAt }),
+      AsyncResult.success({
+        planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: targets[1]!.input.updatedAt },
+        updatedAt: targets[1]!.input.updatedAt,
+      }),
     );
     await Promise.resolve();
     expect(persisted).toEqual([true]);
@@ -921,6 +1037,7 @@ describe("synced plan mode", () => {
   it("keeps the synced preference atom stable across thread-only shell updates", () => {
     const preferences = {
       planModeEnabled: true,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const shellStateAtom = Atom.make<EnvironmentShellState>({
@@ -1029,7 +1146,11 @@ describe("mergeEnvironmentSettings", () => {
     const settings = mergeEnvironmentSettings(
       DEFAULT_SERVER_SETTINGS,
       { ...DEFAULT_CLIENT_SETTINGS, planModeEnabled: false },
-      { planModeEnabled: true, updatedAt: "2026-08-14T12:00:00.000Z" },
+      {
+        planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
     );
 
     expect(settings.planModeEnabled).toBe(true);
@@ -1039,7 +1160,11 @@ describe("mergeEnvironmentSettings", () => {
     const settings = mergeEnvironmentSettings(
       DEFAULT_SERVER_SETTINGS,
       { ...DEFAULT_CLIENT_SETTINGS, planModeEnabled: false },
-      { planModeEnabled: true, updatedAt: "2026-08-14T12:00:00.000Z" },
+      {
+        planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      },
       false,
     );
 

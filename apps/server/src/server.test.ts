@@ -5990,9 +5990,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const canonicalPreferences = {
         planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
         updatedAt: "2026-08-14T12:00:00.000Z",
       } as const;
       let patchedEvent: OrchestrationEvent | null = null;
+      const dispatchedCommandIds: CommandId[] = [];
 
       yield* buildAppUnderTest({
         layers: {
@@ -6000,6 +6002,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             dispatch: (command) =>
               Effect.sync(() => {
                 if (command.type === "client-preferences.patch") {
+                  dispatchedCommandIds.push(command.commandId);
                   patchedEvent = {
                     sequence: 1,
                     eventId: EventId.make("event-client-preferences-patched"),
@@ -6033,11 +6036,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const ack = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.syncedClientPreferencesPatch]({
+            commandId: CommandId.make("client-preferences:replay"),
             patch: { planModeEnabled: true },
             updatedAt: canonicalPreferences.updatedAt,
           }),
         ),
       );
+      assert.deepEqual(dispatchedCommandIds, ["client-preferences:replay"]);
       const legacyItems = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.subscribeShell]({

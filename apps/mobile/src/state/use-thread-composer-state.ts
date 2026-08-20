@@ -44,8 +44,8 @@ import { useThreadOutboxMessages } from "./use-thread-outbox";
 import {
   resolveComposerEnqueueInteractionMode,
   resolveComposerInteractionMode,
-} from "../features/threads/plan-mode";
-import { usePlanModePreferenceState } from "../features/threads/use-plan-mode-enabled";
+} from "../features/threads/legacy-plan-mode";
+import { useLegacyPlanModeState } from "../features/threads/use-legacy-plan-mode-enabled";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -83,8 +83,7 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
-  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } =
-    usePlanModePreferenceState();
+  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
 
   useEffect(() => {
     ensureComposerDraftsLoaded();

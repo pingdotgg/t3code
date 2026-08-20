@@ -1566,28 +1566,13 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.syncedClientPreferencesGet]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.syncedClientPreferencesGet,
-            projectionSnapshotQuery.getSyncedClientPreferences().pipe(
-              Effect.map((preferences) => preferences ?? null),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetSnapshotError({
-                    message: "Failed to load synced client preferences",
-                    cause,
-                  }),
-              ),
-            ),
-            { "rpc.aggregate": "client-preferences" },
-          ),
-        [WS_METHODS.syncedClientPreferencesPatch]: ({ patch, updatedAt }) =>
+        [WS_METHODS.syncedClientPreferencesPatch]: ({ commandId, patch, updatedAt }) =>
           observeRpcEffect(
             WS_METHODS.syncedClientPreferencesPatch,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand({
                 type: "client-preferences.patch",
-                commandId: yield* serverCommandId("client-preferences-patch"),
+                commandId,
                 patch,
                 updatedAt,
               });
@@ -1738,6 +1723,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.pullRequestsActivity, pullRequests.activity(input), {
             "rpc.aggregate": "pull-requests",
           }),
+        [WS_METHODS.pullRequestsThreadComments]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsThreadComments,
+            pullRequests.threadComments(input),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsDiffFileContents,

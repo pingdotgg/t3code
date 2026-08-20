@@ -215,34 +215,10 @@ export function projectEvent(
         "payload",
       ).pipe(
         Effect.map((payload) => {
-          const current =
-            nextBase.syncedClientPreferences === undefined
-              ? undefined
-              : {
-                  ...nextBase.syncedClientPreferences,
-                  updatedAtByField: {
-                    planModeEnabled:
-                      nextBase.syncedClientPreferences.updatedAtByField?.planModeEnabled ??
-                      nextBase.syncedClientPreferences.updatedAt,
-                    appearanceMode:
-                      nextBase.syncedClientPreferences.updatedAtByField?.appearanceMode ??
-                      nextBase.syncedClientPreferences.updatedAt,
-                    themeId:
-                      nextBase.syncedClientPreferences.updatedAtByField?.themeId ??
-                      nextBase.syncedClientPreferences.updatedAt,
-                  },
-                };
+          const current = nextBase.syncedClientPreferences;
           const appliesPlanMode =
             payload.patch.planModeEnabled !== undefined &&
             (getSyncedClientPreferenceUpdatedAt(current, "planModeEnabled") ?? payload.updatedAt) <=
-              payload.updatedAt;
-          const appliesAppearanceMode =
-            payload.patch.appearanceMode !== undefined &&
-            (getSyncedClientPreferenceUpdatedAt(current, "appearanceMode") ?? payload.updatedAt) <=
-              payload.updatedAt;
-          const appliesThemeId =
-            payload.patch.themeId !== undefined &&
-            (getSyncedClientPreferenceUpdatedAt(current, "themeId") ?? payload.updatedAt) <=
               payload.updatedAt;
           return {
             ...nextBase,
@@ -250,15 +226,9 @@ export function projectEvent(
             syncedClientPreferences: {
               ...current,
               ...(appliesPlanMode ? { planModeEnabled: payload.patch.planModeEnabled } : undefined),
-              ...(appliesAppearanceMode
-                ? { appearanceMode: payload.patch.appearanceMode }
-                : undefined),
-              ...(appliesThemeId ? { themeId: payload.patch.themeId } : undefined),
               updatedAtByField: {
                 ...current?.updatedAtByField,
                 ...(appliesPlanMode ? { planModeEnabled: payload.updatedAt } : undefined),
-                ...(appliesAppearanceMode ? { appearanceMode: payload.updatedAt } : undefined),
-                ...(appliesThemeId ? { themeId: payload.updatedAt } : undefined),
               },
               updatedAt:
                 current !== undefined && current.updatedAt > payload.updatedAt

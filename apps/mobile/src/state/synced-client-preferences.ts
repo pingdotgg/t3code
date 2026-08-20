@@ -1,10 +1,14 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
   getSyncedClientPreferenceUpdatedAt,
+  type EnvironmentId,
+  type SyncedClientPreferences,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentShell } from "./shell";
@@ -25,40 +29,111 @@ import {
   hasPlanModePreferenceReconciliationAttempted,
   isPlanModePreferenceReconciliationReady,
   reconcilePlanModePreferences,
+  resolvePlanModeLocalPatchPersistence,
+  shouldPreservePlanModeLocalValue,
 } from "./synced-client-preferences-model";
+
+interface EnvironmentPreferenceShellSlice {
+  readonly shellStatus: EnvironmentShellStatus;
+  readonly preferences: SyncedClientPreferences | undefined;
+}
+
+const environmentPreferenceShellSliceAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previous: EnvironmentPreferenceShellSlice | undefined;
+  return Atom.make((get) => {
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    const preferences =
+      shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
+    if (previous?.shellStatus === shell.status && previous.preferences === preferences) {
+      return previous;
+    }
+    previous = { shellStatus: shell.status, preferences };
+    return previous;
+  });
+});
+
+const environmentCanPatchPreferencesAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previous = false;
+  return Atom.make((get) => {
+    const session = get(environmentSession.sessionStateValueAtom(environmentId));
+    const next =
+      session?.authenticated === true &&
+      session.scopes?.includes(AuthOrchestrationOperateScope) === true;
+    if (next === previous) return previous;
+    previous = next;
+    return previous;
+  });
+});
+
+interface ConnectedEnvironmentPreferenceState {
+  readonly environmentId: EnvironmentId;
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly shellStatus: EnvironmentShellStatus;
+  readonly preferences: SyncedClientPreferences | undefined;
+  readonly canPatch: boolean;
+}
+
+let previousConnectedEnvironmentPreferenceStates:
+  | {
+      readonly connectionsLoaded: boolean;
+      readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+      readonly reconciliationKey: string;
+      readonly states: ReadonlyArray<ConnectedEnvironmentPreferenceState>;
+    }
+  | undefined;
 
 const connectedEnvironmentPreferenceStatesAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   const presentations = get(environmentPresentations.presentationsAtom);
   const states = [...presentations.entries()].map(([environmentId, presentation]) => {
-    const shell = get(environmentShell.stateValueAtom(environmentId));
-    const session = get(environmentSession.sessionStateValueAtom(environmentId));
+    const shell = get(environmentPreferenceShellSliceAtom(environmentId));
     return {
       environmentId,
       connectionState: presentation.connection.phase,
-      shell,
-      canPatch:
-        session?.authenticated === true &&
-        session.scopes?.includes(AuthOrchestrationOperateScope) === true,
+      shellStatus: shell.shellStatus,
+      preferences: shell.preferences,
+      canPatch: get(environmentCanPatchPreferencesAtom(environmentId)),
     };
   });
   const reconciliationKey = createPlanModePreferenceReconciliationKey(
-    states.map(({ environmentId, connectionState, shell }) => ({
+    states.map(({ environmentId, connectionState, shellStatus, preferences }) => ({
       environmentId,
       connectionState,
-      shellStatus: shell.status,
-      preferences:
-        shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
+      shellStatus,
+      preferences,
     })),
   );
-  return {
+  const connectedEnvironmentIds = states
+    .filter((state) => state.connectionState === "connected" && state.canPatch)
+    .map((state) => state.environmentId);
+  const next = {
     connectionsLoaded: catalog.isReady,
-    connectedEnvironmentIds: states
-      .filter((state) => state.connectionState === "connected" && state.canPatch)
-      .map((state) => state.environmentId),
+    connectedEnvironmentIds,
     reconciliationKey,
     states,
   } as const;
+  const previous = previousConnectedEnvironmentPreferenceStates;
+  if (
+    previous !== undefined &&
+    previous.connectionsLoaded === next.connectionsLoaded &&
+    previous.reconciliationKey === next.reconciliationKey &&
+    previous.states.length === next.states.length &&
+    previous.states.every((state, index) => {
+      const candidate = next.states[index];
+      return (
+        candidate !== undefined &&
+        state.environmentId === candidate.environmentId &&
+        state.connectionState === candidate.connectionState &&
+        state.shellStatus === candidate.shellStatus &&
+        state.preferences === candidate.preferences &&
+        state.canPatch === candidate.canPatch
+      );
+    })
+  ) {
+    return previous;
+  }
+  previousConnectedEnvironmentPreferenceStates = next;
+  return next;
 }).pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:connected-environment-states"));
 
 function useConnectedEnvironmentPreferenceStates() {
@@ -98,19 +173,19 @@ export function useSyncedClientPreferences(): void {
     () => createPlanModePreferenceReconciliationController(),
     [],
   );
+  const attemptedLocalPatchKeyRef = useRef<string | null>(null);
 
   useEffect(() => () => reconciliationController.reset(), [reconciliationController]);
 
   useEffect(() => {
     const liveStates = states.filter(
-      ({ connectionState, shell }) => connectionState === "connected" && shell.status === "live",
+      ({ connectionState, shellStatus }) =>
+        connectionState === "connected" && shellStatus === "live",
     );
     reconciliationController.setActiveEnvironmentIds(
       liveStates.filter(({ canPatch }) => canPatch).map(({ environmentId }) => environmentId),
     );
-    for (const { environmentId, shell } of liveStates) {
-      const preferences =
-        shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
+    for (const { environmentId, preferences } of liveStates) {
       reconciliationController.observe(
         environmentId,
         preferences?.planModeEnabled,
@@ -131,9 +206,9 @@ export function useSyncedClientPreferences(): void {
     }
     if (!AsyncResult.isSuccess(preferencesResult)) return;
     const reconciliationAttempted = hasPlanModePreferenceReconciliationAttempted(
-      states.map(({ connectionState, shell }) => ({
+      states.map(({ connectionState, shellStatus }) => ({
         connectionState,
-        shellStatus: shell.status,
+        shellStatus,
       })),
     );
     if (!reconciliationAttempted) return;
@@ -148,15 +223,25 @@ export function useSyncedClientPreferences(): void {
       localUpdatedAt:
         preferencesResult.value.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
         preferencesResult.value.syncedClientPreferencesUpdatedAt,
-      environments: liveStates.map(({ environmentId, shell, canPatch }) => ({
+      environments: liveStates.map(({ environmentId, preferences, canPatch }) => ({
         environmentId,
         canPatch,
-        preferences:
-          shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
+        preferences,
       })),
       now: new Date().toISOString(),
+      preserveLocalOnEqualStamp: shouldPreservePlanModeLocalValue({
+        currentKey: reconciliationKey,
+        appliedKey: reconciledKey,
+      }),
     });
-    if (reconciliation.localPatch !== null) savePreferences(reconciliation.localPatch);
+    const localPersistence = resolvePlanModeLocalPatchPersistence({
+      attemptedKey: attemptedLocalPatchKeyRef.current,
+      localPatch: reconciliation.localPatch,
+    });
+    attemptedLocalPatchKeyRef.current = localPersistence.nextAttemptedKey;
+    if (localPersistence.shouldPersist && reconciliation.localPatch !== null) {
+      savePreferences(reconciliation.localPatch);
+    }
     for (const target of reconciliation.environmentPatches) {
       reconciliationController.reconcile({
         target,
@@ -201,9 +286,7 @@ export function useUpdatePlanModePreference() {
         connectedEnvironmentIds,
         currentUpdatedAtByField: current.syncedClientPreferencesUpdatedAtByField,
         legacyCurrentUpdatedAt: current.syncedClientPreferencesUpdatedAt,
-        authoritativePreferences: states.map(({ shell }) =>
-          shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
-        ),
+        authoritativePreferences: states.map(({ preferences }) => preferences),
         now: new Date().toISOString(),
       });
       savePreferences(write.localPatch);

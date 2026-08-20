@@ -2,10 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime } from "./baseSchemas.ts";
-
-export const SyncedClientAppearanceMode = Schema.Literals(["system", "light", "dark"]);
-export type SyncedClientAppearanceMode = typeof SyncedClientAppearanceMode.Type;
+import { CommandId, IsoDateTime } from "./baseSchemas.ts";
 
 const SyncedClientPreferencesUpdatedAtPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 export const SyncedClientPreferencesUpdatedAt = IsoDateTime.check(
@@ -32,30 +29,20 @@ export function nextSyncedClientPreferencesUpdatedAt(
 
 const SyncedClientPreferenceFields = {
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
-  appearanceMode: Schema.optionalKey(SyncedClientAppearanceMode),
-  themeId: Schema.optionalKey(Schema.String),
 } as const;
 
-export const SYNCED_CLIENT_PREFERENCE_FIELDS = [
-  "planModeEnabled",
-  "appearanceMode",
-  "themeId",
-] as const;
+export const SYNCED_CLIENT_PREFERENCE_FIELDS = ["planModeEnabled"] as const;
 export type SyncedClientPreferenceField = (typeof SYNCED_CLIENT_PREFERENCE_FIELDS)[number];
 
 export const SyncedClientPreferencesUpdatedAtByField = Schema.Struct({
   planModeEnabled: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
-  appearanceMode: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
-  themeId: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
 });
 export type SyncedClientPreferencesUpdatedAtByField =
   typeof SyncedClientPreferencesUpdatedAtByField.Type;
 
 export const SyncedClientPreferences = Schema.Struct({
   ...SyncedClientPreferenceFields,
-  // Optional while mixed-version clients may still receive aggregate-only snapshots.
-  updatedAtByField: Schema.optionalKey(SyncedClientPreferencesUpdatedAtByField),
-  // Retained as the maximum field stamp so older clients can decode current snapshots.
+  updatedAtByField: SyncedClientPreferencesUpdatedAtByField,
   updatedAt: SyncedClientPreferencesUpdatedAt,
 });
 export type SyncedClientPreferences = typeof SyncedClientPreferences.Type;
@@ -65,24 +52,20 @@ export function getSyncedClientPreferenceUpdatedAt(
   field: SyncedClientPreferenceField,
 ): SyncedClientPreferencesUpdatedAt | undefined {
   if (preferences?.[field] === undefined) return undefined;
-  return preferences.updatedAtByField?.[field] ?? preferences.updatedAt;
+  return preferences.updatedAtByField[field];
 }
 
 export const SyncedClientPreferencesPatch = Schema.Struct(SyncedClientPreferenceFields).check(
   Schema.makeFilter(
     (patch) =>
       patch.planModeEnabled !== undefined ||
-      patch.appearanceMode !== undefined ||
-      patch.themeId !== undefined ||
       "Synced client preferences patch must include at least one supported preference.",
   ),
 );
 export type SyncedClientPreferencesPatch = typeof SyncedClientPreferencesPatch.Type;
 
-export const GetSyncedClientPreferencesRequest = Schema.Struct({});
-export type GetSyncedClientPreferencesRequest = typeof GetSyncedClientPreferencesRequest.Type;
-
 export const PatchSyncedClientPreferencesRequest = Schema.Struct({
+  commandId: CommandId,
   patch: SyncedClientPreferencesPatch,
   updatedAt: SyncedClientPreferencesUpdatedAt,
 });

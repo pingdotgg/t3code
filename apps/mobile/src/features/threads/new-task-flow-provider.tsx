@@ -81,8 +81,8 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveComposerInteractionMode } from "./plan-mode";
-import { usePlanModePreferenceState } from "./use-plan-mode-enabled";
+import { resolveComposerInteractionMode } from "./legacy-plan-mode";
+import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -196,8 +196,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
-  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } =
-    usePlanModePreferenceState();
+  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
   const projectScopes = useMemo(
     () =>
       sortHomeProjectScopes({

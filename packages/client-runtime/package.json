@@ -35,6 +35,14 @@
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
     },
+    "./providerSkills": {
+      "types": "./src/providerSkills.ts",
+      "default": "./src/providerSkills.ts"
+    },
+    "./synced-client-preferences": {
+      "types": "./src/syncedClientPreferences.ts",
+      "default": "./src/syncedClientPreferences.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
