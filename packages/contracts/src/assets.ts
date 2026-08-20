@@ -90,7 +90,7 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedErrorClass<Ass
   },
 ) {
   override get message(): string {
-    return "Only browser documents and images can be previewed.";
+    return "Only browser documents, images, and supported 3D models can be previewed.";
   }
 }
 

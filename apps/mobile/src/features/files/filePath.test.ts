@@ -2,9 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isBrowserPreviewFile,
+  isGlbPreviewFile,
   isImagePreviewFile,
   isSvgImagePreviewFile,
   resolveWorkspaceRelativeFilePath,
+  shouldReadWorkspaceFileContents,
 } from "./filePath";
 
 describe("resolveWorkspaceRelativeFilePath", () => {
@@ -34,10 +36,19 @@ describe("file preview types", () => {
     expect(isImagePreviewFile("assets/icon.png")).toBe(true);
     expect(isImagePreviewFile("assets/diagram.SVG?raw=1")).toBe(true);
     expect(isImagePreviewFile("src/image.ts")).toBe(false);
+    expect(isGlbPreviewFile("models/robot.GLB")).toBe(true);
+    expect(isGlbPreviewFile("models/robot.gltf")).toBe(false);
   });
 
   it("identifies SVG images that need web rendering", () => {
     expect(isSvgImagePreviewFile("assets/diagram.svg#icon")).toBe(true);
     expect(isSvgImagePreviewFile("assets/photo.png")).toBe(false);
+  });
+
+  it("never reads binary GLBs as source text", () => {
+    expect(shouldReadWorkspaceFileContents("models/robot.glb", "source")).toBe(false);
+    expect(shouldReadWorkspaceFileContents("models/robot.GLB", "preview")).toBe(false);
+    expect(shouldReadWorkspaceFileContents("README.md", "preview")).toBe(true);
+    expect(shouldReadWorkspaceFileContents("src/main.ts", "source")).toBe(true);
   });
 });

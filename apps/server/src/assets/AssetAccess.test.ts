@@ -40,8 +40,10 @@ describe("AssetAccess", () => {
       });
       const htmlPath = path.join(root, "report.html");
       const cssPath = path.join(root, "report.css");
+      const modelPath = path.join(root, "private.glb");
       yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="report.css">');
       yield* fileSystem.writeFileString(cssPath, "body { color: red; }");
+      yield* fileSystem.writeFile(modelPath, new Uint8Array([103, 108, 84, 70]));
       yield* fileSystem.writeFileString(path.join(root, ".env"), "SECRET=value");
       const canonicalHtmlPath = yield* fileSystem.realPath(htmlPath);
       const canonicalCssPath = yield* fileSystem.realPath(cssPath);
@@ -66,6 +68,7 @@ describe("AssetAccess", () => {
         kind: "file",
         path: canonicalCssPath,
       });
+      expect(yield* resolveAsset(token, "private.glb")).toBeNull();
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
@@ -148,26 +151,29 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("issues exact workspace URLs for image previews", () =>
+  it.effect.each([
+    ["image", "icon.png", new Uint8Array([137, 80, 78, 71])],
+    ["3D model", "scene.glb", new Uint8Array([103, 108, 84, 70])],
+  ] as const)("issues exact workspace URLs for %s previews", ([, fileName, contents]) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-asset-image-workspace-",
+        prefix: "t3-asset-exact-workspace-",
       });
       const assetsDirectory = path.join(root, "assets");
-      const imagePath = path.join(assetsDirectory, "icon.png");
-      const siblingPath = path.join(assetsDirectory, "other.png");
+      const previewPath = path.join(assetsDirectory, fileName);
+      const siblingPath = path.join(assetsDirectory, `other${path.extname(fileName)}`);
       yield* fileSystem.makeDirectory(assetsDirectory, { recursive: true });
-      yield* fileSystem.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
-      yield* fileSystem.writeFile(siblingPath, new Uint8Array([137, 80, 78, 71]));
-      const canonicalImagePath = yield* fileSystem.realPath(imagePath);
+      yield* fileSystem.writeFile(previewPath, contents);
+      yield* fileSystem.writeFile(siblingPath, contents);
+      const canonicalPreviewPath = yield* fileSystem.realPath(previewPath);
 
       const result = yield* issueAssetUrl({
         resource: {
           _tag: "workspace-file",
           threadId: ThreadId.make("thread-1"),
-          path: imagePath,
+          path: previewPath,
         },
         workspaceRoot: root,
       });
@@ -175,12 +181,12 @@ describe("AssetAccess", () => {
       const separatorIndex = suffix.indexOf("/");
       const token = suffix.slice(0, separatorIndex);
 
-      expect(yield* resolveAsset(token, "icon.png")).toEqual({
+      expect(yield* resolveAsset(token, fileName)).toEqual({
         kind: "file",
-        path: canonicalImagePath,
+        path: canonicalPreviewPath,
       });
-      expect(yield* resolveAsset(token, "other.png")).toBeNull();
-      expect(yield* resolveAsset(token, "../icon.png")).toBeNull();
+      expect(yield* resolveAsset(token, path.basename(siblingPath))).toBeNull();
+      expect(yield* resolveAsset(token, `../${fileName}`)).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 

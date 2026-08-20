@@ -14,6 +14,7 @@ import {
   AssetWorkspaceRootNormalizationError,
 } from "@t3tools/contracts";
 import {
+  isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
@@ -240,19 +241,22 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
+      // Only browser documents pull in siblings (stylesheets, scripts, fonts); every other preview
+      // format is served as a single file, so new formats stay locked to their own path by default.
+      const servesSiblingAssets = isWorkspaceBrowserPreviewPath(resolved.relativePath);
+      claims = servesSiblingAssets
         ? {
-            version: 1,
-            kind: "workspace-file-exact",
-            workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
-            expiresAt,
-          }
-        : {
             version: 1,
             kind: "workspace-file",
             workspaceRoot: canonicalWorkspaceRoot,
             baseRelativePath: path.dirname(resolved.relativePath),
+            expiresAt,
+          }
+        : {
+            version: 1,
+            kind: "workspace-file-exact",
+            workspaceRoot: canonicalWorkspaceRoot,
+            relativePath: resolved.relativePath,
             expiresAt,
           };
       fileName = path.basename(resolved.relativePath);
