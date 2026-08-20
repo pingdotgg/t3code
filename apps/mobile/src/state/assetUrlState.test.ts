@@ -47,6 +47,30 @@ describe("resolveAssetUrlState", () => {
     ).toEqual({ _tag: "Failure" });
   });
 
+  it("shows loading again while a failed query is retrying", () => {
+    expect(
+      resolveAssetUrlState({
+        httpBaseUrl: "https://environment.example/",
+        requested: true,
+        result: AsyncResult.failure(Cause.fail(new Error("createUrl failed")), {
+          waiting: true,
+        }),
+      }),
+    ).toEqual({ _tag: "Loading" });
+  });
+
+  it("keeps disconnected copy if the environment drops during a retry", () => {
+    expect(
+      resolveAssetUrlState({
+        httpBaseUrl: null,
+        requested: true,
+        result: AsyncResult.failure(Cause.fail(new Error("createUrl failed")), {
+          waiting: true,
+        }),
+      }),
+    ).toEqual({ _tag: "Disconnected" });
+  });
+
   it("resolves a ready asset URL", () => {
     expect(
       resolveAssetUrlState({

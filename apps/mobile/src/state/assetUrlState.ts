@@ -15,6 +15,10 @@ export function resolveAssetUrlState(input: {
   if (!input.requested) {
     return { _tag: "Loading" };
   }
+  // Retry sets waiting while the previous Failure is still on the atom.
+  if (input.result.waiting) {
+    return input.httpBaseUrl === null ? { _tag: "Disconnected" } : { _tag: "Loading" };
+  }
   if (input.result._tag === "Failure") {
     return { _tag: "Failure" };
   }
