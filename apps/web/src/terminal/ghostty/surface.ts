@@ -1112,6 +1112,10 @@ export class GhosttyTerminalSurface {
 
   private readonly onCopyEvent = (event: ClipboardEvent) => {
     const selection = this.hasSelection() ? this.getSelection() : this.input.value;
+    // Menu-role Copy never hits the keydown primer. The native action reads
+    // this.input, so park the current selection first — including when
+    // clipboardData is missing and we must not preventDefault.
+    primeTerminalCopyInput(this.input, selection);
     const result = applyTerminalCopyEvent(selection, event.clipboardData);
     if (result.preventDefault) event.preventDefault();
     if (result.claimWriteFallback) {

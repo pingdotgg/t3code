@@ -259,6 +259,26 @@ describe("applyTerminalCopyEvent", () => {
       claimWriteFallback: false,
     });
   });
+
+  it("primes the current selection before a copy event with no clipboardData", () => {
+    const input = {
+      value: "stale",
+      selectionStart: 0,
+      selectionEnd: 0,
+      select() {
+        this.selectionStart = 0;
+        this.selectionEnd = this.value.length;
+      },
+    };
+    primeTerminalCopyInput(input, "git status");
+    expect(applyTerminalCopyEvent("git status", null)).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+    expect(input.value).toBe("git status");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(10);
+  });
 });
 
 describe("primeTerminalCopyInput", () => {
