@@ -6,7 +6,7 @@ You can think of T3 Code as an open source "bring-your-own-subscription" alterna
 
 ## What makes T3 Code special?
 
-We have over 100,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
+We have over 200,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
 
 ### 1. Open at the core
 
