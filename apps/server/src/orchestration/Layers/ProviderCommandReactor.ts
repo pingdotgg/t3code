@@ -451,12 +451,13 @@ const make = Effect.gen(function* () {
         return input.expectedSessionUpdatedAt === undefined
           ? dispatch.pipe(Effect.asVoid)
           : dispatch.pipe(
-              Effect.catchTag("OrchestrationCommandInvariantError", (error) =>
-                error.commandType === "thread.session.set" &&
-                error.detail === "Command produced no events."
-                  ? Effect.void
-                  : Effect.fail(error),
-              ),
+              Effect.catchTags({
+                OrchestrationCommandInvariantError: (error) =>
+                  error.commandType === "thread.session.set" &&
+                  error.detail === "Command produced no events."
+                    ? Effect.void
+                    : Effect.fail(error),
+              }),
               Effect.asVoid,
             );
       }),
