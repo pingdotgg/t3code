@@ -71,6 +71,10 @@ import {
   resolveKimiAcpBaseModelId,
   type KimiTurnActivity,
 } from "../acp/KimiAcpSupport.ts";
+import {
+  makeKimiAcpTerminalManager,
+  type KimiAcpTerminalManager,
+} from "../acp/KimiAcpTerminalSupport.ts";
 import { type KimiAdapterShape } from "../Services/KimiAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -102,6 +106,7 @@ interface KimiSessionContext {
   session: ProviderSession;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly terminals: KimiAcpTerminalManager;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
@@ -501,6 +506,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
         if (ctx.stopped) return;
         ctx.stopped = true;
         yield* setPromptsInFlight(ctx, 0);
+        yield* ctx.terminals.shutdown;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
@@ -566,6 +572,9 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
+            // Kimi executes shell commands through the ACP client terminal;
+            // chat sessions advertise it and register the handlers below.
+            terminal: true,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession
@@ -599,11 +608,17 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 }),
             ),
           );
+          const terminals = yield* makeKimiAcpTerminalManager({ childProcessSpawner });
           const started = yield* Effect.gen(function* () {
             yield* acp.handleSessionUpdate((notification) => {
               const configOptions = kimiConfigOptionsFromSessionNotification(notification);
               return configOptions ? Ref.set(configOptionsRef, configOptions) : Effect.void;
             });
+            yield* acp.handleCreateTerminal(terminals.handleCreateTerminal);
+            yield* acp.handleTerminalOutput(terminals.handleTerminalOutput);
+            yield* acp.handleTerminalWaitForExit(terminals.handleTerminalWaitForExit);
+            yield* acp.handleTerminalKill(terminals.handleTerminalKill);
+            yield* acp.handleTerminalRelease(terminals.handleTerminalRelease);
             yield* acp.handleRequestPermission((params) =>
               Effect.gen(function* () {
                 yield* logNative(input.threadId, "session/request_permission", params);
@@ -749,6 +764,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             session,
             scope: sessionScope,
             acp,
+            terminals,
             notificationFiber: undefined,
             pendingApprovals,
             configOptionsRef,

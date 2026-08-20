@@ -40,6 +40,13 @@ interface KimiAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly kimiSettings: KimiAcpRuntimeKimiSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
+  /**
+   * Advertise the ACP client terminal capability. Only adapter chat sessions
+   * set this: they register the terminal handlers. Text generation and the
+   * discovery/auth probes must stay `false` because they register none, and
+   * Kimi routes every shell command through the client once advertised.
+   */
+  readonly terminal?: boolean;
 }
 
 export interface KimiTurnActivity {
@@ -199,6 +206,7 @@ export const makeKimiAcpRuntime = (
         ...input,
         spawn: buildKimiAcpSpawnInput(input.kimiSettings, input.cwd, input.environment),
         authMethodId: KIMI_AUTH_METHOD_LOGIN,
+        ...(input.terminal ? { clientCapabilities: { terminal: true } } : {}),
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

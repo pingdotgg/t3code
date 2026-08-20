@@ -39,15 +39,62 @@ const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
 const exitOnPrompt = process.env.T3_ACP_EXIT_ON_PROMPT === "1";
+const terminalCommandJson = process.env.T3_ACP_TERMINAL_COMMAND;
 const sessionId = "mock-kimi-session-1";
 let currentMode = "default";
 let currentModel = "default";
 let currentReasoning = "medium";
 let permissionId = 0;
 const pendingPermissions = new Map();
+let clientRequestId = 0;
+const pendingClientRequests = new Map();
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
+}
+
+function logLine(method, params) {
+  if (requestLogPath) {
+    appendFileSync(requestLogPath, JSON.stringify({ method, params }) + "\n", "utf8");
+  }
+}
+
+function sendClientRequest(method, params) {
+  return new Promise((resolve, reject) => {
+    const id = "client-req-" + String(++clientRequestId);
+    pendingClientRequests.set(id, { resolve, reject });
+    send({ jsonrpc: "2.0", id, method, params });
+  });
+}
+
+async function runTerminalCommandFlow(promptId) {
+  const spec = JSON.parse(terminalCommandJson);
+  try {
+    const created = await sendClientRequest("terminal/create", {
+      sessionId,
+      command: spec.command,
+      args: spec.args ?? [],
+      env: [{ name: "T3_MOCK_TERMINAL_ENV", value: "from-mock-agent" }],
+      ...(spec.outputByteLimit !== undefined ? { outputByteLimit: spec.outputByteLimit } : {}),
+    });
+    const waitResult = await sendClientRequest("terminal/wait_for_exit", {
+      sessionId,
+      terminalId: created.terminalId,
+    });
+    const outputResult = await sendClientRequest("terminal/output", {
+      sessionId,
+      terminalId: created.terminalId,
+    });
+    await sendClientRequest("terminal/release", {
+      sessionId,
+      terminalId: created.terminalId,
+    });
+    logLine("mock/terminal_result", { created, waitResult, outputResult });
+    completePrompt(promptId, "end_turn");
+  } catch (err) {
+    logLine("mock/terminal_error", { message: String(err) });
+    completePrompt(promptId, "end_turn");
+  }
 }
 
 function configOptions() {
@@ -141,6 +188,10 @@ function handleRequest(message) {
       if (exitOnPrompt) {
         process.exit(7);
       }
+      if (terminalCommandJson) {
+        runTerminalCommandFlow(message.id);
+        return;
+      }
       if (!emitToolCalls) {
         completePrompt(message.id, "end_turn");
         return;
@@ -199,9 +250,19 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method) {
     handleRequest(message);
-  } else {
-    handlePermissionResponse(message);
+    return;
   }
+  const pendingClient = pendingClientRequests.get(String(message.id));
+  if (pendingClient) {
+    pendingClientRequests.delete(String(message.id));
+    if (message.error) {
+      pendingClient.reject(new Error(JSON.stringify(message.error)));
+    } else {
+      pendingClient.resolve(message.result);
+    }
+    return;
+  }
+  handlePermissionResponse(message);
 });
 `;
 
@@ -851,6 +912,66 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       });
 
       assert.deepEqual(operations, ["mode:plan", "model:gpt-5.4", "reasoning:high", "prompt"]);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("executes agent terminal commands through the ACP client terminal", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-terminal-execution");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-terminal-exec-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - free-form mock agent fixture config.
+          T3_ACP_TERMINAL_COMMAND: JSON.stringify({
+            command: mockAgentCommand,
+            args: [
+              "-e",
+              "process.stdout.write('terminal says ' + process.env.T3_MOCK_TERMINAL_ENV);process.exit(5)",
+            ],
+          }),
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      yield* startTestSession(adapter, threadId);
+      yield* adapter.sendTurn({ threadId, input: "run the build", attachments: [] });
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+
+      // The chat session's initialize (the one followed by session/new) must
+      // advertise the terminal capability. Probes may log their own
+      // initialize with terminal: false; those must not flip either way.
+      const sessionNewIndex = requests.findIndex((request) => request.method === "session/new");
+      assert.isAtLeast(sessionNewIndex, 0);
+      const sessionInitialize = requests
+        .slice(0, sessionNewIndex)
+        .reverse()
+        .find((request) => request.method === "initialize");
+      const initializeParams = sessionInitialize?.params as
+        | { clientCapabilities?: { terminal?: boolean } }
+        | undefined;
+      assert.strictEqual(initializeParams?.clientCapabilities?.terminal, true);
+
+      assert.isUndefined(requests.find((request) => request.method === "mock/terminal_error"));
+      const result = requests.find((request) => request.method === "mock/terminal_result");
+      const params = result?.params as {
+        created: { terminalId: string };
+        waitResult: Record<string, unknown>;
+        outputResult: { output: string; truncated: boolean; exitStatus?: { exitCode?: number } };
+      };
+      assert.isString(params.created.terminalId);
+      // The wait_for_exit response must carry exitCode at the TOP level and
+      // never a nested exitStatus (Kimi reads the nested shape as exit -1).
+      assert.strictEqual(params.waitResult.exitCode, 5);
+      assert.notProperty(params.waitResult, "exitStatus");
+      assert.include(params.outputResult.output, "terminal says from-mock-agent");
+      assert.isFalse(params.outputResult.truncated);
+      assert.strictEqual(params.outputResult.exitStatus?.exitCode, 5);
 
       yield* adapter.stopSession(threadId);
     }),
