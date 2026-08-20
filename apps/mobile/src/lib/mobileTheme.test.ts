@@ -114,6 +114,17 @@ describe("mobile themes", () => {
       light: imported.id,
       dark: DEFAULT_MOBILE_THEME_ID,
     });
+
+    const lightOnly = parseMobileThemeFile({
+      version: 1,
+      id: "paper-only",
+      name: "Paper Only",
+      appearance: "light",
+      colors: { canvas: "#fff8e7" },
+    });
+    expect(
+      resolveMobileThemeIds({ lightThemeId: lightOnly.id, darkThemeId: lightOnly.id }, [lightOnly]),
+    ).toEqual({ light: lightOnly.id, dark: DEFAULT_MOBILE_THEME_ID });
   });
 
   it("uses the same preview roles and standard artwork as desktop", () => {

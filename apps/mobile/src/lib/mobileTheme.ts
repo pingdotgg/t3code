@@ -66,15 +66,15 @@ export function resolveMobileThemeIds(
   importedThemes: ReadonlyArray<PortableThemeFile> = [],
 ): MobileThemeIds {
   const legacyThemeId = normalizeMobileThemeId(preferences.themeId, importedThemes);
+  const resolveThemeId = (appearance: MobileThemeAppearance, value: string | undefined) => {
+    const themeId = normalizeMobileThemeId(value ?? legacyThemeId, importedThemes);
+    return mobileThemeHasAppearance(themeId, appearance, importedThemes)
+      ? themeId
+      : DEFAULT_MOBILE_THEME_ID;
+  };
   return {
-    light:
-      preferences.lightThemeId === undefined
-        ? legacyThemeId
-        : normalizeMobileThemeId(preferences.lightThemeId, importedThemes),
-    dark:
-      preferences.darkThemeId === undefined
-        ? legacyThemeId
-        : normalizeMobileThemeId(preferences.darkThemeId, importedThemes),
+    light: resolveThemeId("light", preferences.lightThemeId),
+    dark: resolveThemeId("dark", preferences.darkThemeId),
   };
 }
 
