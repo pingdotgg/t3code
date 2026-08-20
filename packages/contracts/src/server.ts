@@ -658,15 +658,31 @@ export const ServerProviderSkillInventoryResult = Schema.Struct({
 });
 export type ServerProviderSkillInventoryResult = typeof ServerProviderSkillInventoryResult.Type;
 
+export const ServerProviderSkillInventoryFailure = Schema.Literals([
+  "unknown_instance",
+  "unknown_project",
+  "unknown_thread",
+  "unresolvable_workspace",
+  "project_read_model_unavailable",
+  "thread_read_model_unavailable",
+]);
+export type ServerProviderSkillInventoryFailure = typeof ServerProviderSkillInventoryFailure.Type;
+
 export class ServerProviderSkillInventoryError extends Schema.TaggedErrorClass<ServerProviderSkillInventoryError>()(
   "ServerProviderSkillInventoryError",
   {
-    reason: TrimmedNonEmptyString,
+    failure: ServerProviderSkillInventoryFailure,
+    instanceId: ProviderInstanceId,
+    scope: ServerProviderSkillInventoryScope,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Provider skill inventory failed: ${this.reason}`;
+    const scope =
+      this.scope.kind === "project"
+        ? `project '${this.scope.projectId}'`
+        : `thread '${this.scope.threadId}'`;
+    return `Provider skill inventory failed for ${scope} with instance '${this.instanceId}' (${this.failure}).`;
   }
 }
 

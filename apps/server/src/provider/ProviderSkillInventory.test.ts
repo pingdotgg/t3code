@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { resolveProviderSkillInventory } from "./ProviderSkillInventory.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
@@ -59,18 +60,22 @@ const makeInstance = (input: {
  */
 const projectionLayer = (input: {
   readonly projects?: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
+  readonly projectReadError?: PersistenceSqlError;
   readonly threadContext?: {
     readonly projectId: ProjectId;
     readonly workspaceRoot: string | null;
     readonly worktreePath: string | null;
   };
+  readonly threadReadError?: PersistenceSqlError;
 }) =>
   Layer.mock(ProjectionSnapshotQuery)({
     getProjectShellById: ((projectId: ProjectId) =>
+      input.projectReadError ??
       Effect.succeed(
         Option.fromNullishOr(input.projects?.find((project) => project.id === projectId)),
       )) as unknown as ProjectionSnapshotQuery["Service"]["getProjectShellById"],
     getThreadWorkspaceContextById: ((threadId: ThreadId) =>
+      input.threadReadError ??
       Effect.succeed(
         Option.map(Option.fromNullishOr(input.threadContext), (context) => ({
           threadId,
@@ -249,7 +254,9 @@ it.effect("fails with a typed error for an unknown instance", () =>
     );
 
     assert.equal(error._tag, "ServerProviderSkillInventoryError");
-    assert.include(error.reason, INSTANCE_ID);
+    assert.equal(error.failure, "unknown_instance");
+    assert.equal(error.instanceId, INSTANCE_ID);
+    assert.deepEqual(error.scope, { kind: "project", projectId: PROJECT_ID });
   }),
 );
 
@@ -270,7 +277,9 @@ it.effect("fails with a typed error for an unknown project", () =>
     );
 
     assert.equal(error._tag, "ServerProviderSkillInventoryError");
-    assert.include(error.reason, PROJECT_ID);
+    assert.equal(error.failure, "unknown_project");
+    assert.equal(error.instanceId, INSTANCE_ID);
+    assert.deepEqual(error.scope, { kind: "project", projectId: PROJECT_ID });
   }),
 );
 
@@ -291,6 +300,79 @@ it.effect("fails with a typed error for an unknown thread", () =>
     );
 
     assert.equal(error._tag, "ServerProviderSkillInventoryError");
-    assert.include(error.reason, THREAD_ID);
+    assert.equal(error.failure, "unknown_thread");
+    assert.equal(error.instanceId, INSTANCE_ID);
+    assert.deepEqual(error.scope, { kind: "thread", threadId: THREAD_ID });
+  }),
+);
+
+it.effect("classifies a project read-model failure", () =>
+  Effect.gen(function* () {
+    const projectReadError = new PersistenceSqlError({ operation: "read project shell" });
+    const error = yield* Effect.flip(
+      resolveProviderSkillInventory({
+        scope: { kind: "project", projectId: PROJECT_ID },
+        instanceId: INSTANCE_ID,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            registryLayer(makeInstance({ inventory: () => [] })),
+            projectionLayer({ projectReadError }),
+          ),
+        ),
+      ),
+    );
+
+    assert.equal(error.failure, "project_read_model_unavailable");
+    assert.equal(error.cause, projectReadError);
+  }),
+);
+
+it.effect("classifies a thread read-model failure", () =>
+  Effect.gen(function* () {
+    const threadReadError = new PersistenceSqlError({ operation: "read thread workspace" });
+    const error = yield* Effect.flip(
+      resolveProviderSkillInventory({
+        scope: { kind: "thread", threadId: THREAD_ID },
+        instanceId: INSTANCE_ID,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            registryLayer(makeInstance({ inventory: () => [] })),
+            projectionLayer({ threadReadError }),
+          ),
+        ),
+      ),
+    );
+
+    assert.equal(error.failure, "thread_read_model_unavailable");
+    assert.equal(error.cause, threadReadError);
+  }),
+);
+
+it.effect("classifies a thread without a resolvable workspace", () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(
+      resolveProviderSkillInventory({
+        scope: { kind: "thread", threadId: THREAD_ID },
+        instanceId: INSTANCE_ID,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            registryLayer(makeInstance({ inventory: () => [] })),
+            projectionLayer({
+              threadContext: {
+                projectId: PROJECT_ID,
+                workspaceRoot: null,
+                worktreePath: null,
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+
+    assert.equal(error.failure, "unresolvable_workspace");
+    assert.deepEqual(error.scope, { kind: "thread", threadId: THREAD_ID });
   }),
 );

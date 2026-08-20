@@ -37,23 +37,28 @@ import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts
  * would list the project root's skills for a worktree thread.
  */
 const resolveInventoryCwd = Effect.fn("resolveInventoryCwd")(function* (
-  scope: ServerProviderSkillInventoryInput["scope"],
+  input: ServerProviderSkillInventoryInput,
 ): Effect.fn.Return<string, ServerProviderSkillInventoryError, ProjectionSnapshotQuery> {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const { scope } = input;
 
   if (scope.kind === "project") {
     const project = yield* projectionSnapshotQuery.getProjectShellById(scope.projectId).pipe(
       Effect.mapError(
         (cause) =>
           new ServerProviderSkillInventoryError({
-            reason: "Failed to read the project read model.",
+            failure: "project_read_model_unavailable",
+            instanceId: input.instanceId,
+            scope,
             cause,
           }),
       ),
     );
     if (Option.isNone(project)) {
       return yield* new ServerProviderSkillInventoryError({
-        reason: `Unknown project '${scope.projectId}'.`,
+        failure: "unknown_project",
+        instanceId: input.instanceId,
+        scope,
       });
     }
     return project.value.workspaceRoot;
@@ -65,14 +70,18 @@ const resolveInventoryCwd = Effect.fn("resolveInventoryCwd")(function* (
       Effect.mapError(
         (cause) =>
           new ServerProviderSkillInventoryError({
-            reason: "Failed to read the thread read model.",
+            failure: "thread_read_model_unavailable",
+            instanceId: input.instanceId,
+            scope,
             cause,
           }),
       ),
     );
   if (Option.isNone(threadContext)) {
     return yield* new ServerProviderSkillInventoryError({
-      reason: `Unknown thread '${scope.threadId}'.`,
+      failure: "unknown_thread",
+      instanceId: input.instanceId,
+      scope,
     });
   }
 
@@ -90,7 +99,9 @@ const resolveInventoryCwd = Effect.fn("resolveInventoryCwd")(function* (
   });
   if (cwd === undefined) {
     return yield* new ServerProviderSkillInventoryError({
-      reason: `Thread '${scope.threadId}' has no resolvable workspace directory.`,
+      failure: "unresolvable_workspace",
+      instanceId: input.instanceId,
+      scope,
     });
   }
   return cwd;
@@ -114,7 +125,9 @@ export const resolveProviderSkillInventory = Effect.fn("resolveProviderSkillInve
   const instance = yield* instanceRegistry.getInstance(input.instanceId);
   if (instance === undefined) {
     return yield* new ServerProviderSkillInventoryError({
-      reason: `Unknown provider instance '${input.instanceId}'.`,
+      failure: "unknown_instance",
+      instanceId: input.instanceId,
+      scope: input.scope,
     });
   }
 
@@ -125,6 +138,6 @@ export const resolveProviderSkillInventory = Effect.fn("resolveProviderSkillInve
     return snapshot.skills;
   }
 
-  const cwd = yield* resolveInventoryCwd(input.scope);
+  const cwd = yield* resolveInventoryCwd(input);
   return yield* instance.skillInventory.list({ cwd });
 });
