@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
+import {
+  dismissContextMenu,
+  formatContextMenuAcceleratorLabel,
+  showContextMenuFallback,
+} from "./contextMenuFallback";
 
 type FakeListener = (event: FakeDomEvent) => void;
 
 class FakeDomEvent {
   defaultPrevented = false;
+  propagationStopped?: boolean;
 
   constructor(
     readonly type: string,
@@ -16,6 +21,10 @@ class FakeDomEvent {
 
   preventDefault() {
     this.defaultPrevented = true;
+  }
+
+  stopPropagation() {
+    this.propagationStopped = true;
   }
 }
 
@@ -174,6 +183,13 @@ class FakeDocument {
     }
   }
 
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
@@ -219,6 +235,22 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
+  it("formats and styles accelerator labels like shared menu shortcuts", async () => {
+    expect(formatContextMenuAcceleratorLabel("Command+Shift+C", "MacIntel")).toBe("⇧⌘C");
+    expect(formatContextMenuAcceleratorLabel("Ctrl+Shift+C", "Linux x86_64")).toBe("Ctrl+Shift+C");
+
+    const selectionPromise = showContextMenuFallback([
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
+    ]);
+    const shortcut = (document as unknown as FakeDocument).querySelectorAll("kbd")[0];
+
+    expect(shortcut?.textContent).toBe("Ctrl+Shift+C");
+    expect(shortcut?.className).toContain("text-secondary-label");
+
+    dismissContextMenu();
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
   it("renders one separator between menu sections", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename" },
@@ -285,6 +317,25 @@ describe("showContextMenuFallback", () => {
     childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename:project-b");
+  });
+
+  it("resolves a menu accelerator while the popup owns keyboard input", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
+    ]);
+    const shortcut = new KeyboardEvent("keydown", {
+      altKey: false,
+      ctrlKey: true,
+      key: "c",
+      metaKey: false,
+      shiftKey: true,
+    }) as unknown as FakeDomEvent;
+
+    (document as unknown as FakeDocument).dispatchEvent(shortcut);
+
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(shortcut.propagationStopped).toBe(true);
+    await expect(selectionPromise).resolves.toBe("copy");
   });
 
   it("opens and focuses nested submenus when the parent is activated", async () => {

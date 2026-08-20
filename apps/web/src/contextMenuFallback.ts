@@ -1,5 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
+import { formatShortcutLabel } from "./keybindings";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Inline Lucide-style icon paths (stroke-based, viewBox 0 0 24 24, strokeWidth 2).
@@ -182,6 +184,76 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
   return false;
 }
 
+export function matchesContextMenuAccelerator(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  accelerator: string,
+): boolean {
+  const parts = accelerator
+    .split("+")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  const key = parts.pop();
+  if (!key) return false;
+
+  const modifiers = new Set(parts);
+  const commandOrControl = modifiers.has("cmdorctrl") || modifiers.has("commandorcontrol");
+  const expectsControl = modifiers.has("ctrl") || modifiers.has("control");
+  const expectsCommand = modifiers.has("cmd") || modifiers.has("command");
+  const controlMatches = commandOrControl
+    ? event.ctrlKey !== event.metaKey
+    : event.ctrlKey === expectsControl && event.metaKey === expectsCommand;
+
+  return (
+    controlMatches &&
+    event.shiftKey === modifiers.has("shift") &&
+    event.altKey === (modifiers.has("alt") || modifiers.has("option")) &&
+    event.key.toLowerCase() === key
+  );
+}
+
+export function formatContextMenuAcceleratorLabel(
+  accelerator: string,
+  platform = navigator.platform,
+): string {
+  const parts = accelerator
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const key = parts.pop();
+  if (!key) return accelerator;
+
+  const modifiers = new Set(parts.map((part) => part.toLowerCase()));
+  return formatShortcutLabel(
+    {
+      key,
+      metaKey: modifiers.has("cmd") || modifiers.has("command"),
+      ctrlKey: modifiers.has("ctrl") || modifiers.has("control"),
+      shiftKey: modifiers.has("shift"),
+      altKey: modifiers.has("alt") || modifiers.has("option"),
+      modKey: modifiers.has("cmdorctrl") || modifiers.has("commandorcontrol"),
+    },
+    platform,
+  );
+}
+
+function findContextMenuAccelerator<T extends string>(
+  items: readonly ContextMenuItem<T>[],
+  event: KeyboardEvent,
+): T | null {
+  for (const item of items) {
+    if (item.disabled === true || item.header === true) continue;
+    if (item.children && item.children.length > 0) {
+      const child = findContextMenuAccelerator(item.children, event);
+      if (child !== null) return child;
+      continue;
+    }
+    if (item.accelerator && matchesContextMenuAccelerator(event, item.accelerator)) {
+      return item.id;
+    }
+  }
+  return null;
+}
+
 // Only one fallback menu exists at a time in the renderer; the active one is
 // tracked so a state change (for example a terminal selection clearing) can
 // dismiss it with the same result as an outside click or Escape.
@@ -223,7 +295,7 @@ export function showContextMenuFallback<T extends string>(
       if (activeContextMenuDismiss === dismiss) {
         activeContextMenuDismiss = null;
       }
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("contextmenu", onContextMenu, true);
       const shouldRestoreFocus = isNodeWithinMenuStack(document.activeElement, menuStack);
@@ -239,8 +311,16 @@ export function showContextMenuFallback<T extends string>(
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         cleanup(null);
+        return;
       }
+      if (event.defaultPrevented) return;
+      const acceleratedItem = findContextMenuAccelerator(items, event);
+      if (acceleratedItem === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cleanup(acceleratedItem);
     };
 
     const onPointerDown = (event: PointerEvent) => {
@@ -344,6 +424,16 @@ export function showContextMenuFallback<T extends string>(
         label.className = "min-w-0 flex-1 truncate";
         label.textContent = item.label;
         button.appendChild(label);
+
+        if (item.accelerator) {
+          const accelerator = document.createElement("kbd");
+          accelerator.className =
+            "ms-auto shrink-0 font-medium font-sans text-secondary-label text-xs tracking-widest";
+          accelerator.style.cssText =
+            "margin-inline-start:auto;color:var(--secondary-label);font-family:var(--font-sans,system-ui,sans-serif);font-weight:500;font-size:0.75rem;letter-spacing:0.1em;white-space:nowrap;";
+          accelerator.textContent = formatContextMenuAcceleratorLabel(item.accelerator);
+          button.appendChild(accelerator);
+        }
 
         if (hasChildren) {
           button.setAttribute("aria-haspopup", "menu");
@@ -453,7 +543,7 @@ export function showContextMenuFallback<T extends string>(
       });
     };
 
-    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);

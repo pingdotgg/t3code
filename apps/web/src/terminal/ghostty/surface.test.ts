@@ -219,12 +219,31 @@ describe("isTerminalCopyShortcut", () => {
     expect(isTerminalCopyShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
   });
 
-  it("copies with Ctrl+C and Ctrl+Shift+C elsewhere", () => {
-    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(true);
+  it("keeps Ctrl+C for SIGINT and copies with Ctrl+Shift+C on Linux", () => {
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
     expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
     );
     expect(isTerminalCopyShortcut(event({}), "Linux x86_64")).toBe(false);
+  });
+
+  it("preserves plain Ctrl+C selection copy on Windows", () => {
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Win32")).toBe(true);
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Win32")).toBe(true);
+  });
+
+  it("supports the conventional Ctrl+Insert copy shortcut", () => {
+    expect(isTerminalCopyShortcut(event({ key: "Insert", ctrlKey: true }), "Linux x86_64")).toBe(
+      true,
+    );
+    expect(isTerminalCopyShortcut(event({ key: "Insert" }), "Linux x86_64")).toBe(false);
+    expect(
+      isTerminalCopyShortcut(
+        event({ key: "Insert", ctrlKey: true, shiftKey: true }),
+        "Linux x86_64",
+      ),
+    ).toBe(false);
+    expect(isTerminalCopyShortcut(event({ key: "Insert", ctrlKey: true }), "MacIntel")).toBe(false);
   });
 
   it("uses the produced character instead of the physical key position", () => {

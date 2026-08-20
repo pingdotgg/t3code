@@ -34,7 +34,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { cn, isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -246,6 +246,16 @@ export function shouldHandleTerminalSelectionMouseUp(
   return selectionGestureActive && button === 0;
 }
 
+export function shouldOpenTerminalSelectionMenu(options: {
+  nativeContextMenu: boolean;
+  platform: string;
+}): boolean {
+  // Electron's native Linux popup grabs keyboard input but only displays its
+  // accelerators. Leave selection passive so terminal shortcuts reach Ghostty;
+  // the same actions remain available from the terminal's right-click menu.
+  return !(options.nativeContextMenu && isLinuxPlatform(options.platform));
+}
+
 export function terminalSelectionLineRange(position: {
   start: { y: number };
   end: { y: number };
@@ -259,11 +269,22 @@ export function terminalSelectionLineRange(position: {
 
 export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
 
+function terminalCopyAccelerator(platform: string): string {
+  if (isMacPlatform(platform)) return "Command+C";
+  return isWindowsPlatform(platform) ? "Ctrl+C" : "Ctrl+Shift+C";
+}
+
 /** Post-selection popup: just the two selection actions, always enabled. */
-export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
+export function terminalSelectionMenuItems(
+  platform = navigator.platform,
+): ContextMenuItem<"add-to-chat" | "copy">[] {
   return [
     { id: "add-to-chat", label: "Add to chat" },
-    { id: "copy", label: "Copy" },
+    {
+      id: "copy",
+      label: "Copy",
+      accelerator: terminalCopyAccelerator(platform),
+    },
   ];
 }
 
@@ -275,13 +296,19 @@ export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "c
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  platform?: string;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
+  const platform = options.platform ?? navigator.platform;
   return [
-    ...terminalSelectionMenuItems().map((item) => ({
+    ...terminalSelectionMenuItems(platform).map((item) => ({
       ...item,
       disabled: !options.hasSelection,
     })),
-    { id: "paste", label: "Paste" },
+    {
+      id: "paste",
+      label: "Paste",
+      accelerator: isMacPlatform(platform) ? "Command+V" : "Ctrl+Shift+V",
+    },
   ];
 }
 
@@ -809,9 +836,8 @@ export function TerminalViewport({
         });
         if (!shouldClear) return;
         clearSelectionAction();
-        // A copy shortcut that clears the selection (Ctrl+C) must also close
-        // the context menu that appears with the selection, but a clear that
-        // never opened a menu must not dismiss an unrelated one.
+        // Clearing the selection must also close the menu that belongs to it,
+        // but a clear that never opened a menu must not dismiss an unrelated one.
         if (openSelectionMenuRequestIdRef.current !== null) {
           void localApi?.contextMenu.close();
         }
@@ -824,6 +850,14 @@ export function TerminalViewport({
         );
         selectionGestureActiveRef.current = false;
         if (!shouldHandle) {
+          return;
+        }
+        if (
+          !shouldOpenTerminalSelectionMenu({
+            nativeContextMenu: window.desktopBridge !== undefined,
+            platform: navigator.platform,
+          })
+        ) {
           return;
         }
         selectionPointerRef.current = { x: event.clientX, y: event.clientY };

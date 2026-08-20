@@ -4,8 +4,11 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  shouldOpenTerminalSelectionMenu,
+  terminalContextMenuItems,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
+  terminalSelectionMenuItems,
 } from "./ThreadTerminalDrawer";
 
 describe("resolveTerminalSelectionActionPosition", () => {
@@ -75,6 +78,27 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
   });
 
+  it("keeps Linux desktop selection passive so clipboard shortcuts reach the terminal", () => {
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: true,
+        platform: "Linux x86_64",
+      }),
+    ).toBe(false);
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: false,
+        platform: "Linux x86_64",
+      }),
+    ).toBe(true);
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: true,
+        platform: "MacIntel",
+      }),
+    ).toBe(true);
+  });
+
   it("uses Ghostty's physical screen range for visually wrapped selections", () => {
     expect(
       terminalSelectionLineRange({
@@ -88,5 +112,30 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+
+  it("advertises native terminal clipboard accelerators for each platform", () => {
+    expect(terminalSelectionMenuItems("Linux x86_64")).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Ctrl+Shift+C",
+    });
+    expect(
+      terminalContextMenuItems({ hasSelection: true, platform: "Linux x86_64" }),
+    ).toContainEqual({
+      id: "paste",
+      label: "Paste",
+      accelerator: "Ctrl+Shift+V",
+    });
+    expect(terminalSelectionMenuItems("MacIntel")).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Command+C",
+    });
+    expect(terminalSelectionMenuItems("Win32")).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Ctrl+C",
+    });
   });
 });

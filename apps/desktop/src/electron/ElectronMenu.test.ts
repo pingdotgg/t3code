@@ -99,7 +99,7 @@ describe("ElectronMenu", () => {
       const selectedItemId = yield* electronMenu.showContextMenu({
         window: makeWindow(2),
         items: [
-          { id: "copy", label: "Copy" },
+          { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
           { id: "delete", label: "Delete", destructive: true, separatorBefore: true },
         ],
         position: Option.some({ x: 10.8, y: 20.2 }),
@@ -111,6 +111,7 @@ describe("ElectronMenu", () => {
       assert.deepEqual(buildFromTemplateMock.mock.calls[0]?.[0][0], {
         label: "Copy",
         enabled: true,
+        accelerator: "Ctrl+Shift+C",
         click: buildFromTemplateMock.mock.calls[0]?.[0][0].click,
       });
       assert.deepEqual(
