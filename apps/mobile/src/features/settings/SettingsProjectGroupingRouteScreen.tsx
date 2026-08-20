@@ -16,6 +16,7 @@ import {
 } from "../../state/project-grouping";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
   readonly mode: SidebarProjectGroupingMode;
@@ -46,9 +47,10 @@ export function SettingsProjectGroupingRouteScreen() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
-  const selectedMode = AsyncResult.isSuccess(preferencesResult)
-    ? resolveMobileProjectGroupingSettings(preferencesResult.value).sidebarProjectGroupingMode
+  const groupingSettings = AsyncResult.isSuccess(preferencesResult)
+    ? resolveMobileProjectGroupingSettings(preferencesResult.value)
     : null;
+  const selectedMode = groupingSettings?.sidebarProjectGroupingMode ?? null;
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -99,6 +101,16 @@ export function SettingsProjectGroupingRouteScreen() {
               ) : null}
             </Pressable>
           ))}
+        </SettingsSection>
+        <SettingsSection title="Project names">
+          <SettingsSwitchRow
+            disabled={!preferencesReady}
+            icon="folder"
+            label="Use paths as names"
+            subtitle="Name projects after their workspace path instead of their git repository."
+            value={groupingSettings?.sidebarProjectNamesUsePath ?? false}
+            onValueChange={(value) => savePreferences({ projectNamesUsePath: value })}
+          />
         </SettingsSection>
       </ScrollView>
     </View>

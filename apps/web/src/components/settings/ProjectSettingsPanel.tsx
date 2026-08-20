@@ -63,6 +63,7 @@ import {
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   buildSidebarProjectSnapshots,
+  formatSidebarProjectLabel,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
@@ -141,7 +142,7 @@ export function useSettingsProjectGroups(): SidebarProjectSnapshot[] {
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
-      }).sort((a, b) => a.displayName.localeCompare(b.displayName)),
+      }).sort((a, b) => formatSidebarProjectLabel(a).localeCompare(formatSidebarProjectLabel(b))),
     [environmentLabelById, primaryEnvironmentId, projectGroupingSettings, projects],
   );
 }
@@ -199,7 +200,7 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
     const rect = event.currentTarget.getBoundingClientRect();
     const items: ContextMenuItem<string>[] = groups.map((group) => ({
       id: group.projectKey,
-      label: group.displayName,
+      label: formatSidebarProjectLabel(group),
     }));
     void settlePromise(() =>
       api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
@@ -227,7 +228,7 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
             onClick={openProjectMenu}
             className="group/project-title inline-flex min-w-0 max-w-64 cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="min-w-0 truncate">{selected.displayName}</span>
+            <span className="min-w-0 truncate">{formatSidebarProjectLabel(selected)}</span>
             <ChevronDownIcon
               aria-hidden
               className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/project-title:opacity-100 group-focus-visible/project-title:opacity-100"

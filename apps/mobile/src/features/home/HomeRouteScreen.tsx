@@ -85,12 +85,12 @@ export function HomeRouteScreen() {
       buildHomeProjectScopes({
         projects,
         environmentId: selectedEnvironmentId,
-        projectGroupingMode: listOptions.projectGroupingMode,
+        projectGroupingSettings: listOptions.projectGroupingSettings,
       }).map((scope) => ({
         key: scope.key,
         label: scope.title,
       })),
-    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+    [listOptions.projectGroupingSettings, projects, selectedEnvironmentId],
   );
   useEffect(() => {
     if (
@@ -229,7 +229,7 @@ export function HomeRouteScreen() {
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
           onThreadSortOrderChange={setThreadSortOrder}
           pendingTasks={pendingTasks}
-          projectGroupingMode={listOptions.projectGroupingMode}
+          projectGroupingSettings={listOptions.projectGroupingSettings}
           projects={projects}
           projectSortOrder={listOptions.projectSortOrder}
           savedConnectionsById={savedConnectionsById}

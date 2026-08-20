@@ -129,6 +129,17 @@ and correlation only, never for routing. `Project` remains environment-local: a 
 remote clone are different projects that may share a `RepositoryIdentity`, and threads bind to one
 project in one environment.
 
+A project's identity is its exact `workspaceRoot`, so a workspace nested inside another workspace of
+the same repository is a separate project. `buildProjectGroups`
+(`packages/client-runtime/src/state/projectGrouping.ts`) therefore appends the repo-relative path to
+the group key in every repository mode: sibling clones (each at its own git toplevel) still collapse
+into one row, a parent and its nested subdirectory never do. When two visible groups would share a
+label, the group carries a `disambiguator` — the repo-relative path — that clients render next to the
+name via `formatProjectGroupLabel`. `deriveProjectSearchTerms` is the single source of the strings a
+project is findable by (title, git names, workspace path, and each path segment) for the web command
+palette and the mobile home list. The `sidebarProjectNamesUsePath` client setting swaps the primary
+label for the path; it never reaches `deriveLogicalProjectKey`, so it cannot change project identity.
+
 ## Access methods
 
 Access answers one question: how does the client speak WebSocket to a T3 server? It does not answer

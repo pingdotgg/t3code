@@ -12,6 +12,8 @@ import { normalizeProjectPathForComparison } from "./projects.ts";
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
   readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
+  /** Label projects by their workspace path instead of their git repository name. */
+  readonly sidebarProjectNamesUsePath?: boolean;
 }
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
@@ -20,6 +22,7 @@ export function selectProjectGroupingSettings(settings: ClientSettings): Project
   return {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+    sidebarProjectNamesUsePath: settings.sidebarProjectNamesUsePath,
   };
 }
 
@@ -37,7 +40,11 @@ function uniqueNonEmptyValues(values: ReadonlyArray<string | null | undefined>):
   return unique;
 }
 
-function deriveRepositoryRelativeProjectPath(
+/**
+ * Path of a project's workspace relative to its git toplevel: `""` for the
+ * repository root, `null` when the project is not inside a known toplevel.
+ */
+export function deriveRepositoryRelativeProjectPath(
   project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
 ): string | null {
   const rootPath = project.repositoryIdentity?.rootPath?.trim();
@@ -96,17 +103,16 @@ export function resolveProjectGroupingMode(
   );
 }
 
+/**
+ * Sibling checkouts of one remote share a key; a workspace nested inside
+ * another workspace of the same remote never does, in any repository mode.
+ */
 function deriveRepositoryScopedKey(
   project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
-  groupingMode: SidebarProjectGroupingMode,
 ): string | null {
   const canonicalKey = project.repositoryIdentity?.canonicalKey;
   if (!canonicalKey) {
     return null;
-  }
-
-  if (groupingMode === "repository") {
-    return canonicalKey;
   }
 
   const relativeProjectPath = deriveRepositoryRelativeProjectPath(project);
@@ -134,7 +140,7 @@ export function deriveLogicalProjectKey(
   }
 
   return (
-    deriveRepositoryScopedKey(project, groupingMode) ??
+    deriveRepositoryScopedKey(project) ??
     derivePhysicalProjectKey(project) ??
     scopedProjectKey(scopeProjectRef(project.environmentId, project.id))
   );
@@ -196,6 +202,57 @@ export function deriveProjectGroupLabel(input: {
   return input.representative.title;
 }
 
+function lastPathSegment(workspaceRoot: string): string {
+  const normalized = normalizeProjectPathForComparison(workspaceRoot);
+  const segments = normalized.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? normalized;
+}
+
+/**
+ * Path shown to tell two rows apart when their primary labels collide:
+ * `.` for the repository root, otherwise the repo-relative path.
+ */
+export function deriveProjectPathLabel(
+  project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+): string {
+  const relativePath = deriveRepositoryRelativeProjectPath(project);
+  if (relativePath === null) {
+    return lastPathSegment(project.workspaceRoot);
+  }
+  return relativePath.length === 0 ? "." : relativePath;
+}
+
+/**
+ * Every string a project should be findable by: title, git names, the full
+ * workspace path, and each of its segments. Shared so the web palette and the
+ * mobile home list cannot drift.
+ */
+export function deriveProjectSearchTerms(
+  project: Pick<EnvironmentProject, "title" | "workspaceRoot" | "repositoryIdentity">,
+): ReadonlyArray<string> {
+  const identity = project.repositoryIdentity;
+  const owner = identity?.owner?.trim();
+  const name = identity?.name?.trim();
+  const normalizedRoot = normalizeProjectPathForComparison(project.workspaceRoot);
+  return uniqueNonEmptyValues([
+    project.title,
+    identity?.displayName,
+    name,
+    owner && name ? `${owner}/${name}` : null,
+    project.workspaceRoot,
+    normalizedRoot,
+    ...normalizedRoot.split(/[\\/]+/),
+  ]);
+}
+
+/** One-line label for a project row: its name, plus the path when names collide. */
+export function formatProjectGroupLabel(group: {
+  readonly label: string;
+  readonly disambiguator: string | null;
+}): string {
+  return group.disambiguator ? `${group.label} · ${group.disambiguator}` : group.label;
+}
+
 export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
   readonly physicalProjectKey: string;
   readonly project: TProject;
@@ -204,6 +261,11 @@ export interface ProjectGroupMember<TProject extends EnvironmentProject = Enviro
 export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentProject> {
   readonly key: string;
   readonly label: string;
+  /**
+   * Repo-relative path shown next to `label` when another visible group would
+   * otherwise carry the same label; `null` when the label already stands alone.
+   */
+  readonly disambiguator: string | null;
   readonly representative: TProject;
   readonly members: ReadonlyArray<ProjectGroupMember<TProject>>;
   readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
@@ -313,23 +375,51 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   }
 
   const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
-  return Array.from(groupedMembers, ([key, members]) => {
+  const groups = Array.from(groupedMembers, ([key, members]) => {
     const representative =
       (preferredEnvironmentId
         ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
         : null) ?? members[0]!.project;
+    const groupingMode = resolveProjectGroupingMode(representative, input.settings);
+    const label = input.settings.sidebarProjectNamesUsePath
+      ? deriveProjectPathLabelForGroup(representative)
+      : groupingMode === "separate"
+        ? representative.title
+        : deriveProjectGroupLabel({
+            representative,
+            members: members.map((member) => member.project),
+          });
     return {
       key,
-      label:
-        members.length > 1
-          ? deriveProjectGroupLabel({
-              representative,
-              members: members.map((member) => member.project),
-            })
-          : representative.title,
+      label,
+      disambiguator: null as string | null,
       representative,
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
     };
   });
+
+  const labelCounts = new Map<string, number>();
+  for (const group of groups) {
+    labelCounts.set(group.label, (labelCounts.get(group.label) ?? 0) + 1);
+  }
+  for (const group of groups) {
+    if ((labelCounts.get(group.label) ?? 0) > 1) {
+      group.disambiguator = deriveProjectPathLabel(group.representative);
+    }
+  }
+  return groups;
+}
+
+/**
+ * Primary label when project names come from paths: the repo-relative path,
+ * falling back to the workspace's own folder name at a repository root.
+ */
+function deriveProjectPathLabelForGroup(
+  project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+): string {
+  const relativePath = deriveRepositoryRelativeProjectPath(project);
+  return relativePath !== null && relativePath.length > 0
+    ? relativePath
+    : lastPathSegment(project.workspaceRoot);
 }

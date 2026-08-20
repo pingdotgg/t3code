@@ -2,6 +2,9 @@ import {
   buildProjectGroups,
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
+  deriveProjectSearchTerms,
+  formatProjectGroupLabel,
+  type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
@@ -16,7 +19,6 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import type {
   EnvironmentId,
   ScopedProjectRef,
-  SidebarProjectGroupingMode,
   SidebarProjectSortOrder,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
@@ -31,6 +33,7 @@ export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
 export interface HomeProjectScope {
   readonly key: string;
+  /** Row label: the project's name, plus its path when two rows share a name. */
   readonly title: string;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -51,21 +54,18 @@ function getProjectSortTimestamp(
 export function buildHomeProjectScopes(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId | null;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
 }): ReadonlyArray<HomeProjectScope> {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
   );
   return buildProjectGroups({
     projects,
-    settings: {
-      sidebarProjectGroupingMode: input.projectGroupingMode,
-      sidebarProjectGroupingOverrides: {},
-    },
+    settings: input.projectGroupingSettings,
   }).map((group) => {
     return {
       key: group.key,
-      title: group.label,
+      title: formatProjectGroupLabel(group),
       representative: group.representative,
       projects: group.members.map((member) => member.project),
       projectRefs: group.memberProjectRefs,
@@ -209,7 +209,7 @@ export function buildHomeThreadGroups(input: {
   readonly matchedThreadKeys?: ReadonlySet<string>;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
   /** Current time used for the recency window; defaults to now. Injectable for tests. */
   readonly now?: number;
 }): ReadonlyArray<HomeThreadGroup> {
@@ -301,10 +301,15 @@ export function buildHomeThreadGroups(input: {
     const title =
       groupTitleByKey.get(group.key) ??
       deriveProjectGroupLabel({ representative, members: group.projects });
+    // Search matches the row label plus every term a project is findable by
+    // (git names, workspace path, and each of its segments), so a nested
+    // workspace answers to its own folder name.
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||
-      group.projects.some((project) => project.title.toLocaleLowerCase().includes(query));
+      group.projects.some((project) =>
+        deriveProjectSearchTerms(project).some((term) => term.toLocaleLowerCase().includes(query)),
+      );
     const matchingThreads = groupMatches
       ? group.threads
       : group.threads.filter(

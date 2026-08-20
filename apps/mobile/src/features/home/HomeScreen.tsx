@@ -3,6 +3,7 @@ import {
   type LegendListRef,
   type LegendListRenderItemProps,
 } from "@legendapp/list/react-native";
+import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
@@ -12,11 +13,7 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
-import type {
-  EnvironmentId,
-  SidebarProjectGroupingMode,
-  SidebarThreadSortOrder,
-} from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -91,7 +88,7 @@ interface HomeScreenProps {
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
@@ -311,9 +308,9 @@ export function HomeScreen(props: HomeScreenProps) {
       buildHomeProjectScopes({
         projects: props.projects,
         environmentId: props.selectedEnvironmentId,
-        projectGroupingMode: props.projectGroupingMode,
+        projectGroupingSettings: props.projectGroupingSettings,
       }),
-    [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
+    [props.projectGroupingSettings, props.projects, props.selectedEnvironmentId],
   );
   const selectedProjectScope = useMemo(
     () =>
@@ -382,10 +379,10 @@ export function HomeScreen(props: HomeScreenProps) {
         matchedThreadKeys,
         projectSortOrder: props.projectSortOrder,
         threadSortOrder: props.threadSortOrder,
-        projectGroupingMode: props.projectGroupingMode,
+        projectGroupingSettings: props.projectGroupingSettings,
       }),
     [
-      props.projectGroupingMode,
+      props.projectGroupingSettings,
       props.projectSortOrder,
       props.searchQuery,
       props.selectedEnvironmentId,

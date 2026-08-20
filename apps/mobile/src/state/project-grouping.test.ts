@@ -20,6 +20,14 @@ describe("mobile project grouping preferences", () => {
     ).toBe("repository_path");
   });
 
+  it("defaults path names off and reads the device preference", () => {
+    expect(resolveMobileProjectGroupingSettings({}).sidebarProjectNamesUsePath).toBe(false);
+    expect(
+      resolveMobileProjectGroupingSettings({ projectNamesUsePath: true })
+        .sidebarProjectNamesUsePath,
+    ).toBe(true);
+  });
+
   it("dual-writes the legacy boolean for rollback compatibility", () => {
     expect(mobileProjectGroupingModePatch("separate")).toEqual({
       projectGroupingMode: "separate",

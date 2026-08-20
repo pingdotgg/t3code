@@ -2,7 +2,8 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
@@ -197,17 +198,12 @@ export function AdaptiveWorkspaceLayout(props: {
     return AsyncResult.isFailure(preferencesResult) ? (
       <AdaptiveWorkspaceLayoutContent
         {...props}
-        projectGroupingMode={DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode}
+        projectGroupingSettings={DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS}
       />
     ) : null;
   }
   const groupingSettings = resolveMobileProjectGroupingSettings(preferencesResult.value);
-  return (
-    <AdaptiveWorkspaceLayoutContent
-      {...props}
-      projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
-    />
-  );
+  return <AdaptiveWorkspaceLayoutContent {...props} projectGroupingSettings={groupingSettings} />;
 }
 
 function AdaptiveWorkspaceLayoutContent(
@@ -215,10 +211,10 @@ function AdaptiveWorkspaceLayoutContent(
     readonly children: ReactNode;
     readonly pathname: string;
   } & {
-    readonly projectGroupingMode: SidebarProjectGroupingMode;
+    readonly projectGroupingSettings: ProjectGroupingSettings;
   },
 ) {
-  const projectGroupingMode = props.projectGroupingMode;
+  const projectGroupingSettings = props.projectGroupingSettings;
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
   const navigation = useNavigation();
@@ -519,7 +515,7 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   return (
-    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+    <HomeListOptionsProvider projectGroupingSettings={projectGroupingSettings}>
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
         <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (

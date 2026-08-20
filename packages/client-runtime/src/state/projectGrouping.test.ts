@@ -5,6 +5,7 @@ import type { EnvironmentProject } from "./models.ts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  deriveProjectSearchTerms,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -44,11 +45,23 @@ function makeProject(
 function settings(
   mode: ProjectGroupingSettings["sidebarProjectGroupingMode"],
   overrides: ProjectGroupingSettings["sidebarProjectGroupingOverrides"] = {},
+  sidebarProjectNamesUsePath = false,
 ): ProjectGroupingSettings {
   return {
     sidebarProjectGroupingMode: mode,
     sidebarProjectGroupingOverrides: overrides,
+    sidebarProjectNamesUsePath,
   };
+}
+
+function nestedProjects() {
+  const rootIdentity = { ...repositoryIdentity, rootPath: "/work/delta" };
+  return [
+    makeProject("delta", "/work/delta", { repositoryIdentity: rootIdentity }),
+    makeProject("commerce-pricing", "/work/delta/commerce-pricing", {
+      repositoryIdentity: rootIdentity,
+    }),
+  ];
 }
 
 describe("buildProjectGroups", () => {
@@ -212,5 +225,82 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("nested workspaces", () => {
+  it("keeps a parent workspace and a nested workspace of one repository apart", () => {
+    for (const mode of ["repository", "repository_path", "separate"] as const) {
+      const groups = buildProjectGroups({ projects: nestedProjects(), settings: settings(mode) });
+      expect(groups).toHaveLength(2);
+      expect(groups.flatMap((group) => group.members.map((member) => member.project.id))).toEqual([
+        "delta",
+        "commerce-pricing",
+      ]);
+    }
+  });
+
+  it("still groups sibling clones of one remote that are each at a repository root", () => {
+    const projects = [
+      makeProject("t3code", "/work/t3code", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/work/t3code" },
+      }),
+      makeProject("t3code-2", "/work/t3code-2", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/work/t3code-2" },
+      }),
+    ];
+
+    const groups = buildProjectGroups({ projects, settings: settings("repository") });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.members).toHaveLength(2);
+  });
+
+  it("does not treat a sibling directory with a shared prefix as nested", () => {
+    const projects = [
+      makeProject("delta", "/work/delta", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/work/delta" },
+      }),
+      makeProject("delta-ops", "/work/delta-ops", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/work/delta-ops" },
+      }),
+    ];
+
+    expect(buildProjectGroups({ projects, settings: settings("repository") })).toHaveLength(1);
+  });
+
+  it("disambiguates colliding git labels with the repository-relative path", () => {
+    const projects = nestedProjects().map((project) => ({ ...project, title: "t3code" }));
+    const groups = buildProjectGroups({ projects, settings: settings("repository") });
+
+    expect(groups.map((group) => group.label)).toEqual(["T3 Code", "T3 Code"]);
+    expect(groups.map((group) => group.disambiguator)).toEqual([".", "commerce-pricing"]);
+  });
+
+  it("uses paths as the primary label without changing group keys", () => {
+    const projects = nestedProjects();
+    const gitNamed = buildProjectGroups({ projects, settings: settings("repository") });
+    const pathNamed = buildProjectGroups({
+      projects,
+      settings: settings("repository", {}, true),
+    });
+
+    expect(pathNamed.map((group) => group.label)).toEqual(["delta", "commerce-pricing"]);
+    expect(pathNamed.map((group) => group.key)).toEqual(gitNamed.map((group) => group.key));
+    expect(pathNamed.map((group) => group.disambiguator)).toEqual([null, null]);
+  });
+});
+
+describe("deriveProjectSearchTerms", () => {
+  it("includes the title, git names, the workspace path, and every segment", () => {
+    const [, nested] = nestedProjects();
+    const terms = deriveProjectSearchTerms(nested!);
+
+    expect(terms).toContain("commerce-pricing");
+    expect(terms).toContain("delta");
+    expect(terms).toContain("work");
+    expect(terms).toContain("/work/delta/commerce-pricing");
+    expect(terms).toContain("T3 Code");
+    expect(terms).toContain("t3tools/t3code");
+    expect(new Set(terms).size).toBe(terms.length);
   });
 });

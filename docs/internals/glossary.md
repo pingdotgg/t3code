@@ -24,6 +24,10 @@ The top-level workspace record in the app. In [the orchestration contracts][1], 
 
 The root filesystem path for a project. In [the orchestration model][1], it is the base directory for branches and optional worktrees. See [workspace-layout.md][2].
 
+#### Nested project
+
+Two projects whose workspace roots are parent and subdirectory (`~/delta` and `~/delta/commerce-pricing`). A project's identity is its `workspaceRoot`, so both exist independently; `repositoryIdentity` is correlation and labelling only, which is why they share one git toplevel and one display name. Default `repository` grouping collapses sibling clones of a remote but never a parent and its nested workspace — see `deriveRepositoryScopedKey` in `packages/client-runtime/src/state/projectGrouping.ts`. The nested project's agent cwd, scripts, and `t3.json` are its own subdirectory; git operations still run against the real toplevel.
+
 #### Worktree
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].

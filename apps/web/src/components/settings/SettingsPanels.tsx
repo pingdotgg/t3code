@@ -495,6 +495,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
         : []),
+      ...(settings.sidebarProjectNamesUsePath !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarProjectNamesUsePath
+        ? ["Use paths as project names"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
@@ -575,6 +579,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
+      settings.sidebarProjectNamesUsePath,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -657,6 +662,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+      sidebarProjectNamesUsePath: DEFAULT_UNIFIED_SETTINGS.sidebarProjectNamesUsePath,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
@@ -1941,6 +1947,33 @@ export function GeneralSettingsPanel() {
                 });
               }}
               aria-label="Project grouping"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("project-names-use-path")}
+          description="Name projects after their workspace path instead of their git repository."
+          resetAction={
+            settings.sidebarProjectNamesUsePath !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectNamesUsePath ? (
+              <SettingResetButton
+                label="project names"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectNamesUsePath: DEFAULT_UNIFIED_SETTINGS.sidebarProjectNamesUsePath,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarProjectNamesUsePath}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarProjectNamesUsePath: Boolean(checked) })
+              }
+              aria-label="Use paths as project names"
             />
           }
         />

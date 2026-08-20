@@ -1,8 +1,5 @@
-import type {
-  EnvironmentId,
-  SidebarProjectGroupingMode,
-  SidebarThreadSortOrder,
-} from "@t3tools/contracts";
+import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 import {
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
@@ -19,6 +16,7 @@ import {
   type SetStateAction,
 } from "react";
 
+import { DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS } from "../../state/project-grouping.logic";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 
 export interface HomeListOptions {
@@ -28,7 +26,7 @@ export interface HomeListOptions {
 }
 
 export interface ResolvedHomeListOptions extends HomeListOptions {
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
 }
 
 export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
@@ -61,7 +59,7 @@ function defaultHomeListOptions(): HomeListOptions {
 interface HomeListOptionsContextValue {
   readonly options: HomeListOptions;
   readonly setOptions: Dispatch<SetStateAction<HomeListOptions>>;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
 }
 
 const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>(null);
@@ -69,14 +67,14 @@ const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>
 /** Keeps list preferences stable while the app moves between compact and split shells. */
 export function HomeListOptionsProvider({
   children,
-  projectGroupingMode,
+  projectGroupingSettings,
 }: PropsWithChildren<{
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly projectGroupingSettings: ProjectGroupingSettings;
 }>) {
   const [options, setOptions] = useState<HomeListOptions>(defaultHomeListOptions);
   const value = useMemo(
-    () => ({ options, setOptions, projectGroupingMode }),
-    [options, projectGroupingMode],
+    () => ({ options, setOptions, projectGroupingSettings }),
+    [options, projectGroupingSettings],
   );
   return createElement(HomeListOptionsContext, { value }, children);
 }
@@ -114,7 +112,8 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
       : { ...options, selectedEnvironmentId };
   const resolvedOptions: ResolvedHomeListOptions = {
     ...availableOptions,
-    projectGroupingMode: shared?.projectGroupingMode ?? "repository",
+    projectGroupingSettings:
+      shared?.projectGroupingSettings ?? DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
   };
 
   const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {

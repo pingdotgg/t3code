@@ -165,6 +165,7 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  formatSidebarProjectLabel,
 } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
 
@@ -736,7 +737,7 @@ function OpenCommandPaletteDialog(props: {
     () =>
       projectPickerEntries.map(({ group, targetProject }) => ({
         ...targetProject,
-        title: group.displayName,
+        title: formatSidebarProjectLabel(group),
       })),
     [projectPickerEntries],
   );
@@ -1011,9 +1012,7 @@ function OpenCommandPaletteDialog(props: {
         valuePrefix: "project",
         searchTerms: (project) => {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-          return (
-            group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
-          );
+          return group ? [...group.searchTerms] : [];
         },
         icon: projectFavicon,
         runProject: openProjectFromSearch,
@@ -1030,11 +1029,7 @@ function OpenCommandPaletteDialog(props: {
           searchTerms: (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
             const location = projectEnvironmentLocationById.get(project.environmentId);
-            return [
-              ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
-                []),
-              ...(location ? [location.label] : []),
-            ];
+            return [...(group?.searchTerms ?? []), ...(location ? [location.label] : [])];
           },
           renderDescription: (project) => {
             const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
@@ -1488,8 +1483,10 @@ function OpenCommandPaletteDialog(props: {
 
   if (projects.length > 0) {
     const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
+      (() => {
+        const preferred = projectPickerEntries.find((entry) => entry.isPreferred)?.group;
+        return preferred ? formatSidebarProjectLabel(preferred) : null;
+      })() ?? (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
 
     if (activeProjectTitle) {
       actionItems.push({
@@ -1639,7 +1636,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:project-settings",
       searchTerms: ["project", "settings", "scripts", "model", "grouping", "checkout"],
       title: "Project settings",
-      description: contextualProjectGroup.displayName,
+      description: formatSidebarProjectLabel(contextualProjectGroup),
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({

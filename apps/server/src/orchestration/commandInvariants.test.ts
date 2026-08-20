@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import {
   findThreadById,
   listThreadsByProjectId,
+  requireActiveProjectWorkspaceRootAbsent,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
@@ -195,6 +196,40 @@ describe("commandInvariants", () => {
             createdAt: now,
           },
           threadId: ThreadId.make("thread-1"),
+        }),
+      ),
+    ).rejects.toThrow("already exists");
+  });
+});
+
+describe("requireActiveProjectWorkspaceRootAbsent", () => {
+  const command = {
+    type: "project.create" as const,
+    commandId: CommandId.make("cmd-project"),
+    projectId: ProjectId.make("project-nested"),
+    title: "Nested",
+    workspaceRoot: "/tmp/project-a/packages/pricing",
+    defaultModelSelection: null,
+    createdAt: now,
+  };
+
+  it("allows a workspace nested inside an existing project", async () => {
+    await Effect.runPromise(
+      requireActiveProjectWorkspaceRootAbsent({
+        readModel,
+        command,
+        workspaceRoot: "/tmp/project-a/packages/pricing",
+      }),
+    );
+  });
+
+  it("still rejects the exact workspace root of an existing project", async () => {
+    await expect(
+      Effect.runPromise(
+        requireActiveProjectWorkspaceRootAbsent({
+          readModel,
+          command,
+          workspaceRoot: "/tmp/project-a/",
         }),
       ),
     ).rejects.toThrow("already exists");

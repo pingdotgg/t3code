@@ -156,6 +156,19 @@ describe("ClientSettings sidebar", () => {
     ).toBe(false);
   });
 
+  it("defaults project names to git repository names", () => {
+    expect(decodeClientSettings({}).sidebarProjectNamesUsePath).toBe(false);
+  });
+
+  it("round-trips path-based project names", () => {
+    expect(
+      decodeClientSettings({ sidebarProjectNamesUsePath: true }).sidebarProjectNamesUsePath,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ sidebarProjectNamesUsePath: true }).sidebarProjectNamesUsePath,
+    ).toBe(true);
+  });
+
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
     expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
     expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();

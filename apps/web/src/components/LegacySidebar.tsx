@@ -2303,6 +2303,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             <span className="truncate text-sm font-medium text-sidebar-foreground/90">
               {project.displayName}
             </span>
+            {project.pathLabel ? (
+              <span className="shrink-0 truncate text-secondary-label text-[11px]">
+                {project.pathLabel}
+              </span>
+            ) : null}
             {project.groupedProjectCount > 1 ? (
               <span className="shrink-0 text-secondary-label text-[10px]">
                 {project.groupedProjectCount} projects

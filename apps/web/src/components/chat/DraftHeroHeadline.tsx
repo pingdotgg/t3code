@@ -10,6 +10,7 @@ import { selectProjectGroupingSettings } from "~/logicalProject";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  formatSidebarProjectLabel,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
@@ -93,7 +94,9 @@ export function DraftHeroHeadline({
           ),
         ) ?? null);
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
-  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
+  const activeProjectDisplayName = activeProjectGroup
+    ? formatSidebarProjectLabel(activeProjectGroup)
+    : activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
@@ -139,10 +142,10 @@ export function DraftHeroHeadline({
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
                 <Tooltip>
                   <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
-                    {group.displayName}
+                    {formatSidebarProjectLabel(group)}
                   </TooltipTrigger>
                   <TooltipPopup side="top" className="max-w-80">
-                    {group.displayName}
+                    {formatSidebarProjectLabel(group)}
                   </TooltipPopup>
                 </Tooltip>
               </MenuRadioItem>

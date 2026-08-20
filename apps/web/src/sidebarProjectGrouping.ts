@@ -1,5 +1,10 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
-import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
+import {
+  buildProjectGroups,
+  deriveProjectSearchTerms,
+  formatProjectGroupLabel,
+  type ProjectGroupingSettings,
+} from "./logicalProject";
 import type { Project } from "./types";
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
@@ -12,6 +17,13 @@ export interface SidebarProjectGroupMember extends Project {
 export interface SidebarProjectSnapshot extends Project {
   projectKey: string;
   displayName: string;
+  // Repo-relative path shown next to displayName when another row carries the
+  // same name (a workspace nested inside another workspace of the same repo).
+  // Null when displayName already stands alone.
+  pathLabel: string | null;
+  // Everything this row should be findable by: titles, git names, and every
+  // segment of every member's workspace path.
+  searchTerms: readonly string[];
   groupedProjectCount: number;
   environmentPresence: EnvironmentPresence;
   // True iff every non-primary member of this group lives in a
@@ -103,6 +115,8 @@ export function buildSidebarProjectSnapshots(input: {
       ...representative,
       projectKey: group.key,
       displayName: group.label,
+      pathLabel: group.disambiguator,
+      searchTerms: members.flatMap((member) => [...deriveProjectSearchTerms(member)]),
       groupedProjectCount: members.length,
       environmentPresence:
         hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",
@@ -154,4 +168,12 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(0, preferredIndex),
     ...entries.slice(preferredIndex + 1),
   ];
+}
+
+/** One-line label for a project row: its name, plus the path when names collide. */
+export function formatSidebarProjectLabel(group: {
+  displayName: string;
+  pathLabel: string | null;
+}): string {
+  return formatProjectGroupLabel({ label: group.displayName, disambiguator: group.pathLabel });
 }

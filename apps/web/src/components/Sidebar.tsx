@@ -94,6 +94,7 @@ import { readLocalApi } from "../localApi";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  formatSidebarProjectLabel,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -1919,7 +1920,8 @@ export default function Sidebar() {
       new Map(
         projectGroups.flatMap((group) =>
           group.memberProjects.map(
-            (project) => [`${project.environmentId}:${project.id}`, group.displayName] as const,
+            (project) =>
+              [`${project.environmentId}:${project.id}`, formatSidebarProjectLabel(group)] as const,
           ),
         ),
       ),
@@ -3510,7 +3512,9 @@ export default function Sidebar() {
                       <FolderIcon className="size-4 shrink-0" />
                     )}
                     <span className="min-w-0 flex-1 truncate">
-                      {scopedProjectGroup?.displayName ?? "All projects"}
+                      {scopedProjectGroup
+                        ? formatSidebarProjectLabel(scopedProjectGroup)
+                        : "All projects"}
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
@@ -3544,7 +3548,9 @@ export default function Sidebar() {
                               faviconPath={project.faviconPath}
                               className="size-4 shrink-0"
                             />
-                            <span className="min-w-0 truncate text-sm">{project.displayName}</span>
+                            <span className="min-w-0 truncate text-sm">
+                              {formatSidebarProjectLabel(project)}
+                            </span>
                             <Button
                               size="icon-xs"
                               variant="ghost-muted"
@@ -3946,7 +3952,7 @@ export default function Sidebar() {
                   </button>
                 </>
               ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+                `No threads in ${formatSidebarProjectLabel(scopedProjectGroup)} yet`
               ) : (
                 "No threads yet"
               )}

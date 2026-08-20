@@ -1,3 +1,4 @@
+import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -11,6 +12,17 @@ import {
   buildHomeThreadGroups,
   sortHomeProjectScopes,
 } from "./homeThreadList";
+
+function groupingSettings(
+  mode: ProjectGroupingSettings["sidebarProjectGroupingMode"],
+  namesUsePath = false,
+): ProjectGroupingSettings {
+  return {
+    sidebarProjectGroupingMode: mode,
+    sidebarProjectGroupingOverrides: {},
+    sidebarProjectNamesUsePath: namesUsePath,
+  };
+}
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -65,7 +77,7 @@ function buildGroups(
     searchQuery: "",
     projectSortOrder: "updated_at",
     threadSortOrder: "updated_at",
-    projectGroupingMode: "repository",
+    projectGroupingSettings: groupingSettings("repository"),
     now: NOW,
     ...overrides,
   });
@@ -101,7 +113,7 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects,
       environmentId: null,
-      projectGroupingMode: "repository",
+      projectGroupingSettings: groupingSettings("repository"),
     });
 
     expect(scopes).toHaveLength(1);
@@ -160,7 +172,7 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects,
       environmentId: null,
-      projectGroupingMode: "repository",
+      projectGroupingSettings: groupingSettings("repository"),
     });
     const groups = buildGroups(projects, [staleThread]);
 
@@ -217,7 +229,7 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects,
       environmentId: null,
-      projectGroupingMode: "repository",
+      projectGroupingSettings: groupingSettings("repository"),
     });
 
     expect(scopes).toHaveLength(1);
@@ -243,7 +255,7 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [newerProject, olderProject],
       environmentId: null,
-      projectGroupingMode: "separate",
+      projectGroupingSettings: groupingSettings("separate"),
     });
 
     expect(
@@ -288,7 +300,7 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [invalidProject, validProject],
       environmentId: null,
-      projectGroupingMode: "separate",
+      projectGroupingSettings: groupingSettings("separate"),
     });
 
     expect(
@@ -335,7 +347,7 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [olderMember, newerMember, otherProject],
       environmentId: null,
-      projectGroupingMode: "repository",
+      projectGroupingSettings: groupingSettings("repository"),
     });
 
     expect(
@@ -370,7 +382,7 @@ describe("buildHomeThreadGroups", () => {
       buildHomeProjectScopes({
         projects,
         environmentId: null,
-        projectGroupingMode: "repository",
+        projectGroupingSettings: groupingSettings("repository"),
       }),
     ).toHaveLength(2);
   });
@@ -394,7 +406,7 @@ describe("buildHomeThreadGroups", () => {
     const scopes = buildHomeProjectScopes({
       projects: [project],
       environmentId: null,
-      projectGroupingMode: "repository",
+      projectGroupingSettings: groupingSettings("repository"),
     });
     const groups = buildGroups(
       [project],
@@ -483,7 +495,7 @@ describe("buildHomeThreadGroups", () => {
     const groups = buildGroups([olderProject, newerProject], threads, {
       projectSortOrder: "created_at",
       threadSortOrder: "created_at",
-      projectGroupingMode: "separate",
+      projectGroupingSettings: groupingSettings("separate"),
     });
 
     expect(groups.map((group) => group.representative.id)).toEqual([
@@ -564,17 +576,80 @@ describe("buildHomeThreadGroups", () => {
       }),
     );
 
-    expect(buildGroups(projects, threads, { projectGroupingMode: "repository" })).toHaveLength(1);
+    // Nested workspaces of one repo are separate projects in every mode.
     expect(
-      buildGroups(projects, threads, { projectGroupingMode: "repository_path" }).map(
+      buildGroups(projects, threads, {
+        projectGroupingSettings: groupingSettings("repository"),
+      }).map((group) => group.title),
+    ).toEqual(["Mobile", "Web"]);
+    expect(
+      buildGroups(projects, threads, {
+        projectGroupingSettings: groupingSettings("repository", true),
+      }).map((group) => group.title),
+    ).toEqual(["apps/mobile", "apps/web"]);
+    expect(
+      buildGroups(projects, threads, {
+        projectGroupingSettings: groupingSettings("repository_path"),
+      }).map((group) => group.title),
+    ).toEqual(["Mobile", "Web"]);
+    expect(
+      buildGroups(projects, threads, { projectGroupingSettings: groupingSettings("separate") }).map(
         (group) => group.title,
       ),
     ).toEqual(["Mobile", "Web"]);
+  });
+
+  it("finds a nested workspace by its own path segment", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const repositoryIdentity = {
+      canonicalKey: "github.com/kosyanmedia/delta",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "git@github.com:kosyanmedia/delta.git",
+      },
+      provider: "github",
+      owner: "kosyanmedia",
+      name: "delta",
+      displayName: "kosyanmedia/delta",
+      rootPath: "/home/dev/delta",
+    };
+    const projects = [
+      makeProject({
+        environmentId,
+        id: ProjectId.make("project-root"),
+        title: "kosyanmedia/delta",
+        workspaceRoot: "/home/dev/delta",
+        repositoryIdentity,
+      }),
+      makeProject({
+        environmentId,
+        id: ProjectId.make("project-nested"),
+        title: "kosyanmedia/delta",
+        workspaceRoot: "/home/dev/delta/commerce-pricing",
+        repositoryIdentity,
+      }),
+    ];
+    const threads = projects.map((project) =>
+      makeThread({
+        environmentId,
+        id: ThreadId.make(`thread-${project.id}`),
+        projectId: project.id,
+        title: project.title,
+      }),
+    );
+
+    // Same git name on both rows, so the path disambiguates them.
     expect(
-      buildGroups(projects, threads, { projectGroupingMode: "separate" }).map(
+      buildGroups(projects, threads)
+        .map((group) => group.title)
+        .sort(),
+    ).toEqual(["kosyanmedia/delta · .", "kosyanmedia/delta · commerce-pricing"]);
+    expect(
+      buildGroups(projects, threads, { searchQuery: "commerce-pricing" }).map(
         (group) => group.title,
       ),
-    ).toEqual(["Mobile", "Web"]);
+    ).toEqual(["kosyanmedia/delta · commerce-pricing"]);
   });
 
   it("default view shows only threads from the last 5 days", () => {

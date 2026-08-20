@@ -12,6 +12,7 @@ import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  formatSidebarProjectLabel,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -79,6 +80,97 @@ describe("environment grouping", () => {
     }).length;
 
     expect(projectGroupCount).toBe(1);
+  });
+
+  it("keeps a nested workspace out of its parent's group", () => {
+    const rootIdentity = { ...repositoryIdentity, rootPath: "/tmp/shared-repo" };
+    const parent = makeProject({ repositoryIdentity: rootIdentity });
+    const nested = makeProject({
+      id: ProjectId.make("project-nested"),
+      workspaceRoot: "/tmp/shared-repo/packages/pricing",
+      repositoryIdentity: rootIdentity,
+    });
+
+    expect(deriveLogicalProjectKey(parent)).not.toBe(deriveLogicalProjectKey(nested));
+    expect(
+      buildSidebarProjectSnapshots({
+        projects: [parent, nested],
+        settings: defaultGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: () => null,
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("labels colliding rows with their path and searches by path segment", () => {
+    const rootIdentity = {
+      ...repositoryIdentity,
+      owner: "example",
+      name: "shared-repo",
+      displayName: "example/shared-repo",
+      rootPath: "/tmp/shared-repo",
+    };
+    const parent = makeProject({ title: "example/shared-repo", repositoryIdentity: rootIdentity });
+    const nested = makeProject({
+      id: ProjectId.make("project-nested"),
+      title: "example/shared-repo",
+      workspaceRoot: "/tmp/shared-repo/commerce-pricing",
+      repositoryIdentity: rootIdentity,
+    });
+
+    const snapshots = buildSidebarProjectSnapshots({
+      projects: [parent, nested],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    expect(snapshots.map(formatSidebarProjectLabel).sort()).toEqual([
+      "example/shared-repo · .",
+      "example/shared-repo · commerce-pricing",
+    ]);
+
+    const nestedSnapshot = snapshots.find((snapshot) =>
+      snapshot.memberProjects.some((member) => member.id === nested.id),
+    );
+    expect(nestedSnapshot?.searchTerms).toContain("commerce-pricing");
+    expect(nestedSnapshot?.searchTerms).toContain("example/shared-repo");
+  });
+
+  it("uses the workspace path as the name when the path-name setting is on", () => {
+    const rootIdentity = {
+      ...repositoryIdentity,
+      displayName: "example/shared-repo",
+      rootPath: "/tmp/shared-repo",
+    };
+    const parent = makeProject({ title: "example/shared-repo", repositoryIdentity: rootIdentity });
+    const nested = makeProject({
+      id: ProjectId.make("project-nested"),
+      title: "example/shared-repo",
+      workspaceRoot: "/tmp/shared-repo/commerce-pricing",
+      repositoryIdentity: rootIdentity,
+    });
+
+    const snapshots = buildSidebarProjectSnapshots({
+      projects: [parent, nested],
+      settings: { ...defaultGroupingSettings, sidebarProjectNamesUsePath: true },
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    expect(snapshots.map((snapshot) => snapshot.displayName).sort()).toEqual([
+      "commerce-pricing",
+      "shared-repo",
+    ]);
+    // Turning the setting on must not renumber the projects themselves.
+    expect(snapshots.map((snapshot) => snapshot.projectKey).sort()).toEqual(
+      buildSidebarProjectSnapshots({
+        projects: [parent, nested],
+        settings: defaultGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: () => null,
+      })
+        .map((snapshot) => snapshot.projectKey)
+        .sort(),
+    );
   });
 
   it("keeps projects without repository identity physically scoped", () => {
