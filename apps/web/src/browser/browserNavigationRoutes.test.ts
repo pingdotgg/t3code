@@ -99,6 +99,25 @@ describe("browser navigation routes", () => {
     }),
   );
 
+  it.effect("keeps a removed tab route alive until its in-flight navigation finishes", () =>
+    Effect.gen(function* () {
+      let closes = 0;
+      const route = createBrowserNavigationRoute({
+        environmentId,
+        generation: reserveBrowserNavigationRouteGeneration(),
+        resolution: sshResolution("http://127.0.0.1:41001"),
+        scope: yield* makeTrackedScope(() => closes++),
+      });
+      yield* Effect.promise(() => route.commit("tab-1"));
+
+      yield* Effect.promise(() => releaseBrowserNavigationRoute("tab-1"));
+      expect(closes).toBe(0);
+
+      yield* Effect.promise(() => route.release());
+      expect(closes).toBe(1);
+    }),
+  );
+
   it.effect("closes routes and invalidates acquisitions when an environment is removed", () =>
     Effect.gen(function* () {
       let closes = 0;

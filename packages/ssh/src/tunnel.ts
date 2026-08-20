@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -91,6 +92,7 @@ interface SshPortForwardEntry extends SshTunnelEntry {
 interface PendingSshPortForward {
   readonly deferred: Deferred.Deferred<SshPortForwardEntry, SshEnvironmentEffectError>;
   readonly target: DesktopSshEnvironmentTarget;
+  creatorFiber: Fiber.Fiber<SshPortForwardEntry, SshEnvironmentEffectError> | null;
 }
 
 export interface SshPortForwardLease {
@@ -1302,6 +1304,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     }
     pendingPortForwards.delete(key);
     yield* Deferred.fail(pending.deferred, makeSshTunnelCancelledError(target)).pipe(Effect.ignore);
+    if (pending.creatorFiber !== null) {
+      yield* Fiber.interrupt(pending.creatorFiber);
+    }
   });
 
   yield* Scope.addFinalizer(
@@ -1745,9 +1750,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const pendingEntry: PendingSshPortForward = {
       deferred,
       target: input.resolvedTarget,
+      creatorFiber: null,
     };
     pendingPortForwards.set(input.key, pendingEntry);
-    return yield* createPortForwardEntry(input).pipe(
+    const creatorFiber = yield* createPortForwardEntry(input).pipe(
       Effect.flatMap((entry) => {
         if (pendingPortForwards.get(input.key) !== pendingEntry) {
           return closePortForwardEntry(entry).pipe(
@@ -1770,9 +1776,21 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           if (pendingPortForwards.get(input.key) === pendingEntry) {
             pendingPortForwards.delete(input.key);
           }
-        }).pipe(Effect.andThen(Deferred.done(deferred, exit))),
+        }).pipe(
+          Effect.andThen(
+            Exit.hasInterrupts(exit)
+              ? Deferred.fail(deferred, makeSshTunnelCancelledError(input.resolvedTarget))
+              : Deferred.done(deferred, exit),
+          ),
+        ),
       ),
+      Effect.forkIn(managerScope, { startImmediately: true }),
     );
+    pendingEntry.creatorFiber = creatorFiber;
+    if (pendingPortForwards.get(input.key) !== pendingEntry) {
+      yield* Fiber.interrupt(creatorFiber);
+    }
+    return yield* Deferred.await(deferred);
   });
 
   const acquirePortForward = Effect.fn("ssh/tunnel.acquirePortForward")(function* (

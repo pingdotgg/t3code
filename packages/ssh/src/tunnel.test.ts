@@ -535,15 +535,8 @@ describe("ssh tunnel scripts", () => {
 
     return Effect.gen(function* () {
       const readinessStarted = yield* Deferred.make<void>();
-      const allowReadiness = yield* Deferred.make<void>();
       const readyStderr = Stream.fromEffect(
-        Deferred.succeed(readinessStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(allowReadiness)),
-        ),
-      ).pipe(
-        Stream.map(() =>
-          new TextEncoder().encode("debug1: Local forwarding listening on 127.0.0.1 port 41773.\n"),
-        ),
+        Deferred.succeed(readinessStarted, undefined).pipe(Effect.andThen(Effect.never)),
       );
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
@@ -573,8 +566,6 @@ describe("ssh tunnel scripts", () => {
       yield* Deferred.await(readinessStarted);
 
       const closeFiber = yield* Effect.forkChild(Scope.close(managerScope, Exit.void));
-      yield* Effect.yieldNow;
-      yield* Deferred.succeed(allowReadiness, undefined);
 
       const acquisitionResult = yield* Fiber.join(acquisitionFiber);
       yield* Fiber.join(closeFiber);

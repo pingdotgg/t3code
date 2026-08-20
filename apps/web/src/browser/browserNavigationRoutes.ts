@@ -124,7 +124,7 @@ export async function releaseBrowserNavigationRoute(tabId: string): Promise<void
   latestRouteGenerationByTab.set(tabId, ++nextRouteGeneration);
   const matchingRoutes = [...routes].filter((route) => route.tabId === tabId);
   activeRoutes.delete(tabId);
-  await Promise.all(matchingRoutes.map(closeRoute));
+  await Promise.all(matchingRoutes.map(retireRoute));
 }
 
 export async function releaseBrowserNavigationRoutesForEnvironment(
