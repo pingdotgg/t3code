@@ -852,12 +852,23 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     if (input.refUpdates.length === 0) return;
     const currentBranch = yield* symbolicHead(input.root);
-    // Branches checked out in any linked worktree can never be moved.
+    // Branches checked out in any linked worktree can never be moved: this
+    // discovery must fail closed. allowNonZeroExit is deliberately omitted
+    // so a failing `git worktree list` propagates instead of being treated
+    // as "no other worktrees", and truncated output (which would silently
+    // drop entries past the cut) is rejected below rather than trusted.
     const worktreeHeads = yield* run({
       root: input.root,
       args: ["worktree", "list", "--porcelain"],
-      allowNonZeroExit: true,
     });
+    if (worktreeHeads.stdoutTruncated) {
+      return yield* makeGitSyncCommandError({
+        root: input.root,
+        args: ["worktree", "list", "--porcelain"],
+        exitCode: worktreeHeads.code,
+        stderr: "git worktree list output was truncated; refusing to move branch refs.",
+      });
+    }
     const checkedOut = new Set<string>();
     if (currentBranch !== null) checkedOut.add(currentBranch);
     for (const line of worktreeHeads.stdout.split("\n")) {
