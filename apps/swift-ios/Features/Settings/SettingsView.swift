@@ -186,6 +186,22 @@ public struct SettingsView: View {
                     settingsDivider
                     SettingsValueRow(title: "Commit", value: appCommit)
                 }
+                if let changelog = whatsNewChangelog {
+                    settingsDivider
+                    NavigationLink {
+                        WhatsNewView(
+                            presentation: changelog.presentation(info: Bundle.main.infoDictionary),
+                            runningBuildLabel: whatsNewBuildLabel,
+                            appName: appDisplayName
+                        )
+                    } label: {
+                        SettingsNavigationRow(
+                            title: "What's New",
+                            systemImage: "sparkles"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
                     SettingsNavigationRow(
@@ -217,6 +233,17 @@ public struct SettingsView: View {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             ?? "?"
         return "\(version) (\(build))"
+    }
+
+    private var whatsNewChangelog: WhatsNewChangelog? {
+        WhatsNewChangelog.load(info: Bundle.main.infoDictionary)
+    }
+
+    /// Like `appVersionLabel`, but `nil` rather than `?` when a build did not
+    /// record its identity — the What's New header omits the line instead of
+    /// showing placeholders.
+    private var whatsNewBuildLabel: String? {
+        WhatsNewChangelog.buildLabel(info: Bundle.main.infoDictionary)
     }
 
     private var appCommit: String? {
