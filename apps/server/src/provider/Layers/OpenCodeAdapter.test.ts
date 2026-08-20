@@ -1,6 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,6 +33,7 @@ import {
 } from "../opencodeRuntime.ts";
 import {
   appendOpenCodeAssistantTextDelta,
+  extractOpenCodeToolFileChanges,
   isOpenCodeNotFound,
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
@@ -1441,4 +1442,115 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(closeCallsDuringRun, []);
     }),
   );
+});
+
+describe("extractOpenCodeToolFileChanges", () => {
+  it("extracts edit diff from snake_case fields", () => {
+    const result = extractOpenCodeToolFileChanges("Edit", {
+      file_path: "/src/main.ts",
+      old_string: "foo",
+      new_string: "bar",
+    });
+    NodeAssert.deepEqual(result, [{ path: "/src/main.ts", diff: "@@ -1,1 +1,1 @@\n-foo\n+bar" }]);
+  });
+
+  it("extracts edit diff from camelCase fields", () => {
+    const result = extractOpenCodeToolFileChanges("Edit", {
+      filePath: "/src/main.ts",
+      oldString: "hello",
+      newString: "world",
+    });
+    NodeAssert.deepEqual(result, [
+      { path: "/src/main.ts", diff: "@@ -1,1 +1,1 @@\n-hello\n+world" },
+    ]);
+  });
+
+  it("extracts write diff from content field", () => {
+    const result = extractOpenCodeToolFileChanges("Write", {
+      file_path: "/README.md",
+      content: "# Hello\n",
+    });
+    NodeAssert.ok(result);
+    NodeAssert.equal(result![0]!.path, "/README.md");
+    NodeAssert.ok(result![0]!.diff.includes("+# Hello"));
+  });
+
+  it("extracts write diff from new_content field", () => {
+    const result = extractOpenCodeToolFileChanges("Write", {
+      file_path: "/README.md",
+      new_content: "# Hello\n",
+    });
+    NodeAssert.ok(result);
+    NodeAssert.equal(result![0]!.path, "/README.md");
+    NodeAssert.ok(result![0]!.diff.includes("+# Hello"));
+  });
+
+  it("uses path as fallback file path", () => {
+    const result = extractOpenCodeToolFileChanges("Edit", {
+      path: "/src/index.ts",
+      old_string: "a",
+      new_string: "b",
+    });
+    NodeAssert.equal(result![0]!.path, "/src/index.ts");
+  });
+
+  it("returns undefined when file path is missing", () => {
+    const result = extractOpenCodeToolFileChanges("Edit", {
+      old_string: "a",
+      new_string: "b",
+    });
+    NodeAssert.equal(result, undefined);
+  });
+
+  it("returns undefined for non-file tool names", () => {
+    const result = extractOpenCodeToolFileChanges("Bash", {
+      command: "ls",
+    });
+    NodeAssert.equal(result, undefined);
+  });
+
+  it("returns undefined when only old_string is present", () => {
+    const result = extractOpenCodeToolFileChanges("Edit", {
+      file_path: "/x.ts",
+      old_string: "old",
+    });
+    NodeAssert.equal(result, undefined);
+  });
+
+  it("matches multiedit tool names", () => {
+    const result = extractOpenCodeToolFileChanges("MultiEdit", {
+      file_path: "/x.ts",
+      old_string: "a",
+      new_string: "b",
+    });
+    NodeAssert.ok(result);
+  });
+
+  it("matches patch tool names", () => {
+    const result = extractOpenCodeToolFileChanges("apply_patch", {
+      file_path: "/x.ts",
+      old_string: "a",
+      new_string: "b",
+    });
+    NodeAssert.ok(result);
+  });
+
+  it("is case-insensitive", () => {
+    const result = extractOpenCodeToolFileChanges("edit", {
+      file_path: "/x.ts",
+      old_string: "a",
+      new_string: "b",
+    });
+    NodeAssert.ok(result);
+  });
+
+  it("handles new files (empty old_string)", () => {
+    const result = extractOpenCodeToolFileChanges("Write", {
+      file_path: "/new.ts",
+      content: "const x = 1;\n",
+    });
+    NodeAssert.ok(result);
+    NodeAssert.equal(result![0]!.path, "/new.ts");
+    NodeAssert.ok(result![0]!.diff.includes("+const x = 1;"));
+  });
 });

@@ -24,8 +24,11 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -209,6 +212,56 @@ function maxCheckpointTurnCount(
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+function eventHasFileChanges(event: ProviderRuntimeEvent): boolean {
+  if (event.type !== "item.completed") return false;
+  const data =
+    event.payload.data && typeof event.payload.data === "object"
+      ? (event.payload.data as Record<string, unknown>)
+      : undefined;
+  const item =
+    data?.item && typeof data.item === "object"
+      ? (data.item as Record<string, unknown>)
+      : undefined;
+  return Array.isArray(data?.changes) || Array.isArray(item?.changes);
+}
+
+const SUBAGENT_DETAIL_LIMIT = 16000;
+
+function subagentItemRole(itemType: string): "assistant" | "user" | "tool" {
+  if (isToolLifecycleItemType(itemType)) {
+    return "tool";
+  }
+  return itemType === "user_message" ? "user" : "assistant";
+}
+
+function subagentItemActivity(
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "item.started" | "item.updated" | "item.completed" }
+  >,
+  maybeSequence: { sequence?: number },
+): OrchestrationThreadActivity {
+  return {
+    id: event.eventId,
+    createdAt: event.createdAt,
+    tone: "tool",
+    kind: "subagent.item",
+    summary: event.payload.title ?? "Subagent activity",
+    payload: {
+      itemType: event.payload.itemType,
+      ...(event.itemId ? { itemId: event.itemId } : {}),
+      parentItemId: event.parentItemId,
+      role: subagentItemRole(event.payload.itemType),
+      ...(event.payload.detail
+        ? { detail: truncateDetail(event.payload.detail, SUBAGENT_DETAIL_LIMIT) }
+        : {}),
+      ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+    },
+    turnId: toTurnId(event.turnId) ?? null,
+    ...maybeSequence,
+  };
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -879,6 +932,8 @@ const make = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
@@ -888,6 +943,58 @@ const make = Effect.gen(function* () {
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
+
+  const attachPostFileHashes = Effect.fn("attachPostFileHashes")(function* (
+    event: ProviderRuntimeEvent,
+    cwd: string,
+  ) {
+    if (event.type !== "item.completed") {
+      return event;
+    }
+    const data =
+      event.payload.data && typeof event.payload.data === "object"
+        ? (event.payload.data as Record<string, unknown>)
+        : undefined;
+    const item =
+      data?.item && typeof data.item === "object"
+        ? (data.item as Record<string, unknown>)
+        : undefined;
+    const changes = Array.isArray(data?.changes)
+      ? data.changes
+      : Array.isArray(item?.changes)
+        ? item.changes
+        : undefined;
+    if (!changes) return event;
+
+    const hashedChanges = yield* Effect.forEach(
+      changes,
+      (candidate) =>
+        Effect.gen(function* () {
+          if (!candidate || typeof candidate !== "object") return candidate;
+          const change = candidate as Record<string, unknown>;
+          if (typeof change.path !== "string") return candidate;
+          const filePath = path.resolve(cwd, change.path);
+          const relativePath = path.relative(cwd, filePath);
+          if (
+            relativePath === ".." ||
+            relativePath.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relativePath)
+          ) {
+            return candidate;
+          }
+          const contents = yield* fileSystem.readFileString(filePath);
+          const postFileHash = yield* crypto
+            .digest("SHA-256", new TextEncoder().encode(contents))
+            .pipe(Effect.map(Encoding.encodeHex));
+          return { ...change, postFileHash };
+        }).pipe(Effect.orElseSucceed(() => candidate)),
+      { concurrency: 4 },
+    );
+    const nextData = Array.isArray(data?.changes)
+      ? { ...data, changes: hashedChanges }
+      : { ...data, item: { ...item, changes: hashedChanges } };
+    return { ...event, payload: { ...event.payload, data: nextData } } as ProviderRuntimeEvent;
+  });
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -2015,7 +2122,14 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event, taskTitle);
+      const checkpointContext = eventHasFileChanges(event)
+        ? yield* projectionSnapshotQuery
+            .getThreadCheckpointContext(thread.id)
+            .pipe(Effect.map(Option.getOrUndefined))
+        : undefined;
+      const workspaceCwd = checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot;
+      const activityEvent = workspaceCwd ? yield* attachPostFileHashes(event, workspaceCwd) : event;
+      const activities = runtimeEventToActivities(activityEvent, taskTitle);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>

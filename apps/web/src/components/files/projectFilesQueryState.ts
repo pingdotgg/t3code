@@ -44,6 +44,20 @@ export function getProjectFileQueryAtom(
   });
 }
 
+export async function readProjectFileFresh(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): Promise<ProjectReadFileResult | null> {
+  const atom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
+  appAtomRegistry.refresh(atom);
+  const result = await executeAtomQuery(appAtomRegistry, atom, {
+    reportDefect: false,
+    reportFailure: false,
+  });
+  return result._tag === "Success" ? result.value : null;
+}
+
 export function setProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,

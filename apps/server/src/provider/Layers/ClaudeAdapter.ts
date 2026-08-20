@@ -95,6 +95,7 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { extractToolFileChanges } from "./DiffUtils.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
@@ -1446,6 +1447,61 @@ function toolInputFingerprint(input: Record<string, unknown>): string | undefine
   return encodeJsonStringForDiagnostics(input);
 }
 
+export function buildClaudeFileChanges(
+  toolName: string,
+  input: Record<string, unknown>,
+): Array<{ path: string; diff: string }> | undefined {
+  const normalizedName = toolName.toLowerCase();
+
+  // apply_patch: Claude uses splitMultiFilePatch to handle multi-file patches
+  if (normalizedName.includes("apply_patch")) {
+    const patch = typeof input.patch === "string" ? input.patch : undefined;
+    if (patch && patch.length > 0) {
+      return splitMultiFilePatch(patch);
+    }
+    return undefined;
+  }
+
+  // Delegate all other file-change tools to the shared extractor
+  const changes = extractToolFileChanges(toolName, input);
+  return changes && changes.length > 0 ? changes : undefined;
+}
+
+function splitMultiFilePatch(patch: string): Array<{ path: string; diff: string }> | undefined {
+  // Split on "diff --git" boundaries for multi-file patches
+  const parts = patch.split(/(?=^diff --git )/m).filter((p) => p.trim().length > 0);
+  if (parts.length <= 1) {
+    // Single-file patch: extract path from headers
+    const result = extractPatchFilePath(patch);
+    return result.length > 0 ? result : undefined;
+  }
+  const results: Array<{ path: string; diff: string }> = [];
+  for (const part of parts) {
+    results.push(...extractPatchFilePath(part));
+  }
+  return results.length > 0 ? results : undefined;
+}
+
+function extractPatchFilePath(patch: string): Array<{ path: string; diff: string }> {
+  // Try +++ header first (handles creation where --- is /dev/null)
+  const plusMatch = patch.match(/^\+\+\+ [ab]\/(.+)$/m);
+  if (plusMatch?.[1]) {
+    return [{ path: plusMatch[1], diff: patch }];
+  }
+  // Fall back to --- header for deletions
+  const minusMatch = patch.match(/^--- [ab]\/(.+)$/m);
+  if (minusMatch?.[1]) {
+    return [{ path: minusMatch[1], diff: patch }];
+  }
+  // Last resort: try the non-git header format
+  const pathMatch = patch.match(/^(?:---|\+\+\+) ([^\s]+)/m);
+  const filePath = pathMatch?.[1];
+  if (filePath && filePath !== "/dev/null") {
+    return [{ path: filePath, diff: patch }];
+  }
+  return [];
+}
+
 function toolResultStreamKind(itemType: CanonicalItemType): ClaudeToolResultStreamKind | undefined {
   switch (itemType) {
     case "command_execution":
@@ -2718,10 +2774,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
       const toolUseResult = readClaudeToolUseResult(message);
+      const fileChanges =
+        !toolResult.isError && tool.itemType === "file_change"
+          ? buildClaudeFileChanges(tool.toolName, tool.input)
+          : undefined;
       const toolData = {
         toolName: tool.toolName,
         input: tool.input,
         result: toolResult.block,
+        ...(fileChanges ? { changes: fileChanges } : {}),
       };
 
       const updatedStamp = yield* makeEventStamp();

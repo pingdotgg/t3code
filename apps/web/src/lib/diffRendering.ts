@@ -1,4 +1,5 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
+import { applyPatch, createTwoFilesPatch, parsePatch, reversePatch } from "diff";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 
 export const DIFF_THEME_NAMES = {
@@ -55,6 +56,26 @@ export type RenderablePatch =
 export interface DiffLineStat {
   additions: number;
   deletions: number;
+}
+
+export function expandPartialPatchWithCurrentFile(
+  patch: string,
+  filePath: string,
+  currentContents: string,
+): string | null {
+  const [parsedPatch, ...extraPatches] = parsePatch(patch);
+  if (!parsedPatch || extraPatches.length > 0) return null;
+  const oldContents = applyPatch(currentContents, reversePatch(parsedPatch));
+  if (oldContents === false) return null;
+  return createTwoFilesPatch(
+    `a/${filePath}`,
+    `b/${filePath}`,
+    oldContents,
+    currentContents,
+    undefined,
+    undefined,
+    { context: Number.POSITIVE_INFINITY },
+  );
 }
 
 export function getDiffLineStat(files: ReadonlyArray<FileDiffMetadata>): DiffLineStat {

@@ -61,6 +61,13 @@ export type WorkLogToolLifecycleStatus =
   | "declined"
   | "stopped";
 
+export interface FileChange {
+  filePath: string;
+  postFileHash?: string;
+  patch?: string;
+}
+
+
 export interface WorkLogEntry {
   id: string;
   createdAt: string;
@@ -94,6 +101,10 @@ export interface WorkLogEntry {
     workflowId: string | null;
     agentTaskIds: ReadonlyArray<string>;
   };
+  /** Detailed file change info for file_change tool calls. */
+  fileChange?: FileChange;
+  /** Per-file patches reported by a provider for one file-change tool call. */
+  fileChanges?: ReadonlyArray<FileChange>;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -883,6 +894,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null;
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
+  const fileChanges = extractFileChanges(payload);
   const title = extractToolTitle(payload);
   const isTaskActivity =
     activity.kind === "task.started" ||
@@ -935,6 +947,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
+  }
+  if (fileChanges.length > 0) {
+    entry.fileChanges = fileChanges;
+    const [firstFileChange] = fileChanges;
+    if (firstFileChange) {
+      entry.fileChange = firstFileChange;
+    }
   }
   if (title) {
     entry.toolTitle = title;
@@ -1120,6 +1139,7 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const fileChanges = mergeFileChanges(previous.fileChanges, next.fileChanges);
   return {
     ...previous,
     ...next,
@@ -1134,7 +1154,26 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(fileChanges.length > 0
+      ? {
+          fileChanges,
+          ...(fileChanges[0] ? { fileChange: fileChanges[0] } : {}),
+        }
+      : previous.fileChange
+        ? { fileChange: previous.fileChange }
+        : {}),
   };
+}
+
+function mergeFileChanges(
+  previous: ReadonlyArray<FileChange> | undefined,
+  next: ReadonlyArray<FileChange> | undefined,
+): FileChange[] {
+  const byPath = new Map<string, FileChange>();
+  for (const change of [...(previous ?? []), ...(next ?? [])]) {
+    if (change.filePath.length > 0) byPath.set(change.filePath, change);
+  }
+  return [...byPath.values()];
 }
 
 function mergeChangedFiles(
@@ -1693,6 +1732,27 @@ function extractChangedFiles(payload: Record<string, unknown> | null): string[] 
   const seen = new Set<string>();
   collectChangedFiles(asRecord(payload?.data), changedFiles, seen, 0);
   return changedFiles;
+}
+
+function extractFileChanges(payload: Record<string, unknown> | null): FileChange[] {
+  const data = asRecord(payload?.data);
+  const candidates = Array.isArray(data?.changes)
+    ? data.changes
+    : Array.isArray(asRecord(data?.item)?.changes)
+      ? (asRecord(data?.item)?.changes as unknown[])
+      : [];
+  const byPath = new Map<string, FileChange>();
+  for (const candidate of candidates) {
+    const change = asRecord(candidate);
+    if (!change || typeof change.path !== "string" || typeof change.diff !== "string") continue;
+    if (change.path.length === 0 || change.diff.length === 0) continue;
+    byPath.set(change.path, {
+      filePath: change.path,
+      patch: change.diff,
+      ...(typeof change.postFileHash === "string" ? { postFileHash: change.postFileHash } : {}),
+    });
+  }
+  return [...byPath.values()];
 }
 
 function compareActivitiesByOrder(

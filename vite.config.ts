@@ -22,7 +22,7 @@ export default defineConfig({
   },
   staged: {
     // Formatter only for now — no lint or typecheck on commit.
-    "*": "vp fmt",
+    "*.{css,html,js,json,jsonc,jsx,md,mdx,scss,ts,tsx,yaml,yml}": "vp fmt",
   },
   fmt: {
     ignorePatterns: [

@@ -4,6 +4,24 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+## Fork Rebase Invariants
+
+- Treat the capability groups in [Fork-specific features](./README.md#fork-specific-features) as
+  required behavior. Before rebasing, create and record a backup ref. Afterward, use `git range-diff`
+  and focused tests to prove the fork changes survived; conflict-free history and a successful build
+  are not sufficient.
+- Inline file diffs are an end-to-end contract. A completed Codex `file_change` event stores patches
+  in `data.item.changes`; activity projection must preserve them, client extraction must retain them,
+  and expanding the work-log file-change row must render the patch. Keep the projection and client
+  regression tests, including an absolute workspace path. Inline previews must hide redundant tool
+  input, preserve the global line-wrap preference, and keep full-context regions expandable.
+- After every upstream rebase, follow the parent setup repository's required dependency install,
+  build, web/server test, and scoped web-check workflow. Then smoke-test inline diffs in the
+  controlled browser with: `make an edit to the readme. I'm testing the file edit tool... make an
+improvement to it if you see one while you're at it`.
+- Verify inactive threads can settle unless an approval or user-input request is pending, or their
+  provider session is starting or running.
+
 ## What makes T3 Code special?
 
 We have over 100,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.

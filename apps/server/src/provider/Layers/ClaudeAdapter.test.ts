@@ -37,7 +37,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  buildClaudeFileChanges,
+  makeClaudeAdapter,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -4609,5 +4613,94 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+});
+
+describe("buildClaudeFileChanges", () => {
+  it("builds diff from Edit tool with snake_case fields", () => {
+    const result = buildClaudeFileChanges("Edit", {
+      file_path: "/src/main.ts",
+      old_string: "foo",
+      new_string: "bar",
+    });
+    assert.deepStrictEqual(result, [{ path: "/src/main.ts", diff: "@@ -1,1 +1,1 @@\n-foo\n+bar" }]);
+  });
+
+  it("returns undefined for Edit tool without file_path", () => {
+    const result = buildClaudeFileChanges("Edit", {
+      old_string: "a",
+      new_string: "b",
+    });
+    assert.equal(result, undefined);
+  });
+
+  it("returns undefined for Edit tool without old_string or new_string", () => {
+    const result = buildClaudeFileChanges("Edit", {
+      file_path: "/x.ts",
+      old_string: "a",
+    });
+    assert.equal(result, undefined);
+  });
+
+  it("builds diff from Write tool", () => {
+    const result = buildClaudeFileChanges("Write", {
+      file_path: "/README.md",
+      content: "# Hello\n",
+    });
+    assert.ok(result);
+    assert.equal(result![0]!.path, "/README.md");
+    assert.ok(result![0]!.diff.includes("+# Hello"));
+  });
+
+  it("ignores Write tools whose name includes todo", () => {
+    const result = buildClaudeFileChanges("TodoWrite", {
+      file_path: "/todos.md",
+      content: "- [ ] test",
+    });
+    assert.equal(result, undefined);
+  });
+
+  it("builds diff from apply_patch tool", () => {
+    const patch =
+      "diff --git a/main.ts b/main.ts\n--- a/main.ts\n+++ b/main.ts\n@@ -1 +1 @@\n-foo\n+bar\n";
+    const result = buildClaudeFileChanges("apply_patch", {
+      patch,
+    });
+    assert.ok(result);
+    assert.equal(result![0]!.path, "main.ts");
+    assert.ok(result![0]!.diff.includes(patch));
+  });
+
+  it("returns undefined for apply_patch without extractable file path", () => {
+    const result = buildClaudeFileChanges("apply_patch", {
+      patch: "@@ -1 +1 @@\n-foo\n+bar\n",
+    });
+    assert.equal(result, undefined);
+  });
+
+  it("returns undefined for non-file tool names", () => {
+    const result = buildClaudeFileChanges("Bash", {
+      command: "ls",
+    });
+    assert.equal(result, undefined);
+  });
+
+  it("matches tools containing 'edit' case-insensitively", () => {
+    const result = buildClaudeFileChanges("notebookedit", {
+      file_path: "/x.ts",
+      old_string: "a",
+      new_string: "b",
+    });
+    assert.ok(result);
+  });
+
+  it("handles new files (empty old_string)", () => {
+    const result = buildClaudeFileChanges("Write", {
+      file_path: "/new.ts",
+      content: "const x = 1;\n",
+    });
+    assert.ok(result);
+    assert.equal(result![0]!.path, "/new.ts");
+    assert.ok(result![0]!.diff.includes("+const x = 1;"));
   });
 });

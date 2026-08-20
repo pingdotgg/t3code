@@ -33,6 +33,7 @@
     "@tanstack/react-router": "^1.160.2",
     "class-variance-authority": "^0.7.1",
     "culori": "^4.0.2",
+    "diff": "^8.0.3",
     "effect": "catalog:",
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",

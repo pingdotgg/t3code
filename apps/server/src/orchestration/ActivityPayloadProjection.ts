@@ -314,6 +314,7 @@ function projectAcpContent(value: unknown): Record<string, unknown> | undefined 
 /**
  * Removes activity payload fields that no current client reads while retaining
  * the full payload in persistence and the event store.
+ * Preserves data.changes so the web client can render inline diffs.
  */
 export function projectActivityPayload(
   activity: OrchestrationThreadActivity,
@@ -348,6 +349,10 @@ export function projectActivityPayload(
   if (changedFiles.length > 0) {
     // Both clients discover file names by walking objects with path-like keys.
     projectedData.files = changedFiles.map((path) => ({ path }));
+  }
+
+  if (Array.isArray(data.changes)) {
+    projectedData.changes = data.changes;
   }
 
   if ("toolCallId" in data) {

@@ -579,6 +579,9 @@ importers:
       culori:
         specifier: ^4.0.2
         version: 4.0.2
+      diff:
+        specifier: ^8.0.3
+        version: 8.0.3
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)

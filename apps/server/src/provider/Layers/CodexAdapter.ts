@@ -1150,6 +1150,28 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "item/fileChange/patchUpdated") {
+    const payload = readPayload(
+      EffectCodexSchema.V2FileChangePatchUpdatedNotification,
+      event.payload,
+    );
+    if (!payload) {
+      return [];
+    }
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "item.updated",
+        payload: {
+          itemType: "file_change",
+          data: {
+            changes: payload.changes,
+          },
+        },
+      },
+    ];
+  }
+
   if (event.method === "item/plan/delta") {
     const payload = readPayload(EffectCodexSchema.V2PlanDeltaNotification, event.payload);
     const delta = event.textDelta ?? payload?.delta;
