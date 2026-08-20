@@ -1,8 +1,5 @@
 import {
   ExternalLinkIcon,
-  GithubIcon,
-  GitlabIcon,
-  Loader2Icon,
   PackagePlusIcon,
   PaletteIcon,
   RefreshCwIcon,
@@ -22,6 +19,7 @@ import {
   replaceCustomThemeCollection,
   type ThemeDefinition,
 } from "../../themePalette";
+import { GitHubIcon, GitLabIcon } from "../Icons";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -53,9 +51,9 @@ function SourceLinkIcon({ url }: { url: string }) {
   try {
     const host = new URL(url).hostname.toLowerCase();
     if (host === "github.com" || host.endsWith(".github.com"))
-      return <GithubIcon className="size-3.5" />;
+      return <GitHubIcon className="size-3.5" />;
     if (host === "gitlab.com" || host.endsWith(".gitlab.com"))
-      return <GitlabIcon className="size-3.5" />;
+      return <GitLabIcon className="size-3.5" />;
   } catch {
     // Fall through to the generic external-link icon.
   }
@@ -98,6 +96,10 @@ export function ThemeSearchSection({
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [pendingUpdate, setPendingUpdate] = useState<OpenVsxThemeExtension | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+  // The (query, sort) pair the last search actually ran, so an install
+  // finishing can tell a same-key rerun (which must not wipe an install
+  // error) from a query that changed mid-install (which must be searched).
+  const lastSearchKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     requestRef.current?.abort();
@@ -121,6 +123,7 @@ export function ThemeSearchSection({
     async (searchText: string, nextSort = sortBy) => {
       const trimmed = searchText.trim();
       if (!trimmed) return;
+      lastSearchKeyRef.current = `${trimmed}\u0000${nextSort}`;
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
@@ -150,6 +153,7 @@ export function ThemeSearchSection({
   useEffect(() => {
     if (installingId !== null) return;
     if (!debouncedQuery) {
+      lastSearchKeyRef.current = null;
       requestRef.current?.abort();
       requestRef.current = null;
       setResults(null);
@@ -157,12 +161,15 @@ export function ThemeSearchSection({
       setIsSearching(false);
       return;
     }
+    if (lastSearchKeyRef.current === `${debouncedQuery}\u0000${sortBy}`) return;
     void runSearch(debouncedQuery);
-    // `installingId` is deliberately not a dependency: the guard above reads
-    // the current value from the fresh render closure, and a completed install
-    // must not retrigger a search that would wipe an install error.
+    // `installingId` and `sortBy` are deliberately not dependencies: the
+    // guards above read the current values from the fresh render closure. An
+    // install finishing must only rerun the search when the query or sort
+    // changed while it was in flight (checked via lastSearchKeyRef); a plain
+    // same-key rerun would wipe an install error the user still needs to see.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQuery, runSearch]);
+  }, [debouncedQuery, installingId, runSearch]);
 
   const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
     const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
@@ -223,11 +230,7 @@ export function ThemeSearchSection({
       </div>
       <InputGroup>
         <InputGroupAddon>
-          {isSearching ? (
-            <Loader2Icon aria-hidden className="animate-spin" />
-          ) : (
-            <SearchIcon aria-hidden />
-          )}
+          {isSearching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
         </InputGroupAddon>
         <InputGroupInput
           aria-label="Search Open VSX themes"
