@@ -172,9 +172,12 @@ const reconciledScopes = new Map<string, ScopeMarker>();
 /**
  * Refetch one cached workspace query when checkpoints prove it stale. Pass a
  * null `scopeKey` while the consumer is hidden; the scope then re-reconciles
- * on its next mount against every checkpoint it missed. A refresh is skipped
- * only while the query's first fetch is in flight; a settled failure
- * refetches, since a turn may have just created the file whose read failed.
+ * on its next mount against every checkpoint it missed. Settled results,
+ * including failed reads, always refetch, since a turn may have just created
+ * the file whose read failed. A checkpoint that lands while the query's
+ * first fetch is in flight defers instead: that read may predate the turn's
+ * writes, so the marker stays unreconciled and the settled result (an effect
+ * dependency) re-evaluates it.
  */
 export function useCheckpointQueryRefresh<A, E>(
   scopeKey: string | null,
@@ -182,23 +185,23 @@ export function useCheckpointQueryRefresh<A, E>(
   isRelevant: (files: ReadonlyArray<OrchestrationCheckpointFile>) => boolean,
   queryAtom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
 ): void {
-  const current = useRef({ isRelevant, queryAtom });
-  current.current = { isRelevant, queryAtom };
+  const currentIsRelevant = useRef(isRelevant);
+  currentIsRelevant.current = isRelevant;
+  const result = useAtomValue(queryAtom);
 
   useEffect(() => {
     if (scopeKey === null || snapshot === null) return;
-    const decision = evaluateScopeRefresh(
-      reconciledScopes.get(scopeKey),
-      snapshot,
-      current.current.isRelevant,
-    );
+    const marker = reconciledScopes.get(scopeKey);
+    const decision = evaluateScopeRefresh(marker, snapshot, currentIsRelevant.current);
+    const firstFetchInFlight = result.waiting && Option.isNone(AsyncResult.value(result));
+    if (decision.action === "refresh" && marker !== undefined && firstFetchInFlight) {
+      return;
+    }
     reconciledScopes.set(scopeKey, decision.marker);
     if (decision.action === "none") return;
-    const atom = current.current.queryAtom;
-    const result = appAtomRegistry.get(atom);
-    // A first fetch in flight is fresh by construction; anything settled,
-    // including a failed read, may predate the checkpoint, so refetch.
-    if (result.waiting && Option.isNone(AsyncResult.value(result))) return;
-    appAtomRegistry.refresh(atom);
-  }, [scopeKey, snapshot]);
+    // A cold marker's first fetch starts in the same render that read this
+    // snapshot, so it is fresh for it; a warm settled value may not be.
+    if (firstFetchInFlight) return;
+    appAtomRegistry.refresh(queryAtom);
+  }, [scopeKey, snapshot, result, queryAtom]);
 }
