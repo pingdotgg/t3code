@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/preview";
 import {
   createRuntimeCommand,
+  isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -19,22 +20,22 @@ import * as Scope from "effect/Scope";
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { readPreparedConnection } from "~/state/session";
+import {
+  createBrowserNavigationRoute,
+  isBrowserNavigationRouteEnvironmentVersionCurrent,
+  readBrowserNavigationRouteEnvironmentVersion,
+  reserveBrowserNavigationRouteGeneration,
+  type BrowserNavigationRoute,
+} from "./browserNavigationRoutes";
 
 interface AcquiredRoute {
   readonly resolution: PreviewUrlResolution;
   readonly scope: Scope.Closeable;
 }
 
-export interface BrowserNavigationRoute {
-  readonly resolution: PreviewUrlResolution;
-  readonly commit: (tabId: string) => Promise<void>;
-  readonly release: () => Promise<void>;
+export class BrowserNavigationRouteAcquireInterrupted extends Error {
+  override readonly name = "BrowserNavigationRouteAcquireInterrupted";
 }
-
-const activeRoutes = new Map<string, Scope.Closeable>();
-
-const closeRouteScope = (scope: Scope.Closeable): Promise<void> =>
-  Effect.runPromise(Scope.close(scope, Exit.void));
 
 const acquireRouteCommand = createRuntimeCommand(connectionAtomRuntime, {
   label: "preview route acquisition",
@@ -54,39 +55,31 @@ export async function acquireBrowserNavigationTarget(
   environmentId: EnvironmentId,
   target: BrowserNavigationTarget,
 ): Promise<BrowserNavigationRoute> {
+  const environmentVersion = readBrowserNavigationRouteEnvironmentVersion(environmentId);
+  const routeGeneration = reserveBrowserNavigationRouteGeneration();
   const connection = readPreparedConnection(environmentId);
   if (connection === null) {
     throw new Error(`Environment ${environmentId} is not connected.`);
   }
   const result = await acquireRouteCommand.run(appAtomRegistry, { connection, target });
   if (result._tag === "Failure") {
+    if (isAtomCommandInterrupted(result)) {
+      throw new BrowserNavigationRouteAcquireInterrupted();
+    }
     throw squashAtomCommandFailure(result);
   }
 
   const acquired = result.value;
-  let ownership: "pending" | "committed" | "released" = "pending";
-  return {
+  if (!isBrowserNavigationRouteEnvironmentVersionCurrent(environmentId, environmentVersion)) {
+    await Effect.runPromise(Scope.close(acquired.scope, Exit.void));
+    throw new Error(`Environment ${environmentId} disconnected during preview route acquisition.`);
+  }
+  return createBrowserNavigationRoute({
+    environmentId,
+    generation: routeGeneration,
     resolution: acquired.resolution,
-    commit: async (tabId) => {
-      if (ownership !== "pending") return;
-      ownership = "committed";
-      const previous = activeRoutes.get(tabId);
-      if (acquired.resolution.resolutionKind === "ssh-forward") {
-        activeRoutes.set(tabId, acquired.scope);
-      } else {
-        activeRoutes.delete(tabId);
-        await closeRouteScope(acquired.scope);
-      }
-      if (previous !== undefined && previous !== acquired.scope) {
-        await closeRouteScope(previous);
-      }
-    },
-    release: async () => {
-      if (ownership !== "pending") return;
-      ownership = "released";
-      await closeRouteScope(acquired.scope);
-    },
-  };
+    scope: acquired.scope,
+  });
 }
 
 export async function acquireDiscoveredServerRoute(
@@ -102,13 +95,6 @@ export async function acquireDiscoveredServerRoute(
   return acquireBrowserNavigationTarget(environmentId, { kind: "url", url });
 }
 
-export async function releaseBrowserNavigationRoute(tabId: string): Promise<void> {
-  const scope = activeRoutes.get(tabId);
-  if (scope === undefined) return;
-  activeRoutes.delete(tabId);
-  await closeRouteScope(scope);
-}
-
 export async function withBrowserNavigationRoute<A>(
   route: BrowserNavigationRoute | undefined,
   use: () => Promise<A>,
@@ -118,10 +104,4 @@ export async function withBrowserNavigationRoute<A>(
   } finally {
     await route?.release();
   }
-}
-
-export async function resetBrowserNavigationRoutesForTests(): Promise<void> {
-  const scopes = [...activeRoutes.values()];
-  activeRoutes.clear();
-  await Promise.all(scopes.map(closeRouteScope));
 }

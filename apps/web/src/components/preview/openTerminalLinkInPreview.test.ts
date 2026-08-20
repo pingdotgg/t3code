@@ -1,7 +1,21 @@
 import type { LocalApi, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const mocks = vi.hoisted(() => ({
+  acquireDiscoveredServerRoute: vi.fn(),
+  BrowserNavigationRouteAcquireInterrupted: class extends Error {},
+  commit: vi.fn(async () => undefined),
+  release: vi.fn(async () => undefined),
+  openBrowser: vi.fn(),
+  openPreviewSession: vi.fn(),
+}));
+
+vi.mock("~/browser/browserTargetResolver", () => ({
+  acquireDiscoveredServerRoute: mocks.acquireDiscoveredServerRoute,
+  BrowserNavigationRouteAcquireInterrupted: mocks.BrowserNavigationRouteAcquireInterrupted,
+}));
 
 import {
   openTerminalLinkInPreview,
@@ -10,15 +24,16 @@ import {
 } from "./openTerminalLinkInPreview";
 
 vi.mock("~/previewStateStore", () => ({
-  applyPreviewServerSnapshot: vi.fn(),
   isPreviewSupportedInRuntime: () => true,
 }));
 
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
-    getState: () => ({ openBrowser: vi.fn() }),
+    getState: () => ({ openBrowser: mocks.openBrowser }),
   },
 }));
+
+vi.mock("./openPreviewSession", () => ({ openPreviewSession: mocks.openPreviewSession }));
 
 const threadRef = {
   environmentId: "local" as ScopedThreadRef["environmentId"],
@@ -33,6 +48,16 @@ const snapshot: PreviewSessionSnapshot = {
   canGoForward: false,
   updatedAt: "2026-06-20T00:00:00.000Z",
 };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.acquireDiscoveredServerRoute.mockResolvedValue({
+    resolution: { resolvedUrl: "http://127.0.0.1:42173/" },
+    commit: mocks.commit,
+    release: mocks.release,
+  });
+  mocks.openPreviewSession.mockResolvedValue(AsyncResult.success(snapshot));
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -62,6 +87,7 @@ describe("openTerminalLinkInPreview", () => {
 
     expect(fallbackToBrowser).toHaveBeenCalledOnce();
     expect(openPreview).not.toHaveBeenCalled();
+    expect(mocks.acquireDiscoveredServerRoute).not.toHaveBeenCalled();
     expect(reportError).toHaveBeenCalledOnce();
     const error = reportError.mock.calls[0]?.[0];
     expect(error).toBeInstanceOf(TerminalLinkContextMenuShowError);
@@ -80,12 +106,13 @@ describe("openTerminalLinkInPreview", () => {
     const cause = Cause.combine(Cause.fail(rpcError), Cause.die("preview defect"));
     const fallbackToBrowser = vi.fn();
     const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.openPreviewSession.mockResolvedValueOnce(AsyncResult.failure(cause));
 
     await openTerminalLinkInPreview({
       url: "http://127.0.0.1:5173/",
       position: { x: 12, y: 34 },
       threadRef,
-      openPreview: async () => AsyncResult.failure(cause),
+      openPreview: vi.fn(),
       localApi: {
         contextMenu: {
           show: vi.fn(async () => "open-in-preview"),
@@ -95,6 +122,7 @@ describe("openTerminalLinkInPreview", () => {
     });
 
     expect(fallbackToBrowser).toHaveBeenCalledOnce();
+    expect(mocks.release).toHaveBeenCalledOnce();
     expect(reportError).toHaveBeenCalledOnce();
     const error = reportError.mock.calls[0]?.[0];
     expect(error).toBeInstanceOf(TerminalLinkPreviewOpenError);
@@ -110,12 +138,13 @@ describe("openTerminalLinkInPreview", () => {
   it("does not report or fall back when opening the preview is interrupted", async () => {
     const fallbackToBrowser = vi.fn();
     const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.openPreviewSession.mockResolvedValueOnce(AsyncResult.failure(Cause.interrupt()));
 
     await openTerminalLinkInPreview({
       url: "http://localhost:5173/",
       position: { x: 12, y: 34 },
       threadRef,
-      openPreview: async () => AsyncResult.failure(Cause.interrupt()),
+      openPreview: vi.fn(),
       localApi: {
         contextMenu: {
           show: vi.fn(async () => "open-in-preview"),
@@ -125,6 +154,64 @@ describe("openTerminalLinkInPreview", () => {
     });
 
     expect(reportError).not.toHaveBeenCalled();
+    expect(fallbackToBrowser).not.toHaveBeenCalled();
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it("does not report or fall back when route acquisition is interrupted", async () => {
+    const fallbackToBrowser = vi.fn();
+    const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.acquireDiscoveredServerRoute.mockRejectedValueOnce(
+      new mocks.BrowserNavigationRouteAcquireInterrupted(),
+    );
+
+    await openTerminalLinkInPreview({
+      url: "http://localhost:5173/",
+      position: { x: 12, y: 34 },
+      threadRef,
+      openPreview: vi.fn(),
+      localApi: {
+        contextMenu: {
+          show: vi.fn(async () => "open-in-preview"),
+        },
+      } as unknown as LocalApi,
+      fallbackToBrowser,
+    });
+
+    expect(reportError).not.toHaveBeenCalled();
+    expect(fallbackToBrowser).not.toHaveBeenCalled();
+    expect(mocks.openPreviewSession).not.toHaveBeenCalled();
+  });
+
+  it("routes localhost links before opening the preview and retains the route for its tab", async () => {
+    const openPreview = vi.fn();
+    const fallbackToBrowser = vi.fn();
+
+    await openTerminalLinkInPreview({
+      url: "http://localhost:4321/",
+      position: { x: 12, y: 34 },
+      threadRef,
+      openPreview,
+      localApi: {
+        contextMenu: {
+          show: vi.fn(async () => "open-in-preview"),
+        },
+      } as unknown as LocalApi,
+      fallbackToBrowser,
+    });
+
+    expect(mocks.acquireDiscoveredServerRoute).toHaveBeenCalledWith(
+      threadRef.environmentId,
+      "http://localhost:4321/",
+    );
+    expect(mocks.openPreviewSession).toHaveBeenCalledWith({
+      openPreview,
+      threadRef,
+      url: "http://127.0.0.1:42173/",
+    });
+    expect(mocks.commit).toHaveBeenCalledWith("tab-1");
+    expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.openBrowser).toHaveBeenCalledWith(threadRef, "tab-1");
     expect(fallbackToBrowser).not.toHaveBeenCalled();
   });
 });

@@ -1,11 +1,15 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -13,6 +17,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { SshReadinessError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
@@ -45,12 +50,18 @@ const makeSuccessfulProcess = (stdout: string) => {
   });
 };
 
-const makeRunningProcess = (onKill: () => void) => {
+const makeRunningProcess = (
+  onKill: () => void,
+  stderr:
+    | string
+    | Stream.Stream<Uint8Array> = "debug1: Local forwarding listening on 127.0.0.1 port 41773.\n",
+  isRunning: Effect.Effect<boolean> = Effect.succeed(true),
+) => {
   let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
     stdout: Stream.empty,
-    stderr: Stream.empty,
+    stderr: typeof stderr === "string" ? Stream.make(new TextEncoder().encode(stderr)) : stderr,
     all: Stream.empty,
     exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
       finish = (exitCode) => resume(Effect.succeed(exitCode));
@@ -58,7 +69,7 @@ const makeRunningProcess = (onKill: () => void) => {
         finish = null;
       });
     }),
-    isRunning: Effect.succeed(true),
+    isRunning,
     kill: () =>
       Effect.sync(() => {
         onKill();
@@ -389,7 +400,9 @@ describe("ssh tunnel scripts", () => {
 
       yield* manager.ensureEnvironment(target);
 
-      assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
+      const tunnelCommands = spawnedCommands.filter((args) => args.includes("-N"));
+      assert.equal(tunnelCommands.length, 2);
+      assert.include(tunnelCommands[0] ?? [], "127.0.0.1:41773:127.0.0.1:3773");
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
@@ -436,7 +449,8 @@ describe("ssh tunnel scripts", () => {
       assert.equal(first.localPort, second.localPort);
       assert.notEqual(first.leaseId, second.leaseId);
       assert.equal(tunnelSpawnCount, 1);
-      assert.include(forwardArgs[0] ?? [], "127.0.0.1:41773:127.0.0.1:5173");
+      assert.include(forwardArgs[0] ?? [], "127.0.0.1:41773:localhost:5173");
+      assert.include(forwardArgs[0] ?? [], "-v");
 
       yield* manager.releasePortForward(first.leaseId);
       assert.equal(tunnelKillCount, 0);
@@ -452,6 +466,150 @@ describe("ssh tunnel scripts", () => {
 
       yield* manager.releasePortForward(third.leaseId);
       assert.equal(tunnelKillCount, 2);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("serializes reuse against release of the last lease", () => {
+    let tunnelKillCount = 0;
+    let runningCheck: Effect.Effect<boolean> = Effect.succeed(true);
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          return makeRunningProcess(
+            () => {
+              tunnelKillCount += 1;
+            },
+            undefined,
+            Effect.suspend(() => runningCheck),
+          );
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      const first = yield* manager.acquirePortForward(target, 5173);
+      const runningCheckStarted = yield* Deferred.make<void>();
+      const finishRunningCheck = yield* Deferred.make<boolean>();
+      runningCheck = Deferred.succeed(runningCheckStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(finishRunningCheck)),
+      );
+
+      const secondFiber = yield* Effect.forkChild(manager.acquirePortForward(target, 5173));
+      yield* Deferred.await(runningCheckStarted);
+      const releaseFiber = yield* Effect.forkChild(manager.releasePortForward(first.leaseId));
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(finishRunningCheck, true);
+
+      const second = yield* Fiber.join(secondFiber);
+      yield* Fiber.join(releaseFiber);
+      assert.equal(tunnelKillCount, 0);
+
+      yield* manager.releasePortForward(second.leaseId);
+      assert.equal(tunnelKillCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("cancels a pending port forward when the manager scope closes", () => {
+    let tunnelKillCount = 0;
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const readinessStarted = yield* Deferred.make<void>();
+      const readyStderr = Stream.fromEffect(
+        Deferred.succeed(readinessStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            return makeRunningProcess(() => {
+              tunnelKillCount += 1;
+            }, readyStderr);
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+      const managerScope = yield* Scope.make("sequential");
+      const context = yield* Layer.buildWithScope(layer, managerScope);
+      const manager = Context.get(context, SshEnvironmentManager);
+      const acquisitionFiber = yield* Effect.forkChild(
+        Effect.result(manager.acquirePortForward(target, 5173)).pipe(Effect.provide(context)),
+      );
+      yield* Deferred.await(readinessStarted);
+
+      const closeFiber = yield* Effect.forkChild(Scope.close(managerScope, Exit.void));
+
+      const acquisitionResult = yield* Fiber.join(acquisitionFiber);
+      yield* Fiber.join(closeFiber);
+      assert(Result.isFailure(acquisitionResult));
+      assert.equal(tunnelKillCount, 1);
+    });
+  });
+
+  it.effect("does not accept an unrelated local listener as SSH forward readiness", () => {
+    let tunnelKillCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          }, "bind [127.0.0.1]:41773: Address already in use\n");
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      const error = yield* manager.acquirePortForward(target, 5173).pipe(Effect.flip);
+
+      assert.instanceOf(error, SshReadinessError);
+      assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 });

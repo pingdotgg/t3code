@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
+import { releaseBrowserNavigationRoute } from "./browser/browserNavigationRoutes";
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
@@ -145,6 +146,12 @@ const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPrevie
   };
 };
 
+const releaseRemovedBrowserRoutes = (tabIds: ReadonlyArray<string>): void => {
+  for (const tabId of tabIds) {
+    void releaseBrowserNavigationRoute(tabId).catch(() => undefined);
+  }
+};
+
 export function useThreadPreviewState(ref: ScopedThreadRef | null | undefined): ThreadPreviewState {
   const atom = ref ? previewStateAtom(scopedThreadKey(ref)) : emptyPreviewStateAtom;
   return useAtomValue(atom);
@@ -220,15 +227,20 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
         return removeSession(current, event.tabId);
     }
   });
+  if (event.type === "closed") {
+    releaseRemovedBrowserRoutes([event.tabId]);
+  }
 }
 
 export function applyPreviewServerSnapshot(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot | null,
 ): void {
+  let removedTabIds: string[] = [];
   updateThreadPreviewState(ref, (current) => {
     if (!snapshot && current.snapshot === null) return current;
     if (!snapshot) {
+      removedTabIds = Object.keys(current.sessions);
       return {
         ...current,
         snapshot: null,
@@ -251,6 +263,7 @@ export function applyPreviewServerSnapshot(
       recentlySeenUrls,
     };
   });
+  releaseRemovedBrowserRoutes(removedTabIds);
 }
 
 /**
@@ -291,6 +304,7 @@ export function reconcilePreviewServerSessions(
   ref: ScopedThreadRef,
   snapshots: ReadonlyArray<PreviewSessionSnapshot>,
 ): void {
+  let removedTabIds: string[] = [];
   updateThreadPreviewState(ref, (current) => {
     const sessions: Record<string, PreviewSessionSnapshot> = {};
     let recentlySeenUrls = current.recentlySeenUrls;
@@ -301,6 +315,7 @@ export function reconcilePreviewServerSessions(
       sessions[next.tabId] = next;
       recentlySeenUrls = rememberSnapshotUrl(recentlySeenUrls, next);
     }
+    removedTabIds = Object.keys(current.sessions).filter((tabId) => sessions[tabId] === undefined);
 
     const fallback = latestSnapshot(sessions);
     const activeTabId =
@@ -321,6 +336,7 @@ export function reconcilePreviewServerSessions(
       recentlySeenUrls,
     };
   });
+  releaseRemovedBrowserRoutes(removedTabIds);
 }
 
 export function applyPreviewDesktopState(
@@ -402,6 +418,9 @@ export function rememberPreviewUrl(ref: ScopedThreadRef, url: string): void {
 
 export function removePreviewThread(ref: ScopedThreadRef): void {
   const threadKey = scopedThreadKey(ref);
+  releaseRemovedBrowserRoutes(
+    Object.keys(appAtomRegistry.get(previewStateAtom(threadKey)).sessions),
+  );
   appAtomRegistry.set(previewStateAtom(threadKey), EMPTY_THREAD_PREVIEW_STATE);
   syncActivePreviewThread(threadKey, EMPTY_THREAD_PREVIEW_STATE);
   changedPreviewThreadKeys.delete(threadKey);

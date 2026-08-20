@@ -1,6 +1,10 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, type PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const releaseBrowserNavigationRoute = vi.hoisted(() => vi.fn(async () => undefined));
+
+vi.mock("./browser/browserNavigationRoutes", () => ({ releaseBrowserNavigationRoute }));
 
 import {
   __testing,
@@ -34,6 +38,7 @@ const makeSnapshot = (overrides: Partial<PreviewSessionSnapshot> = {}): PreviewS
 });
 
 beforeEach(() => {
+  releaseBrowserNavigationRoute.mockClear();
   resetPreviewStateForTests();
 });
 
@@ -202,6 +207,7 @@ describe("previewStateStore (single-tab)", () => {
     const state = readThreadPreviewState(ref);
     expect(state.snapshot).toBeNull();
     expect(state.recentlySeenUrls).toContain("http://localhost:5173/");
+    expect(releaseBrowserNavigationRoute).toHaveBeenCalledWith(snapshot.tabId);
   });
 
   it("optimistically removes a session before the server close event arrives", () => {
@@ -219,6 +225,7 @@ describe("previewStateStore (single-tab)", () => {
     expect(Object.keys(state.sessions)).toEqual([first.tabId]);
     expect(state.activeTabId).toBe(first.tabId);
     expect(state.snapshot?.tabId).toBe(first.tabId);
+    expect(releaseBrowserNavigationRoute).not.toHaveBeenCalled();
   });
 
   it("treats a late server close event after optimistic removal as a no-op", () => {
@@ -367,6 +374,7 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.activeTabId).toBe(active.tabId);
     expect(state.snapshot).toEqual(active);
     expect(state.desktopByTabId[stale.tabId]).toBeUndefined();
+    expect(releaseBrowserNavigationRoute).toHaveBeenCalledWith(stale.tabId);
   });
 
   it("clears stale sessions when an authoritative list is empty", () => {
@@ -386,6 +394,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, null);
     const state = readThreadPreviewState(ref);
     expect(state.snapshot).toBeNull();
+    expect(releaseBrowserNavigationRoute).toHaveBeenCalledWith(snapshot.tabId);
   });
 
   it("does not replace a streamed snapshot with older SWR data", () => {
@@ -429,5 +438,6 @@ describe("previewStateStore (single-tab)", () => {
     removePreviewThread(ref);
     const state = readThreadPreviewState(ref);
     expect(state).toEqual(__testing.EMPTY_THREAD_PREVIEW_STATE);
+    expect(releaseBrowserNavigationRoute).toHaveBeenCalledWith(snapshot.tabId);
   });
 });

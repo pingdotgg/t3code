@@ -42,6 +42,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import { releaseBrowserNavigationRoutesForEnvironmentEffect } from "../browser/browserNavigationRoutes";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
@@ -605,9 +606,15 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   EnvironmentOwnedDataCleanup,
   EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
-      Effect.sync(() => {
-        clearComposerDraftsEnvironment(environmentId);
-      }),
+      Effect.all(
+        [
+          Effect.sync(() => {
+            clearComposerDraftsEnvironment(environmentId);
+          }),
+          releaseBrowserNavigationRoutesForEnvironmentEffect(environmentId),
+        ],
+        { concurrency: "unbounded", discard: true },
+      ),
   }),
 );
 
