@@ -340,6 +340,43 @@ type SyncedThemeHalfMutation =
       preservedTheme: ThemePreference | null;
     }>;
 
+interface SyncedThemeMutationWriter {
+  readonly setTheme: (theme: ThemePreference) => boolean;
+  readonly setThemeHalf: (appearance: ThemeAppearance, theme: ThemePreference | null) => boolean;
+}
+
+export function applySyncedThemeHalfMutation(input: {
+  readonly mutation: SyncedThemeHalfMutation;
+  readonly previousBaseTheme: ThemePreference;
+  readonly previousThemeHalves: ThemeHalves | null;
+  readonly writer: SyncedThemeMutationWriter;
+}): boolean {
+  const { mutation, writer } = input;
+  if (mutation.type === "none") return true;
+  if (mutation.type === "set-half") {
+    return writer.setThemeHalf(mutation.appearance, mutation.theme);
+  }
+  if (!writer.setTheme(mutation.baseTheme)) return false;
+  if (
+    mutation.preservedTheme === null ||
+    writer.setThemeHalf(mutation.preservedAppearance, mutation.preservedTheme)
+  ) {
+    return true;
+  }
+
+  // Resetting the base clears the mix. If restoring the opposite half fails,
+  // put the complete previous selection back before leaving hydration pending.
+  if (writer.setTheme(input.previousBaseTheme)) {
+    if (input.previousThemeHalves?.light !== undefined) {
+      writer.setThemeHalf("light", input.previousThemeHalves.light);
+    }
+    if (input.previousThemeHalves?.dark !== undefined) {
+      writer.setThemeHalf("dark", input.previousThemeHalves.dark);
+    }
+  }
+  return false;
+}
+
 export function resolveSyncedThemeHalfMutation(
   baseTheme: ThemePreference,
   themeHalves: ThemeHalves | null,
@@ -402,30 +439,38 @@ function useCanPatchSyncedClientPreferences(environmentId: EnvironmentId | null)
 function useSyncedClientPreferenceState() {
   const clientSettings = useClientSettingsValue();
   const themeState = useTheme();
-  const persistPlanMode = useCallback((value: boolean, updatedAt: string) => {
+  const persistPlanMode = useCallback((value: boolean, updatedAt: string): boolean => {
     const snapshot = getClientSettingsSnapshot();
-    if (snapshot.planModeEnabled === value && snapshot.planModeUpdatedAt === updatedAt) return;
+    if (snapshot.planModeEnabled === value && snapshot.planModeUpdatedAt === updatedAt) return true;
     persistClientSettings({
       ...snapshot,
       planModeEnabled: value,
       planModeUpdatedAt: updatedAt,
     });
+    return true;
   }, []);
   const persistAppearanceMode = useCallback(
-    (value: ThemePreferenceMode, updatedAt: string) => {
-      if (themeState.appearanceMode !== value) themeState.setAppearanceMode(value);
+    (value: ThemePreferenceMode, updatedAt: string): boolean => {
+      if (themeState.appearanceMode !== value && !themeState.setAppearanceMode(value)) return false;
       const snapshot = getClientSettingsSnapshot();
       if (snapshot.appearanceModeUpdatedAt !== updatedAt) {
         persistClientSettings({ ...snapshot, appearanceModeUpdatedAt: updatedAt });
       }
+      return true;
     },
     [themeState.appearanceMode, themeState.setAppearanceMode],
   );
   const persistThemeId = useCallback(
-    (appearance: "light" | "dark", value: string, updatedAt: string) => {
+    (appearance: "light" | "dark", value: string, updatedAt: string): boolean => {
       const theme = themePreferenceFromSyncedThemeId(value);
-      const liveBaseTheme = readThemePreference();
-      const liveThemeHalves = readThemeHalves();
+      let liveBaseTheme: ThemePreference;
+      let liveThemeHalves: ThemeHalves | null;
+      try {
+        liveBaseTheme = readThemePreference();
+        liveThemeHalves = readThemeHalves();
+      } catch {
+        return false;
+      }
       const mutation = resolveSyncedThemeHalfMutation(
         liveBaseTheme,
         liveThemeHalves,
@@ -433,14 +478,15 @@ function useSyncedClientPreferenceState() {
         appearance,
         theme,
       );
-      if (mutation.type === "set-half") {
-        themeState.setThemeHalf(mutation.appearance, mutation.theme);
-      } else if (mutation.type === "reset-base") {
-        // Read storage live because both field hydration effects can run in one
-        // commit before React produces a fresh theme snapshot.
-        if (themeState.setTheme(mutation.baseTheme) && mutation.preservedTheme !== null) {
-          themeState.setThemeHalf(mutation.preservedAppearance, mutation.preservedTheme);
-        }
+      if (
+        !applySyncedThemeHalfMutation({
+          mutation,
+          previousBaseTheme: liveBaseTheme,
+          previousThemeHalves: liveThemeHalves,
+          writer: themeState,
+        })
+      ) {
+        return false;
       }
 
       const snapshot = getClientSettingsSnapshot();
@@ -449,6 +495,7 @@ function useSyncedClientPreferenceState() {
       if (snapshot[updatedAtKey] !== updatedAt) {
         persistClientSettings({ ...snapshot, [updatedAtKey]: updatedAt });
       }
+      return true;
     },
     [themeState.setTheme, themeState.setThemeHalf],
   );
@@ -645,8 +692,8 @@ export function useSyncedTheme() {
   const setTheme = useCallback(
     (theme: ThemePreference): boolean => {
       if (!state.themeState.setTheme(theme)) return false;
-      const themeId = syncedThemeIdFromPreference(theme);
-      if (themeId !== undefined) write({ lightThemeId: themeId, darkThemeId: themeId });
+      const patch = syncedThemePairPatch(theme);
+      if (patch !== undefined) write(patch);
       return true;
     },
     [state.themeState, write],
@@ -683,9 +730,23 @@ export function useSyncedTheme() {
     },
     [state.themeState, write],
   );
+  const clearThemeHalves = useCallback((): boolean => {
+    if (!state.themeState.clearThemeHalves()) return false;
+    let liveTheme: ThemePreference;
+    try {
+      liveTheme = readThemePreference();
+    } catch {
+      return false;
+    }
+    const patch = syncedThemePairPatch(liveTheme);
+    if (patch === undefined) return false;
+    write(patch);
+    return true;
+  }, [state.themeState, write]);
 
   return {
     ...state.themeState,
+    clearThemeHalves,
     setAppearanceMode,
     setFollowSystem,
     setTheme,
@@ -698,6 +759,13 @@ export function syncedThemePatchForHalf(
   themeId: string,
 ): SyncedClientPreferencesPatch {
   return appearance === "light" ? { lightThemeId: themeId } : { darkThemeId: themeId };
+}
+
+export function syncedThemePairPatch(
+  theme: ThemePreference,
+): SyncedClientPreferencesPatch | undefined {
+  const themeId = syncedThemeIdFromPreference(theme);
+  return themeId === undefined ? undefined : { lightThemeId: themeId, darkThemeId: themeId };
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -837,13 +905,14 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           persist: (value, updatedAt) => {
             const snapshot = getClientSettingsSnapshot();
             if (snapshot.planModeEnabled === value && snapshot.planModeUpdatedAt === updatedAt) {
-              return;
+              return true;
             }
             persistClientSettings({
               ...snapshot,
               planModeEnabled: value,
               planModeUpdatedAt: updatedAt,
             });
+            return true;
           },
         });
       }

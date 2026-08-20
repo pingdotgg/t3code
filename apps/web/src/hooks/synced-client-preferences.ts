@@ -35,8 +35,8 @@ export function resolveSyncedPlanModeCoordinatorEnvironmentIds(input: {
   readonly hydratedPrimaryEnvironmentId: EnvironmentId | null;
   readonly primaryUnavailable: boolean;
 }): ReadonlyArray<EnvironmentId> {
-  if (input.primaryEnvironmentId === null) return [];
   if (input.primaryUnavailable) return input.environmentIds;
+  if (input.primaryEnvironmentId === null) return [];
   if (input.hydratedPrimaryEnvironmentId !== input.primaryEnvironmentId) {
     return input.environmentIds.includes(input.primaryEnvironmentId)
       ? [input.primaryEnvironmentId]
@@ -129,7 +129,7 @@ export interface SyncedClientPreferenceHydrationInput<
   readonly canPatch: boolean;
   readonly now: string;
   readonly patch: SyncedClientPreferencePatch<E>;
-  readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => void;
+  readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => boolean;
   readonly onHydrated?: (() => void) | undefined;
 }
 
@@ -221,6 +221,7 @@ export function createSyncedClientPreferenceHydrationController<
     readonly synchronizeAgainByOwner: Map<symbol, () => void>;
     cancelRetry?: () => void;
     patchAttempt: number;
+    persistenceAttempt: number;
     retryEpochActive: boolean;
     lastCanPatch: boolean;
   }
@@ -233,6 +234,7 @@ export function createSyncedClientPreferenceHydrationController<
     const state: SyncedClientPreferenceEnvironmentState = {
       synchronizeAgainByOwner: new Map(),
       patchAttempt: 0,
+      persistenceAttempt: 0,
       retryEpochActive: false,
       lastCanPatch: false,
     };
@@ -257,19 +259,27 @@ export function createSyncedClientPreferenceHydrationController<
     }
     return latest;
   };
-  const requestRetry = (state: SyncedClientPreferenceEnvironmentState) => {
+  const requestRetry = (state: SyncedClientPreferenceEnvironmentState, attempt: number) => {
     if (
-      state.patchAttempt >= SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS ||
+      attempt >= SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS ||
       state.cancelRetry !== undefined ||
       getSynchronizeAgain(state) === undefined
     ) {
       return;
     }
-    const delayMs = syncedClientPreferenceRetryDelayMs(state.patchAttempt);
+    const delayMs = syncedClientPreferenceRetryDelayMs(attempt);
     state.cancelRetry = scheduleRetry(() => {
       delete state.cancelRetry;
       getSynchronizeAgain(state)?.();
     }, delayMs);
+  };
+  const requestPersistenceRetry = (state: SyncedClientPreferenceEnvironmentState) => {
+    state.persistenceAttempt += 1;
+    requestRetry(state, state.persistenceAttempt);
+  };
+  const completePersistence = (state: SyncedClientPreferenceEnvironmentState) => {
+    cancelRetry(state);
+    state.persistenceAttempt = 0;
   };
   const markAdopted = (state: SyncedClientPreferenceEnvironmentState, updatedAt: string) => {
     if (state.adoptedUpdatedAt === undefined || updatedAt > state.adoptedUpdatedAt) {
@@ -281,7 +291,7 @@ export function createSyncedClientPreferenceHydrationController<
     readonly environmentId: EnvironmentId;
     readonly requestedUpdatedAt: string;
     readonly result: AtomCommandResult<SyncedClientPreferences, E>;
-    readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => void;
+    readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => boolean;
     readonly onHydrated: (() => void) | undefined;
   }) => {
     const state = stateByEnvironment.get(input.environmentId);
@@ -294,7 +304,7 @@ export function createSyncedClientPreferenceHydrationController<
       const matchingSeed = state.seedPendingUpdatedAt === input.requestedUpdatedAt;
       if (!matchingWrite && !matchingSeed) return;
       if (matchingSeed) delete state.seedPendingUpdatedAt;
-      requestRetry(state);
+      requestRetry(state, state.patchAttempt);
       return;
     }
 
@@ -316,7 +326,11 @@ export function createSyncedClientPreferenceHydrationController<
       state.pendingAdoption = { value: resultValue, updatedAt: resultUpdatedAt };
     }
     if (getSynchronizeAgain(state) === undefined || state.pendingAdoption === undefined) return;
-    input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt);
+    if (!input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt)) {
+      requestPersistenceRetry(state);
+      return;
+    }
+    completePersistence(state);
     markAdopted(state, state.pendingAdoption.updatedAt);
     input.onHydrated?.();
   };
@@ -324,7 +338,7 @@ export function createSyncedClientPreferenceHydrationController<
   const dispatchPatch = <E>(input: {
     readonly target: SyncedClientPreferencePatchTarget;
     readonly patch: SyncedClientPreferencePatch<E>;
-    readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => void;
+    readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => boolean;
     readonly onHydrated: (() => void) | undefined;
   }) => {
     const { environmentId } = input.target;
@@ -363,6 +377,7 @@ export function createSyncedClientPreferenceHydrationController<
     if (!state.retryEpochActive || (!state.lastCanPatch && input.canPatch)) {
       cancelRetry(state);
       state.patchAttempt = 0;
+      state.persistenceAttempt = 0;
     }
     state.retryEpochActive = true;
     state.lastCanPatch = input.canPatch;
@@ -398,11 +413,15 @@ export function createSyncedClientPreferenceHydrationController<
       (state.adoptedUpdatedAt === undefined ||
         state.pendingAdoption.updatedAt > state.adoptedUpdatedAt)
     ) {
-      if (input.clientValue !== state.pendingAdoption.value) {
-        input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt);
-      } else if (clientUpdatedAt !== state.pendingAdoption.updatedAt) {
-        input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt);
+      if (
+        (input.clientValue !== state.pendingAdoption.value ||
+          clientUpdatedAt !== state.pendingAdoption.updatedAt) &&
+        !input.persist(state.pendingAdoption.value, state.pendingAdoption.updatedAt)
+      ) {
+        requestPersistenceRetry(state);
+        return;
       }
+      completePersistence(state);
       markAdopted(state, state.pendingAdoption.updatedAt);
       input.onHydrated?.();
     }
@@ -471,7 +490,11 @@ export function createSyncedClientPreferenceHydrationController<
           value: input.clientValue,
           updatedAt: next.request.updatedAt,
         };
-        input.persist(input.clientValue, next.request.updatedAt);
+        if (!input.persist(input.clientValue, next.request.updatedAt)) {
+          requestPersistenceRetry(state);
+          return;
+        }
+        completePersistence(state);
         dispatchPatch<E>({
           target: { environmentId, input: next.request },
           patch: input.patch,
@@ -484,10 +507,15 @@ export function createSyncedClientPreferenceHydrationController<
         input.onHydrated?.();
         return deactivateSynchronization;
       }
-      markAdopted(state, action.updatedAt);
-      if (input.clientValue !== action.value || clientUpdatedAt !== action.updatedAt) {
-        input.persist(action.value, action.updatedAt);
+      if (
+        (input.clientValue !== action.value || clientUpdatedAt !== action.updatedAt) &&
+        !input.persist(action.value, action.updatedAt)
+      ) {
+        requestPersistenceRetry(state);
+        return;
       }
+      completePersistence(state);
+      markAdopted(state, action.updatedAt);
       input.onHydrated?.();
       return deactivateSynchronization;
     }
@@ -530,13 +558,14 @@ export function createSyncedClientPreferenceHydrationController<
     readonly canPatch: boolean;
     readonly now: string;
     readonly patch: SyncedClientPreferencePatch<E>;
-    readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => void;
+    readonly persist: (value: SyncedClientPreferenceValue<Field>, updatedAt: string) => boolean;
   }) => {
     if (input.environmentId === null) return;
     const environmentId = input.environmentId;
     const state = stateFor(environmentId);
     cancelRetry(state);
     state.patchAttempt = 0;
+    state.persistenceAttempt = 0;
     const controllerUpdatedAt = [
       state.adoptedUpdatedAt,
       state.seedPendingUpdatedAt,

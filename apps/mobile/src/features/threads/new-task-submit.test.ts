@@ -61,8 +61,40 @@ describe("new-task submission eligibility", () => {
   });
 
   it("interprets submit-time commands only when creating a new task", () => {
-    expect(shouldInterpretNewTaskSubmit({ editingPendingTask: null })).toBe(true);
-    expect(shouldInterpretNewTaskSubmit({ editingPendingTask: {} })).toBe(false);
+    expect(
+      shouldInterpretNewTaskSubmit({
+        editingPendingTask: null,
+        planModePreferenceLoaded: true,
+        startInFlight: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldInterpretNewTaskSubmit({
+        editingPendingTask: {},
+        planModePreferenceLoaded: true,
+        startInFlight: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not consume submit-time commands before the Plan Mode preference hydrates", () => {
+    expect(
+      shouldInterpretNewTaskSubmit({
+        editingPendingTask: null,
+        planModePreferenceLoaded: false,
+        startInFlight: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not consume a second submit while the first start is in flight", () => {
+    expect(
+      shouldInterpretNewTaskSubmit({
+        editingPendingTask: null,
+        planModePreferenceLoaded: true,
+        startInFlight: true,
+      }),
+    ).toBe(false);
   });
 
   it("blocks command selection while an incoming share transfer is pending", () => {

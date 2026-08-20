@@ -49,7 +49,10 @@ describe("synced client preferences", () => {
       canPatch: true,
       now: "2026-08-14T12:01:00.000Z",
       patch: vi.fn(),
-      persist: (value, updatedAt) => events.push(`persist:${value}:${updatedAt}`),
+      persist: (value, updatedAt) => {
+        events.push(`persist:${value}:${updatedAt}`);
+        return true;
+      },
       onHydrated: () => events.push("hydrated"),
     });
 
@@ -73,7 +76,7 @@ describe("synced client preferences", () => {
     ).toBe("2026-08-14T12:01:00.000Z");
 
     const environmentId = EnvironmentId.make("primary");
-    const persist = vi.fn();
+    const persist = vi.fn(() => true);
     createSyncedClientPreferenceHydrationController("planModeEnabled").synchronize({
       environmentId,
       primaryEnvironmentId: environmentId,
@@ -105,7 +108,7 @@ describe("synced client preferences", () => {
       canPatch: false,
       now: "2026-08-14T12:01:00.000Z",
       patch: vi.fn(),
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
       onHydrated,
     });
 
@@ -122,6 +125,55 @@ describe("synced client preferences", () => {
         primaryUnavailable: true,
       }),
     ).toHaveLength(2);
+  });
+
+  it("releases all environments when no unavailable primary is designated", () => {
+    const environmentIds = [EnvironmentId.make("first"), EnvironmentId.make("second")];
+    expect(
+      resolveSyncedPlanModeCoordinatorEnvironmentIds({
+        environmentIds,
+        primaryEnvironmentId: null,
+        hydratedPrimaryEnvironmentId: null,
+        primaryUnavailable: true,
+      }),
+    ).toEqual(environmentIds);
+  });
+
+  it("retries local adoption instead of completing hydration after persistence fails", () => {
+    const environmentId = EnvironmentId.make("primary");
+    const scheduledRetries: Array<() => void> = [];
+    const controller = createSyncedClientPreferenceHydrationController("lightThemeId", (retry) => {
+      scheduledRetries.push(retry);
+      return vi.fn();
+    });
+    const persist = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    const onHydrated = vi.fn();
+    const input = {
+      environmentId,
+      primaryEnvironmentId: environmentId,
+      clientHydrated: true,
+      clientValue: "t3-code",
+      live: true,
+      serverPreferences: {
+        lightThemeId: "dracula",
+        updatedAtByField: { lightThemeId: UPDATED_AT },
+        updatedAt: UPDATED_AT,
+      },
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist,
+      onHydrated,
+    } as const;
+
+    controller.synchronize(input);
+    expect(persist).toHaveBeenCalledOnce();
+    expect(onHydrated).not.toHaveBeenCalled();
+    expect(scheduledRetries).toHaveLength(1);
+
+    scheduledRetries[0]?.();
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(onHydrated).toHaveBeenCalledOnce();
   });
 
   it("creates independent theme-half writes with collision-safe command ids", () => {
@@ -170,7 +222,7 @@ describe("synced client preferences", () => {
         updatedAt: target.input.updatedAt,
       }),
     );
-    const persist = vi.fn();
+    const persist = vi.fn(() => true);
 
     controller.write({
       environmentId,

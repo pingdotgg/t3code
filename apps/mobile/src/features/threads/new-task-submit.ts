@@ -1,7 +1,11 @@
 export function shouldInterpretNewTaskSubmit(input: {
   readonly editingPendingTask: object | null;
+  readonly planModePreferenceLoaded: boolean;
+  readonly startInFlight: boolean;
 }): boolean {
-  return input.editingPendingTask === null;
+  return (
+    input.editingPendingTask === null && input.planModePreferenceLoaded && !input.startInFlight
+  );
 }
 
 export function shouldApplyNewTaskCommandSelection(input: {

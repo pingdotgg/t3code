@@ -754,7 +754,11 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
-    const submitInteractionMode = shouldInterpretNewTaskSubmit(flow)
+    const submitInteractionMode = shouldInterpretNewTaskSubmit({
+      editingPendingTask: flow.editingPendingTask,
+      planModePreferenceLoaded: flow.planModePreferenceLoaded,
+      startInFlight: startInFlightRef.current,
+    })
       ? resolveComposerSubmitInteractionMode({
           text: draft.text,
           attachmentCount: draft.attachments.length,

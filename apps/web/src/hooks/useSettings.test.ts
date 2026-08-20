@@ -130,9 +130,10 @@ describe("synced plan mode", () => {
     const persisted: boolean[] = [];
     let localValue = false;
     const persist = (value: boolean) => {
-      if (localValue === value) return;
+      if (localValue === value) return true;
       localValue = value;
       persisted.push(value);
+      return true;
     };
     const patch = vi.fn(async () =>
       AsyncResult.success({
@@ -206,6 +207,7 @@ describe("synced plan mode", () => {
     let localValue = false;
     const persist = (value: boolean) => {
       localValue = value;
+      return true;
     };
     const canonical = {
       planModeEnabled: false,
@@ -297,7 +299,7 @@ describe("synced plan mode", () => {
         canPatch: false,
         now: "2026-08-14T12:00:00.000Z",
         patch,
-        persist: vi.fn(),
+        persist: vi.fn(() => true),
       });
     }
     controller.write({
@@ -307,7 +309,7 @@ describe("synced plan mode", () => {
       canPatch: false,
       now: "2026-08-14T12:01:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     });
 
     expect(patch).not.toHaveBeenCalled();
@@ -316,7 +318,7 @@ describe("synced plan mode", () => {
   it("keeps the local fallback when server preferences are read-only", () => {
     const primaryEnvironmentId = EnvironmentId.make("read-only");
     const controller = createSyncedPlanModeHydrationController();
-    const persist = vi.fn();
+    const persist = vi.fn(() => true);
     const patch = vi.fn();
 
     controller.synchronize({
@@ -363,7 +365,7 @@ describe("synced plan mode", () => {
       canPatch: false,
       now: "2026-08-14T12:01:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     });
     controller.synchronize({
       environmentId: primaryEnvironmentId,
@@ -375,7 +377,7 @@ describe("synced plan mode", () => {
       canPatch: true,
       now: "2026-08-14T12:02:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     });
     await Promise.resolve();
 
@@ -406,6 +408,7 @@ describe("synced plan mode", () => {
       patch: vi.fn(),
       persist: (_value, updatedAt) => {
         persistedUpdatedAt = updatedAt;
+        return true;
       },
     });
 
@@ -427,7 +430,7 @@ describe("synced plan mode", () => {
       canPatch: true,
       now: "2026-08-14T12:02:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     });
     await Promise.resolve();
 
@@ -462,7 +465,7 @@ describe("synced plan mode", () => {
       canPatch: true,
       now: "2026-08-14T12:01:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     });
     await Promise.resolve();
 
@@ -508,7 +511,7 @@ describe("synced plan mode", () => {
       canPatch: true,
       now: "2026-08-14T12:01:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     } satisfies SyncedPlanModeHydrationInput<string>;
 
     controller.synchronize(hydrationInput);
@@ -555,7 +558,7 @@ describe("synced plan mode", () => {
       canPatch: true,
       now: "2026-08-14T12:01:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     } satisfies SyncedPlanModeHydrationInput<string>;
 
     controller.synchronize(hydrationInput);
@@ -602,7 +605,7 @@ describe("synced plan mode", () => {
       canPatch: true,
       now: "2026-08-14T12:01:00.000Z",
       patch,
-      persist: vi.fn(),
+      persist: vi.fn(() => true),
     } satisfies SyncedPlanModeHydrationInput<string>;
 
     controller.synchronize(hydrationInput);
@@ -667,7 +670,7 @@ describe("synced plan mode", () => {
           updatedAt: "2026-08-14T12:02:00.000Z",
         }),
       );
-    const persist = vi.fn();
+    const persist = vi.fn(() => true);
     const input = {
       environmentId: previousPrimaryEnvironmentId,
       primaryEnvironmentId: previousPrimaryEnvironmentId,
@@ -725,7 +728,10 @@ describe("synced plan mode", () => {
           }),
       );
       const persisted: boolean[] = [];
-      const persist = (value: boolean) => persisted.push(value);
+      const persist = (value: boolean) => {
+        persisted.push(value);
+        return true;
+      };
       const input = {
         environmentId: previousPrimaryEnvironmentId,
         primaryEnvironmentId: previousPrimaryEnvironmentId,
@@ -801,6 +807,7 @@ describe("synced plan mode", () => {
     const persist = (value: boolean) => {
       localValue = value;
       persisted.push(value);
+      return true;
     };
     const deactivate = controller.synchronize({
       environmentId,
@@ -878,6 +885,7 @@ describe("synced plan mode", () => {
     const persist = (value: boolean) => {
       localValue = value;
       persisted.push(value);
+      return true;
     };
     const input = {
       environmentId,
@@ -937,7 +945,10 @@ describe("synced plan mode", () => {
         resolvePatches.push(resolve);
       });
     const persisted: boolean[] = [];
-    const persist = (value: boolean) => persisted.push(value);
+    const persist = (value: boolean) => {
+      persisted.push(value);
+      return true;
+    };
 
     controller.synchronize({
       environmentId: primaryEnvironmentId,
@@ -1010,7 +1021,10 @@ describe("synced plan mode", () => {
         resolvePatches.push(resolve);
       });
     const persisted: boolean[] = [];
-    const persist = (value: boolean) => persisted.push(value);
+    const persist = (value: boolean) => {
+      persisted.push(value);
+      return true;
+    };
 
     controller.synchronize({
       environmentId: primaryEnvironmentId,

@@ -126,6 +126,10 @@ function ThemeCard(props: {
 }) {
   const badgeBackground = useThemeColor("--color-card");
   const badgeIcon = useThemeColor("--color-icon");
+  const selectBothDisabled =
+    props.disabled ||
+    !mobileThemeHasAppearance(props.themeId, "light", props.importedThemes) ||
+    !mobileThemeHasAppearance(props.themeId, "dark", props.importedThemes);
 
   const choice = (appearance: MobileThemeAppearance, selected: boolean) => {
     const available = mobileThemeHasAppearance(props.themeId, appearance, props.importedThemes);
@@ -172,13 +176,9 @@ function ThemeCard(props: {
         accessibilityHint="Sets both light and dark appearances"
         accessibilityLabel={`${props.label} theme`}
         accessibilityRole="button"
-        accessibilityState={{ disabled: props.disabled }}
+        accessibilityState={{ disabled: selectBothDisabled }}
         className="absolute inset-0 rounded-[24px] active:bg-subtle"
-        disabled={
-          props.disabled ||
-          !mobileThemeHasAppearance(props.themeId, "light", props.importedThemes) ||
-          !mobileThemeHasAppearance(props.themeId, "dark", props.importedThemes)
-        }
+        disabled={selectBothDisabled}
         onPress={props.onSelectBoth}
       />
       <View className="flex-row items-center justify-center gap-2 py-1" pointerEvents="box-none">
