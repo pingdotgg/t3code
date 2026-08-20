@@ -120,7 +120,11 @@ import {
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
-import { buildThreadActionMenuItems, parseThreadSectionMenuId } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  parseThreadSectionMenuId,
+  threadSectionMenuId,
+} from "./threadActionMenu.logic";
 import { useThreadSectionNameDialog } from "./ThreadSectionNameDialog";
 import {
   buildBulkTitleRegenerationContextMenuItem,
@@ -2891,7 +2895,12 @@ export default function Sidebar() {
           api.contextMenu.show(
             [
               { id: "rename-section", label: "Rename section", icon: "pencil" },
-              { id: "delete-section", label: "Delete section", icon: "trash" },
+              {
+                id: "delete-section",
+                label: "Delete section",
+                icon: "trash",
+                destructive: true,
+              },
             ],
             position,
           ),
@@ -3140,7 +3149,7 @@ export default function Sidebar() {
                     label: `Move to section (${count})`,
                     children: [
                       ...threadSectionNames.map((name) => ({
-                        id: `section:name:${encodeURIComponent(name)}`,
+                        id: threadSectionMenuId(name),
                         label: name,
                       })),
                       {
