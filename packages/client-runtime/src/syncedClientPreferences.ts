@@ -1,5 +1,6 @@
 import {
   CommandId,
+  SYNCED_CLIENT_PREFERENCE_FIELDS,
   type PatchSyncedClientPreferencesRequest,
   type SyncedClientPreferencesPatch,
   type SyncedClientPreferencesUpdatedAt,
@@ -22,15 +23,13 @@ export function createSyncedClientPreferencesPatchRequest(
   patch: SyncedClientPreferencesPatch,
   updatedAt: SyncedClientPreferencesUpdatedAt,
 ): PatchSyncedClientPreferencesRequest {
-  const fields = Object.keys(patch).sort();
+  const fields = SYNCED_CLIENT_PREFERENCE_FIELDS.filter((field) => patch[field] !== undefined);
   const identity =
     fields.length === 1 && fields[0] === "planModeEnabled" && patch.planModeEnabled !== undefined
       ? patch.planModeEnabled
         ? "1"
         : "0"
-      : JSON.stringify(
-          fields.map((field) => [field, patch[field as keyof SyncedClientPreferencesPatch]]),
-        );
+      : JSON.stringify(fields.map((field) => [field, patch[field]]));
   return {
     commandId: CommandId.make(`client-preferences:${updatedAt}:${identity}`),
     patch,

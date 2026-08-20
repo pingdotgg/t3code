@@ -96,7 +96,7 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
         const version = ++nextPatchVersion;
         const current = get(optimisticPatchAtom);
         const versions = { ...current.versions };
-        for (const key of Object.keys(normalizedPatch) as Array<keyof Preferences>) {
+        for (const key of Struct.keys(normalizedPatch)) {
           versions[key] = version;
         }
         get.set(optimisticPatchAtom, {
