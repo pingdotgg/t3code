@@ -42,6 +42,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
+  resolveComposerMenuLoading,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -1070,7 +1071,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     query: isPathTrigger ? pathTriggerQuery : null,
   });
 
-  const composerSkills = useProviderSkills({
+  const { skills: composerSkills, isPending: isComposerSkillsPending } = useProviderSkills({
     activeEnvironmentId: activeThreadEnvironmentId,
     fallbackEnvironmentId: environmentId,
     provider: selectedProviderStatus,
@@ -1220,8 +1221,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
   ]);
 
-  const isComposerMenuLoading =
-    composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending;
+  const isComposerMenuLoading = resolveComposerMenuLoading({
+    triggerKind: composerTriggerKind,
+    pathQuery: pathTriggerQuery,
+    isPathSearchPending: workspaceEntries.isPending,
+    isSkillInventoryPending: isComposerSkillsPending,
+    skillCount: composerSkills.length,
+  });
   const composerMenuEmptyState = useMemo(() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";

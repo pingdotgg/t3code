@@ -18,6 +18,19 @@ export function shouldSubmitComposerOnEnter(input: {
   return !input.isMobileViewport && !input.shiftKey;
 }
 
+export function resolveComposerMenuLoading(input: {
+  triggerKind: ComposerTriggerKind | null;
+  pathQuery: string;
+  isPathSearchPending: boolean;
+  isSkillInventoryPending: boolean;
+  skillCount: number;
+}): boolean {
+  if (input.triggerKind === "skill") {
+    return input.skillCount === 0 && input.isSkillInventoryPending;
+  }
+  return input.triggerKind === "path" && input.pathQuery.length > 0 && input.isPathSearchPending;
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }

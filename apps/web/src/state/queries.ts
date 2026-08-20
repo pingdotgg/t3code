@@ -311,16 +311,17 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
 }
 
 /**
- * Skills for a composer or message timeline.
+ * Skills and inventory loading state for a composer or message timeline.
  *
  * Snapshot-mode providers resolve entirely from the provider snapshot and
  * never reach the network. A project-mode provider issues one request per
  * (environment, scope, instance) key; composer query text is not part of the
  * key, so filtering more characters does not refetch.
  */
-export function useProviderSkills(
-  context: ProviderSkillInventoryContext,
-): ReadonlyArray<ServerProviderSkill> {
+export function useProviderSkills(context: ProviderSkillInventoryContext): {
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly isPending: boolean;
+} {
   const target = resolveProviderSkillInventoryTarget(context);
   const request = resolveProviderSkillInventoryRequest(target);
   const result = useEnvironmentQuery(
@@ -328,7 +329,13 @@ export function useProviderSkills(
   );
   const provider = target.provider;
   const inventory = result.data;
-  return useMemo(() => selectProviderSkills({ provider, inventory }), [provider, inventory]);
+  return useMemo(
+    () => ({
+      skills: selectProviderSkills({ provider, inventory }),
+      isPending: result.isPending,
+    }),
+    [inventory, provider, result.isPending],
+  );
 }
 
 interface ProjectContentSearchTarget {

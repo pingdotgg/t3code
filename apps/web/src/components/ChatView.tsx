@@ -2688,7 +2688,7 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
-  const timelineSkills = useProviderSkills({
+  const { skills: timelineSkills } = useProviderSkills({
     activeEnvironmentId: activeThread?.environmentId,
     fallbackEnvironmentId: environmentId,
     provider: activeProviderStatus,
