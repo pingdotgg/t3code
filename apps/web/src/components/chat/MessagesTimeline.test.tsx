@@ -1,8 +1,16 @@
-import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  type OrchestrationV2TurnItem,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import type { WorkLogEntry } from "~/session-logic";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -178,7 +186,6 @@ const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
 function buildProps() {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
@@ -1571,7 +1578,6 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnInProgress
         latestRun={{
           runId: RunId.make("run-1"),
           status: "running",
@@ -1863,5 +1869,178 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
+  });
+
+  // Derive the collapsed lifecycle value from the projected item's real
+  // status, so the fixture cannot assert on a pairing the projection never
+  // emits.
+  const toolLifecycleStatusForItemStatus = (
+    itemStatus: OrchestrationV2TurnItem["status"] | undefined,
+  ): WorkLogEntry["toolLifecycleStatus"] => {
+    switch (itemStatus) {
+      case "pending":
+      case "running":
+      case "waiting":
+        return "inProgress";
+      case "completed":
+        return "completed";
+      case "failed":
+        return "failed";
+      case "cancelled":
+      case "interrupted":
+        return "stopped";
+      case undefined:
+        return undefined;
+    }
+  };
+
+  const workRow = (itemStatus: OrchestrationV2TurnItem["status"] | undefined) => {
+    const toolLifecycleStatus = toolLifecycleStatusForItemStatus(itemStatus);
+    return renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "bash -c 'sleep 30'",
+              ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
+              ...(itemStatus
+                ? { structuredPayload: { status: itemStatus } as OrchestrationV2TurnItem }
+                : {}),
+            },
+          },
+        ]}
+      />,
+    );
+  };
+
+  // Tooltip text is not in static markup, so assert on the icon and the row's
+  // accessible name, as the failed-indicator case above does.
+  it("shows a running tool from the projected item's status", () => {
+    const markup = workRow("running");
+    expect(markup).toContain("Ran command");
+    expect(markup).toContain("lucide-loader-circle");
+    expect(markup).toContain(', running"');
+    expect(markup).not.toContain("lucide-check");
+    // The spinner is decorative here; a nested role="status" inside the row
+    // button would announce a generic "Loading" over the row's own name.
+    expect(markup).not.toContain('role="status"');
+    expect(markup).not.toContain('aria-label="Loading"');
+  });
+
+  // A stopped row carries no indicator of its own; this component has no glyph
+  // for that state. It must still render, and must not claim it completed.
+  it("renders a stopped tool without claiming it completed", () => {
+    for (const itemStatus of ["cancelled", "interrupted"] as const) {
+      const markup = workRow(itemStatus);
+      expect(markup).toContain("Ran command");
+      expect(markup).toContain(', stopped"');
+      expect(markup).not.toContain("lucide-check");
+      expect(markup).not.toContain("lucide-loader-circle");
+    }
+  });
+
+  // Pending and waiting deliberately render bare. The former "Empty" minus
+  // would mislabel queued or approval-blocked work, and adding a new status
+  // glyph needs a design decision.
+  it("renders pending and waiting tools without a lifecycle indicator", () => {
+    for (const itemStatus of ["pending", "waiting"] as const) {
+      const markup = workRow(itemStatus);
+      expect(markup).toContain("Ran command");
+      expect(markup).not.toContain("lucide-loader-circle");
+      expect(markup).not.toContain("lucide-check");
+      expect(markup).not.toContain("lucide-x");
+      expect(markup).not.toContain(', failed"');
+      expect(markup).not.toContain(', running"');
+      expect(markup).not.toContain(', stopped"');
+    }
+  });
+
+  it("still omits a tool row carrying no lifecycle signal", () => {
+    expect(workRow(undefined)).not.toContain("Ran command");
+  });
+
+  const multiToolWorkEntries = (
+    rows: Array<{
+      id: string;
+      label: string;
+      itemStatus: OrchestrationV2TurnItem["status"];
+    }>,
+  ) =>
+    rows.map((row, index) => {
+      const toolLifecycleStatus = toolLifecycleStatusForItemStatus(row.itemStatus);
+      return {
+        id: `entry-${row.id}`,
+        kind: "work" as const,
+        createdAt: `2026-03-17T19:12:${String(28 + index).padStart(2, "0")}.000Z`,
+        entry: {
+          id: row.id,
+          createdAt: `2026-03-17T19:12:${String(28 + index).padStart(2, "0")}.000Z`,
+          label: row.label,
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+          command: row.label,
+          ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
+          structuredPayload: { status: row.itemStatus } as OrchestrationV2TurnItem,
+        },
+      };
+    });
+
+  // Collapsed groups used to keep only slice(-1), so a later completed tool
+  // buried the running or stopped row the work-log filter retained.
+  it("keeps pinned running and stopped tools visible in a collapsed work group", () => {
+    const runningAndCompleted = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={multiToolWorkEntries([
+          { id: "running", label: "Active shell", itemStatus: "running" },
+          { id: "completed", label: "Finished shell", itemStatus: "completed" },
+        ])}
+      />,
+    );
+    expect(runningAndCompleted).toContain("Active shell");
+    expect(runningAndCompleted).toContain("Finished shell");
+    expect(runningAndCompleted).toContain("lucide-loader-circle");
+    expect(runningAndCompleted).not.toContain("previous tool");
+
+    const stoppedAndCompleted = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={multiToolWorkEntries([
+          { id: "stopped", label: "Interrupted shell", itemStatus: "interrupted" },
+          { id: "completed", label: "Finished shell", itemStatus: "completed" },
+        ])}
+      />,
+    );
+    expect(stoppedAndCompleted).toContain("Interrupted shell");
+    expect(stoppedAndCompleted).toContain("Finished shell");
+    expect(stoppedAndCompleted).toContain(', stopped"');
+    expect(stoppedAndCompleted).not.toContain("previous tool");
+  });
+
+  it("does not pin pending or waiting rows in a collapsed work group", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={multiToolWorkEntries([
+          { id: "pending", label: "Queued shell", itemStatus: "pending" },
+          { id: "waiting", label: "Blocked shell", itemStatus: "waiting" },
+          { id: "completed", label: "Finished shell", itemStatus: "completed" },
+        ])}
+      />,
+    );
+
+    expect(markup).toContain("Finished shell");
+    expect(markup).not.toContain("Queued shell");
+    expect(markup).not.toContain("Blocked shell");
+    expect(markup).toContain("+2 previous tool calls");
   });
 });

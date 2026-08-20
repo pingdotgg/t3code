@@ -22,7 +22,12 @@ import {
   findLatestProposedPlan,
   isLatestRunSettled,
   providerErrorPresentation,
+  workEntryHasReportedLifecycle,
+  workEntryIndicatesToolNeutralStatus,
+  workEntryIsExecuting,
+  workEntryShouldRenderInWorkLog,
   type TimelineEntry,
+  type WorkLogEntry,
 } from "./session-logic";
 import { makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
@@ -633,5 +638,77 @@ describe("V2 session presentation", () => {
       [supersededAttemptId, "superseded"],
       [activeAttemptId, "running"],
     ]);
+  });
+});
+
+describe("work log rows the timeline must keep", () => {
+  const toolEntry = (toolLifecycleStatus: WorkLogEntry["toolLifecycleStatus"]): WorkLogEntry => ({
+    id: "entry-1",
+    createdAt: "2026-07-28T17:20:43.442Z",
+    label: "Ran command",
+    tone: "tool",
+    itemType: "command_execution",
+    command: "bash -c 'sleep 30'",
+    ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
+  });
+
+  // The work group filters on exactly this, so the tests exercise the shipped
+  // policy rather than a copy of the expression that could drift from it.
+  const keptByWorkGroup = workEntryShouldRenderInWorkLog;
+
+  it("keeps a reported non-terminal tool without inferring that it is executing", () => {
+    const entry = toolEntry("inProgress");
+    expect(workEntryIndicatesToolNeutralStatus(entry)).toBe(true);
+    expect(workEntryHasReportedLifecycle(entry)).toBe(true);
+    expect(keptByWorkGroup(entry)).toBe(true);
+    expect(workEntryIsExecuting(entry)).toBe(false);
+  });
+
+  it("does not treat a running non-tool work item as an executing tool", () => {
+    const entry: WorkLogEntry = {
+      id: "entry-1",
+      createdAt: "2026-07-28T17:20:43.442Z",
+      label: "Updated tasks",
+      tone: "info",
+      itemType: "todo_list",
+      toolLifecycleStatus: "inProgress",
+      structuredPayload: { status: "running" } as OrchestrationV2TurnItem,
+    };
+    expect(workEntryIsExecuting(entry)).toBe(false);
+  });
+
+  it("shows a running provider retry without treating it as an executing tool", () => {
+    const entry: WorkLogEntry = {
+      id: "entry-provider-retry",
+      createdAt: "2026-07-28T17:20:43.442Z",
+      label: "Retrying provider (2/5)",
+      tone: "info",
+      itemType: "error",
+      toolLifecycleStatus: "inProgress",
+      structuredPayload: { status: "running" } as OrchestrationV2TurnItem,
+    };
+    expect(keptByWorkGroup(entry)).toBe(true);
+    expect(workEntryIsExecuting(entry)).toBe(false);
+  });
+
+  it("keeps a tool stopped by an interrupt, so Stop leaves a record", () => {
+    const entry = toolEntry("stopped");
+    expect(workEntryHasReportedLifecycle(entry)).toBe(true);
+    expect(keptByWorkGroup(entry)).toBe(true);
+  });
+
+  it("still hides a tool row carrying no lifecycle signal at all", () => {
+    const entry = toolEntry(undefined);
+    expect(workEntryIndicatesToolNeutralStatus(entry)).toBe(true);
+    expect(workEntryHasReportedLifecycle(entry)).toBe(false);
+    expect(keptByWorkGroup(entry)).toBe(false);
+  });
+
+  it("leaves terminal rows alone", () => {
+    for (const status of ["completed", "failed", "declined"] as const) {
+      const entry = toolEntry(status);
+      expect(workEntryIndicatesToolNeutralStatus(entry)).toBe(false);
+      expect(keptByWorkGroup(entry)).toBe(true);
+    }
   });
 });
