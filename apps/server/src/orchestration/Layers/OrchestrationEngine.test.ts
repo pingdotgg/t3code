@@ -921,6 +921,7 @@ describe("OrchestrationEngine", () => {
     let restoreOnUnarchive = false;
     let failNextRestore = false;
     let failNextFinish = false;
+    let partialRestoreActive = false;
 
     const flakyStore: OrchestrationEventStoreShape = {
       append(event) {
@@ -949,6 +950,7 @@ describe("OrchestrationEngine", () => {
       restoreTree: (threadId) => {
         if (failNextRestore) {
           failNextRestore = false;
+          partialRestoreActive = true;
           return Effect.fail(
             new ThreadColdStorage.ThreadColdStorageError({
               operation: "restore",
@@ -961,6 +963,7 @@ describe("OrchestrationEngine", () => {
       },
       rollbackRestoreTree: (threadId) =>
         Effect.sync(() => {
+          partialRestoreActive = false;
           rolledBackThreadIds.push(threadId);
         }),
       finishRestoreTree: (threadId) =>
@@ -1044,6 +1047,8 @@ describe("OrchestrationEngine", () => {
         "Failed to restore the archived conversation",
       );
       expect(events.at(-1)?.type).toBe("thread.archived");
+      expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
+      rolledBackThreadIds.length = 0;
 
       restoreOnUnarchive = true;
       failNextRestore = true;
@@ -1056,6 +1061,9 @@ describe("OrchestrationEngine", () => {
       expect(retryableRestoreFailure.message).toContain(
         "Failed to restore the archived conversation",
       );
+      expect(partialRestoreActive).toBe(false);
+      expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
+      rolledBackThreadIds.length = 0;
       const retriedRestoreResult = yield* engine.dispatch(retryableRestoreCommand);
       expect(retriedRestoreResult.sequence).toBeGreaterThan(0);
       expect(events.at(-1)?.type).toBe("thread.unarchived");

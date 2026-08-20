@@ -192,6 +192,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }
 
         if (unarchiveThreadId !== null) {
+          restoredUnarchiveThreadId = unarchiveThreadId;
           const restored = yield* threadColdStorage.restoreTree(unarchiveThreadId).pipe(
             Effect.mapError((cause) => {
               unarchiveRestoreFailed = true;
@@ -203,7 +204,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             }),
           );
           if (restored) {
-            restoredUnarchiveThreadId = unarchiveThreadId;
             commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
           } else {
             unarchiveRestoreFailed = true;
