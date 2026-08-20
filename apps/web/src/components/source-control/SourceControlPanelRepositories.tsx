@@ -283,26 +283,25 @@ export function makeSourceControlPanelRepositoryRenderers(
     const expanded = expandedTree.has(key);
     const details = stashDetailsByKey.get(stashKey);
     const loadingDetails = loadingStashDetails.has(stashKey);
-    const applyKey = `stash-apply:${stash.refName}`;
-    const popKey = `stash-pop:${stash.refName}`;
-    const dropKey = `stash-drop:${stash.refName}`;
+    const mutationKey = "stash-mutation";
+    const mutationRunning = isActionRunning(mutationKey);
     const relativeDate = formatRelativeDate(stash.createdAt);
     const branchName = stashBranchName(stash);
     const applyStash = () =>
       void runAction(
-        applyKey,
+        mutationKey,
         () => api?.vcs.applyStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
       );
     const popStash = () =>
       void runAction(
-        popKey,
+        mutationKey,
         () => api?.vcs.popStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
       );
     const dropStash = () =>
       void (async () => {
         if (!(await confirm(`Drop ${stash.refName}?`))) return;
         await runAction(
-          dropKey,
+          mutationKey,
           () => api?.vcs.dropStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
         );
       })();
@@ -322,13 +321,13 @@ export function makeSourceControlPanelRepositoryRenderers(
             openContextMenu(
               event,
               [
-                { id: "apply", label: "Apply stash", disabled: isActionRunning(applyKey) },
-                { id: "pop", label: "Pop stash", disabled: isActionRunning(popKey) },
+                { id: "apply", label: "Apply stash", disabled: mutationRunning },
+                { id: "pop", label: "Pop stash", disabled: mutationRunning },
                 {
                   id: "drop",
                   label: "Drop stash",
                   destructive: true,
-                  disabled: isActionRunning(dropKey),
+                  disabled: mutationRunning,
                   icon: "trash",
                   separatorBefore: true,
                 },
@@ -374,16 +373,16 @@ export function makeSourceControlPanelRepositoryRenderers(
           <RowActions>
             <IconButton
               label="Apply stash"
-              disabled={isActionRunning(applyKey)}
-              loading={isActionRunning(applyKey)}
+              disabled={mutationRunning}
+              loading={mutationRunning}
               onClick={applyStash}
             >
               <Download className="size-3.5" />
             </IconButton>
             <IconButton
               label="Pop stash"
-              disabled={isActionRunning(popKey)}
-              loading={isActionRunning(popKey)}
+              disabled={mutationRunning}
+              loading={mutationRunning}
               onClick={popStash}
             >
               <Archive className="size-3.5" />
@@ -391,8 +390,8 @@ export function makeSourceControlPanelRepositoryRenderers(
             <IconButton
               label="Drop stash"
               destructive
-              disabled={isActionRunning(dropKey)}
-              loading={isActionRunning(dropKey)}
+              disabled={mutationRunning}
+              loading={mutationRunning}
               onClick={dropStash}
             >
               <Trash2 className="size-3.5" />
