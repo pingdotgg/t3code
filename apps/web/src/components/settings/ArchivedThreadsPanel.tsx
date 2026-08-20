@@ -157,6 +157,14 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      {archivedGroups.length > 0 && archiveError ? (
+        <SettingsSection
+          id={searchableSetting("archive").id}
+          title={searchableSetting("archive").title}
+        >
+          <SettingsRow title="Could not load all archived threads" description={archiveError} />
+        </SettingsSection>
+      ) : null}
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
@@ -188,7 +196,7 @@ export function ArchivedThreadsPanel() {
         archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
             key={`${project.environmentId}:${project.id}`}
-            id={index === 0 ? searchableSetting("archive").id : undefined}
+            id={index === 0 && !archiveError ? searchableSetting("archive").id : undefined}
             title={project.name}
             icon={
               <ProjectFavicon

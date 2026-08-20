@@ -41,6 +41,39 @@ const layer = it.layer(
 );
 
 layer("ThreadColdStorage", (it) => {
+  it.effect("waits for pending archive and delete work before legacy compaction", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const archiveThreadId = ThreadId.make("thread-compact-pending-archive");
+      const deleteThreadId = ThreadId.make("thread-compact-pending-delete");
+
+      yield* insertArchivedThread(archiveThreadId, "Pending archive before compaction");
+      yield* insertArchivedThread(deleteThreadId, "Pending delete before compaction");
+      yield* sql`
+        UPDATE projection_threads
+        SET deleted_at = '2026-07-03T00:00:00.000Z'
+        WHERE thread_id = ${deleteThreadId}
+      `;
+
+      yield* storage.compactLegacyStorage;
+      const deferredMaintenance = yield* sql<{ readonly status: string }>`
+        SELECT status FROM thread_storage_maintenance
+        WHERE task = 'compact-legacy-thread-storage'
+      `;
+      assert.deepStrictEqual(deferredMaintenance, [{ status: "pending" }]);
+
+      yield* storage.archiveThread(archiveThreadId);
+      yield* storage.deleteThread(deleteThreadId);
+      yield* storage.compactLegacyStorage;
+      const completedMaintenance = yield* sql<{ readonly status: string }>`
+        SELECT status FROM thread_storage_maintenance
+        WHERE task = 'compact-legacy-thread-storage'
+      `;
+      assert.deepStrictEqual(completedMaintenance, [{ status: "complete" }]);
+    }),
+  );
+
   it.effect("normalizes typed quiesce failures at the archive boundary", () =>
     Effect.gen(function* () {
       const storage = yield* ThreadColdStorage.ThreadColdStorage;

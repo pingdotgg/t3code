@@ -121,6 +121,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     let processingStartedAtMs = 0;
     let restoredUnarchiveThreadId: ThreadId | null = null;
     let restoredUnarchiveCommitted = false;
+    let unarchiveRestoreFailed = false;
     const aggregateRef = commandToAggregateRef(envelope.command);
     const baseMetricAttributes = {
       commandType: envelope.command.type,
@@ -192,19 +193,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
         if (unarchiveThreadId !== null) {
           const restored = yield* threadColdStorage.restoreTree(unarchiveThreadId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationCommandInvariantError({
-                  commandType: envelope.command.type,
-                  detail: "Failed to restore the archived conversation.",
-                  cause,
-                }),
-            ),
+            Effect.mapError((cause) => {
+              unarchiveRestoreFailed = true;
+              return new OrchestrationCommandInvariantError({
+                commandType: envelope.command.type,
+                detail: "Failed to restore the archived conversation.",
+                cause,
+              });
+            }),
           );
           if (restored) {
             restoredUnarchiveThreadId = unarchiveThreadId;
             commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
           } else {
+            unarchiveRestoreFailed = true;
             return yield* new OrchestrationCommandInvariantError({
               commandType: envelope.command.type,
               detail: "Failed to restore the archived conversation.",
@@ -375,7 +377,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ),
             );
 
-            if (isOrchestrationCommandInvariantError(error)) {
+            if (isOrchestrationCommandInvariantError(error) && !unarchiveRestoreFailed) {
               yield* commandReceiptRepository
                 .upsert({
                   commandId: envelope.command.commandId,

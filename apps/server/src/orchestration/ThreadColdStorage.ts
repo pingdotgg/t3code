@@ -912,12 +912,70 @@ export const make = Effect.gen(function* () {
     yield* sql.unsafe(`DELETE FROM thread_cleanup_queue WHERE thread_id = ?`, [threadId]);
   });
 
+  const listIds = (query: string, operation: ThreadColdStorageOperation) =>
+    sql.unsafe(query).pipe(
+      Effect.map((rows) =>
+        (rows as ReadonlyArray<SqlRow>).map((row) => ThreadId.make(String(row.thread_id))),
+      ),
+      Effect.mapError((cause) => ThreadColdStorageError.normalize(operation, undefined, cause)),
+    );
+
+  const pendingArchiveThreadIds = listIds(
+    `SELECT thread_id
+     FROM (
+       SELECT thread_id, archived_at
+       FROM thread_archive_manifests
+       WHERE status IN ('pending', 'archiving', 'cleanup_pending')
+       UNION ALL
+       SELECT thread_archive_manifests.thread_id, thread_archive_manifests.archived_at
+       FROM thread_archive_manifests
+       INNER JOIN projection_threads
+         ON projection_threads.thread_id = thread_archive_manifests.thread_id
+        AND projection_threads.deleted_at IS NULL
+        AND projection_threads.archived_at = thread_archive_manifests.archived_at
+       WHERE thread_archive_manifests.status = 'restored'
+       UNION ALL
+       SELECT projection_threads.thread_id, projection_threads.archived_at
+       FROM projection_threads
+       WHERE projection_threads.archived_at IS NOT NULL
+         AND projection_threads.deleted_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM thread_archive_manifests
+           WHERE thread_archive_manifests.thread_id = projection_threads.thread_id
+         )
+     )
+     ORDER BY archived_at ASC, thread_id ASC`,
+    "list-pending-archives",
+  );
+
+  const pendingDeleteThreadIds = listIds(
+    `SELECT thread_id
+     FROM (
+       SELECT thread_id, created_at
+       FROM thread_cleanup_queue
+       WHERE reason = 'deleted'
+       UNION ALL
+       SELECT thread_id, deleted_at AS created_at
+       FROM projection_threads
+       WHERE deleted_at IS NOT NULL
+     )
+     GROUP BY thread_id
+     ORDER BY MIN(created_at) ASC, thread_id ASC`,
+    "list-pending-deletes",
+  );
+
   const compactLegacyStorageImpl = Effect.fn("compactLegacyThreadStorage")(function* () {
     const rows = (yield* sql.unsafe(
       `SELECT status FROM thread_storage_maintenance
        WHERE task = 'compact-legacy-thread-storage'`,
     )) as ReadonlyArray<SqlRow>;
     if (rows[0]?.status === "complete") return;
+
+    const [pendingArchives, pendingDeletes] = yield* Effect.all([
+      pendingArchiveThreadIds,
+      pendingDeleteThreadIds,
+    ]);
+    if (pendingArchives.length > 0 || pendingDeletes.length > 0) return;
 
     yield* sql.unsafe(
       `UPDATE thread_storage_maintenance
@@ -983,14 +1041,6 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => ThreadColdStorageError.normalize(operation, threadId, cause)),
     );
 
-  const listIds = (query: string, operation: ThreadColdStorageOperation) =>
-    sql.unsafe(query).pipe(
-      Effect.map((rows) =>
-        (rows as ReadonlyArray<SqlRow>).map((row) => ThreadId.make(String(row.thread_id))),
-      ),
-      Effect.mapError((cause) => ThreadColdStorageError.normalize(operation, undefined, cause)),
-    );
-
   return {
     archiveThread: <E>(threadId: ThreadId, quiesce: Effect.Effect<void, E> = Effect.void) => {
       const operation = "archive";
@@ -1021,48 +1071,8 @@ export const make = Effect.gen(function* () {
         ThreadColdStorageError.normalize("compact-legacy-storage", undefined, cause),
       ),
     ),
-    listPendingArchiveThreadIds: listIds(
-      `SELECT thread_id
-       FROM (
-         SELECT thread_id, archived_at
-         FROM thread_archive_manifests
-         WHERE status IN ('pending', 'archiving', 'cleanup_pending')
-         UNION ALL
-         SELECT thread_archive_manifests.thread_id, thread_archive_manifests.archived_at
-         FROM thread_archive_manifests
-         INNER JOIN projection_threads
-           ON projection_threads.thread_id = thread_archive_manifests.thread_id
-          AND projection_threads.deleted_at IS NULL
-          AND projection_threads.archived_at = thread_archive_manifests.archived_at
-         WHERE thread_archive_manifests.status = 'restored'
-         UNION ALL
-         SELECT projection_threads.thread_id, projection_threads.archived_at
-         FROM projection_threads
-         WHERE projection_threads.archived_at IS NOT NULL
-           AND projection_threads.deleted_at IS NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM thread_archive_manifests
-             WHERE thread_archive_manifests.thread_id = projection_threads.thread_id
-           )
-       )
-       ORDER BY archived_at ASC, thread_id ASC`,
-      "list-pending-archives",
-    ),
-    listPendingDeleteThreadIds: listIds(
-      `SELECT thread_id
-       FROM (
-         SELECT thread_id, created_at
-         FROM thread_cleanup_queue
-         WHERE reason = 'deleted'
-         UNION ALL
-         SELECT thread_id, deleted_at AS created_at
-         FROM projection_threads
-         WHERE deleted_at IS NOT NULL
-       )
-       GROUP BY thread_id
-       ORDER BY MIN(created_at) ASC, thread_id ASC`,
-      "list-pending-deletes",
-    ),
+    listPendingArchiveThreadIds: pendingArchiveThreadIds,
+    listPendingDeleteThreadIds: pendingDeleteThreadIds,
   } satisfies ThreadColdStorage["Service"];
 });
 

@@ -909,7 +909,7 @@ describe("OrchestrationEngine", () => {
     await runtime.dispose();
   });
 
-  effectIt.effect("rolls restored cold storage back when unarchive dispatch fails", () => {
+  effectIt.effect("keeps restore failures retryable and rolls restored storage back", () => {
     type StoredEvent =
       ReturnType<OrchestrationEventStoreShape["append"]> extends Effect.Effect<infer A, any, any>
         ? A
@@ -919,6 +919,7 @@ describe("OrchestrationEngine", () => {
     const finishedThreadIds: ThreadId[] = [];
     let nextSequence = 1;
     let restoreOnUnarchive = false;
+    let failNextRestore = false;
     let failNextFinish = false;
 
     const flakyStore: OrchestrationEventStoreShape = {
@@ -945,7 +946,19 @@ describe("OrchestrationEngine", () => {
     };
     const coldStorage: ThreadColdStorage.ThreadColdStorage["Service"] = {
       archiveThread: () => Effect.void,
-      restoreTree: () => Effect.succeed(restoreOnUnarchive),
+      restoreTree: (threadId) => {
+        if (failNextRestore) {
+          failNextRestore = false;
+          return Effect.fail(
+            new ThreadColdStorage.ThreadColdStorageError({
+              operation: "restore",
+              threadId,
+              cause: new Error("temporary restore failure"),
+            }),
+          );
+        }
+        return Effect.succeed(restoreOnUnarchive);
+      },
       rollbackRestoreTree: (threadId) =>
         Effect.sync(() => {
           rolledBackThreadIds.push(threadId);
@@ -1033,6 +1046,24 @@ describe("OrchestrationEngine", () => {
       expect(events.at(-1)?.type).toBe("thread.archived");
 
       restoreOnUnarchive = true;
+      failNextRestore = true;
+      const retryableRestoreCommand = {
+        type: "thread.unarchive",
+        commandId: CommandId.make("cmd-cold-unarchive-retryable-restore"),
+        threadId: ThreadId.make("thread-cold-rollback"),
+      } as const;
+      const retryableRestoreFailure = yield* Effect.flip(engine.dispatch(retryableRestoreCommand));
+      expect(retryableRestoreFailure.message).toContain(
+        "Failed to restore the archived conversation",
+      );
+      const retriedRestoreResult = yield* engine.dispatch(retryableRestoreCommand);
+      expect(retriedRestoreResult.sequence).toBeGreaterThan(0);
+      expect(events.at(-1)?.type).toBe("thread.unarchived");
+      yield* engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cmd-cold-thread-rearchive-after-restore-retry"),
+        threadId: ThreadId.make("thread-cold-rollback"),
+      });
 
       const unarchiveFailure = yield* Effect.flip(
         engine.dispatch({
@@ -1043,7 +1074,7 @@ describe("OrchestrationEngine", () => {
       );
       expect(unarchiveFailure.message).toContain("unarchive append failed");
       expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
-      expect(finishedThreadIds).toEqual([]);
+      expect(finishedThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
 
       failNextFinish = true;
       const acceptedCommand = {
@@ -1058,8 +1089,9 @@ describe("OrchestrationEngine", () => {
       expect(finishedThreadIds).toEqual([
         ThreadId.make("thread-cold-rollback"),
         ThreadId.make("thread-cold-rollback"),
+        ThreadId.make("thread-cold-rollback"),
       ]);
-      expect(events.filter((event) => event.type === "thread.unarchived")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "thread.unarchived")).toHaveLength(2);
     }).pipe(Effect.provide(testLayer));
   });
 
