@@ -159,6 +159,30 @@ export function findKimiModelConfigOption(
   );
 }
 
+export function findKimiThinkingConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): KimiSelectConfigOption | undefined {
+  if (!configOptions) {
+    return undefined;
+  }
+  const selectOptions = configOptions.filter(
+    (option): option is KimiSelectConfigOption => option.type === "select",
+  );
+  return (
+    selectOptions.find((option) => option.category === "thought_level") ??
+    selectOptions.find((option) => option.id.trim() === "thinking")
+  );
+}
+
+export function flattenKimiSelectConfigOptions(
+  configOption: EffectAcpSchema.SessionConfigOption | null | undefined,
+): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
+  if (!configOption || configOption.type !== "select") {
+    return [];
+  }
+  return configOption.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
+}
+
 export function kimiModelStateFromSessionSetup(
   sessionSetupResult: KimiSessionSetupResponse,
 ): EffectAcpSchema.SessionModelState | undefined {
@@ -166,24 +190,22 @@ export function kimiModelStateFromSessionSetup(
   if (modelConfig) {
     const currentModelId = modelConfig.currentValue.trim();
     const seen = new Set<string>();
-    const availableModels = modelConfig.options
-      .flatMap((entry) => ("value" in entry ? [entry] : entry.options))
-      .flatMap((option) => {
-        const modelId = option.value.trim();
-        if (!modelId || seen.has(modelId)) {
-          return [];
-        }
-        seen.add(modelId);
-        const name = option.name.trim() || modelId;
-        const description = option.description?.trim() || undefined;
-        return [
-          {
-            modelId,
-            name,
-            ...(description ? { description } : {}),
-          } satisfies EffectAcpSchema.ModelInfo,
-        ];
-      });
+    const availableModels = flattenKimiSelectConfigOptions(modelConfig).flatMap((option) => {
+      const modelId = option.value.trim();
+      if (!modelId || seen.has(modelId)) {
+        return [];
+      }
+      seen.add(modelId);
+      const name = option.name.trim() || modelId;
+      const description = option.description?.trim() || undefined;
+      return [
+        {
+          modelId,
+          name,
+          ...(description ? { description } : {}),
+        } satisfies EffectAcpSchema.ModelInfo,
+      ];
+    });
     if (currentModelId && availableModels.length > 0) {
       return { currentModelId, availableModels };
     }
@@ -217,21 +239,29 @@ export function resolveKimiAcpModeId(input: {
   }
 }
 
-export function currentKimiModeIdFromSessionSetup(
-  sessionSetupResult: KimiSessionSetupResponse,
+export function currentKimiModeIdFromConfigOptions(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): string | undefined {
-  const configOptions = sessionSetupResult.configOptions ?? [];
+  const options = configOptions ?? [];
   const modeConfig =
-    configOptions.find(
+    options.find(
       (option): option is KimiSelectConfigOption =>
         option.type === "select" && option.category === "mode",
     ) ??
-    configOptions.find(
+    options.find(
       (option): option is KimiSelectConfigOption =>
         option.type === "select" && option.id.trim() === "mode",
     );
+  return modeConfig?.currentValue.trim() || undefined;
+}
+
+export function currentKimiModeIdFromSessionSetup(
+  sessionSetupResult: KimiSessionSetupResponse,
+): string | undefined {
   return (
-    modeConfig?.currentValue.trim() || sessionSetupResult.modes?.currentModeId.trim() || undefined
+    (currentKimiModeIdFromConfigOptions(sessionSetupResult.configOptions) ??
+      sessionSetupResult.modes?.currentModeId.trim()) ||
+    undefined
   );
 }
 
@@ -309,6 +339,12 @@ export function advertisedKimiModelIdsFromSessionSetup(
   return models && models.length > 0 ? models.map((model) => model.modelId) : undefined;
 }
 
+export function currentKimiModelIdFromConfigOptions(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): string | undefined {
+  return findKimiModelConfigOption(configOptions)?.currentValue.trim() || undefined;
+}
+
 export function currentKimiModelIdFromSessionSetup(
   sessionSetupResult: KimiSessionSetupResponse,
 ): string | undefined {
@@ -347,6 +383,78 @@ export function applyKimiAcpModelSelection<E>(input: {
       )
     : applyFallbackModel;
   return applyModel.pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+}
+
+export interface KimiThinkingSelectionResolution {
+  readonly configId: string;
+  readonly currentValue: string;
+  readonly selectedValue: string;
+  readonly usedFallback: boolean;
+}
+
+export function resolveKimiThinkingSelection(input: {
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly requestedValue: string | undefined;
+}): KimiThinkingSelectionResolution | undefined {
+  const thinkingConfig = findKimiThinkingConfigOption(input.configOptions);
+  if (!thinkingConfig) {
+    return undefined;
+  }
+  const values = flattenKimiSelectConfigOptions(thinkingConfig)
+    .map((option) => option.value.trim())
+    .filter((value) => value.length > 0);
+  if (values.length === 0) {
+    return undefined;
+  }
+  const configId = thinkingConfig.id.trim();
+  const currentValue = thinkingConfig.currentValue.trim();
+  const fallbackValue = values.includes(currentValue) ? currentValue : values[0];
+  if (!configId || !fallbackValue) {
+    return undefined;
+  }
+  const requestedValue = input.requestedValue?.trim();
+  const selectedValue =
+    requestedValue && values.includes(requestedValue) ? requestedValue : fallbackValue;
+  return {
+    configId,
+    currentValue,
+    selectedValue,
+    usedFallback: requestedValue !== undefined && requestedValue !== selectedValue,
+  };
+}
+
+export function applyKimiAcpThinkingSelection<E>(input: {
+  readonly runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setConfigOption"
+  >;
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly requestedValue: string | undefined;
+  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+}): Effect.Effect<
+  {
+    readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+    readonly resolution: KimiThinkingSelectionResolution | undefined;
+  },
+  E
+> {
+  const resolution = resolveKimiThinkingSelection(input);
+  if (!resolution || resolution.selectedValue === resolution.currentValue) {
+    return Effect.succeed({ configOptions: input.configOptions, resolution });
+  }
+  return input.runtime.setConfigOption(resolution.configId, resolution.selectedValue).pipe(
+    Effect.mapError(input.mapError),
+    Effect.andThen(input.runtime.getConfigOptions),
+    Effect.map((configOptions) => ({ configOptions, resolution })),
+  );
+}
+
+export function kimiConfigOptionsFromSessionNotification(
+  notification: EffectAcpSchema.SessionNotification,
+): ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined {
+  return notification.update.sessionUpdate === "config_option_update"
+    ? notification.update.configOptions
+    : undefined;
 }
 
 /** True when an ACP failure means "signed out", i.e. `authenticate` was rejected. */

@@ -7,16 +7,20 @@ import {
   advertisedKimiModelIdsFromSessionSetup,
   applyKimiAcpModeSelection,
   applyKimiAcpModelSelection,
+  applyKimiAcpThinkingSelection,
   buildKimiAcpSpawnInput,
   currentKimiModeIdFromSessionSetup,
   currentKimiModelIdFromSessionSetup,
   findKimiModelConfigOption,
+  findKimiThinkingConfigOption,
   isKimiAuthRequiredError,
+  kimiConfigOptionsFromSessionNotification,
   kimiModelStateFromSessionSetup,
   kimiSessionHasModelConfigOption,
   resolveKimiAcpBaseModelId,
   resolveKimiAcpModeId,
   resolveKimiAcpWireModelId,
+  resolveKimiThinkingSelection,
   shouldKimiAdapterAutoApprove,
 } from "./KimiAcpSupport.ts";
 
@@ -50,6 +54,22 @@ const configOptionSession = {
     },
   ],
 } satisfies EffectAcpSchema.NewSessionResponse;
+
+function thinkingConfigOptions(
+  values: ReadonlyArray<string>,
+  currentValue: string,
+): ReadonlyArray<EffectAcpSchema.SessionConfigOption> {
+  return [
+    {
+      id: "thinking",
+      name: "Thinking",
+      category: "thought_level",
+      type: "select",
+      currentValue,
+      options: values.map((value) => ({ value, name: value.toUpperCase() })),
+    },
+  ];
+}
 
 describe("resolveKimiAcpBaseModelId", () => {
   it("normalizes empty and custom Kimi model ids", () => {
@@ -177,6 +197,75 @@ describe("Kimi ACP modes", () => {
     expect(
       shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", currentModeId: "yolo" }),
     ).toBe(true);
+  });
+});
+
+describe("Kimi thinking configuration", () => {
+  it("resolves supported values and falls back stale selections to the advertised current value", () => {
+    const k3 = thinkingConfigOptions(["low", "high", "max"], "high");
+    const k27 = thinkingConfigOptions(["on", "high"], "high");
+
+    expect(findKimiThinkingConfigOption(k3)?.id).toBe("thinking");
+    expect(resolveKimiThinkingSelection({ configOptions: k3, requestedValue: "max" })).toEqual({
+      configId: "thinking",
+      currentValue: "high",
+      selectedValue: "max",
+      usedFallback: false,
+    });
+    expect(resolveKimiThinkingSelection({ configOptions: k27, requestedValue: "low" })).toEqual({
+      configId: "thinking",
+      currentValue: "high",
+      selectedValue: "high",
+      usedFallback: true,
+    });
+  });
+
+  it.effect("skips fallback/current writes and applies supported thinking values", () =>
+    Effect.gen(function* () {
+      let configOptions = thinkingConfigOptions(["on", "high"], "high");
+      const calls: Array<[string, string | boolean]> = [];
+      const runtime = {
+        setConfigOption: (configId: string, value: string | boolean) =>
+          Effect.sync(() => {
+            calls.push([configId, value]);
+            configOptions = thinkingConfigOptions(["on", "high"], String(value));
+            return { configOptions };
+          }),
+        getConfigOptions: Effect.sync(() => configOptions),
+      };
+
+      const fallback = yield* applyKimiAcpThinkingSelection({
+        runtime,
+        configOptions,
+        requestedValue: "low",
+        mapError: (cause) => cause.message,
+      });
+      expect(calls).toEqual([]);
+      expect(fallback.resolution?.selectedValue).toBe("high");
+      expect(fallback.resolution?.usedFallback).toBe(true);
+
+      const applied = yield* applyKimiAcpThinkingSelection({
+        runtime,
+        configOptions: fallback.configOptions,
+        requestedValue: "on",
+        mapError: (cause) => cause.message,
+      });
+      expect(calls).toEqual([["thinking", "on"]]);
+      expect(findKimiThinkingConfigOption(applied.configOptions)?.currentValue).toBe("on");
+    }),
+  );
+
+  it("extracts config option updates from session notifications", () => {
+    const configOptions = thinkingConfigOptions(["low", "high", "max"], "max");
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions,
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(kimiConfigOptionsFromSessionNotification(notification)).toEqual(configOptions);
   });
 });
 

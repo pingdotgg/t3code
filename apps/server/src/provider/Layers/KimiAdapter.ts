@@ -30,6 +30,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import { getProviderOptionStringSelectionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -56,8 +57,13 @@ import {
   advertisedKimiModelIdsFromSessionSetup,
   applyKimiAcpModeSelection,
   applyKimiAcpModelSelection,
+  applyKimiAcpThinkingSelection,
+  currentKimiModeIdFromConfigOptions,
   currentKimiModeIdFromSessionSetup,
+  currentKimiModelIdFromConfigOptions,
   currentKimiModelIdFromSessionSetup,
+  findKimiThinkingConfigOption,
+  kimiConfigOptionsFromSessionNotification,
   kimiSessionHasModelConfigOption,
   resolveKimiAcpModeId,
   shouldKimiAdapterAutoApprove,
@@ -96,6 +102,7 @@ interface KimiSessionContext {
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
@@ -524,6 +531,9 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           }
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+          const configOptionsRef = yield* Ref.make<
+            ReadonlyArray<EffectAcpSchema.SessionConfigOption>
+          >([]);
           const sessionScope = yield* Scope.make("sequential");
           let sessionScopeTransferred = false;
           yield* Effect.addFinalizer(() =>
@@ -577,6 +587,10 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             ),
           );
           const started = yield* Effect.gen(function* () {
+            yield* acp.handleSessionUpdate((notification) => {
+              const configOptions = kimiConfigOptionsFromSessionNotification(notification);
+              return configOptions ? Ref.set(configOptionsRef, configOptions) : Effect.void;
+            });
             yield* acp.handleRequestPermission((params) =>
               Effect.gen(function* () {
                 yield* logNative(input.threadId, "session/request_permission", params);
@@ -683,6 +697,21 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
+          const initialConfigOptions = yield* acp.getConfigOptions;
+          const initialThinkingConfig = findKimiThinkingConfigOption(initialConfigOptions);
+          const initialThinking = yield* applyKimiAcpThinkingSelection({
+            runtime: acp,
+            configOptions: initialConfigOptions,
+            requestedValue: initialThinkingConfig
+              ? getProviderOptionStringSelectionValue(
+                  kimiModelSelection?.options,
+                  initialThinkingConfig.id,
+                )
+              : undefined,
+            mapError: (cause) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_config_option", cause),
+          });
+          yield* Ref.set(configOptionsRef, initialThinking.configOptions);
 
           const now = yield* nowIso;
           const session: ProviderSession = {
@@ -709,6 +738,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             acp,
             notificationFiber: undefined,
             pendingApprovals,
+            configOptionsRef,
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
@@ -881,13 +911,18 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             };
 
             return yield* Effect.gen(function* () {
+              const observedConfigOptions = yield* Ref.get(ctx.configOptionsRef);
+              const observedModeId =
+                currentKimiModeIdFromConfigOptions(observedConfigOptions) ?? ctx.currentModeId;
+              const requestedModeId = resolveKimiAcpModeId({
+                runtimeMode: ctx.session.runtimeMode,
+                interactionMode: input.interactionMode,
+              });
+              const modeChanged = observedModeId !== requestedModeId;
               const currentModeId = yield* applyKimiAcpModeSelection({
                 runtime: ctx.acp,
-                currentModeId: ctx.currentModeId,
-                requestedModeId: resolveKimiAcpModeId({
-                  runtimeMode: ctx.session.runtimeMode,
-                  interactionMode: input.interactionMode,
-                }),
+                currentModeId: observedModeId,
+                requestedModeId,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
               });
@@ -900,9 +935,15 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               const requestedTurnModelId = turnModelSelection?.model
                 ? resolveKimiAcpBaseModelId(turnModelSelection.model)
                 : undefined;
+              const observedModelId =
+                currentKimiModelIdFromConfigOptions(observedConfigOptions) ?? ctx.currentModelId;
+              const modelChanged =
+                requestedTurnModelId !== undefined &&
+                requestedTurnModelId !==
+                  (observedModelId ? resolveKimiAcpBaseModelId(observedModelId) : undefined);
               const currentModelId = yield* applyKimiAcpModelSelection({
                 runtime: ctx.acp,
-                currentModelId: ctx.currentModelId,
+                currentModelId: observedModelId,
                 requestedModelId: requestedTurnModelId,
                 advertisedModelIds: ctx.advertisedModelIds,
                 hasModelConfigOption: ctx.hasModelConfigOption,
@@ -910,6 +951,30 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
               ctx.currentModelId = currentModelId;
+
+              const refreshedConfigOptions =
+                modeChanged || modelChanged
+                  ? yield* ctx.acp.getConfigOptions
+                  : observedConfigOptions;
+              const thinkingConfig = findKimiThinkingConfigOption(refreshedConfigOptions);
+              const thinking = yield* applyKimiAcpThinkingSelection({
+                runtime: ctx.acp,
+                configOptions: refreshedConfigOptions,
+                requestedValue: thinkingConfig
+                  ? getProviderOptionStringSelectionValue(
+                      turnModelSelection?.options,
+                      thinkingConfig.id,
+                    )
+                  : undefined,
+                mapError: (cause) =>
+                  mapAcpToAdapterError(
+                    PROVIDER,
+                    input.threadId,
+                    "session/set_config_option",
+                    cause,
+                  ),
+              });
+              yield* Ref.set(ctx.configOptionsRef, thinking.configOptions);
 
               const text = input.input?.trim();
               const imagePromptParts = yield* Effect.forEach(

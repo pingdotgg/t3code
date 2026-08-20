@@ -21,6 +21,7 @@ import {
   buildInitialKimiProviderSnapshot,
   buildKimiDiscoveredModelsFromSessionModelState,
   buildKimiModelDiscoveryCacheKey,
+  buildKimiThinkingCapabilitiesFromConfigOptions,
   checkKimiProviderStatus,
   probeKimiProviderStatus,
   type KimiAcpProbeResult,
@@ -56,6 +57,22 @@ const dynamicModelSession = {
     },
   ],
 } satisfies EffectAcpSchema.NewSessionResponse;
+
+function thinkingConfigOptions(
+  values: ReadonlyArray<string>,
+  currentValue: string,
+): ReadonlyArray<EffectAcpSchema.SessionConfigOption> {
+  return [
+    {
+      id: "thinking",
+      name: "Thinking",
+      category: "thought_level",
+      type: "select",
+      currentValue,
+      options: values.map((value) => ({ value, name: value.toUpperCase() })),
+    },
+  ];
+}
 
 function makeProbeOperations(
   input: {
@@ -148,6 +165,52 @@ describe("buildKimiDiscoveredModelsFromSessionModelState", () => {
       ["moonshot-ai/kimi-k2.6", "kimi-k2.6"],
     ]);
     expect(models.find((model) => model.slug === "k3")?.isDefault).toBe(true);
+  });
+
+  it("builds model-specific thinking descriptors only from advertised values", () => {
+    const k3Capabilities = buildKimiThinkingCapabilitiesFromConfigOptions(
+      thinkingConfigOptions(["low", "high", "max"], "high"),
+    );
+    const k27Capabilities = buildKimiThinkingCapabilitiesFromConfigOptions(
+      thinkingConfigOptions(["on", "high"], "high"),
+    );
+    const configurableCapabilities = buildKimiThinkingCapabilitiesFromConfigOptions(
+      thinkingConfigOptions(["off", "on", "high"], "high"),
+    );
+
+    expect(k3Capabilities.optionDescriptors?.[0]).toMatchObject({
+      id: "thinking",
+      label: "Thinking",
+      type: "select",
+      currentValue: "high",
+      options: [
+        { id: "low", label: "LOW" },
+        { id: "high", label: "HIGH", isDefault: true },
+        { id: "max", label: "MAX" },
+      ],
+    });
+    expect(
+      k27Capabilities.optionDescriptors?.[0]?.type === "select"
+        ? k27Capabilities.optionDescriptors[0].options.map((option) => option.id)
+        : [],
+    ).toEqual(["on", "high"]);
+    expect(
+      configurableCapabilities.optionDescriptors?.[0]?.type === "select"
+        ? configurableCapabilities.optionDescriptors[0].options.map((option) => option.id)
+        : [],
+    ).toEqual(["off", "on", "high"]);
+
+    const models = buildKimiDiscoveredModelsFromSessionModelState(
+      kimiModelStateFromSessionSetup(dynamicModelSession),
+      new Map([
+        ["kimi-code/k3", k3Capabilities],
+        ["kimi-code/kimi-for-coding", k27Capabilities],
+      ]),
+    );
+    expect(models.find((model) => model.slug === "k3")?.capabilities).toEqual(k3Capabilities);
+    expect(models.find((model) => model.slug === "kimi-for-coding")?.capabilities).toEqual(
+      k27Capabilities,
+    );
   });
 
   it("collapses thinking variants onto their base model and marks the current default", () => {

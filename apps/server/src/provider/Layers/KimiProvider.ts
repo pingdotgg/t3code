@@ -24,6 +24,7 @@ import {
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
+  buildSelectOptionDescriptor,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import {
@@ -31,8 +32,11 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import {
+  findKimiThinkingConfigOption,
+  flattenKimiSelectConfigOptions,
   isKimiAuthRequiredError,
   kimiModelStateFromSessionSetup,
+  kimiSessionHasModelConfigOption,
   makeKimiAcpRuntime,
   probeKimiAcpAuthentication,
   resolveKimiAcpBaseModelId,
@@ -166,8 +170,51 @@ function kimiModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
+export function buildKimiThinkingCapabilitiesFromConfigOptions(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): ModelCapabilities {
+  const thinkingConfig = findKimiThinkingConfigOption(configOptions);
+  if (!thinkingConfig) {
+    return EMPTY_CAPABILITIES;
+  }
+  const currentValue = thinkingConfig.currentValue.trim();
+  const seen = new Set<string>();
+  const options = flattenKimiSelectConfigOptions(thinkingConfig).flatMap((option) => {
+    const value = option.value.trim();
+    if (!value || seen.has(value)) {
+      return [];
+    }
+    seen.add(value);
+    const description = option.description?.trim() || undefined;
+    return [
+      {
+        value,
+        label: option.name.trim() || value,
+        ...(description ? { description } : {}),
+        ...(value === currentValue ? { isDefault: true } : {}),
+      },
+    ];
+  });
+  const configId = thinkingConfig.id.trim();
+  if (!configId || options.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+  const description = thinkingConfig.description?.trim() || undefined;
+  return createModelCapabilities({
+    optionDescriptors: [
+      buildSelectOptionDescriptor({
+        id: configId,
+        label: thinkingConfig.name.trim() || "Thinking",
+        options,
+        ...(description ? { description } : {}),
+      }),
+    ],
+  });
+}
+
 export function buildKimiDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
+  capabilitiesByModelId: ReadonlyMap<string, ModelCapabilities> = new Map(),
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
     return [];
@@ -188,7 +235,7 @@ export function buildKimiDiscoveredModelsFromSessionModelState(
         name: model.name.trim() || slug,
         isCustom: false,
         ...(slug === currentBaseModelId ? { isDefault: true } : {}),
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities: capabilitiesByModelId.get(model.modelId) ?? EMPTY_CAPABILITIES,
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
@@ -247,9 +294,28 @@ const discoverKimiModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildKimiDiscoveredModelsFromSessionModelState(
-      kimiModelStateFromSessionSetup(started.sessionSetupResult),
-    );
+    const modelState = kimiModelStateFromSessionSetup(started.sessionSetupResult);
+    if (!modelState || !kimiSessionHasModelConfigOption(started.sessionSetupResult)) {
+      return buildKimiDiscoveredModelsFromSessionModelState(modelState);
+    }
+    const capabilitiesByModelId = new Map<string, ModelCapabilities>();
+    yield* Effect.forEach(
+      modelState.availableModels,
+      (model) =>
+        acp.setModel(model.modelId).pipe(
+          Effect.andThen(acp.getConfigOptions),
+          Effect.tap((configOptions) =>
+            Effect.sync(() => {
+              capabilitiesByModelId.set(
+                model.modelId,
+                buildKimiThinkingCapabilitiesFromConfigOptions(configOptions),
+              );
+            }),
+          ),
+        ),
+      { discard: true },
+    ).pipe(Effect.ensuring(acp.setModel(modelState.currentModelId).pipe(Effect.ignore)));
+    return buildKimiDiscoveredModelsFromSessionModelState(modelState, capabilitiesByModelId);
   }).pipe(Effect.scoped);
 
 const runKimiVersionCommand = (

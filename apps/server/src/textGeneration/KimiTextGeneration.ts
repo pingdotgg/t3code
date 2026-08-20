@@ -8,6 +8,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 
 import { type KimiSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { getProviderOptionStringSelectionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
@@ -26,7 +27,9 @@ import {
 import {
   advertisedKimiModelIdsFromSessionSetup,
   applyKimiAcpModelSelection,
+  applyKimiAcpThinkingSelection,
   currentKimiModelIdFromSessionSetup,
+  findKimiThinkingConfigOption,
   kimiSessionHasModelConfigOption,
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
@@ -95,6 +98,21 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
             new TextGenerationError({
               operation,
               detail: "Failed to set Kimi ACP base model for text generation.",
+              cause,
+            }),
+        });
+        const configOptions = yield* runtime.getConfigOptions;
+        const thinkingConfig = findKimiThinkingConfigOption(configOptions);
+        yield* applyKimiAcpThinkingSelection({
+          runtime,
+          configOptions,
+          requestedValue: thinkingConfig
+            ? getProviderOptionStringSelectionValue(modelSelection.options, thinkingConfig.id)
+            : undefined,
+          mapError: (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Failed to set Kimi ACP thinking level for text generation.",
               cause,
             }),
         });
