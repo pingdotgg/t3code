@@ -293,6 +293,11 @@ describe("Open VSX themes", () => {
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {
     const zip = new JSZip();
     zip.file("extension/.gitkeep", "");
+    // Theme extensions sometimes publish their development dependencies too.
+    // Those unused files should not prevent importing the small theme payload.
+    for (let index = 0; index < 3_000; index += 1) {
+      zip.file(`extension/node_modules/package-${index}.js`, "");
+    }
     zip.file(
       "extension/themes/base.jsonc",
       `{
