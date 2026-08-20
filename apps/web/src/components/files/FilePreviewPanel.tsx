@@ -43,6 +43,11 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import {
+  checkpointFilesIncludePath,
+  useCheckpointQueryRefresh,
+  useCheckpointsSnapshot,
+} from "./checkpointFileRefresh";
+import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
   type FileCommentLineAnnotation,
@@ -61,6 +66,8 @@ import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  getProjectEntriesQueryAtom,
+  getProjectFileQueryAtom,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
@@ -783,6 +790,26 @@ export default function FilePreviewPanel({
   const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
   const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
+  // Turn checkpoints drive a refetch of whatever this panel shows: the open
+  // file when an unreconciled turn touched it, the tree when one changed
+  // anything, and both after a revert, since checkpoints cannot describe a
+  // revert's change set.
+  const checkpointsSnapshot = useCheckpointsSnapshot(threadRef);
+  const explorerVisible = explorerOpen || relativePath === null;
+  const refreshScope = `${threadRef.environmentId}:${threadRef.threadId}:${cwd}`;
+  useCheckpointQueryRefresh(
+    explorerVisible ? `entries:${refreshScope}` : null,
+    checkpointsSnapshot,
+    (changedFiles) => changedFiles.length > 0,
+    getProjectEntriesQueryAtom(environmentId, cwd),
+  );
+  useCheckpointQueryRefresh(
+    relativePath !== null && !isImage ? `file:${refreshScope}:${relativePath}` : null,
+    checkpointsSnapshot,
+    (changedFiles) =>
+      relativePath !== null && checkpointFilesIncludePath(changedFiles, relativePath),
+    getProjectFileQueryAtom(environmentId, cwd, relativePath),
+  );
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
@@ -1063,7 +1090,7 @@ export default function FilePreviewPanel({
             )
           ) : null}
         </div>
-        {explorerOpen || relativePath === null ? (
+        {explorerVisible ? (
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
