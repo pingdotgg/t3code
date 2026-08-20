@@ -34,7 +34,6 @@ import {
   Keyboard,
   Platform,
   Pressable,
-  useColorScheme,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -55,6 +54,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import { AppText as Text } from "../../components/AppText";
 import type { StatusTone } from "../../components/StatusPill";
@@ -554,7 +554,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, [freeze, scrollMessageToEnd]);
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const activeThreadBusy =
     props.selectedThread.session?.status === "running" ||
     props.selectedThread.session?.status === "starting";

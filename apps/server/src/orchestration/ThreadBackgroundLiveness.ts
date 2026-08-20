@@ -173,13 +173,16 @@ export function make(
     if (tombstone !== undefined && tombstone.expiresAt <= now) {
       terminalTombstones.delete(tombstoneKey);
     }
-    const previousAgent = stateByThreadId.get(input.threadId)?.agents.get(input.taskId);
-    const previousMonitorActivityId = stateByThreadId
-      .get(input.threadId)
-      ?.monitors.get(input.taskId);
+    const previousState = stateByThreadId.get(input.threadId);
+    const previousAgent = previousState?.agents.get(input.taskId);
+    const previousMonitorActivityId = previousState?.monitors.get(input.taskId);
+    const wasLive =
+      previousState?.agents.has(input.taskId) === true ||
+      previousState?.monitors.has(input.taskId) === true;
     // Idle counts as not-live: a resting (resumable) Codex child isn't doing
     // anything, and an all-idle fleet must not pin Working. Unlike terminal
-    // statuses this records no tombstone, so later progress can resume it.
+    // statuses this records no tombstone, so a later explicit running update
+    // or a new start can resume it.
     if (input.status === "idle") {
       drop(input.threadId, input.taskId);
       return;
@@ -198,6 +201,13 @@ export function make(
         return;
       }
       terminalTombstones.delete(tombstoneKey);
+    }
+
+    // Status-free progress is a description tick, not a restart. A delayed
+    // progress event after idle must not put the task back in the live set
+    // (#7128).
+    if (input.kind === "progress" && input.status === undefined && !wasLive) {
+      return;
     }
 
     const taskType = input.taskType;

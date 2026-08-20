@@ -4,7 +4,6 @@ import type {
   OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import type { InterruptThreadTurnInput } from "@t3tools/client-runtime/operations";
-import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Predicate from "effect/Predicate";
 
 interface BackgroundWorkStopOutcome {
@@ -88,14 +87,9 @@ export function backgroundWorkStopConfirmation(onConfirm: () => void) {
 export function buildBackgroundWorkInterruptInput(
   thread: Pick<OrchestrationThread, "id" | "session">,
   commandId: CommandId,
-  serverVersion: string | null | undefined,
+  guardedInterrupt: boolean | undefined,
 ): InterruptThreadTurnInput | null {
-  if (serverVersion === undefined) {
-    return null;
-  }
-  const supportsGuardedInterrupt =
-    serverVersion !== null && satisfiesSemverRange(serverVersion, ">=0.0.33");
-  if (supportsGuardedInterrupt && thread.session?.status === "starting") {
+  if (guardedInterrupt !== true || thread.session?.status === "starting") {
     return null;
   }
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
@@ -106,11 +100,9 @@ export function buildBackgroundWorkInterruptInput(
   if (runningTurnId !== null) {
     Object.assign(input, { turnId: runningTurnId });
   }
-  if (supportsGuardedInterrupt) {
-    Object.assign(input, { expectedTurnId: thread.session?.activeTurnId ?? null });
-    if (thread.session !== null) {
-      Object.assign(input, { expectedSessionUpdatedAt: thread.session.updatedAt });
-    }
+  Object.assign(input, { expectedTurnId: thread.session?.activeTurnId ?? null });
+  if (thread.session !== null) {
+    Object.assign(input, { expectedSessionUpdatedAt: thread.session.updatedAt });
   }
   return input;
 }

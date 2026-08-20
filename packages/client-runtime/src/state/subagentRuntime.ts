@@ -726,7 +726,11 @@ export function foldSubagentActivitiesWithBatchCounts(
   );
 
   return {
-    agents: Array.from(agents.values(), ({ activations: _, ...agent }) => agent),
+    agents: Array.from(agents.values(), (agent) => {
+      const { activations, ...runtimeAgent } = agent;
+      void activations;
+      return runtimeAgent;
+    }),
     agentTaskIds,
     batchKeyByActivityId,
     batchCounts,

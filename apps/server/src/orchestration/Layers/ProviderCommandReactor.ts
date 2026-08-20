@@ -10,12 +10,13 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
-  type TurnId,
+  TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -27,7 +28,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import { ProviderAdapterRequestError, ProviderTurnChangedError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -51,6 +52,7 @@ import {
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
+const isProviderTurnChangedError = Schema.is(ProviderTurnChangedError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 type ProviderIntentEvent = Extract<
@@ -329,6 +331,7 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
   const receiptBus = yield* RuntimeReceiptBus;
+  const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -1237,14 +1240,16 @@ const make = Effect.gen(function* () {
     const publishOutcome = Effect.fn("publishProviderInterruptOutcome")(function* (
       outcome: "interrupted" | "work-changed" | "no-session" | "interrupt-failed",
       resolvedTurnId: TurnId | null = actualTurnId,
+      resolvedAt?: string,
     ) {
+      const createdAt = resolvedAt ?? (yield* nowIso);
       const receipt: ProviderTurnInterruptResolvedReceipt = {
         type: "provider.turn.interrupt.resolved",
         threadId: event.payload.threadId,
         commandId: event.commandId,
         outcome,
         actualTurnId: resolvedTurnId,
-        createdAt: event.payload.createdAt,
+        createdAt,
       };
       if (event.payload.expectedTurnId !== undefined) {
         Object.assign(receipt, { expectedTurnId: event.payload.expectedTurnId });
@@ -1258,12 +1263,13 @@ const make = Effect.gen(function* () {
         requestId: event.commandId,
         outcome,
         turnId: resolvedTurnId,
-        createdAt: event.payload.createdAt,
+        createdAt,
       }).pipe(Effect.ensuring(publishReceipt));
     });
     const publishWorkChanged = Effect.fn("publishProviderInterruptWorkChanged")(function* (
       resolvedTurnId: TurnId | null,
     ) {
+      const resolvedAt = yield* nowIso;
       const failure: ProviderFailureActivityInput = {
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -1271,14 +1277,14 @@ const make = Effect.gen(function* () {
         detail:
           "The provider session changed after Stop was requested. The newer work was left running.",
         turnId: resolvedTurnId,
-        createdAt: event.payload.createdAt,
+        createdAt: resolvedAt,
         reason: "work-changed",
       };
       if (event.commandId !== null) {
         Object.assign(failure, { requestId: event.commandId });
       }
       yield* appendProviderFailureActivity(failure);
-      return yield* publishOutcome("work-changed", resolvedTurnId);
+      return yield* publishOutcome("work-changed", resolvedTurnId, resolvedAt);
     });
     if (!thread) {
       if (hasGuard) {
@@ -1330,28 +1336,47 @@ const make = Effect.gen(function* () {
       return yield* publishWorkChanged(providerTurnId);
     }
 
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
-      Effect.matchCauseEffect({
-        onFailure: (cause) => {
-          const failure: ProviderFailureActivityInput = {
-            threadId: event.payload.threadId,
-            kind: "provider.turn.interrupt.failed",
-            summary: "Provider turn interrupt failed",
-            detail: Cause.pretty(cause),
-            turnId: actualTurnId,
-            createdAt: event.payload.createdAt,
-          };
-          if (event.commandId !== null) {
-            Object.assign(failure, { requestId: event.commandId });
-          }
-          return appendProviderFailureActivity(failure).pipe(
-            Effect.flatMap(() => publishOutcome("interrupt-failed")),
-          );
-        },
-        onSuccess: () => publishOutcome("interrupted"),
-      }),
-    );
+    // ProviderService rechecks this exact adapter-session snapshot while
+    // holding the same per-thread lock used by session creation and turn
+    // start. That closes the gap between this read and the adapter interrupt.
+    yield* providerService
+      .interruptTurn({
+        threadId: event.payload.threadId,
+        expectedTurnId: providerTurnId,
+        expectedSessionUpdatedAt: providerSession.updatedAt,
+      })
+      .pipe(
+        Effect.matchCauseEffect({
+          onFailure: (cause) => {
+            const failureReason = cause.reasons.find(Cause.isFailReason);
+            if (isProviderTurnChangedError(failureReason?.error)) {
+              return publishWorkChanged(
+                failureReason.error.actualTurnId === null
+                  ? null
+                  : TurnId.make(failureReason.error.actualTurnId),
+              );
+            }
+            return Effect.gen(function* () {
+              const resolvedAt = yield* nowIso;
+              const failure: ProviderFailureActivityInput = {
+                threadId: event.payload.threadId,
+                kind: "provider.turn.interrupt.failed",
+                summary: "Provider turn interrupt failed",
+                detail: Cause.pretty(cause),
+                turnId: actualTurnId,
+                createdAt: resolvedAt,
+              };
+              if (event.commandId !== null) {
+                Object.assign(failure, { requestId: event.commandId });
+              }
+              return yield* appendProviderFailureActivity(failure).pipe(
+                Effect.flatMap(() => publishOutcome("interrupt-failed", actualTurnId, resolvedAt)),
+              );
+            });
+          },
+          onSuccess: () => publishOutcome("interrupted"),
+        }),
+      );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

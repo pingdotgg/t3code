@@ -67,6 +67,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
+  /** Server atomically revalidates a provider-session snapshot before a
+      guarded thread interrupt. Missing is unsupported; clients must not fall
+      back to a session-scoped interrupt that could stop newer work. */
+  guardedInterrupt: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */

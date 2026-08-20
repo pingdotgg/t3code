@@ -19,3 +19,7 @@ link opened as the first screen also provides a way back to the threads list.
 request is checked against the provider-session state shown when Stop was pressed. If a newer turn
 or session becomes active first, the newer work is left running and the app reports **Work already
 changed**. While a Stop request is being resolved, another Stop request cannot be started.
+
+Servers that do not advertise guarded interrupts are not sent an older, session-scoped Stop
+request. Mobile asks you to update that environment so newer work cannot be interrupted by
+mistake.

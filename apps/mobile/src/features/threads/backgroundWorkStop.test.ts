@@ -40,7 +40,7 @@ describe("backgroundWorkStopConfirmation", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
-  it("sends legacy unguarded interrupts to servers before conditional Stop support", () => {
+  it("does not send unguarded interrupts when the server lacks guarded Stop", () => {
     const threadId = ThreadId.make("thread-background");
     const activeTurnId = TurnId.make("turn-running");
     const commandId = CommandId.make("stop-command");
@@ -62,13 +62,9 @@ describe("backgroundWorkStopConfirmation", () => {
           session: { ...session, status: "running", activeTurnId },
         },
         commandId,
-        "0.0.32",
+        false,
       ),
-    ).toEqual({
-      threadId,
-      commandId,
-      turnId: activeTurnId,
-    });
+    ).toBeNull();
   });
 
   it("defers Stop while the server capability is unavailable", () => {
@@ -95,9 +91,7 @@ describe("backgroundWorkStopConfirmation", () => {
       updatedAt: "2026-08-14T12:00:00.000Z",
     };
 
-    expect(
-      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, "0.0.33"),
-    ).toEqual({
+    expect(buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, true)).toEqual({
       threadId,
       commandId,
       expectedTurnId: null,
@@ -110,7 +104,7 @@ describe("backgroundWorkStopConfirmation", () => {
           session: { ...session, status: "running", activeTurnId },
         },
         commandId,
-        "0.0.33",
+        true,
       ),
     ).toEqual({
       threadId,
@@ -136,11 +130,11 @@ describe("backgroundWorkStopConfirmation", () => {
     };
 
     expect(
-      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, "0.0.33"),
+      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, true),
     ).toBeNull();
     expect(
-      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, "0.0.32"),
-    ).toEqual({ threadId, commandId });
+      buildBackgroundWorkInterruptInput({ id: threadId, session }, commandId, false),
+    ).toBeNull();
   });
 
   it("guards a null-session snapshot on servers with conditional Stop support", () => {
@@ -148,7 +142,7 @@ describe("backgroundWorkStopConfirmation", () => {
     const commandId = CommandId.make("stop-command");
 
     expect(
-      buildBackgroundWorkInterruptInput({ id: threadId, session: null }, commandId, "0.0.33"),
+      buildBackgroundWorkInterruptInput({ id: threadId, session: null }, commandId, true),
     ).toEqual({
       threadId,
       commandId,

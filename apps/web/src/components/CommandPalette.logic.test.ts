@@ -59,7 +59,7 @@ describe("reduceCommandPaletteUiState", () => {
 
     expect(
       reduceCommandPaletteUiState(contentOpen, { _tag: "ToggleMode", mode: "content" }),
-    ).toEqual({ open: false, mode: "command", openIntent: null });
+    ).toEqual({ open: false, mode: "content", openIntent: null });
   });
 
   it("switches between open modes without closing", () => {
@@ -93,7 +93,7 @@ describe("reduceCommandPaletteUiState", () => {
     });
   });
 
-  it("resets to command mode for dialog-driven opens and closes", () => {
+  it("preserves the mode on close and resets it on open", () => {
     const filesOpen = reduceCommandPaletteUiState(closedState, {
       _tag: "ToggleMode",
       mode: "files",
@@ -101,7 +101,7 @@ describe("reduceCommandPaletteUiState", () => {
 
     expect(reduceCommandPaletteUiState(filesOpen, { _tag: "SetOpen", open: false })).toEqual({
       open: false,
-      mode: "command",
+      mode: "files",
       openIntent: null,
     });
     expect(reduceCommandPaletteUiState(filesOpen, { _tag: "SetOpen", open: true })).toEqual({

@@ -31,9 +31,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -47,7 +49,11 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  type ProviderAdapterError,
+  ProviderTurnChangedError,
+  ProviderValidationError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -57,6 +63,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -66,6 +73,15 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  /**
+   * Overrides MCP credential issuance. The real issuer reads a module-global
+   * registry that only a running MCP server installs, which makes the
+   * agent-browser-access gate unobservable from a unit test; this seam lets a
+   * test see whether a credential was requested at all.
+   */
+  readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
+  /** Same seam as `issueMcpCredential`, for observing the deny path's revoke. */
+  readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -215,16 +231,82 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const issueMcpCredential =
+    options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
+  const revokeMcpCredential =
+    options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+  const getThreadLock = (threadId: ThreadId) =>
+    SynchronizedRef.modifyEffect(threadLocks, (locks) => {
+      const existing = locks.get(threadId);
+      if (existing !== undefined) {
+        return Effect.succeed([existing, locks] as const);
+      }
+      return Semaphore.make(1).pipe(
+        Effect.map((lock) => [lock, new Map(locks).set(threadId, lock)] as const),
+      );
+    });
+
+  /**
+   * Session creation, turn start, guarded interrupt, and session stop share a
+   * per-thread lock. This makes the provider-session guard check and adapter
+   * interrupt one atomic operation relative to every facade path that can
+   * replace the session or start newer work.
+   */
+  const withThreadLock = <A, E, R>(
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.flatMap(getThreadLock(threadId), (lock) => lock.withPermit(effect));
+  /**
+   * Attach the `t3-code` MCP server to the session that is about to start.
+   *
+   * This is the only place a credential is minted, so withholding one here is
+   * what disables agent browser access everywhere: every adapter already
+   * treats a missing session as "no MCP server", and the `/mcp` endpoint
+   * accepts nothing but tokens issued from this path.
+   */
+  /**
+   * Deny on an unreadable settings file rather than letting the read failure
+   * escape: adding `ServerSettingsError` to `ProviderServiceError` would widen
+   * a union every caller handles, for a branch that only decides whether one
+   * optional toolset is attached. Denying is the safe direction — an explicit
+   * "off" silently becoming "on" would violate the user's stated choice,
+   * whereas the reverse costs an agent one toolset and is visible immediately.
+   */
+  const agentBrowserAccessEnabled = serverSettings.getSettings.pipe(
+    Effect.map((settings) => settings.enableAgentBrowserAccess),
+    Effect.catch((cause) =>
+      Effect.logWarning(
+        "Could not read server settings; withholding agent browser access for this session.",
+        { cause },
+      ).pipe(Effect.as(false)),
+    ),
+  );
+
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
-      Effect.tap((credential) =>
-        credential
-          ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
-          : Effect.void,
-      ),
-    );
+    Effect.gen(function* () {
+      if (!(yield* agentBrowserAccessEnabled)) {
+        // Revoke as well as clear. Every other prepare path reaches
+        // `issueActiveMcpCredential`, which revokes the thread first, so
+        // skipping it here would leave a previously issued bearer token valid
+        // against `/mcp` for the rest of its liveness window — and later turns
+        // would keep refreshing it. A session restart (runtime mode, cwd,
+        // model) re-prepares without stopping, so it relies on this.
+        yield* revokeMcpCredential(threadId);
+        yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
+        return undefined;
+      }
+      const credential = yield* issueMcpCredential({ threadId, providerInstanceId });
+      if (credential) {
+        yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
+      }
+      return credential;
+    });
   const clearMcpSession = (threadId: ThreadId) =>
     McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
@@ -525,7 +607,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
-  const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
+  const startSessionUnlocked: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
     function* (threadId, rawInput) {
       const parsed = yield* decodeInputOrValidationError({
         operation: "ProviderService.startSession",
@@ -661,120 +743,122 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
-    const parsed = yield* decodeInputOrValidationError({
-      operation: "ProviderService.sendTurn",
-      schema: ProviderSendTurnInput,
-      payload: rawInput,
-    });
-
-    const attachments = parsed.attachments ?? [];
-    if (!parsed.input && attachments.length === 0) {
-      return yield* toValidationError(
-        "ProviderService.sendTurn",
-        "Either input text or at least one attachment is required",
-      );
-    }
-
-    // Adapters inline attachment pixels into the model prompt, but the model's
-    // tools cannot dereference pixels. Appending the on-disk path is what lets
-    // a turn like "include this screenshot in the PR" copy the actual file.
-    // This runs after schema decode, so the appended lines are exempt from the
-    // PROVIDER_SEND_TURN_MAX_INPUT_CHARS check; attachment count is capped, so
-    // the overhead is bounded. Unresolvable ids are skipped here and surface
-    // as adapter errors when the file is read for inlining.
-    const attachmentPathLines = attachments.flatMap((attachment) => {
-      const attachmentPath = resolveAttachmentPath({
-        attachmentsDir: serverConfig.attachmentsDir,
-        attachment,
-      });
-      return attachmentPath === null
-        ? []
-        : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
-    });
-    const inputTextWithAttachmentPaths =
-      attachmentPathLines.length === 0
-        ? parsed.input
-        : [parsed.input, attachmentPathLines.join("\n")]
-            .filter((part): part is string => typeof part === "string" && part.length > 0)
-            .join("\n\n");
-
-    const input = {
-      ...parsed,
-      ...(inputTextWithAttachmentPaths !== undefined
-        ? { input: inputTextWithAttachmentPaths }
-        : {}),
-      attachments,
-    };
-    yield* Effect.annotateCurrentSpan({
-      "provider.operation": "send-turn",
-      "provider.thread_id": input.threadId,
-      "provider.interaction_mode": input.interactionMode,
-      "provider.attachment_count": input.attachments.length,
-    });
-    let metricProvider = "unknown";
-    let metricModel = input.modelSelection?.model;
-    return yield* Effect.gen(function* () {
-      const routed = yield* resolveRoutableSession({
-        threadId: input.threadId,
+  const sendTurnUnlocked: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(
+    function* (rawInput) {
+      const parsed = yield* decodeInputOrValidationError({
         operation: "ProviderService.sendTurn",
-        allowRecovery: true,
+        schema: ProviderSendTurnInput,
+        payload: rawInput,
       });
-      metricProvider = routed.adapter.provider;
-      metricModel = input.modelSelection?.model;
-      yield* Effect.annotateCurrentSpan({
-        "provider.kind": routed.adapter.provider,
-        ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
-      });
-      // A turn is the clearest sign a session is still alive. The MCP
-      // credential is minted once at session start and cannot be rotated into
-      // an already-spawned agent process, so we keep the existing token valid
-      // rather than issuing a new one: sessions that go a long time between
-      // browser tool calls used to lose the toolkit outright.
-      yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const turn = yield* routed.adapter.sendTurn(input);
-      yield* directory.upsert({
-        threadId: input.threadId,
-        provider: routed.adapter.provider,
-        providerInstanceId: routed.instanceId,
-        status: "running",
-        ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
-        },
-      });
-      yield* analytics.record("provider.turn.sent", {
-        provider: routed.adapter.provider,
-        model: input.modelSelection?.model,
-        interactionMode: input.interactionMode,
-        // Session-start events alone skew runtime mode toward users who toggle
-        // often, since every toggle restarts the session. Recording it per turn
-        // gives a usage-weighted view and lets it cross with interactionMode.
-        runtimeMode: routed.runtimeMode,
-        attachmentCount: input.attachments.length,
-        hasInput: typeof input.input === "string" && input.input.trim().length > 0,
-      });
-      return turn;
-    }).pipe(
-      withMetrics({
-        counter: providerTurnsTotal,
-        timer: providerTurnDuration,
-        attributes: () =>
-          providerTurnMetricAttributes({
-            provider: metricProvider,
-            model: metricModel,
-            extra: {
-              operation: "send",
-            },
-          }),
-      }),
-    );
-  });
 
-  const interruptTurn: ProviderServiceMethod<"interruptTurn"> = Effect.fn("interruptTurn")(
+      const attachments = parsed.attachments ?? [];
+      if (!parsed.input && attachments.length === 0) {
+        return yield* toValidationError(
+          "ProviderService.sendTurn",
+          "Either input text or at least one attachment is required",
+        );
+      }
+
+      // Adapters inline attachment pixels into the model prompt, but the model's
+      // tools cannot dereference pixels. Appending the on-disk path is what lets
+      // a turn like "include this screenshot in the PR" copy the actual file.
+      // This runs after schema decode, so the appended lines are exempt from the
+      // PROVIDER_SEND_TURN_MAX_INPUT_CHARS check; attachment count is capped, so
+      // the overhead is bounded. Unresolvable ids are skipped here and surface
+      // as adapter errors when the file is read for inlining.
+      const attachmentPathLines = attachments.flatMap((attachment) => {
+        const attachmentPath = resolveAttachmentPath({
+          attachmentsDir: serverConfig.attachmentsDir,
+          attachment,
+        });
+        return attachmentPath === null
+          ? []
+          : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
+      });
+      const inputTextWithAttachmentPaths =
+        attachmentPathLines.length === 0
+          ? parsed.input
+          : [parsed.input, attachmentPathLines.join("\n")]
+              .filter((part): part is string => typeof part === "string" && part.length > 0)
+              .join("\n\n");
+
+      const input = {
+        ...parsed,
+        ...(inputTextWithAttachmentPaths !== undefined
+          ? { input: inputTextWithAttachmentPaths }
+          : {}),
+        attachments,
+      };
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "send-turn",
+        "provider.thread_id": input.threadId,
+        "provider.interaction_mode": input.interactionMode,
+        "provider.attachment_count": input.attachments.length,
+      });
+      let metricProvider = "unknown";
+      let metricModel = input.modelSelection?.model;
+      return yield* Effect.gen(function* () {
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.sendTurn",
+          allowRecovery: true,
+        });
+        metricProvider = routed.adapter.provider;
+        metricModel = input.modelSelection?.model;
+        yield* Effect.annotateCurrentSpan({
+          "provider.kind": routed.adapter.provider,
+          ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
+        });
+        // A turn is the clearest sign a session is still alive. The MCP
+        // credential is minted once at session start and cannot be rotated into
+        // an already-spawned agent process, so we keep the existing token valid
+        // rather than issuing a new one: sessions that go a long time between
+        // browser tool calls used to lose the toolkit outright.
+        yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
+        const turn = yield* routed.adapter.sendTurn(input);
+        yield* directory.upsert({
+          threadId: input.threadId,
+          provider: routed.adapter.provider,
+          providerInstanceId: routed.instanceId,
+          status: "running",
+          ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
+          runtimePayload: {
+            ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+            activeTurnId: turn.turnId,
+            lastRuntimeEvent: "provider.sendTurn",
+            lastRuntimeEventAt: yield* nowIso,
+          },
+        });
+        yield* analytics.record("provider.turn.sent", {
+          provider: routed.adapter.provider,
+          model: input.modelSelection?.model,
+          interactionMode: input.interactionMode,
+          // Session-start events alone skew runtime mode toward users who toggle
+          // often, since every toggle restarts the session. Recording it per turn
+          // gives a usage-weighted view and lets it cross with interactionMode.
+          runtimeMode: routed.runtimeMode,
+          attachmentCount: input.attachments.length,
+          hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+        });
+        return turn;
+      }).pipe(
+        withMetrics({
+          counter: providerTurnsTotal,
+          timer: providerTurnDuration,
+          attributes: () =>
+            providerTurnMetricAttributes({
+              provider: metricProvider,
+              model: metricModel,
+              extra: {
+                operation: "send",
+              },
+            }),
+        }),
+      );
+    },
+  );
+
+  const interruptTurnUnlocked: ProviderServiceMethod<"interruptTurn"> = Effect.fn("interruptTurn")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
         operation: "ProviderService.interruptTurn",
@@ -783,10 +867,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
+        const guarded =
+          input.expectedTurnId !== undefined || input.expectedSessionUpdatedAt !== undefined;
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.interruptTurn",
-          allowRecovery: true,
+          allowRecovery: !guarded,
         });
         metricProvider = routed.adapter.provider;
         yield* Effect.annotateCurrentSpan({
@@ -795,6 +881,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.thread_id": input.threadId,
           "provider.turn_id": input.turnId,
         });
+        if (guarded) {
+          const session = (yield* routed.adapter.listSessions()).find(
+            (candidate) => candidate.threadId === routed.threadId,
+          );
+          const actualTurnId = session?.activeTurnId ?? null;
+          const turnChanged =
+            input.expectedTurnId !== undefined && input.expectedTurnId !== actualTurnId;
+          const sessionChanged =
+            input.expectedSessionUpdatedAt !== undefined &&
+            input.expectedSessionUpdatedAt !== session?.updatedAt;
+          if (!routed.isActive || session === undefined || turnChanged || sessionChanged) {
+            return yield* new ProviderTurnChangedError({
+              threadId: input.threadId,
+              expectedTurnId: input.expectedTurnId ?? null,
+              actualTurnId,
+            });
+          }
+        }
         yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
         yield* analytics.record("provider.turn.interrupted", {
           provider: routed.adapter.provider,
@@ -883,7 +987,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
-  const stopSession: ProviderServiceMethod<"stopSession"> = Effect.fn("stopSession")(
+  const stopSessionUnlocked: ProviderServiceMethod<"stopSession"> = Effect.fn("stopSession")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
         operation: "ProviderService.stopSession",
@@ -1124,6 +1228,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ),
   );
+
+  const startSession: ProviderServiceMethod<"startSession"> = (threadId, input) =>
+    withThreadLock(threadId, startSessionUnlocked(threadId, input));
+  const sendTurn: ProviderServiceMethod<"sendTurn"> = (input) =>
+    withThreadLock(input.threadId, sendTurnUnlocked(input));
+  const interruptTurn: ProviderServiceMethod<"interruptTurn"> = (input) =>
+    withThreadLock(input.threadId, interruptTurnUnlocked(input));
+  const stopSession: ProviderServiceMethod<"stopSession"> = (input) =>
+    withThreadLock(input.threadId, stopSessionUnlocked(input));
 
   return {
     startSession,

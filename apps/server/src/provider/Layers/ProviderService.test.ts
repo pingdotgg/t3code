@@ -20,9 +20,10 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { it, assert, vi } from "@effect/vitest";
+import { it, assert, describe, vi } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderTurnChangedError,
   ProviderUnsupportedError,
   ProviderValidationError,
   type ProviderAdapterError,
@@ -936,6 +938,86 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.deepEqual(startPayload.resumeCursor, session.resumeCursor);
         assert.equal(startPayload.threadId, session.threadId);
       }
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("atomically guards provider interrupts against newer work", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-guarded-interrupt");
+      const observedAt = "2026-01-01T00:00:00.000Z";
+      const changedAt = "2026-01-01T00:00:01.000Z";
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.updateSession(threadId, (session) => ({
+        ...session,
+        status: "running",
+        activeTurnId: asTurnId("turn-new"),
+        updatedAt: changedAt,
+      }));
+      routing.codex.interruptTurn.mockClear();
+
+      const error = yield* provider
+        .interruptTurn({
+          threadId,
+          expectedTurnId: asTurnId("turn-observed"),
+          expectedSessionUpdatedAt: observedAt,
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderTurnChangedError);
+      assert.equal(error.actualTurnId, "turn-new");
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("holds the provider thread lock through guard check and interrupt", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-guarded-interrupt-lock");
+      const updatedAt = "2026-01-01T00:00:00.000Z";
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.updateSession(threadId, (session) => ({
+        ...session,
+        status: "running",
+        activeTurnId: asTurnId("turn-observed"),
+        updatedAt,
+      }));
+      routing.codex.interruptTurn.mockClear();
+      routing.codex.sendTurn.mockClear();
+      const releaseInterrupt = yield* Deferred.make<void>();
+      routing.codex.interruptTurn.mockImplementationOnce(() => Deferred.await(releaseInterrupt));
+
+      const interruptFiber = yield* provider
+        .interruptTurn({
+          threadId,
+          expectedTurnId: asTurnId("turn-observed"),
+          expectedSessionUpdatedAt: updatedAt,
+        })
+        .pipe(Effect.forkChild);
+      while (routing.codex.interruptTurn.mock.calls.length === 0) {
+        yield* Effect.yieldNow;
+      }
+
+      const sendFiber = yield* provider
+        .sendTurn({ threadId, input: "new work", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
+
+      yield* Deferred.succeed(releaseInterrupt, undefined);
+      yield* Fiber.join(interruptFiber);
+      yield* Fiber.join(sendFiber);
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
     }),
   );
@@ -1955,5 +2037,92 @@ validation.layer("ProviderServiceLive validation", (it) => {
         assert.equal(runtime.value.threadId, session.threadId);
       }
     }),
+  );
+});
+
+describe("agent browser access", () => {
+  const revokedThreads: Array<ThreadId> = [];
+
+  const startSessionWith = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const issued: Array<ThreadId> = [];
+      const codex = makeFakeCodexAdapter();
+      const providerAdapterLayer = Layer.succeed(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+      );
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive({
+        issueMcpCredential: (request) =>
+          Effect.sync(() => {
+            issued.push(request.threadId);
+            return undefined;
+          }),
+        revokeMcpCredential: (revoked) => Effect.sync(() => void revokedThreads.push(revoked)),
+      }).pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest({ enableAgentBrowserAccess })),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        return yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+      }).pipe(Effect.provide(providerLayer));
+
+      return issued;
+    });
+
+  // Credential issuance is the observable that matters: it is the only place a
+  // credential is minted, and `/mcp` accepts nothing else, so withholding it is
+  // what actually denies every provider and external MCP client.
+  it.effect("requests no MCP credential when agent browser access is off", () =>
+    Effect.gen(function* () {
+      const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
+
+      assert.deepEqual(issued, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("revokes an already-issued credential when access is off", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-browser-revoke");
+      revokedThreads.length = 0;
+
+      yield* startSessionWith(false, threadId);
+
+      // Clearing the in-memory map is not enough: a token issued before the
+      // toggle flipped stays valid against `/mcp` for its whole liveness
+      // window, and later turns refresh it.
+      assert.deepEqual(revokedThreads, [threadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("requests an MCP credential when agent browser access is on", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-browser-on");
+
+      const issued = yield* startSessionWith(true, threadId);
+
+      assert.deepEqual(issued, [threadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

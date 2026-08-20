@@ -2573,7 +2573,7 @@ describe("ProviderCommandReactor", () => {
       outcome: "work-changed",
       expectedTurnId: "turn-1",
       actualTurnId: "turn-2",
-      createdAt: currentUpdatedAt,
+      createdAt: expect.any(String),
     });
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
@@ -2640,7 +2640,7 @@ describe("ProviderCommandReactor", () => {
       outcome: "work-changed",
       expectedTurnId: null,
       actualTurnId: "turn-new",
-      createdAt: now,
+      createdAt: expect.any(String),
     });
   });
 
@@ -2720,7 +2720,7 @@ describe("ProviderCommandReactor", () => {
       outcome: "no-session",
       expectedTurnId: "turn-1",
       actualTurnId: null,
-      createdAt: now,
+      createdAt: expect.any(String),
     });
   });
 
@@ -2792,7 +2792,7 @@ describe("ProviderCommandReactor", () => {
       outcome: "no-session",
       expectedTurnId: "turn-1",
       actualTurnId: null,
-      createdAt: stoppedAt,
+      createdAt: expect.any(String),
     });
   });
 
@@ -2848,14 +2848,19 @@ describe("ProviderCommandReactor", () => {
       outcome: "interrupted",
       expectedTurnId: "turn-1",
       actualTurnId: "turn-1",
-      createdAt: now,
+      createdAt: expect.any(String),
     });
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const resolution = harness.interruptReceipts.find(
+      (receipt) => receipt.commandId === "cmd-turn-interrupt-conditional",
+    );
+    expect(resolution).toBeDefined();
+    expect(Date.parse(resolution?.createdAt ?? "")).toBeGreaterThan(Date.parse(now));
     expect(thread?.latestTurn).toMatchObject({
       turnId: "turn-1",
       state: "interrupted",
-      completedAt: now,
+      completedAt: resolution?.createdAt,
     });
     expect(
       thread?.activities.find((entry) => entry.kind === "provider.turn.interrupt.resolved"),
@@ -2921,7 +2926,7 @@ describe("ProviderCommandReactor", () => {
       outcome: "interrupted",
       expectedTurnId: "turn-1",
       actualTurnId: "turn-1",
-      createdAt: providerUpdatedAt,
+      createdAt: expect.any(String),
     });
   });
 
@@ -2990,7 +2995,7 @@ describe("ProviderCommandReactor", () => {
       outcome: "work-changed",
       expectedTurnId: "turn-1",
       actualTurnId: "turn-2",
-      createdAt: currentUpdatedAt,
+      createdAt: expect.any(String),
     });
   });
 
@@ -3049,7 +3054,7 @@ describe("ProviderCommandReactor", () => {
       outcome: "interrupted",
       expectedTurnId: "turn-1",
       actualTurnId: "turn-1",
-      createdAt: now,
+      createdAt: expect.any(String),
     });
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));

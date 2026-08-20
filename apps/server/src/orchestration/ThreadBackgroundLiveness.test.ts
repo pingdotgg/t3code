@@ -2,6 +2,32 @@ import { describe, expect, it } from "vite-plus/test";
 import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
 
 describe("ThreadBackgroundLiveness", () => {
+  it("does not let status-free progress restart an idle task", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "progress",
+    });
+    expect(liveness.getThreadBackgroundLiveness("thread")).toBeNull();
+  });
+
   it("agents present as working; monitors as monitoring; agents win", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-live-1";
@@ -230,43 +256,33 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
   });
 
-  it("resumes idle tasks from status-less progress and updated events", () => {
+  it("resumes idle tasks from status-less updated events", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-idle-resume";
-    for (const kind of ["progress", "updated"] as const) {
-      const taskId = `resumable-${kind}`;
-      liveness.recordTaskLiveness({
-        threadId,
-        taskId,
-        taskType: "subagent",
-        status: "running",
-        kind: "started",
-      });
-      liveness.recordTaskLiveness({
-        threadId,
-        taskId,
-        taskType: "subagent",
-        status: "idle",
-        kind: "updated",
-      });
-      expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "resumable",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "resumable",
+      taskType: "subagent",
+      status: "idle",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
 
-      liveness.recordTaskLiveness({
-        threadId,
-        taskId,
-        taskType: "subagent",
-        status: undefined,
-        kind,
-      });
-      expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
-      liveness.recordTaskLiveness({
-        threadId,
-        taskId,
-        taskType: "subagent",
-        status: "completed",
-        kind: "completed",
-      });
-    }
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "resumable",
+      taskType: "subagent",
+      status: undefined,
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
   });
 
   it("retains terminal tombstones across session exit", () => {

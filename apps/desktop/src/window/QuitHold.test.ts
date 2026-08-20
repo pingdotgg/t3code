@@ -77,15 +77,30 @@ describe("makeQuitHoldHandler", () => {
     expect(harness.notifications).toEqual(["down", "up"]);
   });
 
-  it("quits once the shortcut auto-repeats past the hold duration", async () => {
+  it("quits after a completed hold is released", async () => {
     const harness = makeHarness();
     await harness.send(makeInput({}));
-    await harness.holdFor(QUIT_HOLD_DURATION_MS - 200);
+    await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
     expect(harness.quit).not.toHaveBeenCalled();
-    await harness.holdFor(400);
+    await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
+    expect(harness.quit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
     expect(harness.quit).toHaveBeenCalledTimes(1);
-    // Exactly one hint cycle for the whole hold.
     expect(harness.notifications).toEqual(["down", "up"]);
+  });
+
+  it("waits for Q release when Cmd is released first", async () => {
+    const harness = makeHarness();
+    await harness.send(makeInput({}));
+    await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
+    await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
+    harness.preventDefault.mockClear();
+    await harness.send(makeInput({ meta: false, isAutoRepeat: true }));
+    expect(harness.preventDefault).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS * 2);
+    expect(harness.quit).not.toHaveBeenCalled();
+    await harness.send(makeInput({ type: "keyUp", meta: false }));
+    expect(harness.quit).toHaveBeenCalledTimes(1);
   });
 
   it("does not quit when the hold stops before the duration", async () => {
@@ -107,12 +122,11 @@ describe("makeQuitHoldHandler", () => {
     expect(harness.quit).not.toHaveBeenCalled();
   });
 
-  it("quits immediately on a single press when disabled", async () => {
+  it("quits without showing a hint when hold-to-quit is disabled", async () => {
     const harness = makeHarness({ enabled: false });
     await harness.send(makeInput({}));
     expect(harness.quit).toHaveBeenCalledTimes(1);
-    // The hint is dismissed in case the quit gets cancelled downstream.
-    expect(harness.notifications).toEqual(["down", "up"]);
+    expect(harness.notifications).toEqual([]);
   });
 
   it("discards a stale isEnabled resolution from a superseded press", async () => {
@@ -138,6 +152,7 @@ describe("makeQuitHoldHandler", () => {
     // Press #2 resolves enabled and completes a full hold.
     resolvers[1]?.(true);
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
+    await harness.send(makeInput({ type: "keyUp" }));
     expect(harness.quit).toHaveBeenCalledTimes(1);
   });
 
@@ -196,6 +211,7 @@ describe("makeQuitHoldHandler", () => {
     await harness.send(makeInput({ meta: false, control: true }));
     expect(harness.preventDefault).toHaveBeenCalledTimes(1);
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200, { meta: false, control: true });
+    await harness.send(makeInput({ type: "keyUp", meta: false, control: true }));
     expect(harness.quit).toHaveBeenCalledTimes(1);
   });
 });

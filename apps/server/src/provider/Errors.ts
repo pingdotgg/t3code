@@ -172,6 +172,23 @@ export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<Provid
 }
 
 /**
+ * ProviderTurnChangedError - A guarded interrupt no longer targets the
+ * provider session snapshot observed by its caller.
+ */
+export class ProviderTurnChangedError extends Schema.TaggedErrorClass<ProviderTurnChangedError>()(
+  "ProviderTurnChangedError",
+  {
+    threadId: Schema.String,
+    expectedTurnId: Schema.NullOr(Schema.String),
+    actualTurnId: Schema.NullOr(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Provider work changed before interrupt for thread ${this.threadId}`;
+  }
+}
+
+/**
  * ProviderSessionDirectoryPersistenceError - Session directory persistence failure.
  */
 export class ProviderSessionDirectoryPersistenceError extends Schema.TaggedErrorClass<ProviderSessionDirectoryPersistenceError>()(
@@ -199,6 +216,7 @@ export type ProviderServiceError =
   | ProviderUnsupportedError
   | ProviderInstanceNotFoundError
   | ProviderSessionNotFoundError
+  | ProviderTurnChangedError
   | ProviderSessionDirectoryPersistenceError
   | ProviderAdapterError
   | CheckpointServiceError;

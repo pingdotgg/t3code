@@ -531,10 +531,19 @@ function ThreadRouteContent(
       return;
     }
     const commandId = CommandId.make(uuidv4());
+    const guardedInterrupt =
+      selectedEnvironmentServerConfig.environment.capabilities.guardedInterrupt === true;
+    if (!guardedInterrupt) {
+      Alert.alert(
+        "Server update required",
+        "Update this environment before stopping background work safely.",
+      );
+      return;
+    }
     const interruptInput = buildBackgroundWorkInterruptInput(
       selectedThread,
       commandId,
-      selectedEnvironmentServerConfig.environment.serverVersion ?? null,
+      guardedInterrupt,
     );
     if (interruptInput === null) {
       Alert.alert(
