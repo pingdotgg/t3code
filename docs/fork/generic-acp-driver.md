@@ -103,7 +103,8 @@ format is portable in a way an adapter is not.
 
 ## Mapping to T3
 
-`ProviderAdapterShape` has thirteen members. Most are bookkeeping over a
+`ProviderAdapterShape` has fourteen members: `provider` and `capabilities`, plus
+twelve operational ones. Most of those are bookkeeping over a
 `threadId → runtime` registry: `listSessions`, `hasSession`, `stopSession`,
 `stopAll`, `startSession`. The protocol-facing ones — `sendTurn`,
 `interruptTurn`, `respondToRequest`, `respondToUserInput`, `streamEvents` — map
