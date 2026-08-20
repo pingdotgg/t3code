@@ -197,12 +197,10 @@ describe("formatDayAwareTimestamp", () => {
 
 describe("invalid timestamp inputs", () => {
   it("returns an empty timestamp instead of throwing", () => {
-    expect(() => formatTimestamp("not-a-date", "12-hour")).not.toThrow();
     expect(formatTimestamp("not-a-date", "12-hour")).toBe("");
   });
 
   it("returns an empty short timestamp instead of throwing", () => {
-    expect(() => formatShortTimestamp("not-a-date", "12-hour")).not.toThrow();
     expect(formatShortTimestamp("not-a-date", "12-hour")).toBe("");
   });
 
