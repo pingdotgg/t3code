@@ -9,13 +9,16 @@ import {
   applyKimiAcpModelSelection,
   applyKimiAcpThinkingSelection,
   buildKimiAcpSpawnInput,
+  classifyKimiPermissionRequest,
   currentKimiModeIdFromSessionSetup,
   currentKimiModelIdFromSessionSetup,
+  extractKimiProposedPlanMarkdown,
   findKimiModelConfigOption,
   findKimiThinkingConfigOption,
   isKimiAuthRequiredError,
   kimiConfigOptionsFromSessionNotification,
   kimiModelStateFromSessionSetup,
+  kimiPermissionRequestDetail,
   kimiSessionHasModelConfigOption,
   resolveKimiAcpBaseModelId,
   resolveKimiAcpModeId,
@@ -181,22 +184,25 @@ describe("Kimi ACP modes", () => {
     }),
   );
 
-  it("keeps adapter auto-approval aligned with full-access yolo mode", () => {
-    expect(
-      shouldKimiAdapterAutoApprove({ runtimeMode: "approval-required", currentModeId: "default" }),
-    ).toBe(false);
-    expect(
-      shouldKimiAdapterAutoApprove({ runtimeMode: "auto-accept-edits", currentModeId: "auto" }),
-    ).toBe(false);
-    expect(shouldKimiAdapterAutoApprove({ runtimeMode: "auto", currentModeId: "auto" })).toBe(
-      false,
+  it("auto-approves tool gates for full-access in any native mode, never user decisions", () => {
+    // Full access answers Kimi's tool-gate requests itself, whatever the
+    // tracked native mode is (including a stale plan mode left over from an
+    // intercepted ExitPlanMode).
+    expect(shouldKimiAdapterAutoApprove({ runtimeMode: "full-access" })).toBe(true);
+    expect(shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", requestKind: "tool" })).toBe(
+      true,
     );
+    // Plan decisions and user questions are user decisions, never auto-approved.
     expect(
-      shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", currentModeId: "plan" }),
+      shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", requestKind: "plan-decision" }),
     ).toBe(false);
     expect(
-      shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", currentModeId: "yolo" }),
-    ).toBe(true);
+      shouldKimiAdapterAutoApprove({ runtimeMode: "full-access", requestKind: "user-question" }),
+    ).toBe(false);
+    // Non-full-access runtime modes keep the supervised behavior exactly.
+    expect(shouldKimiAdapterAutoApprove({ runtimeMode: "approval-required" })).toBe(false);
+    expect(shouldKimiAdapterAutoApprove({ runtimeMode: "auto-accept-edits" })).toBe(false);
+    expect(shouldKimiAdapterAutoApprove({ runtimeMode: "auto" })).toBe(false);
   });
 });
 
@@ -514,4 +520,134 @@ describe("applyKimiAcpModelSelection", () => {
       expect(fallbackModelCalls).toEqual([]);
     }),
   );
+});
+
+describe("Kimi permission request classification", () => {
+  const bashRequest = {
+    sessionId: "session-1",
+    toolCall: {
+      toolCallId: "tool-bash-1",
+      title: "Bash",
+      kind: "execute",
+      status: "pending",
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: 'Requesting approval to Running: echo "hello"' },
+        },
+      ],
+    },
+    options: [
+      { optionId: "approve_once", name: "Approve once", kind: "allow_once" },
+      { optionId: "approve_always", name: "Approve for this session", kind: "allow_always" },
+      { optionId: "reject", name: "Reject", kind: "reject_once" },
+    ],
+  } satisfies EffectAcpSchema.RequestPermissionRequest;
+
+  const exitPlanModeRequest = {
+    sessionId: "session-1",
+    toolCall: {
+      toolCallId: "tool-exit-plan-1",
+      title: "ExitPlanMode",
+      status: "pending",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "Plan saved to: D:/plans/mock-plan.md\n\n# Plan: Mock\n\n## Steps\n- do the thing",
+          },
+        },
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "Requesting approval to Presenting plan and exiting plan mode",
+          },
+        },
+      ],
+    },
+    options: [
+      { optionId: "plan_approve", name: "Approve", kind: "allow_once" },
+      { optionId: "plan_revise", name: "Revise", kind: "reject_once" },
+      { optionId: "plan_reject_and_exit", name: "Reject and Exit", kind: "reject_once" },
+    ],
+  } satisfies EffectAcpSchema.RequestPermissionRequest;
+
+  it("classifies tool gates, plan decisions, and user questions", () => {
+    expect(classifyKimiPermissionRequest(bashRequest)).toBe("tool");
+    expect(classifyKimiPermissionRequest(exitPlanModeRequest)).toBe("plan-decision");
+    expect(
+      classifyKimiPermissionRequest({
+        ...bashRequest,
+        toolCall: { toolCallId: "tool-q-1", title: "AskUserQuestion" },
+      }),
+    ).toBe("user-question");
+    // The plan_approve option id is the fallback signal when the title changes.
+    expect(
+      classifyKimiPermissionRequest({
+        ...exitPlanModeRequest,
+        toolCall: { toolCallId: "tool-plan-2", title: "Present plan" },
+      }),
+    ).toBe("plan-decision");
+  });
+
+  it("extracts the plan markdown without the saved-path header", () => {
+    expect(extractKimiProposedPlanMarkdown(exitPlanModeRequest)).toBe(
+      "# Plan: Mock\n\n## Steps\n- do the thing",
+    );
+  });
+
+  it("falls back to bare plan text and skips the approval-scaffolding entry", () => {
+    expect(
+      extractKimiProposedPlanMarkdown({
+        ...exitPlanModeRequest,
+        toolCall: {
+          toolCallId: "tool-plan-3",
+          title: "ExitPlanMode",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "Requesting approval to Presenting plan and exiting plan mode",
+              },
+            },
+            {
+              type: "content",
+              content: { type: "text", text: "# Plan: bare markdown" },
+            },
+          ],
+        },
+      }),
+    ).toBe("# Plan: bare markdown");
+    expect(
+      extractKimiProposedPlanMarkdown({
+        ...exitPlanModeRequest,
+        toolCall: { toolCallId: "tool-plan-4", title: "ExitPlanMode" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("surfaces the real command text as the approval detail", () => {
+    expect(kimiPermissionRequestDetail(bashRequest)).toBe('Running: echo "hello"');
+    expect(
+      kimiPermissionRequestDetail({
+        ...bashRequest,
+        toolCall: {
+          toolCallId: "tool-q-2",
+          title: "AskUserQuestion",
+          content: [
+            { type: "content", content: { type: "text", text: "What should the site be about?" } },
+          ],
+        },
+      }),
+    ).toBe("What should the site be about?");
+    expect(
+      kimiPermissionRequestDetail({
+        ...bashRequest,
+        toolCall: { toolCallId: "tool-bare-1", title: "Bash" },
+      }),
+    ).toBeUndefined();
+  });
 });

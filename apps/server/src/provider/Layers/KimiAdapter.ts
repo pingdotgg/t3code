@@ -3,6 +3,7 @@ import {
   type KimiSettings,
   EventId,
   type ProviderApprovalDecision,
+  ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderSession,
   ProviderDriverKind,
@@ -58,12 +59,15 @@ import {
   applyKimiAcpModeSelection,
   applyKimiAcpModelSelection,
   applyKimiAcpThinkingSelection,
+  classifyKimiPermissionRequest,
   currentKimiModeIdFromConfigOptions,
   currentKimiModeIdFromSessionSetup,
   currentKimiModelIdFromConfigOptions,
   currentKimiModelIdFromSessionSetup,
+  extractKimiProposedPlanMarkdown,
   findKimiThinkingConfigOption,
   kimiConfigOptionsFromSessionNotification,
+  kimiPermissionRequestDetail,
   kimiSessionHasModelConfigOption,
   resolveKimiAcpModeId,
   shouldKimiAdapterAutoApprove,
@@ -112,6 +116,9 @@ interface KimiSessionContext {
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
+  /** Last ExitPlanMode request captured into the proposed-plan flow, so a
+   * retried request does not emit duplicate turn.proposed.completed events. */
+  lastCapturedExitPlanKey: string | undefined;
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -160,14 +167,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const resolveNotificationTurnId = (ctx: KimiSessionContext): TurnId | undefined => ctx.activeTurnId;
 
 const resolveCallbackTurnId = (ctx: KimiSessionContext): TurnId | undefined => ctx.activeTurnId;
-
-const resolveSessionCallbackTurnId = (
-  sessions: ReadonlyMap<ThreadId, KimiSessionContext>,
-  threadId: ThreadId,
-): TurnId | undefined => {
-  const ctx = sessions.get(threadId);
-  return ctx ? resolveCallbackTurnId(ctx) : undefined;
-};
 
 function parseKimiResume(raw: unknown): { sessionId: string } | undefined {
   if (!isRecord(raw)) return undefined;
@@ -622,10 +621,59 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             yield* acp.handleRequestPermission((params) =>
               Effect.gen(function* () {
                 yield* logNative(input.threadId, "session/request_permission", params);
+                const sessionCtx = sessions.get(input.threadId);
+                const callbackTurnId =
+                  sessionCtx !== undefined ? resolveCallbackTurnId(sessionCtx) : undefined;
+                // A permission request that arrives after the turn was stopped
+                // (Kimi has not processed session/cancel yet) must never open
+                // a fresh approval card on the dead turn; cancel it outright.
+                if (
+                  sessionCtx === undefined ||
+                  sessionCtx.stopped ||
+                  callbackTurnId === undefined ||
+                  sessionCtx.promptsInFlight <= 0 ||
+                  sessionCtx.interruptedTurnIds.has(callbackTurnId)
+                ) {
+                  return { outcome: { outcome: "cancelled" as const } };
+                }
+                const requestKind = classifyKimiPermissionRequest(params);
+                if (requestKind === "plan-decision") {
+                  const planMarkdown = extractKimiProposedPlanMarkdown(params);
+                  if (planMarkdown !== undefined) {
+                    // Claude parity: capture the plan into T3's proposed-plan
+                    // flow and cancel the native exit, so Kimi stays in plan
+                    // mode and T3's plan-approval UI owns the mode flip. The
+                    // implementation turn arrives with interactionMode default
+                    // and sendTurn pushes the runtime-derived mode natively.
+                    const captureKey = `${callbackTurnId}:${params.toolCall.toolCallId}`;
+                    if (sessionCtx.lastCapturedExitPlanKey !== captureKey) {
+                      sessionCtx.lastCapturedExitPlanKey = captureKey;
+                      yield* offerRuntimeEvent({
+                        type: "turn.proposed.completed",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: callbackTurnId,
+                        payload: { planMarkdown },
+                        providerRefs: {
+                          providerItemId: ProviderItemId.make(params.toolCall.toolCallId),
+                        },
+                        raw: {
+                          source: "acp.jsonrpc",
+                          method: "session/request_permission",
+                          payload: params,
+                        },
+                      });
+                    }
+                    return { outcome: { outcome: "cancelled" as const } };
+                  }
+                  // No plan text in the payload: fall through to the regular
+                  // approval card so the user can still decide natively.
+                }
                 if (
                   shouldKimiAdapterAutoApprove({
                     runtimeMode: input.runtimeMode,
-                    currentModeId: sessions.get(input.threadId)?.currentModeId,
+                    requestKind,
                   })
                 ) {
                   const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
@@ -642,7 +690,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                 const runtimeRequestId = RuntimeRequestId.make(requestId);
                 const decision = yield* Deferred.make<ProviderApprovalDecision>();
-                const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                const turnId = callbackTurnId;
                 pendingApprovals.set(requestId, { decision });
                 yield* offerRuntimeEvent(
                   makeAcpRequestOpenedEvent({
@@ -653,6 +701,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                     requestId: runtimeRequestId,
                     permissionRequest,
                     detail:
+                      kimiPermissionRequestDetail(params) ??
                       permissionRequest.detail ??
                       encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
                       "[unserializable params]",
@@ -770,6 +819,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             configOptionsRef,
             turns: [],
             lastPlanFingerprint: undefined,
+            lastCapturedExitPlanKey: undefined,
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
@@ -1072,6 +1122,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               }
               if (steeringTurnId === undefined) {
                 ctx.lastPlanFingerprint = undefined;
+                ctx.lastCapturedExitPlanKey = undefined;
               }
               ctx.session = {
                 ...ctx.session,

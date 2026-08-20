@@ -40,6 +40,8 @@ const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
 const exitOnPrompt = process.env.T3_ACP_EXIT_ON_PROMPT === "1";
 const terminalCommandJson = process.env.T3_ACP_TERMINAL_COMMAND;
+const planFlow = process.env.T3_ACP_PLAN_FLOW === "1";
+const permissionAfterCancel = process.env.T3_ACP_PERMISSION_AFTER_CANCEL === "1";
 const sessionId = "mock-kimi-session-1";
 let currentMode = "default";
 let currentModel = "default";
@@ -67,6 +69,74 @@ function sendClientRequest(method, params) {
     const id = "client-req-" + String(++clientRequestId);
     pendingClientRequests.set(id, { resolve, reject });
     send({ jsonrpc: "2.0", id, method, params });
+  });
+}
+
+const BASH_PERMISSION_OPTIONS = [
+  { optionId: "approve_once", name: "Approve once", kind: "allow_once" },
+  { optionId: "approve_always", name: "Approve for this session", kind: "allow_always" },
+  { optionId: "reject", name: "Reject", kind: "reject_once" },
+];
+
+const EXIT_PLAN_PERMISSION_OPTIONS = [
+  { optionId: "plan_approve", name: "Approve", kind: "allow_once" },
+  { optionId: "plan_revise", name: "Revise", kind: "reject_once" },
+  { optionId: "plan_reject_and_exit", name: "Reject and Exit", kind: "reject_once" },
+];
+
+// Mirrors kimi-cli 0.37.2 wire shapes: the tool call carries composed text
+// content entries instead of rawInput.
+function bashPermissionToolCall() {
+  return {
+    toolCallId: "tool-bash-" + String(permissionId + 1),
+    title: "Bash",
+    kind: "execute",
+    status: "pending",
+    rawInput: {},
+    content: [
+      {
+        type: "content",
+        content: {
+          type: "text",
+          text: "Requesting approval to Running: echo mock-approved-command",
+        },
+      },
+    ],
+  };
+}
+
+function exitPlanModeToolCall() {
+  return {
+    toolCallId: "tool-exit-plan-" + String(permissionId + 1),
+    title: "ExitPlanMode",
+    status: "pending",
+    content: [
+      {
+        type: "content",
+        content: {
+          type: "text",
+          text: "Plan saved to: D:/mock/plans/mock-plan.md\n\n# Plan: Mock landing page\n\n## Steps\n- write the plan\n- ship it",
+        },
+      },
+      {
+        type: "content",
+        content: {
+          type: "text",
+          text: "Requesting approval to Presenting plan and exiting plan mode",
+        },
+      },
+    ],
+  };
+}
+
+function requestPermission(promptId, toolCall, options) {
+  const id = "permission-" + String(++permissionId);
+  pendingPermissions.set(id, { promptId });
+  send({
+    jsonrpc: "2.0",
+    id,
+    method: "session/request_permission",
+    params: { sessionId, toolCall, options },
   });
 }
 
@@ -190,8 +260,34 @@ function handlePermissionResponse(message) {
   const pending = pendingPermissions.get(String(message.id));
   if (!pending) return;
   pendingPermissions.delete(String(message.id));
+  logLine("mock/permission_response", { id: String(message.id), result: message.result });
   const selected = message.result?.outcome?.outcome === "selected";
   completePrompt(pending.promptId, selected ? "end_turn" : "cancelled");
+  // Deterministic post-response marker: the RPC layer can unwind the prompt
+  // client-side on cancel, so tests cannot use prompt settlement to observe
+  // that the permission response arrived.
+  send({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "permission-resolved" },
+      },
+    },
+  });
+}
+
+function notifyConfigOptions() {
+  send({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId,
+      update: { sessionUpdate: "config_option_update", configOptions: configOptions() },
+    },
+  });
 }
 
 function handleRequest(message) {
@@ -215,6 +311,7 @@ function handleRequest(message) {
     case "session/set_mode":
       currentMode = String(params.modeId);
       result(message.id, {});
+      notifyConfigOptions();
       return;
     case "session/set_model":
       currentModel = String(params.modelId);
@@ -225,14 +322,15 @@ function handleRequest(message) {
       if (params.configId === "model") currentModel = String(params.value);
       if (params.configId === "reasoning") currentReasoning = String(params.value);
       result(message.id, { configOptions: configOptions() });
+      notifyConfigOptions();
       return;
     case "session/prompt": {
       if (exitOnPrompt) {
         process.exit(7);
       }
+      promptOrdinal += 1;
       if (terminalCommandJson) {
         const spec = JSON.parse(terminalCommandJson);
-        promptOrdinal += 1;
         if (spec.cancelAfterWait && promptOrdinal > 1) {
           // Only the first prompt blocks on the never-exiting terminal;
           // follow-ups behave normally so the session stays usable.
@@ -242,42 +340,55 @@ function handleRequest(message) {
         runTerminalCommandFlow(message.id);
         return;
       }
-      if (!emitToolCalls) {
+      if (permissionAfterCancel) {
+        if (promptOrdinal > 1) {
+          // Only the first prompt parks; follow-ups behave normally so the
+          // session stays usable after the interrupt.
+          completePrompt(message.id, "end_turn");
+          return;
+        }
+        // Surface that the prompt is parked so the test interrupts
+        // deterministically, then wait for session/cancel: the drained
+        // waiter fires a late permission request BEFORE answering the
+        // prompt; the post-stop gate must cancel it without opening an
+        // approval card.
+        send({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "prompt-parked" },
+            },
+          },
+        });
+        cancelWaiters.push(() =>
+          requestPermission(message.id, bashPermissionToolCall(), BASH_PERMISSION_OPTIONS),
+        );
+        return;
+      }
+      if (planFlow && promptOrdinal === 1) {
+        // The first prompt ends in the plan decision; follow-ups are tool gates.
+        requestPermission(message.id, exitPlanModeToolCall(), EXIT_PLAN_PERMISSION_OPTIONS);
+        return;
+      }
+      if (!emitToolCalls && !planFlow) {
         completePrompt(message.id, "end_turn");
         return;
       }
-      const id = "permission-" + String(++permissionId);
-      pendingPermissions.set(id, { promptId: message.id });
-      send({
-        jsonrpc: "2.0",
-        id,
-        method: "session/request_permission",
-        params: {
-          sessionId,
-          toolCall: {
-            toolCallId: "tool-" + id,
-            title: "Mock tool",
-            kind: "execute",
-            status: "pending",
-            rawInput: {},
-          },
-          options: [
-            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
-            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
-          ],
-        },
-      });
+      requestPermission(message.id, bashPermissionToolCall(), BASH_PERMISSION_OPTIONS);
       return;
     }
     case "session/cancel":
       result(message.id, {});
       cancelRequested = true;
-      for (const waiter of cancelWaiters.splice(0)) {
-        waiter();
-      }
       for (const [id, pending] of pendingPermissions) {
         pendingPermissions.delete(id);
         completePrompt(pending.promptId, "cancelled");
+      }
+      for (const waiter of cancelWaiters.splice(0)) {
+        waiter();
       }
       if (emitLateUpdateAfterCancel) {
         setImmediate(() =>
@@ -1138,6 +1249,371 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       assert.strictEqual(params.waitResult.signal, "SIGTERM");
       assert.notProperty(params.waitResult, "exitStatus");
       assert.strictEqual(params.outputResult.exitStatus?.signal, "SIGTERM");
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect(
+    "routes ExitPlanMode through the proposed-plan flow and keeps the agent from flipping the mode",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("kimi-plan-flow-proposed-plan");
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-plan-flow-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockKimiWrapper({
+            T3_ACP_PLAN_FLOW: "1",
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          }),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath);
+        const events: ProviderRuntimeEvent[] = [];
+        const proposedPlan =
+          yield* Deferred.make<
+            Extract<ProviderRuntimeEvent, { type: "turn.proposed.completed" }>
+          >();
+        const requestOpened =
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
+        const firstTurnCompleted = yield* Deferred.make<void>();
+        const secondTurnCompleted = yield* Deferred.make<void>();
+        const completedCount = yield* Ref.make(0);
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.gen(function* () {
+            events.push(event);
+            if (event.type === "turn.proposed.completed") {
+              yield* Deferred.succeed(proposedPlan, event).pipe(Effect.ignore);
+            }
+            if (event.type === "request.opened") {
+              yield* Deferred.succeed(requestOpened, event).pipe(Effect.ignore);
+            }
+            if (event.type === "turn.completed") {
+              const count = yield* Ref.updateAndGet(completedCount, (current) => current + 1);
+              yield* Deferred.succeed(
+                count === 1 ? firstTurnCompleted : secondTurnCompleted,
+                undefined,
+              ).pipe(Effect.ignore);
+            }
+          }),
+        ).pipe(Effect.forkChild);
+
+        yield* startTestSession(adapter, threadId);
+        const planTurn = yield* adapter.sendTurn({
+          threadId,
+          input: "plan the work",
+          attachments: [],
+          interactionMode: "plan",
+        });
+        yield* Deferred.await(firstTurnCompleted).pipe(Effect.timeout("5 seconds"));
+
+        // The plan markdown rides T3's proposed-plan flow (without the
+        // "Plan saved to:" header), and no approval card ever opened.
+        const proposed = yield* Deferred.await(proposedPlan).pipe(Effect.timeout("5 seconds"));
+        assert.equal(
+          proposed.payload.planMarkdown,
+          "# Plan: Mock landing page\n\n## Steps\n- write the plan\n- ship it",
+        );
+        assert.equal(String(proposed.turnId), String(planTurn.turnId));
+        assert.lengthOf(
+          events.filter((event) => event.type === "turn.proposed.completed"),
+          1,
+        );
+        assert.lengthOf(
+          events.filter((event) => event.type === "request.opened"),
+          0,
+        );
+        assert.deepEqual(
+          terminalEvents(events, threadId).map((event) => event.payload.state),
+          ["cancelled"],
+        );
+
+        // Kimi received the cancel outcome, so its native mode stays plan.
+        const planPhaseRequests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        const planResponse = planPhaseRequests.find(
+          (request) => request.method === "mock/permission_response",
+        );
+        const planResponseParams = planResponse?.params as
+          | { result?: { outcome?: { outcome?: string } } }
+          | undefined;
+        assert.equal(planResponseParams?.result?.outcome?.outcome, "cancelled");
+
+        // The follow-up turn surfaces a normal approval card with the real
+        // command text, and the tracked mode flips plan -> default from the
+        // T3 side, not from the agent.
+        const secondFiber = yield* adapter
+          .sendTurn({ threadId, input: "implement it", attachments: [] })
+          .pipe(Effect.forkChild);
+        const opened = yield* Deferred.await(requestOpened).pipe(Effect.timeout("5 seconds"));
+        assert.include(opened.payload.detail, "echo mock-approved-command");
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(String(opened.requestId)),
+          "accept",
+        );
+        yield* Fiber.join(secondFiber).pipe(Effect.timeout("5 seconds"));
+        yield* Deferred.await(secondTurnCompleted).pipe(Effect.timeout("5 seconds"));
+
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        const modeSelections = requests.flatMap((request) => {
+          if (request.method !== "session/set_config_option") {
+            return [];
+          }
+          const params = request.params as Record<string, unknown> | undefined;
+          return params?.configId === "mode" ? [String(params.value)] : [];
+        });
+        assert.deepEqual(modeSelections, ["plan", "default"]);
+        assert.deepEqual(
+          terminalEvents(events, threadId).map((event) => event.payload.state),
+          ["cancelled", "completed"],
+        );
+
+        yield* Fiber.interrupt(eventsFiber);
+        yield* adapter.stopSession(threadId);
+      }),
+  );
+
+  it.effect("full-access still pauses for the plan decision, then auto-approves tool gates", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-full-access-plan-carve-out");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-plan-carve-out-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_PLAN_FLOW: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const events: ProviderRuntimeEvent[] = [];
+      const proposedPlan = yield* Deferred.make<void>();
+      const firstTurnCompleted = yield* Deferred.make<void>();
+      const secondTurnCompleted = yield* Deferred.make<void>();
+      const completedCount = yield* Ref.make(0);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "turn.proposed.completed") {
+            yield* Deferred.succeed(proposedPlan, undefined).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.completed") {
+            const count = yield* Ref.updateAndGet(completedCount, (current) => current + 1);
+            yield* Deferred.succeed(
+              count === 1 ? firstTurnCompleted : secondTurnCompleted,
+              undefined,
+            ).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* startTestSession(adapter, threadId, "full-access");
+      yield* adapter.sendTurn({
+        threadId,
+        input: "plan the work",
+        attachments: [],
+        interactionMode: "plan",
+      });
+      yield* Deferred.await(firstTurnCompleted).pipe(Effect.timeout("5 seconds"));
+
+      // Even under full access the plan decision is a user decision: exactly
+      // one proposed-plan event, and ExitPlanMode is never auto-approved.
+      yield* Deferred.await(proposedPlan).pipe(Effect.timeout("5 seconds"));
+      assert.lengthOf(
+        events.filter((event) => event.type === "turn.proposed.completed"),
+        1,
+      );
+      assert.lengthOf(
+        events.filter((event) => event.type === "request.opened"),
+        0,
+      );
+
+      // The implementation turn auto-approves the tool gate without any card.
+      yield* adapter.sendTurn({ threadId, input: "implement it", attachments: [] });
+      yield* Deferred.await(secondTurnCompleted).pipe(Effect.timeout("5 seconds"));
+
+      assert.lengthOf(
+        events.filter((event) => event.type === "request.opened"),
+        0,
+      );
+      assert.deepEqual(
+        terminalEvents(events, threadId).map((event) => event.payload.state),
+        ["cancelled", "completed"],
+      );
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const permissionResponses = requests
+        .filter((request) => request.method === "mock/permission_response")
+        .map(
+          (request) =>
+            (request.params as { result?: { outcome?: { outcome?: string; optionId?: string } } })
+              .result?.outcome,
+        );
+      assert.deepEqual(permissionResponses, [
+        { outcome: "cancelled" },
+        { outcome: "selected", optionId: "approve_always" },
+      ]);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("auto-approves tool gates under full-access while the native mode is plan", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-full-access-plan-tool-gate");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const events: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* startTestSession(adapter, threadId, "full-access");
+      // Plan interaction keeps the native mode on plan; a tool-gate request
+      // arriving in that state must still be auto-approved for full access.
+      yield* adapter.sendTurn({
+        threadId,
+        input: "run a command",
+        attachments: [],
+        interactionMode: "plan",
+      });
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("5 seconds"));
+
+      assert.lengthOf(
+        events.filter((event) => event.type === "request.opened"),
+        0,
+      );
+      assert.deepEqual(
+        terminalEvents(events, threadId).map((event) => event.payload.state),
+        ["completed"],
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("cancels permission requests that arrive after the turn was interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-permission-after-cancel");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-permission-after-cancel-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_PERMISSION_AFTER_CANCEL: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const latePermissionRequest = yield* Deferred.make<void>();
+      const latePermissionResolved = yield* Deferred.make<void>();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        // Post-cancel session updates never reach the runtime event stream by
+        // design; the native log still observes the late request itself and
+        // the mock's post-response marker.
+        nativeEventLogger: {
+          filePath: "memory://kimi-permission-after-cancel-native-events",
+          write: (record: unknown) => {
+            const serialized = JSON.stringify(record);
+            return serialized.includes("session/request_permission")
+              ? Deferred.succeed(latePermissionRequest, undefined).pipe(Effect.asVoid)
+              : serialized.includes("permission-resolved")
+                ? Deferred.succeed(latePermissionResolved, undefined).pipe(Effect.asVoid)
+                : Effect.void;
+          },
+          close: () => Effect.void,
+        },
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      const promptParked = yield* Deferred.make<void>();
+      const turnStarted = yield* Deferred.make<TurnId>();
+      const firstTurnCompleted = yield* Deferred.make<void>();
+      const secondTurnCompleted = yield* Deferred.make<void>();
+      const completedCount = yield* Ref.make(0);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "content.delta" && String(event.threadId) === String(threadId)) {
+            yield* Deferred.succeed(promptParked, undefined).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.started" && event.turnId !== undefined) {
+            yield* Deferred.succeed(turnStarted, event.turnId).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.completed") {
+            const count = yield* Ref.updateAndGet(completedCount, (current) => current + 1);
+            yield* Deferred.succeed(
+              count === 1 ? firstTurnCompleted : secondTurnCompleted,
+              undefined,
+            ).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* startTestSession(adapter, threadId);
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "hold until stopped", attachments: [] })
+        .pipe(Effect.forkChild);
+      const turnId = yield* Deferred.await(turnStarted).pipe(Effect.timeout("5 seconds"));
+      // The mock notifies once it parked the prompt, so the interrupt lands
+      // while the prompt is genuinely in flight.
+      yield* Deferred.await(promptParked).pipe(Effect.timeout("5 seconds"));
+
+      // The mock answers session/cancel by firing a late permission request
+      // before completing the prompt. The interrupted-turn gate must cancel
+      // it without ever emitting request.opened.
+      yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(latePermissionRequest).pipe(Effect.timeout("5 seconds"));
+      // The mock only completes the prompt after the permission response
+      // arrives, so the joined fiber proves the gate answered cancelled.
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(firstTurnCompleted).pipe(Effect.timeout("5 seconds"));
+
+      assert.lengthOf(
+        events.filter((event) => event.type === "request.opened"),
+        0,
+      );
+      assert.deepEqual(
+        terminalEvents(events, threadId).map((event) => [
+          String(event.turnId),
+          event.payload.state,
+        ]),
+        [[String(turnId), "cancelled"]],
+      );
+      // Wait for the mock's post-response marker: the RPC layer unwinds the
+      // prompt client-side on cancel, so prompt settlement does not prove the
+      // mock saw the gate's cancelled answer.
+      yield* Deferred.await(latePermissionResolved).pipe(Effect.timeout("5 seconds"));
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const lateResponse = requests.find(
+        (request) => request.method === "mock/permission_response",
+      );
+      const lateResponseParams = lateResponse?.params as
+        | { result?: { outcome?: { outcome?: string } } }
+        | undefined;
+      assert.equal(lateResponseParams?.result?.outcome?.outcome, "cancelled");
+
+      // The session survives: a follow-up turn prompts and completes normally.
+      yield* adapter
+        .sendTurn({ threadId, input: "follow up", attachments: [] })
+        .pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(secondTurnCompleted).pipe(Effect.timeout("5 seconds"));
+      assert.deepEqual(
+        terminalEvents(events, threadId).map((event) => event.payload.state),
+        ["cancelled", "completed"],
+      );
 
       yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);

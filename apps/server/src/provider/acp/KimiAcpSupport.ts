@@ -367,11 +367,110 @@ export function applyKimiAcpModeSelection<E>(input: {
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModeId));
 }
 
+/**
+ * Kimi routes three different things through `session/request_permission`:
+ * tool gates (Bash, edits), the plan decision (`ExitPlanMode`), and user
+ * questions (`AskUserQuestion`). Only tool gates are approvable on the user's
+ * behalf; the other two are user decisions and must always reach the UI.
+ */
+export type KimiPermissionRequestKind = "tool" | "plan-decision" | "user-question";
+
+export function classifyKimiPermissionRequest(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): KimiPermissionRequestKind {
+  const title = params.toolCall.title?.trim();
+  if (
+    title === "ExitPlanMode" ||
+    params.options.some((option) => option.optionId.trim() === "plan_approve")
+  ) {
+    return "plan-decision";
+  }
+  if (title === "AskUserQuestion") {
+    return "user-question";
+  }
+  return "tool";
+}
+
+// kimi-cli composes human-readable text entries on the permission request's
+// tool call instead of filling rawInput. Observed on 0.37.2:
+//   Bash:         "Requesting approval to Running: <command>"
+//   ExitPlanMode: "Plan saved to: <path>\n\n<plan markdown>" plus a trailing
+//                 "Requesting approval to Presenting plan and exiting plan mode"
+//   AskUserQuestion: the bare question text.
+const KIMI_APPROVAL_TEXT_PREFIX = "Requesting approval to ";
+const KIMI_PLAN_SAVED_PREFIX = "Plan saved to: ";
+
+function kimiPermissionContentTexts(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): Array<string> {
+  const texts: Array<string> = [];
+  for (const entry of params.toolCall.content ?? []) {
+    if (entry.type !== "content" || entry.content.type !== "text") {
+      continue;
+    }
+    const text = entry.content.text.trim();
+    if (text.length > 0) {
+      texts.push(text);
+    }
+  }
+  return texts;
+}
+
+/**
+ * The proposed plan markdown from an ExitPlanMode permission request, without
+ * the "Plan saved to: <path>" header line. Kimi does not stream ACP plan
+ * entries in plan mode, so this payload is the only plan-markdown source; a
+ * request without usable text returns undefined and stays a normal approval.
+ */
+export function extractKimiProposedPlanMarkdown(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  const texts = kimiPermissionContentTexts(params);
+  for (const text of texts) {
+    if (!text.startsWith(KIMI_PLAN_SAVED_PREFIX)) {
+      continue;
+    }
+    const separatorIndex = text.indexOf("\n\n");
+    const markdown = (separatorIndex === -1 ? "" : text.slice(separatorIndex + 2)).trim();
+    if (markdown.length > 0) {
+      return markdown;
+    }
+  }
+  return texts.find((text) => !text.startsWith(KIMI_APPROVAL_TEXT_PREFIX));
+}
+
+/**
+ * What the approval card should say for a Kimi permission request: the actual
+ * command or question text, not just the tool title. Kimi prefixes tool-gate
+ * text with "Requesting approval to "; that scaffolding is stripped.
+ */
+export function kimiPermissionRequestDetail(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  const text = kimiPermissionContentTexts(params)[0];
+  if (text === undefined) {
+    return undefined;
+  }
+  const stripped = text.startsWith(KIMI_APPROVAL_TEXT_PREFIX)
+    ? text.slice(KIMI_APPROVAL_TEXT_PREFIX.length).trim()
+    : text;
+  return stripped.length > 0 ? stripped : undefined;
+}
+
 export function shouldKimiAdapterAutoApprove(input: {
   readonly runtimeMode: RuntimeMode;
-  readonly currentModeId: string | undefined;
+  readonly requestKind?: KimiPermissionRequestKind | undefined;
 }): boolean {
-  return input.runtimeMode === "full-access" && input.currentModeId === "yolo";
+  // User decisions (plan approval, clarifying questions) are never answered
+  // on the user's behalf, regardless of runtime mode.
+  if (input.requestKind !== undefined && input.requestKind !== "tool") {
+    return false;
+  }
+  // Full access means T3 answers Kimi's tool-gate permission requests in
+  // every native mode. Kimi's own per-mode behavior is unchanged; a stale
+  // tracked mode (e.g. plan left over from an intercepted ExitPlanMode) must
+  // not re-gate every command.
+  return input.runtimeMode === "full-access";
 }
 
 /**
