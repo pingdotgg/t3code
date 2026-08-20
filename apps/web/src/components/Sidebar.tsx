@@ -2065,14 +2065,13 @@ export default function Sidebar() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const occupiedThreadSectionNames = useMemo(
+    () => new Set(threads.flatMap((thread) => (thread.sectionName ? [thread.sectionName] : []))),
+    [threads],
+  );
   const threadSectionNames = useMemo(
-    () => [
-      ...new Set([
-        ...storedThreadSectionNames,
-        ...threads.flatMap((thread) => (thread.sectionName ? [thread.sectionName] : [])),
-      ]),
-    ],
-    [storedThreadSectionNames, threads],
+    () => [...new Set([...storedThreadSectionNames, ...occupiedThreadSectionNames])],
+    [occupiedThreadSectionNames, storedThreadSectionNames],
   );
   const supportsAnyThreadSections = useMemo(
     () =>
@@ -2333,9 +2332,7 @@ export default function Sidebar() {
     () =>
       customSections
         .filter(
-          (section) =>
-            section.threads.length > 0 ||
-            (scopedProjectKeys === null && storedThreadSectionNames.includes(section.name)),
+          (section) => section.threads.length > 0 || !occupiedThreadSectionNames.has(section.name),
         )
         .map((section) => {
           if (threadSectionExpandedByName[section.name] === true) {
@@ -2348,13 +2345,7 @@ export default function Sidebar() {
           );
           return { ...section, visibleThreads: routeThread ? [routeThread] : [] };
         }),
-    [
-      customSections,
-      routeThreadKey,
-      scopedProjectKeys,
-      storedThreadSectionNames,
-      threadSectionExpandedByName,
-    ],
+    [customSections, occupiedThreadSectionNames, routeThreadKey, threadSectionExpandedByName],
   );
 
   const orderedThreads = useMemo(
