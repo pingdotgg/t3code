@@ -503,10 +503,6 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
       return;
     }
 
-    if (traceRecord.success.child_class !== "hook") {
-      return;
-    }
-
     const event = traceRecord.success.event;
     const childKey = trace2ChildKey(traceRecord.success);
     if (childKey === null) {
@@ -521,6 +517,9 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
     }
 
     if (event === "child_start") {
+      if (traceRecord.success.child_class !== "hook") {
+        return;
+      }
       const now = yield* DateTime.now;
       hookStartByChildKey.set(childKey, { hookName, startedAtMs: DateTime.toEpochMillis(now) });
       yield* addCurrentSpanEvent("git.hook.started", {
@@ -533,21 +532,22 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
     }
 
     if (event === "child_exit") {
+      if (!started) {
+        return;
+      }
       hookStartByChildKey.delete(childKey);
-      const code = traceRecord.success.exitCode;
+      const code = traceRecord.success.code;
       const exitCode = typeof code === "number" && Number.isInteger(code) ? code : null;
       const now = yield* DateTime.now;
-      const durationMs = started
-        ? Math.max(0, DateTime.toEpochMillis(now) - started.startedAtMs)
-        : null;
+      const durationMs = Math.max(0, DateTime.toEpochMillis(now) - started.startedAtMs);
       yield* addCurrentSpanEvent("git.hook.finished", {
-        hookName: started?.hookName ?? hookName,
+        hookName: started.hookName,
         exitCode,
         durationMs,
       });
       if (progress.onHookFinished) {
         yield* progress.onHookFinished({
-          hookName: started?.hookName ?? hookName,
+          hookName: started.hookName,
           exitCode,
           durationMs,
         });

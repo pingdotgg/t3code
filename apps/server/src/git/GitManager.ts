@@ -1613,6 +1613,7 @@ export const make = Effect.gen(function* () {
     });
 
     let currentHookName: string | null = null;
+    let failedHook: { hookName: string; exitCode: number } | null = null;
     const commitProgress =
       progressReporter && actionId
         ? {
@@ -1647,6 +1648,9 @@ export const make = Effect.gen(function* () {
               if (currentHookName === hookName) {
                 currentHookName = null;
               }
+              if (exitCode !== null && exitCode !== 0) {
+                failedHook = { hookName, exitCode };
+              }
               return emit({
                 kind: "hook_finished",
                 hookName,
@@ -1656,10 +1660,27 @@ export const make = Effect.gen(function* () {
             },
           }
         : null;
-    const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-      timeoutMs: COMMIT_TIMEOUT_MS,
-      ...(commitProgress ? { progress: commitProgress } : {}),
-    });
+    const { commitSha } = yield* gitCore
+      .commit(cwd, suggestion.subject, suggestion.body, {
+        timeoutMs: COMMIT_TIMEOUT_MS,
+        ...(commitProgress ? { progress: commitProgress } : {}),
+      })
+      .pipe(
+        // The driver error only says "exited with a non-zero status" and carries no output, so a
+        // hook rejection is indistinguishable from a broken repository without naming the hook.
+        Effect.mapError((error) => {
+          const hook = failedHook;
+          if (hook === null) {
+            return error;
+          }
+          return new GitManagerError({
+            operation: "runCommitStep",
+            cwd,
+            detail: `The ${hook.hookName} hook rejected the commit (exit code ${hook.exitCode}).`,
+            cause: error,
+          });
+        }),
+      );
     if (currentHookName !== null) {
       yield* emit({
         kind: "hook_finished",
