@@ -9,8 +9,16 @@ const baseState: ThreadActionMenuState = {
   isSnoozed: false,
   canSnoozeNow: true,
   isRegeneratingTitle: false,
+  sectionName: null,
+  sectionNames: ["Later", "Waiting"],
   isRunning: false,
-  supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  supports: {
+    settlement: true,
+    snooze: true,
+    pinning: true,
+    titleRegeneration: true,
+    sections: true,
+  },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -31,7 +39,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          snooze: false,
+          pinning: false,
+          titleRegeneration: false,
+          sections: false,
+        },
       }),
     ).toEqual(["rename", "mark-unread", "copy", "archive", "delete"]);
   });
@@ -70,6 +84,18 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
   });
+
+  it("offers existing, active, and new section destinations", () => {
+    expect(allIds({ ...baseState, sectionName: "Later" })).toEqual(
+      expect.arrayContaining([
+        "move-to-section",
+        "section:name:Later",
+        "section:name:Waiting",
+        "section:active",
+        "section:new",
+      ]),
+    );
+  });
   it("offers archive as a non-destructive action right before delete", () => {
     const items = buildThreadActionMenuItems(baseState);
     const archiveItem = items.at(-2);
@@ -84,7 +110,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          settlement: false,
+          snooze: false,
+          pinning: false,
+          titleRegeneration: false,
+          sections: false,
+        },
       }),
     ).toContain("archive");
   });

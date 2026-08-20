@@ -17,8 +17,10 @@ import { useCallback } from "react";
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  parseThreadSectionMenuId,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import { useThreadSectionNameDialog } from "../components/ThreadSectionNameDialog";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -26,8 +28,10 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsSections,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
+  readThreadShells,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
 import { useUiStateStore } from "../uiStateStore";
@@ -80,6 +84,9 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
+  const rememberThreadSection = useUiStateStore((s) => s.rememberThreadSection);
+  const { requestName: requestSectionName, dialog: sectionNameDialog } =
+    useThreadSectionNameDialog();
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
@@ -115,12 +122,21 @@ export function useThreadActionMenu(input: {
         // what the user is looking at.
         const thread = readThreadShell(threadRef);
         if (!thread) return;
+        const sectionNames = [
+          ...new Set([
+            ...useUiStateStore.getState().threadSectionNames,
+            ...readThreadShells().flatMap((candidate) =>
+              candidate.sectionName ? [candidate.sectionName] : [],
+            ),
+          ]),
+        ];
         const now = new Date();
         const supports = {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
+          sections: readEnvironmentSupportsSections(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
@@ -141,6 +157,8 @@ export function useThreadActionMenu(input: {
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
+          sectionName: thread.sectionName ?? null,
+          sectionNames,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
@@ -148,6 +166,56 @@ export function useThreadActionMenu(input: {
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadActionMenuId = clicked.value;
+        if (
+          action === "section:new" ||
+          action === "section:active" ||
+          action.startsWith("section:name:")
+        ) {
+          const nextSectionName =
+            action === "section:new"
+              ? await requestSectionName({ existingNames: sectionNames })
+              : parseThreadSectionMenuId(action);
+          if (
+            nextSectionName === undefined ||
+            (action === "section:new" && nextSectionName === null)
+          ) {
+            return;
+          }
+          const previousSectionName = thread.sectionName ?? null;
+          if (nextSectionName === previousSectionName) return;
+          if (action === "section:new" && nextSectionName !== null) {
+            rememberThreadSection(nextSectionName, false);
+          }
+          const result = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, sectionName: nextSectionName },
+          });
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) {
+              failureToast("Failed to move thread", squashAtomCommandFailure(result));
+            }
+            return;
+          }
+          if (nextSectionName !== null) rememberThreadSection(nextSectionName);
+          toastManager.add(
+            stackedThreadToast({
+              type: "success",
+              title:
+                nextSectionName === null ? "Moved to active list" : `Moved to ${nextSectionName}`,
+              timeout: 5_000,
+              actionProps: {
+                children: "Undo",
+                onClick: () => {
+                  void updateThreadMetadata({
+                    environmentId: threadRef.environmentId,
+                    input: { threadId: threadRef.threadId, sectionName: previousSectionName },
+                  });
+                },
+              },
+            }),
+          );
+          return;
+        }
         if (action.startsWith("snooze:")) {
           const preset = snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
           if (!preset) return;
@@ -321,6 +389,7 @@ export function useThreadActionMenu(input: {
       deleteThread,
       handleNewThread,
       markThreadUnread,
+      rememberThreadSection,
       onStartRename,
       pinThread,
       projectCwd,
@@ -328,6 +397,7 @@ export function useThreadActionMenu(input: {
       snoozeThread,
       threadRef,
       timestampFormat,
+      requestSectionName,
       unpinThread,
       unsettleThread,
       unsnoozeThread,
@@ -335,5 +405,5 @@ export function useThreadActionMenu(input: {
     ],
   );
 
-  return { openMenu };
+  return { openMenu, sectionNameDialog };
 }

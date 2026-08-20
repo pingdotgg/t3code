@@ -9,10 +9,14 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
+  forgetThreadSection,
+  rememberThreadSection,
+  renameThreadSection,
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setThreadSectionExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -23,6 +27,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    threadSectionNames: [],
+    threadSectionExpandedByName: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
@@ -144,6 +150,17 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("orders, renames, collapses, and forgets local section definitions", () => {
+    const created = rememberThreadSection(makeUiState(), "Later", true);
+    const second = rememberThreadSection(created, "Waiting");
+    const collapsed = setThreadSectionExpanded(second, "Later", false);
+    const renamed = renameThreadSection(collapsed, "Later", "Research");
+    const removed = forgetThreadSection(renamed, "Waiting");
+
+    expect(removed.threadSectionNames).toEqual(["Research"]);
+    expect(removed.threadSectionExpandedByName).toEqual({ Research: false });
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -166,6 +183,8 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      threadSectionNames: ["Later", "", "Waiting", "Later"],
+      threadSectionExpandedByName: { Later: false, invalid: "no" as unknown as boolean },
     });
 
     expect(parsed).toEqual({
@@ -183,6 +202,8 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      threadSectionNames: ["Later", "Waiting"],
+      threadSectionExpandedByName: { Later: false },
     });
   });
 
@@ -279,6 +300,8 @@ describe("uiStateStore persistence", () => {
           "turn-2": true,
         },
       },
+      threadSectionNames: ["Later"],
+      threadSectionExpandedByName: { Later: false },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
     });
 
@@ -303,6 +326,8 @@ describe("uiStateStore persistence", () => {
           "turn-2": true,
         },
       },
+      threadSectionNames: ["Later"],
+      threadSectionExpandedByName: { Later: false },
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,

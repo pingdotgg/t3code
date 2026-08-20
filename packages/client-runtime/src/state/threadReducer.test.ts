@@ -178,24 +178,28 @@ describe("applyThreadDetailEvent", () => {
   describe("thread.settled / thread.unsettled", () => {
     it("sets the settled override and timestamp", () => {
       const settledAt = "2026-04-01T05:00:00.000Z";
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: settledAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.settled",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          settledAt,
-          updatedAt: settledAt,
+      const result = applyThreadDetailEvent(
+        { ...baseThread, sectionName: "Waiting" },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: settledAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.settled",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            settledAt,
+            updatedAt: settledAt,
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe("settled");
         expect(result.thread.settledAt).toBe(settledAt);
+        expect(result.thread.sectionName).toBe("Waiting");
       }
     });
 
@@ -205,6 +209,7 @@ describe("applyThreadDetailEvent", () => {
     ] as const)("unsettles for %s with override %s", (reason, settledOverride) => {
       const settledThread: OrchestrationThread = {
         ...baseThread,
+        sectionName: "Waiting",
         settledOverride: "settled",
         settledAt: "2026-04-01T05:00:00.000Z",
       };
@@ -227,6 +232,7 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe(settledOverride);
         expect(result.thread.settledAt).toBeNull();
+        expect(result.thread.sectionName).toBe("Waiting");
       }
     });
   });
@@ -304,6 +310,25 @@ describe("applyThreadDetailEvent", () => {
         // Model selection should be unchanged since it wasn't in the payload
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);
       }
+    });
+
+    it("moves the thread into a custom section", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          sectionName: "Waiting",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") expect(result.thread.sectionName).toBe("Waiting");
     });
   });
 
