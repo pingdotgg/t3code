@@ -8,7 +8,6 @@ import {
 import * as Option from "effect/Option";
 
 import {
-  buildAddProjectRemoteSourceReadiness,
   buildProjectCreateCommand,
   canCreateProjectInEnvironment,
   findExistingAddProject,
@@ -16,8 +15,8 @@ import {
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
+  listAddProjectRemoteSources,
   resolveAddProjectPath,
-  sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
@@ -133,7 +132,7 @@ describe("add project shared logic", () => {
     ).toEqual({ ok: true, path: "/work/next" });
   });
 
-  it("marks authenticated source control providers as ready", () => {
+  it("shows only authenticated providers while hiding providers that need setup", () => {
     const discovery: SourceControlDiscoveryResult = {
       versionControlSystems: [],
       sourceControlProviders: [
@@ -152,27 +151,55 @@ describe("add project shared logic", () => {
           },
         },
         {
-          kind: "gitlab",
-          label: "GitLab",
+          kind: "bitbucket",
+          label: "Bitbucket",
           status: "available",
-          installHint: "Install glab",
-          version: Option.some("1.0.0"),
+          installHint: "Configure Bitbucket",
+          version: Option.none(),
           detail: Option.none(),
           auth: {
             status: "unauthenticated",
             account: Option.none(),
+            host: Option.some("bitbucket.org"),
+            detail: Option.some("Configure Bitbucket credentials"),
+          },
+        },
+        {
+          kind: "gitlab",
+          label: "GitLab",
+          status: "missing",
+          installHint: "Install glab",
+          version: Option.none(),
+          detail: Option.none(),
+          auth: {
+            status: "unknown",
+            account: Option.none(),
             host: Option.none(),
-            detail: Option.some("Run glab auth login"),
+            detail: Option.none(),
+          },
+        },
+        {
+          kind: "azure-devops",
+          label: "Azure DevOps",
+          status: "available",
+          installHint: "Install az",
+          version: Option.some("1.0.0"),
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
           },
         },
       ],
     };
 
-    const readiness = buildAddProjectRemoteSourceReadiness(discovery);
-    expect(readiness.url.ready).toBe(true);
-    expect(readiness.github.ready).toBe(true);
-    expect(readiness.gitlab).toEqual({ ready: false, hint: "Run glab auth login" });
-    expect(sortAddProjectProviderSources(readiness)[0]).toBe("github");
+    expect(listAddProjectRemoteSources(discovery)).toEqual(["url", "azure-devops", "github"]);
+  });
+
+  it("does not imply provider readiness before discovery", () => {
+    expect(listAddProjectRemoteSources(null)).toEqual(["url"]);
   });
 
   it("finds existing projects by normalized path in the target environment", () => {

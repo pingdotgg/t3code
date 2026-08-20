@@ -16,6 +16,7 @@ import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import { isSourceControlProviderReady } from "@t3tools/shared/sourceControl";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -163,7 +164,7 @@ function RedactedAccount(props: { readonly account: string | null }) {
 function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): string {
   if (isVcsNotReady(item)) return "bg-muted-foreground/35";
   if (item.status !== "available") return "bg-warning";
-  if (isProviderDiscoveryItem(item) && item.auth.status !== "authenticated") return "bg-warning";
+  if (isProviderDiscoveryItem(item) && !isSourceControlProviderReady(item)) return "bg-warning";
   return "bg-success";
 }
 
@@ -260,7 +261,7 @@ function DiscoveryItemRow({
 }) {
   const version = optionLabel(item.version);
   const enabled = isProviderDiscoveryItem(item)
-    ? item.status === "available" && item.auth.status === "authenticated"
+    ? isSourceControlProviderReady(item)
     : item.status === "available" && item.implemented;
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;

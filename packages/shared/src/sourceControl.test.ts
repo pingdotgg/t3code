@@ -1,11 +1,48 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { SourceControlProviderDiscoveryItem } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 
 import {
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
+  isSourceControlProviderReady,
   resolveChangeRequestPresentation,
 } from "./sourceControl.ts";
+
+const readyProvider = {
+  kind: "github",
+  label: "GitHub",
+  status: "available",
+  installHint: "Install gh",
+  version: Option.some("1.0.0"),
+  detail: Option.none(),
+  auth: {
+    status: "authenticated",
+    account: Option.some("octo"),
+    host: Option.some("github.com"),
+    detail: Option.none(),
+  },
+} satisfies SourceControlProviderDiscoveryItem;
+
+describe("isSourceControlProviderReady", () => {
+  it("requires both availability and authentication", () => {
+    expect(isSourceControlProviderReady(readyProvider)).toBe(true);
+    expect(isSourceControlProviderReady({ ...readyProvider, status: "missing" })).toBe(false);
+    expect(
+      isSourceControlProviderReady({
+        ...readyProvider,
+        auth: { ...readyProvider.auth, status: "unauthenticated" },
+      }),
+    ).toBe(false);
+    expect(
+      isSourceControlProviderReady({
+        ...readyProvider,
+        auth: { ...readyProvider.auth, status: "unknown" },
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("source control presentation", () => {
   it("uses merge request terminology for GitLab", () => {
