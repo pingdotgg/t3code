@@ -1,5 +1,7 @@
 import {
   ExternalLinkIcon,
+  GithubIcon,
+  GitlabIcon,
   PackagePlusIcon,
   PaletteIcon,
   RefreshCwIcon,
@@ -44,6 +46,19 @@ const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = 
   { value: "timestamp", label: "Newest" },
   { value: "relevance", label: "Most relevant" },
 ];
+
+function SourceLinkIcon({ url }: { url: string }) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === "github.com" || host.endsWith(".github.com"))
+      return <GithubIcon className="size-3.5" />;
+    if (host === "gitlab.com" || host.endsWith(".gitlab.com"))
+      return <GitlabIcon className="size-3.5" />;
+  } catch {
+    // Fall through to the generic external-link icon.
+  }
+  return <ExternalLinkIcon className="size-3.5" />;
+}
 
 function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
   const [failed, setFailed] = useState(false);
@@ -329,12 +344,12 @@ export function ThemeSearchSection({
                       {extension.sourceUrl ? (
                         <a
                           aria-label={`View source for ${extension.name}`}
-                          className="inline-flex items-center gap-1 text-muted-foreground text-[11px] hover:text-foreground"
+                          className="inline-flex items-center text-muted-foreground hover:text-foreground"
                           href={extension.sourceUrl}
                           rel="noreferrer"
                           target="_blank"
                         >
-                          Source <ExternalLinkIcon className="size-3" />
+                          <SourceLinkIcon url={extension.sourceUrl} />
                         </a>
                       ) : null}
                     </div>
