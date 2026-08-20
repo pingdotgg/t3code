@@ -532,6 +532,10 @@ export function ThemeImportDialog({
                   {fileInput}
                 </div>
                 {editorSection()}
+                {/* The actions live with the import section, not in a DialogFooter,
+                    because Add theme only applies to the file in this section. Pinning
+                    them at the modal bottom would read as a modal-scoped action when
+                    the dialog also has the search and conflict views. */}
                 <div className="flex flex-col-reverse gap-2 border-t border-border/70 pt-3 sm:flex-row sm:justify-end">
                   <Button variant="ghost" onClick={() => onOpenChange(false)}>
                     Cancel
