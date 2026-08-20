@@ -290,7 +290,12 @@ export const make = Effect.gen(function* () {
 
   // --- directive handlers ----------------------------------------------------
 
-  const agentStagingPath = (syncId: string) => path.join(stagingDir, `${syncId}.bundle`);
+  // syncId is host-supplied directive input (untrusted, per this module's
+  // trust boundary), so it's percent-encoded before it becomes a filename:
+  // an unencoded "../" or absolute path would let a compromised host make
+  // this agent write or delete files outside stagingDir.
+  const agentStagingPath = (syncId: string) =>
+    path.join(stagingDir, `${encodeURIComponent(syncId)}.bundle`);
 
   /** Shared body of seed-requested/submodule-seed-requested, parameterized by root. */
   const seedRoot = Effect.fn("MirrorAgent.seedRoot")(function* (
