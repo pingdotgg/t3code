@@ -350,8 +350,13 @@ export function primeTerminalCopyInput(
   input.select();
 }
 
-export function clearPrimedTerminalCopyInput(input: Pick<HTMLTextAreaElement, "value">): void {
-  if (input.value.length === 0) return;
+export function clearPrimedTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value">,
+  primedSelection: string,
+): void {
+  // Only blank the copy we parked. The same textarea holds the IME candidate;
+  // wiping whatever is there would cancel CJK composition.
+  if (primedSelection.length === 0 || input.value !== primedSelection) return;
   input.value = "";
 }
 
@@ -586,6 +591,7 @@ export class GhosttyTerminalSurface {
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
+  private primedCopySelection = "";
   private wheelRemainder = 0;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
@@ -910,7 +916,7 @@ export class GhosttyTerminalSurface {
   }
 
   clearSelection(): void {
-    clearPrimedTerminalCopyInput(this.input);
+    this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;
     this.selectionAnchorScreen = null;
@@ -987,7 +993,7 @@ export class GhosttyTerminalSurface {
       // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
       // inspect), so synthesize one with execCommand("copy").
       const selection = this.getSelection();
-      primeTerminalCopyInput(this.input, selection);
+      this.primeCopy(selection);
       if (event.shiftKey) {
         event.preventDefault();
         document.execCommand("copy");
@@ -1063,7 +1069,7 @@ export class GhosttyTerminalSurface {
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
-    clearPrimedTerminalCopyInput(this.input);
+    this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
     this.suppressedKeyCodes.delete(event.code);
@@ -1119,12 +1125,22 @@ export class GhosttyTerminalSurface {
     this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
   }
 
+  private primeCopy(selection: string): void {
+    this.primedCopySelection = selection;
+    primeTerminalCopyInput(this.input, selection);
+  }
+
+  private clearPrimedCopy(): void {
+    clearPrimedTerminalCopyInput(this.input, this.primedCopySelection);
+    this.primedCopySelection = "";
+  }
+
   private readonly onCopyEvent = (event: ClipboardEvent) => {
     const selection = this.hasSelection() ? this.getSelection() : this.input.value;
     // Menu-role Copy never hits the keydown primer. The native action reads
     // this.input, so park the current selection first — including when
     // clipboardData is missing and we must not preventDefault.
-    primeTerminalCopyInput(this.input, selection);
+    this.primeCopy(selection);
     const result = applyTerminalCopyEvent(selection, event.clipboardData);
     if (result.preventDefault) event.preventDefault();
     if (result.claimWriteFallback) {
@@ -1152,7 +1168,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onCompositionStart = () => {
-    clearPrimedTerminalCopyInput(this.input);
+    this.clearPrimedCopy();
     this.clearCompositionInputSuppression();
     this.composing = true;
   };

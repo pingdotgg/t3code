@@ -297,8 +297,16 @@ describe("primeTerminalCopyInput", () => {
     expect(input.value).toBe("git status");
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe(10);
-    clearPrimedTerminalCopyInput(input);
+    clearPrimedTerminalCopyInput(input, "git status");
     expect(input.value).toBe("");
+  });
+
+  it("does not wipe an IME candidate that replaced the primed copy", () => {
+    const input = { value: "", select() {} };
+    primeTerminalCopyInput(input, "git status");
+    input.value = "あ";
+    clearPrimedTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("あ");
   });
 });
 
