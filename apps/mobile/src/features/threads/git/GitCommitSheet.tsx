@@ -1,5 +1,5 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -62,6 +62,24 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   );
   const [isEditingFiles, setIsEditingFiles] = useState(false);
 
+  // Dismissing the sheet is the mobile equivalent of Cancel on web, so it discards the draft.
+  // Submitting also unmounts the sheet, hence the guard.
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
+  const isSubmittingRef = useRef(false);
+  useEffect(
+    () => () => {
+      if (isSubmittingRef.current) {
+        return;
+      }
+      const key = draftKeyRef.current;
+      if (key !== null && pendingCommitDraft?.key === key) {
+        pendingCommitDraft = null;
+      }
+    },
+    [],
+  );
+
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
@@ -71,6 +89,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
+      isSubmittingRef.current = true;
       const commitMessage = dialogCommitMessage.trim();
       const submitted =
         draftKey === null ? null : { key: draftKey, message: commitMessage, excludedFiles };
