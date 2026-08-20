@@ -301,7 +301,7 @@ function grokPlanSessionPrefixes(): ReadonlySet<string> {
 }
 
 const CANONICAL_HOME_GROK_SESSION_PATH =
-  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/.+\/plan\.md$/;
+  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/.+\/plan\.md$/i;
 
 /**
  * True when a path is Grok's session plan file under a Grok home

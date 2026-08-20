@@ -397,6 +397,8 @@ describe("XAiAcpExtension", () => {
     expect(isGrokPlanMarkdownPath("~/.grok/sessions/abc/plan.md")).toBe(true);
     expect(isGrokPlanMarkdownPath("/tmp/mock-home/.grok/sessions/sess/plan.md")).toBe(true);
     expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/sess/plan.md")).toBe(true);
+    expect(isGrokPlanMarkdownPath("C:/Users/other/.grok/sessions/id/plan.md")).toBe(true);
+    expect(isGrokPlanMarkdownPath("C:\\Users\\other\\.grok\\sessions\\id\\plan.md")).toBe(true);
     const previousGrokHome = process.env.GROK_HOME;
     process.env.GROK_HOME = "/opt/grok-data";
     try {
