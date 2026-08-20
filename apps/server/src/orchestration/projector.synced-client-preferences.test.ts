@@ -36,7 +36,7 @@ it.effect("merges synced preferences by field when a later event is globally sta
       preferenceEvent({
         sequence: 1,
         updatedAt: "2026-08-14T13:00:00.000Z",
-        patch: { appearanceMode: "dark" },
+        patch: { appearanceMode: "dark", darkThemeId: "tokyo-night" },
       }),
     );
     const withPlan = yield* projectEvent(
@@ -51,10 +51,11 @@ it.effect("merges synced preferences by field when a later event is globally sta
     assert.deepEqual(withPlan.syncedClientPreferences, {
       planModeEnabled: true,
       appearanceMode: "dark",
+      darkThemeId: "tokyo-night",
       updatedAtByField: {
         planModeEnabled: "2026-08-14T12:00:00.000Z",
         appearanceMode: "2026-08-14T13:00:00.000Z",
-        themeId: "2026-08-14T13:00:00.000Z",
+        darkThemeId: "2026-08-14T13:00:00.000Z",
       },
       updatedAt: "2026-08-14T13:00:00.000Z",
     });
@@ -70,7 +71,8 @@ it.effect("backfills field clocks before patching legacy synced preferences", ()
       syncedClientPreferences: {
         planModeEnabled: false,
         appearanceMode: "light" as const,
-        themeId: "legacy-theme",
+        lightThemeId: "legacy-light",
+        darkThemeId: "legacy-dark",
         updatedAt: legacyUpdatedAt,
       },
     };
@@ -94,11 +96,13 @@ it.effect("backfills field clocks before patching legacy synced preferences", ()
     assert.deepEqual(withAppearance.syncedClientPreferences, {
       planModeEnabled: true,
       appearanceMode: "dark",
-      themeId: "legacy-theme",
+      lightThemeId: "legacy-light",
+      darkThemeId: "legacy-dark",
       updatedAtByField: {
         planModeEnabled: "2026-08-14T12:00:00.000Z",
         appearanceMode: "2026-08-14T11:00:00.000Z",
-        themeId: legacyUpdatedAt,
+        lightThemeId: legacyUpdatedAt,
+        darkThemeId: legacyUpdatedAt,
       },
       updatedAt: "2026-08-14T12:00:00.000Z",
     });

@@ -1,820 +1,452 @@
 import {
-  type ImportedMobileTheme,
-  normalizeMobileThemeColorLiteral,
-  type PortableThemeColorOverrides,
-} from "./mobileThemeFile";
+  BUILT_IN_THEMES,
+  getThemeColorsForAppearance,
+  MOBILE_DEFAULT_THEME_ID,
+  MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
+  type ThemeAppearance,
+  type ThemeColors,
+} from "@t3tools/shared/themePalettes";
+import type { PortableThemeFile } from "@t3tools/shared/themeFile";
+import {
+  STANDARD_THEME_PREVIEW_COLORS,
+  type ThemePreviewColors,
+} from "@t3tools/shared/themePreview";
+import { DEFAULT_MOBILE_THEME_VARIABLES } from "./mobileDefaultTheme";
 
-export const MOBILE_APPEARANCE_OPTIONS = [
-  { id: "system", label: "System" },
-  { id: "light", label: "Light" },
-  { id: "dark", label: "Dark" },
-] as const;
-export type MobileAppearanceMode = (typeof MOBILE_APPEARANCE_OPTIONS)[number]["id"];
-export type MobileThemeAppearance = Exclude<MobileAppearanceMode, "system">;
-
-export const MOBILE_THEME_OPTIONS = [
-  { id: "t3-code", label: "T3 Code" },
-  { id: "t3-chat", label: "T3 Chat" },
-  { id: "grove", label: "Grove" },
-  { id: "ocean", label: "Ocean" },
-  { id: "ember", label: "Ember" },
-  { id: "iris", label: "Iris" },
-] as const;
-
-export type MobileBuiltInThemeId = (typeof MOBILE_THEME_OPTIONS)[number]["id"];
+export const DEFAULT_MOBILE_THEME_ID = MOBILE_DEFAULT_THEME_ID;
+export const MOBILE_THEME_IDS = SHARED_MOBILE_THEME_IDS;
+export type MobileBuiltInThemeId = (typeof MOBILE_THEME_IDS)[number];
 export type MobileThemeId = string;
+export type MobileThemeAppearance = ThemeAppearance;
+export type MobileThemeMode = MobileThemeAppearance | "system";
+export type MobileThemeIds = Readonly<{
+  light: MobileThemeId;
+  dark: MobileThemeId;
+}>;
 
-export const DEFAULT_MOBILE_APPEARANCE_MODE: MobileAppearanceMode = "system";
-export const DEFAULT_MOBILE_THEME_ID: MobileBuiltInThemeId = "t3-code";
-
-export interface MobileThemePreferences {
-  readonly appearanceMode: MobileAppearanceMode;
-  readonly themeId: MobileThemeId;
-}
-
-export interface MobileCoreThemeColors {
-  readonly canvas: string;
-  readonly surface: string;
-  readonly surfaceRaised: string;
-  readonly surfaceOverlay: string;
-  readonly text: string;
-  readonly textMuted: string;
-  readonly border: string;
-  readonly input: string;
-  readonly accent: string;
-  readonly accentForeground: string;
-  readonly secondary: string;
-  readonly secondaryForeground: string;
-  readonly muted: string;
-  readonly mutedForeground: string;
-  readonly placeholder: string;
-  readonly error: string;
-  readonly errorForeground: string;
-  readonly errorSurface: string;
-  readonly messageSurface: string;
-  readonly messageForeground: string;
-  readonly codeBackground: string;
-  readonly codeForeground: string;
-  readonly sidebar: string;
-  readonly sidebarForeground: string;
-  readonly sidebarMutedForeground: string;
-  readonly sidebarControlSurface: string;
-}
-
-export interface MobileNativeSurfaceColors {
-  readonly terminalBackground: string;
-  readonly terminalForeground: string;
-  readonly terminalCursor: string;
-  readonly sheetBackground: string;
-  readonly foreground: string;
-  readonly mutedForeground: string;
-  readonly border: string;
-  readonly accent: string;
-}
-
-export interface MobileThemePickerOption {
-  readonly id: string;
+export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
+  readonly id: MobileBuiltInThemeId;
   readonly label: string;
-  readonly imported: boolean;
-  readonly light: MobileCoreThemeColors;
-  readonly dark: MobileCoreThemeColors;
-}
+}> = [
+  { id: DEFAULT_MOBILE_THEME_ID, label: "T3 Code" },
+  ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileBuiltInThemeId, label: theme.label })),
+];
 
-type MobileThemeVariants = Readonly<
-  Record<MobileThemeAppearance, Readonly<Partial<MobileCoreThemeColors>>>
->;
-type StoredMobileThemeValue = string | null | undefined;
-
-const T3_CODE_COLORS = {
-  light: {
-    canvas: "#f2f2f7",
-    surface: "#ffffff",
-    surfaceRaised: "#f5f5f5",
-    surfaceOverlay: "#ffffff",
-    text: "#262626",
-    textMuted: "#737373",
-    border: "rgba(0, 0, 0, 0.08)",
-    input: "rgba(0, 0, 0, 0.1)",
-    accent: "#262626",
-    accentForeground: "#ffffff",
-    secondary: "#ffffff",
-    secondaryForeground: "#262626",
-    muted: "rgba(0, 0, 0, 0.04)",
-    mutedForeground: "#525252",
-    placeholder: "#a3a3a3",
-    error: "rgba(239, 68, 68, 0.12)",
-    errorForeground: "#dc2626",
-    errorSurface: "#fef2f2",
-    messageSurface: "#007aff",
-    messageForeground: "#ffffff",
-    codeBackground: "rgba(0, 0, 0, 0.04)",
-    codeForeground: "#262626",
-    sidebar: "#ffffff",
-    sidebarForeground: "#262626",
-    sidebarMutedForeground: "#525252",
-    sidebarControlSurface: "rgba(118, 118, 128, 0.12)",
-  },
-  dark: {
-    canvas: "#0a0a0a",
-    surface: "#171717",
-    surfaceRaised: "#1c1c1c",
-    surfaceOverlay: "#171717",
-    text: "#f5f5f5",
-    textMuted: "#8e8e93",
-    border: "rgba(255, 255, 255, 0.06)",
-    input: "rgba(255, 255, 255, 0.08)",
-    accent: "#f5f5f5",
-    accentForeground: "#0a0a0a",
-    secondary: "rgba(255, 255, 255, 0.04)",
-    secondaryForeground: "#f5f5f5",
-    muted: "rgba(255, 255, 255, 0.04)",
-    mutedForeground: "#a3a3a3",
-    placeholder: "#8e8e93",
-    error: "rgba(248, 113, 113, 0.18)",
-    errorForeground: "#fca5a5",
-    errorSurface: "rgba(239, 68, 68, 0.14)",
-    messageSurface: "#0a84ff",
-    messageForeground: "#ffffff",
-    codeBackground: "rgba(255, 255, 255, 0.06)",
-    codeForeground: "#e5e5e5",
-    sidebar: "#0e0e0e",
-    sidebarForeground: "#f5f5f5",
-    sidebarMutedForeground: "#a3a3a3",
-    sidebarControlSurface: "rgba(118, 118, 128, 0.24)",
-  },
-} satisfies Readonly<Record<MobileThemeAppearance, MobileCoreThemeColors>>;
-
-function normalizeMobileThemeColors(colors: MobileCoreThemeColors): MobileCoreThemeColors {
-  const normalizedColors = { ...colors };
-  // SAFETY: MobileCoreThemeColors is closed, so Object.keys returns only its declared roles.
-  for (const role of Object.keys(normalizedColors) as Array<keyof MobileCoreThemeColors>) {
-    const color = normalizeMobileThemeColorLiteral(normalizedColors[role]);
-    if (!color) throw new Error(`Invalid T3 Code fallback color for "${role}": ${colors[role]}`);
-    normalizedColors[role] = color;
-  }
-  return normalizedColors;
-}
-
-const NORMALIZED_T3_CODE_COLORS = {
-  light: normalizeMobileThemeColors(T3_CODE_COLORS.light),
-  dark: normalizeMobileThemeColors(T3_CODE_COLORS.dark),
-} satisfies Readonly<Record<MobileThemeAppearance, MobileCoreThemeColors>>;
-
-const T3_CHAT_COLORS = {
-  light: {
-    canvas: "#fdf7fd",
-    surface: "#faf3fb",
-    surfaceRaised: "#fdfafd",
-    surfaceOverlay: "#ffffff",
-    text: "#501854",
-    textMuted: "#ac1668",
-    border: "#eee1ed",
-    input: "#e7c1dc",
-    accent: "#db2777",
-    accentForeground: "#ffffff",
-    secondary: "#f1c4e6",
-    secondaryForeground: "#77347c",
-    muted: "#eaa7cb",
-    mutedForeground: "#8d1255",
-    placeholder: "#8b5f90",
-    error: "#f7086c",
-    errorForeground: "#9d174d",
-    errorSurface: "#fde4f1",
-    messageSurface: "#f7def2",
-    messageForeground: "#492c61",
-    codeBackground: "#f5ecf9",
-    codeForeground: "#673c8b",
-    sidebar: "#f2e1f4",
-    sidebarForeground: "#454554",
-    sidebarMutedForeground: "#ac1668",
-    sidebarControlSurface: "#f8f8f7",
-  },
-  dark: {
-    canvas: "#1f1a24",
-    surface: "#29232d",
-    surfaceRaised: "#2c2631",
-    surfaceOverlay: "#100a0e",
-    text: "#f9f8fb",
-    textMuted: "#e7d0dd",
-    border: "#27242c",
-    input: "#302029",
-    accent: "#a3004c",
-    accentForeground: "#fbd0e8",
-    secondary: "#362d3d",
-    secondaryForeground: "#d4c7e1",
-    muted: "#423a45",
-    mutedForeground: "#e7d0dd",
-    placeholder: "#968d9f",
-    error: "#9d174d",
-    errorForeground: "#fbd0e8",
-    errorSurface: "#331a2b",
-    messageSurface: "#2b2431",
-    messageForeground: "#f2ebfa",
-    codeBackground: "#1f1a24",
-    codeForeground: "#d8c3ef",
-    sidebar: "#171018",
-    sidebarForeground: "#f4f4f5",
-    sidebarMutedForeground: "#e7d0dd",
-    sidebarControlSurface: "#261922",
-  },
-} satisfies MobileThemeVariants;
-
-const MANAGED_LIGHT_COLORS = {
-  text: "#241523",
-  accentForeground: "#fffaff",
-  secondaryForeground: "#241523",
-  error: "#fb2c36",
-  errorForeground: "#c10007",
-  messageForeground: "#241523",
-  codeForeground: "#241523",
-  sidebarForeground: "#241523",
-} as const;
-
-const MANAGED_DARK_COLORS = {
-  text: "#fffaff",
-  accentForeground: "#241523",
-  secondaryForeground: "#fffaff",
-  error: "#fb414a",
-  errorForeground: "#ff6467",
-  messageForeground: "#fffaff",
-  codeForeground: "#fffaff",
-  sidebarForeground: "#fffaff",
-} as const;
-
-function managedTheme(
-  light: Readonly<Partial<MobileCoreThemeColors>>,
-  dark: Readonly<Partial<MobileCoreThemeColors>>,
-) {
-  return {
-    light: { ...MANAGED_LIGHT_COLORS, ...light },
-    dark: { ...MANAGED_DARK_COLORS, ...dark },
-  } satisfies MobileThemeVariants;
-}
-
-const THEME_VARIANTS = {
-  "t3-chat": T3_CHAT_COLORS,
-  grove: managedTheme(
-    {
-      canvas: "#f3f7f4",
-      surface: "#f3f7f4",
-      surfaceRaised: "#ecefed",
-      surfaceOverlay: "#e7e9e8",
-      textMuted: "#746c73",
-      border: "#cbd5d1",
-      input: "#becbc5",
-      accent: "#1b7d50",
-      secondary: "#e2ede7",
-      muted: "#e6f0ea",
-      mutedForeground: "#6e696f",
-      placeholder: "#716971",
-      errorSurface: "#f4e7e5",
-      messageSurface: "#cce1d7",
-      codeBackground: "#eef1ef",
-      sidebar: "#e2ede7",
-      sidebarMutedForeground: "#6b666c",
-      sidebarControlSurface: "#d3dcd8",
-    },
-    {
-      canvas: "#1b2821",
-      surface: "#1b2821",
-      surfaceRaised: "#36413c",
-      surfaceOverlay: "#444d49",
-      textMuted: "#919595",
-      border: "#415f4f",
-      input: "#4f725f",
-      accent: "#69d69a",
-      secondary: "#2a4b39",
-      muted: "#253e31",
-      mutedForeground: "#9da5a2",
-      placeholder: "#a9abab",
-      errorSurface: "#3f2c28",
-      messageSurface: "#37664d",
-      codeBackground: "#28342e",
-      sidebar: "#21362b",
-      sidebarMutedForeground: "#9da3a2",
-      sidebarControlSurface: "#45554d",
-    },
-  ),
-  ocean: managedTheme(
-    {
-      canvas: "#f5f7f8",
-      surface: "#f5f7f8",
-      surfaceRaised: "#edeff1",
-      surfaceOverlay: "#e8e9eb",
-      textMuted: "#746c75",
-      border: "#cdd4dc",
-      input: "#c0c9d4",
-      accent: "#2672af",
-      secondary: "#e4ecf2",
-      muted: "#e8eff4",
-      mutedForeground: "#6f6873",
-      placeholder: "#716972",
-      errorSurface: "#f5e6e9",
-      messageSurface: "#d0dfeb",
-      codeBackground: "#f0f1f3",
-      sidebar: "#e4ecf2",
-      sidebarMutedForeground: "#6c6570",
-      sidebarControlSurface: "#d5dbe2",
-    },
-    {
-      canvas: "#17212b",
-      surface: "#17212b",
-      surfaceRaised: "#333b45",
-      surfaceOverlay: "#414851",
-      textMuted: "#8d8f97",
-      border: "#405567",
-      input: "#4f677b",
-      accent: "#70b9ee",
-      secondary: "#293f52",
-      muted: "#233544",
-      mutedForeground: "#969ca6",
-      placeholder: "#a4a4ac",
-      errorSurface: "#3c2630",
-      messageSurface: "#375871",
-      codeBackground: "#252e38",
-      sidebar: "#1e2d3b",
-      sidebarMutedForeground: "#989ca5",
-      sidebarControlSurface: "#424e5a",
-    },
-  ),
-  ember: managedTheme(
-    {
-      canvas: "#f9f7f5",
-      surface: "#f9f7f5",
-      surfaceRaised: "#f1efee",
-      surfaceOverlay: "#ece9e9",
-      textMuted: "#766c74",
-      border: "#ddd2ce",
-      input: "#d4c6c1",
-      accent: "#ae552a",
-      secondary: "#f3eae5",
-      muted: "#f4ede9",
-      mutedForeground: "#74686f",
-      placeholder: "#736971",
-      errorSurface: "#f9e7e6",
-      messageSurface: "#ebdad1",
-      codeBackground: "#f3f1f0",
-      sidebar: "#f3eae5",
-      sidebarMutedForeground: "#71646b",
-      sidebarControlSurface: "#e2d9d6",
-    },
-    {
-      canvas: "#291e1a",
-      surface: "#291e1a",
-      surfaceRaised: "#433835",
-      surfaceOverlay: "#4f4543",
-      textMuted: "#968e8f",
-      border: "#664c3f",
-      input: "#7a5d4d",
-      accent: "#f09a64",
-      secondary: "#513728",
-      muted: "#432e23",
-      mutedForeground: "#a59996",
-      placeholder: "#aba3a5",
-      errorSurface: "#4a2321",
-      messageSurface: "#704b34",
-      codeBackground: "#362b27",
-      sidebar: "#39281f",
-      sidebarMutedForeground: "#a49998",
-      sidebarControlSurface: "#584943",
-    },
-  ),
-  iris: managedTheme(
-    {
-      canvas: "#f8f7f9",
-      surface: "#f8f7f9",
-      surfaceRaised: "#f0eff2",
-      surfaceOverlay: "#ebe9ed",
-      textMuted: "#766c76",
-      border: "#d6d1de",
-      input: "#ccc5d6",
-      accent: "#7253b9",
-      secondary: "#edeaf4",
-      muted: "#f0edf6",
-      mutedForeground: "#726874",
-      placeholder: "#736973",
-      errorSurface: "#f8e6ea",
-      messageSurface: "#e0d9ee",
-      codeBackground: "#f2f1f4",
-      sidebar: "#edeaf4",
-      sidebarMutedForeground: "#6f6471",
-      sidebarControlSurface: "#ddd9e3",
-    },
-    {
-      canvas: "#1d1929",
-      surface: "#1d1929",
-      surfaceRaised: "#383443",
-      surfaceOverlay: "#454250",
-      textMuted: "#8e8a95",
-      border: "#4d4366",
-      input: "#5d527b",
-      accent: "#9d7df2",
-      secondary: "#362d51",
-      muted: "#2d2643",
-      mutedForeground: "#9690a1",
-      placeholder: "#a29ea8",
-      errorSurface: "#40202e",
-      messageSurface: "#4b3d72",
-      codeBackground: "#2a2736",
-      sidebar: "#272139",
-      sidebarMutedForeground: "#9792a0",
-      sidebarControlSurface: "#494459",
-    },
-  ),
-} satisfies Readonly<Record<Exclude<MobileBuiltInThemeId, "t3-code">, MobileThemeVariants>>;
-
-export function isMobileAppearanceMode(
-  value: StoredMobileThemeValue,
-): value is MobileAppearanceMode {
-  return MOBILE_APPEARANCE_OPTIONS.some((option) => option.id === value);
-}
-
-export function isMobileBuiltInThemeId(
-  value: StoredMobileThemeValue,
-): value is MobileBuiltInThemeId {
-  return MOBILE_THEME_OPTIONS.some((theme) => theme.id === value);
-}
+type MobileThemeVariable = `--color-${string}`;
+export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
 export function isMobileThemeId(
-  value: StoredMobileThemeValue,
-  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
+  value: string | undefined,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
 ): value is MobileThemeId {
-  return isMobileBuiltInThemeId(value) || importedThemes.some((theme) => theme.id === value);
+  return (
+    value !== undefined &&
+    (MOBILE_THEME_IDS.some((themeId) => themeId === value) ||
+      importedThemes.some((theme) => theme.id === value))
+  );
 }
 
-export function resolveMobileThemePreferences(
-  stored:
-    | {
-        readonly appearanceMode?: StoredMobileThemeValue;
-        readonly themeId?: StoredMobileThemeValue;
-      }
-    | null
-    | undefined,
-  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
-): MobileThemePreferences {
+export function normalizeMobileThemeId(
+  value: string | undefined,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
+): MobileThemeId {
+  return isMobileThemeId(value, importedThemes) ? value : DEFAULT_MOBILE_THEME_ID;
+}
+
+export function normalizeMobileThemeMode(value: string | undefined): MobileThemeMode {
+  return value === "light" || value === "dark" || value === "system" ? value : "system";
+}
+
+export function resolveMobileThemeIds(
+  preferences: {
+    readonly themeId?: string;
+    readonly lightThemeId?: string;
+    readonly darkThemeId?: string;
+  },
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
+): MobileThemeIds {
+  const legacyThemeId = normalizeMobileThemeId(preferences.themeId, importedThemes);
   return {
-    appearanceMode: isMobileAppearanceMode(stored?.appearanceMode)
-      ? stored.appearanceMode
-      : DEFAULT_MOBILE_APPEARANCE_MODE,
-    themeId: isMobileThemeId(stored?.themeId, importedThemes)
-      ? stored.themeId
-      : DEFAULT_MOBILE_THEME_ID,
+    light:
+      preferences.lightThemeId === undefined
+        ? legacyThemeId
+        : normalizeMobileThemeId(preferences.lightThemeId, importedThemes),
+    dark:
+      preferences.darkThemeId === undefined
+        ? legacyThemeId
+        : normalizeMobileThemeId(preferences.darkThemeId, importedThemes),
   };
+}
+
+export function mobileThemeHasAppearance(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  importedThemes: ReadonlyArray<PortableThemeFile>,
+): boolean {
+  const imported = importedThemes.find((theme) => theme.id === themeId);
+  return (
+    imported === undefined ||
+    imported.appearance === appearance ||
+    imported.variants?.[appearance] !== undefined
+  );
 }
 
 export function removeImportedMobileTheme(
-  importedThemes: ReadonlyArray<ImportedMobileTheme>,
+  importedThemes: ReadonlyArray<PortableThemeFile>,
   removedThemeId: string,
   selectedThemeId: MobileThemeId,
-): Readonly<{
-  importedThemes: ReadonlyArray<ImportedMobileTheme>;
-  themeId?: MobileThemeId;
-}> | null {
-  const next = importedThemes.filter((theme) => theme.id !== removedThemeId);
-  if (next.length === importedThemes.length) return null;
-  if (selectedThemeId === removedThemeId) {
-    return { importedThemes: next, themeId: DEFAULT_MOBILE_THEME_ID };
-  }
-  return { importedThemes: next };
-}
-
-export function resolveColorSchemeOverride(
-  mode: MobileAppearanceMode,
-): MobileThemeAppearance | null {
-  return mode === "system" ? null : mode;
-}
-
-export function resolveMobileThemeColors(
-  themeId: string,
-  appearance: MobileThemeAppearance,
-  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
-): MobileCoreThemeColors {
-  const fallback = T3_CODE_COLORS[appearance];
-  if (isMobileBuiltInThemeId(themeId)) {
-    if (themeId === "t3-code") return fallback;
-    return { ...fallback, ...THEME_VARIANTS[themeId][appearance] };
-  }
-
-  const theme = importedThemes.find((candidate) => candidate.id === themeId);
-  const overrides = theme ? getImportedThemeOverrides(theme, appearance) : null;
-  return overrides
-    ? { ...NORMALIZED_T3_CODE_COLORS[appearance], ...pickMobileCoreThemeColors(overrides) }
-    : fallback;
-}
-
-const BUILT_IN_MOBILE_THEME_PICKER_OPTIONS: ReadonlyArray<MobileThemePickerOption> =
-  MOBILE_THEME_OPTIONS.map((theme) => ({
-    ...theme,
-    imported: false,
-    light: resolveMobileThemeColors(theme.id, "light"),
-    dark: resolveMobileThemeColors(theme.id, "dark"),
-  }));
-
-export function resolveMobileThemePickerOptions(
-  importedThemes: ReadonlyArray<ImportedMobileTheme>,
-): ReadonlyArray<MobileThemePickerOption> {
-  return [
-    ...BUILT_IN_MOBILE_THEME_PICKER_OPTIONS,
-    ...importedThemes.map((theme) => ({
-      id: theme.id,
-      label: theme.name,
-      imported: true,
-      light: resolveMobileThemeColors(theme.id, "light", importedThemes),
-      dark: resolveMobileThemeColors(theme.id, "dark", importedThemes),
-    })),
-  ];
-}
-
-function getImportedThemeOverrides(
-  theme: ImportedMobileTheme,
-  appearance: MobileThemeAppearance,
-): PortableThemeColorOverrides | null {
-  return appearance === theme.appearance ? theme.colors : (theme.variants?.[appearance] ?? null);
-}
-
-function pickMobileCoreThemeColors(
-  colors: PortableThemeColorOverrides,
-): Readonly<Partial<MobileCoreThemeColors>> {
-  const overrides: { -readonly [Role in keyof MobileCoreThemeColors]?: string } = {};
-  // SAFETY: T3_CODE_COLORS.light is a closed MobileCoreThemeColors object.
-  for (const role of Object.keys(T3_CODE_COLORS.light) as Array<keyof MobileCoreThemeColors>) {
-    const color = colors[role];
-    if (color) overrides[role] = color;
-  }
-  return overrides;
-}
-
-export function resolveMobileNativeSurfaceColors(
-  themeId: string,
-  appearance: MobileThemeAppearance,
-  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
-): MobileNativeSurfaceColors | null {
-  if (themeId === "t3-code") return null;
-  const builtIn = isMobileBuiltInThemeId(themeId);
-  const importedTheme = importedThemes.find((candidate) => candidate.id === themeId);
-  if (!builtIn && !importedTheme) return null;
-
-  const portableColors = importedTheme
-    ? getImportedThemeOverrides(importedTheme, appearance)
-    : null;
-  if (importedTheme && !portableColors) return null;
-
-  const colors = resolveMobileThemeColors(themeId, appearance, importedThemes);
-  return {
-    terminalBackground: portableColors?.terminalBackground ?? colors.canvas,
-    terminalForeground: portableColors?.terminalForeground ?? colors.text,
-    terminalCursor: portableColors?.terminalCursor ?? colors.accent,
-    sheetBackground: withAlpha(colors.canvas, "fa"),
-    foreground: colors.text,
-    mutedForeground: colors.textMuted,
-    border: colors.border,
-    accent: colors.accent,
-  };
-}
-
-/** Keeps the shipped T3 Code sheet bytes while resolving selected-theme surfaces. */
-export function resolveMobileFormSheetBackground(
-  themeId: string,
-  appearance: MobileThemeAppearance,
-  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
-): string {
-  const nativeSurfaceColors = resolveMobileNativeSurfaceColors(themeId, appearance, importedThemes);
-  return nativeSurfaceColors?.sheetBackground ?? (appearance === "dark" ? "#0e0e0e" : "#f2f2f7");
-}
-
-export function withAlpha(color: string, alpha: string): string {
-  if (!/^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(color) || !/^[\da-f]{2}$/i.test(alpha)) {
-    throw new Error(`Expected a 6- or 8-digit hex color and 2-digit alpha, received ${color}`);
-  }
-  const existingAlpha = color.length === 9 ? Number.parseInt(color.slice(7), 16) : 255;
-  const requestedAlpha = Number.parseInt(alpha, 16);
-  const combinedAlpha = Math.round((existingAlpha * requestedAlpha) / 255);
-  return `${color.slice(0, 7)}${combinedAlpha.toString(16).padStart(2, "0")}`;
-}
-
-const T3_CODE_MARKDOWN_VARIABLES = {
-  light: {
-    "--color-md-body": "#111111",
-    "--color-md-strong": "#000000",
-    "--color-md-link": "#2563eb",
-    "--color-md-blockquote-border": "rgba(0, 0, 0, 0.08)",
-    "--color-md-blockquote-bg": "rgba(0, 0, 0, 0.02)",
-    "--color-md-code-bg": "rgba(0, 0, 0, 0.04)",
-    "--color-md-code-text": "#262626",
-    "--color-md-inline-code-text": "#5f6368",
-    "--color-md-user-code-bg": "rgba(255, 255, 255, 0.22)",
-    "--color-md-user-code-text": "#ffffff",
-    "--color-md-user-inline-code-text": "rgba(255, 255, 255, 0.82)",
-    "--color-md-user-fence-bg": "rgba(0, 0, 0, 0.16)",
-    "--color-md-user-fence-text": "#ffffff",
-    "--color-md-hr": "rgba(0, 0, 0, 0.08)",
-    "--color-user-bubble": "#007aff",
-    "--color-user-bubble-foreground": "#ffffff",
-    "--color-user-bubble-foreground-muted": "rgba(255, 255, 255, 0.78)",
-  },
-  dark: {
-    "--color-md-body": "#e5e5e5",
-    "--color-md-strong": "#f5f5f5",
-    "--color-md-link": "#60a5fa",
-    "--color-md-blockquote-border": "rgba(255, 255, 255, 0.1)",
-    "--color-md-blockquote-bg": "rgba(255, 255, 255, 0.03)",
-    "--color-md-code-bg": "rgba(255, 255, 255, 0.06)",
-    "--color-md-code-text": "#e5e5e5",
-    "--color-md-inline-code-text": "#b8bcc2",
-    "--color-md-user-code-bg": "rgba(255, 255, 255, 0.18)",
-    "--color-md-user-code-text": "#ffffff",
-    "--color-md-user-inline-code-text": "rgba(255, 255, 255, 0.82)",
-    "--color-md-user-fence-bg": "rgba(0, 0, 0, 0.28)",
-    "--color-md-user-fence-text": "#ffffff",
-    "--color-md-hr": "rgba(255, 255, 255, 0.08)",
-    "--color-user-bubble": "#0a84ff",
-    "--color-user-bubble-foreground": "#ffffff",
-    "--color-user-bubble-foreground-muted": "rgba(255, 255, 255, 0.78)",
-  },
-} as const;
-
-const T3_CODE_VARIABLES = {
-  light: {
-    "--color-screen": "#f2f2f7",
-    "--color-sheet": "rgba(242, 242, 247, 0.98)",
-    "--color-card": "#ffffff",
-    "--color-card-alt": "#f5f5f5",
-    "--color-card-translucent": "rgba(255, 255, 255, 0.8)",
-    "--color-foreground": "#262626",
-    "--color-foreground-secondary": "#525252",
-    "--color-foreground-muted": "#737373",
-    "--color-foreground-tertiary": "#8e8e93",
-    "--color-border": "rgba(0, 0, 0, 0.08)",
-    "--color-border-subtle": "rgba(0, 0, 0, 0.06)",
-    "--color-separator": "rgba(0, 0, 0, 0.04)",
-    "--color-subtle": "rgba(0, 0, 0, 0.04)",
-    "--color-subtle-strong": "rgba(0, 0, 0, 0.08)",
-    "--color-inline-skill-background": "rgba(217, 70, 239, 0.12)",
-    "--color-inline-skill-border": "rgba(217, 70, 239, 0.25)",
-    "--color-inline-skill-foreground": "#a21caf",
-    "--color-primary": "#262626",
-    "--color-primary-foreground": "#ffffff",
-    "--color-primary-shadow": "rgba(0, 0, 0, 0.18)",
-    "--color-secondary": "#ffffff",
-    "--color-secondary-foreground": "#262626",
-    "--color-secondary-border": "rgba(0, 0, 0, 0.08)",
-    "--color-switch-active": "#34c759",
-    "--color-danger": "#fef2f2",
-    "--color-danger-border": "rgba(239, 68, 68, 0.12)",
-    "--color-danger-foreground": "#dc2626",
-    "--color-input": "#ffffff",
-    "--color-input-border": "rgba(0, 0, 0, 0.1)",
-    "--color-sidebar-search": "rgba(118, 118, 128, 0.12)",
-    "--color-placeholder": "#a3a3a3",
-    "--color-icon": "#262626",
-    "--color-icon-muted": "#525252",
-    "--color-icon-subtle": "#a3a3a3",
-    "--color-header": "rgba(255, 255, 255, 0.97)",
-    "--color-header-border": "rgba(0, 0, 0, 0.06)",
-    "--color-glass-surface": "rgba(255, 255, 255, 0.72)",
-    "--color-glass-tint": "rgba(255, 255, 255, 0.18)",
-    "--color-status-bar": "#f2f2f7",
-    ...T3_CODE_MARKDOWN_VARIABLES.light,
-    "--color-backdrop": "rgba(0, 0, 0, 0.22)",
-    "--color-drawer": "rgba(255, 255, 255, 0.99)",
-    "--color-drawer-shadow": "rgba(0, 0, 0, 0.12)",
-    "--color-dot-separator": "rgba(0, 0, 0, 0.2)",
-    "--color-wordmark": "#262626",
-    "--color-chevron": "rgba(0, 0, 0, 0.2)",
-  },
-  dark: {
-    "--color-screen": "#0a0a0a",
-    "--color-sheet": "rgba(14, 14, 14, 0.98)",
-    "--color-card": "#171717",
-    "--color-card-alt": "#1c1c1c",
-    "--color-card-translucent": "rgba(17, 17, 17, 0.8)",
-    "--color-foreground": "#f5f5f5",
-    "--color-foreground-secondary": "#a3a3a3",
-    "--color-foreground-muted": "#8e8e93",
-    "--color-foreground-tertiary": "#636366",
-    "--color-border": "rgba(255, 255, 255, 0.06)",
-    "--color-border-subtle": "rgba(255, 255, 255, 0.04)",
-    "--color-separator": "rgba(255, 255, 255, 0.03)",
-    "--color-subtle": "rgba(255, 255, 255, 0.04)",
-    "--color-subtle-strong": "rgba(255, 255, 255, 0.08)",
-    "--color-inline-skill-background": "rgba(217, 70, 239, 0.12)",
-    "--color-inline-skill-border": "rgba(217, 70, 239, 0.25)",
-    "--color-inline-skill-foreground": "#f0abfc",
-    "--color-primary": "#f5f5f5",
-    "--color-primary-foreground": "#0a0a0a",
-    "--color-primary-shadow": "rgba(0, 0, 0, 0.22)",
-    "--color-secondary": "rgba(255, 255, 255, 0.04)",
-    "--color-secondary-foreground": "#f5f5f5",
-    "--color-secondary-border": "rgba(255, 255, 255, 0.06)",
-    "--color-switch-active": "#30d158",
-    "--color-danger": "rgba(239, 68, 68, 0.14)",
-    "--color-danger-border": "rgba(248, 113, 113, 0.18)",
-    "--color-danger-foreground": "#fca5a5",
-    "--color-input": "#141414",
-    "--color-input-border": "rgba(255, 255, 255, 0.08)",
-    "--color-sidebar-search": "rgba(118, 118, 128, 0.24)",
-    "--color-placeholder": "#8e8e93",
-    "--color-icon": "#f5f5f5",
-    "--color-icon-muted": "#a3a3a3",
-    "--color-icon-subtle": "#8e8e93",
-    "--color-header": "rgba(10, 10, 10, 0.97)",
-    "--color-header-border": "rgba(255, 255, 255, 0.06)",
-    "--color-glass-surface": "rgba(23, 23, 23, 0.78)",
-    "--color-glass-tint": "rgba(23, 23, 23, 0.24)",
-    "--color-status-bar": "#0a0a0a",
-    ...T3_CODE_MARKDOWN_VARIABLES.dark,
-    "--color-backdrop": "rgba(0, 0, 0, 0.48)",
-    "--color-drawer": "rgba(14, 14, 14, 0.99)",
-    "--color-drawer-shadow": "rgba(0, 0, 0, 0.32)",
-    "--color-dot-separator": "rgba(255, 255, 255, 0.2)",
-    "--color-wordmark": "#f5f5f5",
-    "--color-chevron": "rgba(255, 255, 255, 0.2)",
-  },
-} as const;
-
-/** Maps web theme roles onto the smaller mobile token surface. */
-export function resolveMobileThemeVariables(
-  themeId: string,
-  appearance: MobileThemeAppearance,
-  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
 ) {
-  if (!isMobileThemeId(themeId, importedThemes) || themeId === "t3-code") {
-    return T3_CODE_VARIABLES[appearance];
+  if (!importedThemes.some((theme) => theme.id === removedThemeId)) return null;
+  if (selectedThemeId === removedThemeId) {
+    return {
+      importedThemes: importedThemes.filter((theme) => theme.id !== removedThemeId),
+      themeId: DEFAULT_MOBILE_THEME_ID,
+    };
   }
-
-  const importedTheme = importedThemes.find((candidate) => candidate.id === themeId);
-  if (importedTheme && !getImportedThemeOverrides(importedTheme, appearance)) {
-    return T3_CODE_VARIABLES[appearance];
-  }
-
-  const colors = resolveMobileThemeColors(themeId, appearance, importedThemes);
-  const dark = appearance === "dark";
-  const markdownVariables = {
-    "--color-md-body": colors.text,
-    "--color-md-strong": colors.text,
-    "--color-md-link": colors.accent,
-    "--color-md-blockquote-border": colors.border,
-    "--color-md-blockquote-bg": colors.muted,
-    "--color-md-code-bg": colors.codeBackground,
-    "--color-md-code-text": colors.codeForeground,
-    "--color-md-inline-code-text": colors.textMuted,
-    "--color-md-user-code-bg": withAlpha(colors.messageForeground, "38"),
-    "--color-md-user-code-text": colors.messageForeground,
-    "--color-md-user-inline-code-text": withAlpha(colors.messageForeground, "d1"),
-    "--color-md-user-fence-bg": withAlpha(colors.text, dark ? "47" : "29"),
-    "--color-md-user-fence-text": colors.messageForeground,
-    "--color-md-hr": colors.border,
-    "--color-user-bubble": colors.messageSurface,
-    "--color-user-bubble-foreground": colors.messageForeground,
-    "--color-user-bubble-foreground-muted": withAlpha(colors.messageForeground, "c7"),
-  };
-
   return {
-    "--color-screen": colors.canvas,
-    "--color-sheet": withAlpha(colors.canvas, "fa"),
-    "--color-card": colors.surface,
-    "--color-card-alt": colors.surfaceRaised,
-    "--color-card-translucent": withAlpha(colors.surface, "cc"),
-    "--color-foreground": colors.text,
-    "--color-foreground-secondary": colors.mutedForeground,
-    "--color-foreground-muted": colors.textMuted,
-    "--color-foreground-tertiary": colors.placeholder,
-    "--color-border": colors.border,
-    "--color-border-subtle": withAlpha(colors.border, dark ? "b3" : "cc"),
-    "--color-separator": withAlpha(colors.border, "99"),
-    "--color-subtle": colors.muted,
-    "--color-subtle-strong": colors.secondary,
-    "--color-inline-skill-background": withAlpha(colors.accent, "1f"),
-    "--color-inline-skill-border": withAlpha(colors.accent, "40"),
-    "--color-inline-skill-foreground": colors.accent,
-    "--color-primary": colors.accent,
-    "--color-primary-foreground": colors.accentForeground,
-    "--color-primary-shadow": withAlpha(colors.text, dark ? "38" : "2e"),
-    "--color-secondary": colors.secondary,
-    "--color-secondary-foreground": colors.secondaryForeground,
-    "--color-secondary-border": colors.border,
-    "--color-switch-active": colors.accent,
-    "--color-danger": colors.errorSurface,
-    "--color-danger-border": colors.error,
-    "--color-danger-foreground": colors.errorForeground,
-    "--color-input": colors.surface,
-    "--color-input-border": colors.input,
-    "--color-sidebar-search": colors.sidebarControlSurface,
-    "--color-placeholder": colors.placeholder,
-    "--color-icon": colors.text,
-    "--color-icon-muted": colors.textMuted,
-    "--color-icon-subtle": colors.placeholder,
-    "--color-header": withAlpha(colors.canvas, "f7"),
-    "--color-header-border": colors.border,
-    "--color-glass-surface": withAlpha(colors.surface, "c7"),
-    "--color-glass-tint": withAlpha(colors.surfaceRaised, "3d"),
-    "--color-status-bar": colors.canvas,
-    ...markdownVariables,
-    "--color-backdrop": dark ? "#0000007a" : "#00000038",
-    "--color-drawer": withAlpha(colors.sidebar, "fc"),
-    "--color-drawer-shadow": dark ? "#00000052" : "#0000001f",
-    "--color-dot-separator": withAlpha(colors.text, "33"),
-    "--color-wordmark": colors.text,
-    "--color-chevron": withAlpha(colors.text, "33"),
+    importedThemes: importedThemes.filter((theme) => theme.id !== removedThemeId),
+  };
+}
+
+export function createMobileThemeSelectionPatch(
+  themeIds: MobileThemeIds,
+  activeAppearance: MobileThemeAppearance,
+  selectedAppearance: MobileThemeAppearance,
+  value: MobileThemeId,
+) {
+  const nextThemeIds: MobileThemeIds = {
+    light: selectedAppearance === "light" ? value : themeIds.light,
+    dark: selectedAppearance === "dark" ? value : themeIds.dark,
+  };
+  return {
+    lightThemeId: nextThemeIds.light,
+    darkThemeId: nextThemeIds.dark,
+    // Keep older OTA bundles on the theme for the appearance currently in use.
+    themeId: nextThemeIds[activeAppearance],
+  };
+}
+
+export function createMobileThemePairPatch(value: MobileThemeId) {
+  return {
+    lightThemeId: value,
+    darkThemeId: value,
+    themeId: value,
+  };
+}
+
+const OKLCH_PATTERN = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/;
+
+function linearToSrgb(value: number): number {
+  const converted = value <= 0.0031308 ? 12.92 * value : 1.055 * value ** (1 / 2.4) - 0.055;
+  return Math.round(Math.min(1, Math.max(0, converted)) * 255);
+}
+
+/** React Native does not accept OKLCH ColorValues, so palettes cross the app boundary as sRGB. */
+export function themeColorToNativeColor(value: string): string {
+  const match = OKLCH_PATTERN.exec(value);
+  if (!match) return value;
+
+  const lightness = Number(match[1]);
+  const chroma = Number(match[2]);
+  const hue = (Number(match[3]) * Math.PI) / 180;
+  const alpha = match[4] === undefined ? 1 : Number(match[4]);
+  const a = chroma * Math.cos(hue);
+  const b = chroma * Math.sin(hue);
+  const lPrime = lightness + 0.3963377774 * a + 0.2158037573 * b;
+  const mPrime = lightness - 0.1055613458 * a - 0.0638541728 * b;
+  const sPrime = lightness - 0.0894841775 * a - 1.291485548 * b;
+  const l = lPrime ** 3;
+  const m = mPrime ** 3;
+  const s = sPrime ** 3;
+  const red = linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
+  const green = linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
+  const blue = linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
+
+  return alpha < 1
+    ? `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(4))})`
+    : `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function nativeColors(colors: ThemeColors): ThemeColors {
+  return Object.fromEntries(
+    Object.entries(colors).map(([role, color]) => [role, themeColorToNativeColor(color)]),
+  ) as ThemeColors;
+}
+
+function withAlpha(color: string, alpha: number): string {
+  const hex = color.startsWith("#") ? color.slice(1) : "";
+  if (hex.length !== 6) return color;
+  const [red, green, blue] = [0, 2, 4].map((offset) =>
+    Number.parseInt(hex.slice(offset, offset + 2), 16),
+  );
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function rgbChannels(color: string): readonly [number, number, number] | null {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+  return match
+    ? [Number.parseInt(match[1], 16), Number.parseInt(match[2], 16), Number.parseInt(match[3], 16)]
+    : null;
+}
+
+function relativeLuminance(channels: readonly [number, number, number]): number {
+  const [red, green, blue] = channels.map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+}
+
+function contrastRatio(
+  first: readonly [number, number, number],
+  second: readonly [number, number, number],
+): number {
+  const firstLuminance = relativeLuminance(first);
+  const secondLuminance = relativeLuminance(second);
+  return (
+    (Math.max(firstLuminance, secondLuminance) + 0.05) /
+    (Math.min(firstLuminance, secondLuminance) + 0.05)
+  );
+}
+
+/** Preserve the theme's action hue while making it readable as skill text on a message bubble. */
+function readableMessageAccent(accent: string, surface: string): string {
+  const accentChannels = rgbChannels(accent);
+  const surfaceChannels = rgbChannels(surface);
+  if (
+    !accentChannels ||
+    !surfaceChannels ||
+    contrastRatio(accentChannels, surfaceChannels) >= 4.5
+  ) {
+    return accent;
+  }
+
+  const black = [0, 0, 0] as const;
+  const white = [255, 255, 255] as const;
+  const target =
+    contrastRatio(black, surfaceChannels) >= contrastRatio(white, surfaceChannels) ? black : white;
+  let readable: readonly [number, number, number] = target;
+  let lowerAmount = 0;
+  let upperAmount = 1;
+  for (let index = 0; index < 12; index += 1) {
+    const amount = (lowerAmount + upperAmount) / 2;
+    const candidate: readonly [number, number, number] = [
+      Math.round(accentChannels[0] + (target[0] - accentChannels[0]) * amount),
+      Math.round(accentChannels[1] + (target[1] - accentChannels[1]) * amount),
+      Math.round(accentChannels[2] + (target[2] - accentChannels[2]) * amount),
+    ];
+    if (contrastRatio(candidate, surfaceChannels) >= 4.5) {
+      readable = candidate;
+      upperAmount = amount;
+    } else {
+      lowerAmount = amount;
+    }
+  }
+  return `#${readable.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function themeColorWithAlpha(color: string, alpha: number): string {
+  const hex = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+  if (hex) {
+    return `rgba(${Number.parseInt(hex[1], 16)}, ${Number.parseInt(hex[2], 16)}, ${Number.parseInt(hex[3], 16)}, ${alpha})`;
+  }
+  const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/.exec(color);
+  return rgb ? `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})` : color;
+}
+
+export function createMobileThemeVariables(
+  colors: ThemeColors,
+  appearance: MobileThemeAppearance,
+): MobileThemeVariables {
+  const c = nativeColors(colors);
+  return {
+    "--color-screen": c.canvas,
+    "--color-sheet": withAlpha(c.chrome, 0.98),
+    "--color-sheet-solid": c.chrome,
+    "--color-card": c.surfaceRaised,
+    "--color-card-alt": c.surface,
+    "--color-card-translucent": withAlpha(c.surfaceRaised, 0.8),
+    "--color-foreground": c.text,
+    "--color-foreground-secondary": c.textMuted,
+    "--color-foreground-muted": c.mutedForeground,
+    "--color-foreground-tertiary": c.secondaryLabel,
+    "--color-border": c.border,
+    "--color-border-subtle": withAlpha(c.border, 0.7),
+    "--color-separator": withAlpha(c.border, 0.55),
+    "--color-subtle": c.muted,
+    "--color-subtle-strong": c.secondary,
+    "--color-inline-skill-background": c.accentSurface,
+    "--color-inline-skill-border": withAlpha(c.accent, 0.42),
+    "--color-inline-skill-foreground": c.accentSurfaceForeground,
+    "--color-primary": c.accent,
+    "--color-primary-foreground": c.accentForeground,
+    "--color-primary-shadow": "#000000",
+    "--color-secondary": c.secondary,
+    "--color-secondary-foreground": c.secondaryForeground,
+    "--color-secondary-border": c.border,
+    "--color-switch-active-track": c.accent,
+    "--color-switch-active-thumb": c.accentForeground,
+    "--color-switch-inactive-track": c.secondary,
+    "--color-switch-inactive-thumb": c.mutedForeground,
+    "--color-danger": c.errorSurface,
+    "--color-danger-border": withAlpha(c.error, 0.32),
+    "--color-danger-foreground": c.errorForeground,
+    "--color-input": c.surfaceRaised,
+    "--color-input-border": c.input,
+    "--color-sidebar-search": c.sidebarControlSurface,
+    "--color-placeholder": c.placeholder,
+    "--color-icon": c.text,
+    "--color-icon-muted": c.iconMuted,
+    "--color-icon-subtle": c.secondaryLabel,
+    "--color-header": withAlpha(c.toolbar, 0.97),
+    "--color-header-border": c.toolbarBorder,
+    "--color-glass-surface": withAlpha(c.surfaceOverlay, 0.74),
+    "--color-glass-tint": withAlpha(c.surfaceOverlay, 0.22),
+    "--color-status-bar": c.canvas,
+    "--color-md-body": c.text,
+    "--color-md-strong": c.toolbarForeground,
+    "--color-md-link": c.accent,
+    "--color-md-blockquote-border": c.border,
+    "--color-md-blockquote-bg": c.muted,
+    "--color-md-code-bg": c.codeBackground,
+    "--color-md-code-text": c.codeForeground,
+    "--color-md-inline-code-text": c.mutedForeground,
+    "--color-md-user-code-bg": withAlpha(c.messageForeground, 0.18),
+    "--color-md-user-code-text": c.messageForeground,
+    "--color-md-user-inline-code-text": withAlpha(c.messageForeground, 0.82),
+    "--color-md-user-fence-bg": withAlpha("#000000", appearance === "dark" ? 0.28 : 0.16),
+    "--color-md-user-fence-text": c.messageForeground,
+    "--color-md-hr": c.border,
+    "--color-user-bubble": c.messageSurface,
+    "--color-user-bubble-foreground": c.messageForeground,
+    "--color-user-bubble-foreground-muted": withAlpha(c.messageForeground, 0.78),
+    "--color-user-bubble-skill-foreground": readableMessageAccent(
+      c.messageAction,
+      c.messageSurface,
+    ),
+    "--color-backdrop": withAlpha("#000000", appearance === "dark" ? 0.48 : 0.22),
+    "--color-drawer": withAlpha(c.sidebar, 0.99),
+    "--color-drawer-shadow": withAlpha("#000000", appearance === "dark" ? 0.32 : 0.12),
+    "--color-dot-separator": withAlpha(c.textMuted, 0.35),
+    "--color-wordmark": c.text,
+    "--color-chevron": withAlpha(c.textMuted, 0.42),
+  };
+}
+
+function getDefaultMobileThemeColors(appearance: MobileThemeAppearance): ThemeColors {
+  const variables = DEFAULT_MOBILE_THEME_VARIABLES[appearance];
+  return {
+    canvas: variables["--color-screen"],
+    chrome: variables["--color-sheet-solid"],
+    toolbar: variables["--color-header"],
+    toolbarForeground: variables["--color-foreground"],
+    toolbarBorder: variables["--color-header-border"],
+    toolbarControl: variables["--color-card"],
+    toolbarControlForeground: variables["--color-foreground"],
+    toolbarControlHover: variables["--color-subtle"],
+    surface: variables["--color-card-alt"],
+    surfaceRaised: variables["--color-card"],
+    surfaceOverlay: variables["--color-glass-surface"],
+    text: variables["--color-foreground"],
+    textMuted: variables["--color-foreground-secondary"],
+    border: variables["--color-border"],
+    input: variables["--color-input-border"],
+    focus: variables["--color-primary"],
+    accent: variables["--color-primary"],
+    accentForeground: variables["--color-primary-foreground"],
+    secondary: variables["--color-secondary"],
+    secondaryForeground: variables["--color-secondary-foreground"],
+    muted: variables["--color-subtle"],
+    mutedForeground: variables["--color-foreground-muted"],
+    placeholder: variables["--color-placeholder"],
+    secondaryLabel: variables["--color-foreground-tertiary"],
+    iconMuted: variables["--color-icon-muted"],
+    error: variables["--color-danger-border"],
+    errorForeground: variables["--color-danger-foreground"],
+    errorSurface: variables["--color-danger"],
+    warning: variables["--color-primary"],
+    warningForeground: variables["--color-primary-foreground"],
+    warningSurface: variables["--color-subtle"],
+    update: variables["--color-primary"],
+    updateForeground: variables["--color-primary-foreground"],
+    updateSurface: variables["--color-subtle"],
+    accentSurface: variables["--color-inline-skill-background"],
+    accentSurfaceForeground: variables["--color-inline-skill-foreground"],
+    messageSurface: variables["--color-user-bubble"],
+    messageForeground: variables["--color-user-bubble-foreground"],
+    messageAction: variables["--color-user-bubble-skill-foreground"],
+    messageActionForeground: variables["--color-user-bubble-foreground"],
+    messageActionHover: variables["--color-user-bubble-foreground-muted"],
+    codeBackground: variables["--color-md-code-bg"],
+    codeForeground: variables["--color-md-code-text"],
+    sidebar: variables["--color-drawer"],
+    sidebarForeground: variables["--color-foreground"],
+    sidebarMutedForeground: variables["--color-foreground-secondary"],
+    sidebarControlSurface: variables["--color-sidebar-search"],
+    sidebarRowHover: variables["--color-subtle"],
+    sidebarRowActive: variables["--color-subtle-strong"],
+    sidebarRowSelected: variables["--color-secondary"],
+    sidebarBorder: variables["--color-border"],
+    terminalBackground: variables["--color-screen"],
+    terminalForeground: variables["--color-md-code-text"],
+    terminalCursor: variables["--color-primary"],
+    terminalSelection: variables["--color-subtle-strong"],
+    terminalScrollbar: variables["--color-foreground-tertiary"],
+    terminalScrollbarHover: variables["--color-foreground-muted"],
+  };
+}
+
+export function getImportedMobileThemeColors(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  importedThemes: ReadonlyArray<PortableThemeFile>,
+): ThemeColors | null {
+  const theme = importedThemes.find((candidate) => candidate.id === themeId);
+  if (!theme) return null;
+  const overrides = theme.appearance === appearance ? theme.colors : theme.variants?.[appearance];
+  return overrides ? { ...getDefaultMobileThemeColors(appearance), ...overrides } : null;
+}
+
+export function getMobileThemeVariables(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  overrides: Partial<MobileThemeVariables> | null = null,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
+): MobileThemeVariables {
+  const baseVariables = (() => {
+    if (themeId === DEFAULT_MOBILE_THEME_ID) return DEFAULT_MOBILE_THEME_VARIABLES[appearance];
+    const importedColors = getImportedMobileThemeColors(themeId, appearance, importedThemes);
+    if (importedColors) return createMobileThemeVariables(importedColors, appearance);
+    const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+    if (!theme) return DEFAULT_MOBILE_THEME_VARIABLES[appearance];
+    const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
+    return createMobileThemeVariables(colors, appearance);
+  })();
+
+  // The complete base record guarantees that optional overrides cannot leave a token undefined.
+  return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
+}
+
+export function getMobileThemePreviewColors(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
+): ThemePreviewColors {
+  if (themeId === DEFAULT_MOBILE_THEME_ID) return STANDARD_THEME_PREVIEW_COLORS[appearance];
+  const importedColors = getImportedMobileThemeColors(themeId, appearance, importedThemes);
+  if (importedColors) {
+    return {
+      canvas: themeColorToNativeColor(importedColors.canvas),
+      accent: themeColorToNativeColor(importedColors.accent),
+      messageAction: themeColorToNativeColor(importedColors.messageAction),
+    };
+  }
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+  if (!theme) return STANDARD_THEME_PREVIEW_COLORS[appearance];
+  const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
+  return {
+    canvas: themeColorToNativeColor(colors.canvas),
+    accent: themeColorToNativeColor(colors.accent),
+    messageAction: themeColorToNativeColor(colors.messageAction),
   };
 }

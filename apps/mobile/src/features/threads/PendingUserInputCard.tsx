@@ -257,14 +257,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               <Text className="font-sans text-base leading-snug text-neutral-950 dark:text-neutral-50">
                 {question.question}
               </Text>
-              <View className="flex-row flex-wrap gap-2.5">
+              <View className="gap-2">
                 {question.options.map((option) => {
                   const selected = isPendingUserInputOptionSelected(draft, option.label);
+                  const description =
+                    option.description !== option.label ? option.description : undefined;
                   return (
                     <Pressable
                       key={option.label}
                       className={cn(
-                        "rounded-full border px-3 py-2.5 ",
+                        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
                         selected
                           ? "border-blue-300/50 bg-blue-50 dark:border-blue-400/28 dark:bg-blue-400/14"
                           : "border-neutral-200 bg-white dark:border-white/6 dark:bg-neutral-950/70",
@@ -277,16 +279,23 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         )
                       }
                     >
-                      <Text
-                        className={cn(
-                          "font-t3-bold text-sm",
-                          selected
-                            ? "text-sky-700 dark:text-sky-300"
-                            : "text-neutral-600 dark:text-neutral-300",
-                        )}
-                      >
-                        {option.label}
-                      </Text>
+                      <View className="min-w-0 flex-1 gap-0.5">
+                        <Text
+                          className={cn(
+                            "font-t3-bold text-sm",
+                            selected
+                              ? "text-sky-700 dark:text-sky-300"
+                              : "text-neutral-700 dark:text-neutral-200",
+                          )}
+                        >
+                          {option.label}
+                        </Text>
+                        {description ? (
+                          <Text className="font-sans text-sm leading-5 text-neutral-500 dark:text-neutral-400">
+                            {description}
+                          </Text>
+                        ) : null}
+                      </View>
                     </Pressable>
                   );
                 })}

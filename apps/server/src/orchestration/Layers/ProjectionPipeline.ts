@@ -1620,9 +1620,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       const appearanceMode = event.payload.patch.appearanceMode ?? null;
       const appearanceModeUpdatedAt =
         event.payload.patch.appearanceMode === undefined ? null : event.payload.updatedAt;
-      const themeId = event.payload.patch.themeId ?? null;
-      const themeIdUpdatedAt =
-        event.payload.patch.themeId === undefined ? null : event.payload.updatedAt;
+      const lightThemeId = event.payload.patch.lightThemeId ?? null;
+      const lightThemeIdUpdatedAt =
+        event.payload.patch.lightThemeId === undefined ? null : event.payload.updatedAt;
+      const darkThemeId = event.payload.patch.darkThemeId ?? null;
+      const darkThemeIdUpdatedAt =
+        event.payload.patch.darkThemeId === undefined ? null : event.payload.updatedAt;
       return sql`
         INSERT INTO projection_synced_client_preferences (
           singleton_id,
@@ -1630,8 +1633,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           plan_mode_enabled_updated_at,
           appearance_mode,
           appearance_mode_updated_at,
-          theme_id,
-          theme_id_updated_at,
+          light_theme_id,
+          light_theme_id_updated_at,
+          dark_theme_id,
+          dark_theme_id_updated_at,
           updated_at
         )
         VALUES (
@@ -1640,8 +1645,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           ${planModeEnabledUpdatedAt},
           ${appearanceMode},
           ${appearanceModeUpdatedAt},
-          ${themeId},
-          ${themeIdUpdatedAt},
+          ${lightThemeId},
+          ${lightThemeIdUpdatedAt},
+          ${darkThemeId},
+          ${darkThemeIdUpdatedAt},
           ${event.payload.updatedAt}
         )
         ON CONFLICT (singleton_id)
@@ -1682,23 +1689,41 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             THEN excluded.appearance_mode_updated_at
             ELSE appearance_mode_updated_at
           END,
-          theme_id = CASE
-            WHEN excluded.theme_id_updated_at IS NOT NULL
+          light_theme_id = CASE
+            WHEN excluded.light_theme_id_updated_at IS NOT NULL
               AND (
-                theme_id_updated_at IS NULL
-                OR excluded.theme_id_updated_at >= theme_id_updated_at
+                light_theme_id_updated_at IS NULL
+                OR excluded.light_theme_id_updated_at >= light_theme_id_updated_at
               )
-            THEN excluded.theme_id
-            ELSE theme_id
+            THEN excluded.light_theme_id
+            ELSE light_theme_id
           END,
-          theme_id_updated_at = CASE
-            WHEN excluded.theme_id_updated_at IS NOT NULL
+          light_theme_id_updated_at = CASE
+            WHEN excluded.light_theme_id_updated_at IS NOT NULL
               AND (
-                theme_id_updated_at IS NULL
-                OR excluded.theme_id_updated_at >= theme_id_updated_at
+                light_theme_id_updated_at IS NULL
+                OR excluded.light_theme_id_updated_at >= light_theme_id_updated_at
               )
-            THEN excluded.theme_id_updated_at
-            ELSE theme_id_updated_at
+            THEN excluded.light_theme_id_updated_at
+            ELSE light_theme_id_updated_at
+          END,
+          dark_theme_id = CASE
+            WHEN excluded.dark_theme_id_updated_at IS NOT NULL
+              AND (
+                dark_theme_id_updated_at IS NULL
+                OR excluded.dark_theme_id_updated_at >= dark_theme_id_updated_at
+              )
+            THEN excluded.dark_theme_id
+            ELSE dark_theme_id
+          END,
+          dark_theme_id_updated_at = CASE
+            WHEN excluded.dark_theme_id_updated_at IS NOT NULL
+              AND (
+                dark_theme_id_updated_at IS NULL
+                OR excluded.dark_theme_id_updated_at >= dark_theme_id_updated_at
+              )
+            THEN excluded.dark_theme_id_updated_at
+            ELSE dark_theme_id_updated_at
           END,
           updated_at = MAX(updated_at, excluded.updated_at)
       `.pipe(

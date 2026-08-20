@@ -10,6 +10,8 @@ import { IRIS_THEME_ID } from "../themePalette";
 import {
   mergeEnvironmentSettings,
   resolveEnvironmentIdentificationMode,
+  resolveSyncedThemeHalfMutation,
+  syncedThemePatchForHalf,
   syncedThemeIdFromPreference,
 } from "./useSettings";
 
@@ -17,6 +19,29 @@ describe("syncedThemeIdFromPreference", () => {
   it("maps only built-in themes into synced preferences", () => {
     expect(syncedThemeIdFromPreference(IRIS_THEME_ID)).toBe(IRIS_THEME_ID);
     expect(syncedThemeIdFromPreference("personal-sunset")).toBeUndefined();
+  });
+
+  it("updates light and dark theme selections independently", () => {
+    expect(syncedThemePatchForHalf("light", "grove")).toEqual({ lightThemeId: "grove" });
+    expect(syncedThemePatchForHalf("dark", "iris")).toEqual({ darkThemeId: "iris" });
+  });
+
+  it("resets a themed base before applying T3 Code to one half", () => {
+    expect(resolveSyncedThemeHalfMutation("ocean", null, "system", "light", "system")).toEqual({
+      type: "reset-base",
+      baseTheme: "system",
+      preservedAppearance: "dark",
+      preservedTheme: "ocean",
+    });
+    expect(
+      resolveSyncedThemeHalfMutation(
+        "system",
+        { light: "grove", dark: "iris" },
+        "system",
+        "light",
+        "system",
+      ),
+    ).toEqual({ type: "set-half", appearance: "light", theme: null });
   });
 });
 

@@ -11,7 +11,7 @@ import {
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useEffect, useRef } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, type ColorValue } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
@@ -73,30 +73,12 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
-import { useSyncedClientPreferences } from "./state/synced-client-preferences";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
 };
-
-type AppNavigationTheme = ReactNavigation.Theme & {
-  readonly formSheetBackground: ColorValue;
-};
-
-function themedFormSheetContentStyle(theme: ReactNavigation.Theme) {
-  // SAFETY: App's NavigationContainer always provides the AppNavigationTheme built in App.tsx.
-  return {
-    backgroundColor: (theme as AppNavigationTheme).formSheetBackground,
-  };
-}
-
-function themedOpaqueHeaderStyle(theme: ReactNavigation.Theme) {
-  // SAFETY: native-stack types this as `string`, but the native side accepts
-  // every ColorValue, including DynamicColorIOS.
-  return themedFormSheetContentStyle(theme) as { readonly backgroundColor: string };
-}
 
 // Shared header presets. Screens only override genuinely dynamic values (titles,
 // subtitles, toolbar items, search callbacks) via NativeStackScreenOptions.
@@ -110,7 +92,7 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  ...(NATIVE_LIQUID_GLASS_SUPPORTED ? { headerStyle: { backgroundColor: "transparent" } } : null),
+  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
   scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? HEADER_SCROLL_EDGE_EFFECTS : undefined,
@@ -154,12 +136,11 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
 
 const SettingsContentStack = createNativeStackNavigator({
   initialRouteName: "Settings",
-  screenOptions: ({ theme }) => ({
+  screenOptions: {
     ...GLASS_HEADER_OPTIONS,
-    ...(!NATIVE_LIQUID_GLASS_SUPPORTED ? { headerStyle: themedOpaqueHeaderStyle(theme) } : null),
     // Sheets read better with the iOS-default centered title (no editor style).
     unstable_navigationItemStyle: undefined,
-  }),
+  },
   screens: {
     Settings: createNativeStackScreen({
       screen: SettingsRouteScreen,
@@ -257,24 +238,18 @@ const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 // in-sheet pushes come from this nested stack).
 const NewTaskSheetStack = createNativeStackNavigator({
   initialRouteName: "NewTask",
-  screenOptions: ({ route, theme }) => ({
+  screenOptions: {
     ...SHEET_GLASS_HEADER_OPTIONS,
-    ...(!NATIVE_LIQUID_GLASS_SUPPORTED ? { headerStyle: themedOpaqueHeaderStyle(theme) } : null),
     // The form-sheet host owns the one opaque adaptive surface. Child screens
     // and the navigation bar stay transparent over it, avoiding visible color
     // slabs as view controllers move horizontally.
-    contentStyle:
-      Platform.OS === "ios"
-        ? route.name === "ThreadSettings"
-          ? themedFormSheetContentStyle(theme)
-          : { backgroundColor: "transparent" }
-        : undefined,
+    contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
     // UIKit's default push adds a dimming shadow and independently transitions
     // the navigation bar. Both read as mismatched sheet backgrounds here.
     // simple_push retains native push/pop gestures without either artifact.
     animation: Platform.OS === "ios" ? "simple_push" : undefined,
     animationDuration: Platform.OS === "ios" ? 350 : undefined,
-  }),
+  },
   screens: {
     NewTask: createNativeStackScreen({
       screen: NewTaskRouteScreen,
@@ -383,11 +358,6 @@ function ThreadOutboxDrainWorker() {
   return null;
 }
 
-function SyncedClientPreferencesWorker() {
-  useSyncedClientPreferences();
-  return null;
-}
-
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
@@ -424,7 +394,6 @@ function RootStackLayout(props: {
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
-      <SyncedClientPreferencesWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
         <AdaptiveWorkspaceLayout pathname={workspacePathname}>
@@ -474,30 +443,12 @@ function NotFoundScreen() {
   );
 }
 
-const ROOT_FORM_SHEET_ROUTES = new Set([
-  "ConnectOnboarding",
-  "Connections",
-  "ConnectionsNew",
-  "GitBranches",
-  "GitCommit",
-  "GitConfirm",
-  "GitOverview",
-  "NewTaskSheet",
-  "SettingsSheet",
-  "ThreadReviewComment",
-  "ThreadSettingsSheet",
-]);
-
 export const RootStack = createNativeStackNavigator({
   initialRouteName: "Home",
   layout: RootStackLayout,
-  screenOptions: ({ route, theme }) => ({
+  screenOptions: {
     headerShown: false,
-    headerStyle: themedOpaqueHeaderStyle(theme),
-    ...(Platform.OS === "ios" && ROOT_FORM_SHEET_ROUTES.has(route.name)
-      ? { contentStyle: themedFormSheetContentStyle(theme) }
-      : null),
-  }),
+  },
   screens: {
     Home: createNativeStackScreen({
       screen: HomeRouteScreen,
@@ -540,11 +491,10 @@ export const RootStack = createNativeStackNavigator({
     ThreadFiles: createNativeStackScreen({
       screen: ThreadFilesTreeScreen,
       linking: `${THREAD_LINKING_PREFIX}/files`,
-      options: ({ theme }) => ({
+      options: {
         ...GLASS_HEADER_OPTIONS,
-        contentStyle: themedFormSheetContentStyle(theme),
         title: "Files",
-      }),
+      },
     }),
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
@@ -671,7 +621,11 @@ export const RootStack = createNativeStackNavigator({
       // The whole new-task flow (choose project → draft → add project) shares
       // draft state via NewTaskFlowProvider. The expo-router era mounted it in
       // app/new/_layout.tsx; this layout wrapper is the native-stack equivalent.
-      layout: ({ children }) => <NewTaskFlowProvider>{children}</NewTaskFlowProvider>,
+      layout: ({ children }) => (
+        <NewTaskFlowProvider>
+          <View className="flex-1 bg-sheet-solid">{children}</View>
+        </NewTaskFlowProvider>
+      ),
       options: {
         gestureEnabled: true,
         headerShown: false,

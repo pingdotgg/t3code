@@ -11,10 +11,12 @@ import { useCallback, useEffect, useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import {
-  DEFAULT_MOBILE_APPEARANCE_MODE,
   DEFAULT_MOBILE_THEME_ID,
   isMobileThemeId,
-  type MobileAppearanceMode,
+  normalizeMobileThemeMode,
+  resolveMobileThemeIds,
+  type MobileThemeAppearance,
+  type MobileThemeMode,
 } from "../lib/mobileTheme";
 import type { ImportedMobileTheme } from "../lib/mobileThemeFile";
 import { environmentShell } from "./shell";
@@ -102,6 +104,11 @@ function resolveLocalThemeId(
     : DEFAULT_MOBILE_THEME_ID;
 }
 
+function toLocalPreferencesPatch(patch: Partial<SyncedClientPreferencesPatch>) {
+  const { appearanceMode, ...rest } = patch;
+  return appearanceMode === undefined ? rest : { ...rest, themeMode: appearanceMode };
+}
+
 export function useSyncedClientPreferences(): void {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -118,7 +125,8 @@ export function useSyncedClientPreferences(): void {
     () => ({
       planModeEnabled: createSyncedClientPreferenceReconciliationController("planModeEnabled"),
       appearanceMode: createSyncedClientPreferenceReconciliationController("appearanceMode"),
-      themeId: createSyncedClientPreferenceReconciliationController("themeId"),
+      lightThemeId: createSyncedClientPreferenceReconciliationController("lightThemeId"),
+      darkThemeId: createSyncedClientPreferenceReconciliationController("darkThemeId"),
     }),
     [],
   );
@@ -179,12 +187,16 @@ export function useSyncedClientPreferences(): void {
     }
     const importedThemes = preferencesResult.value.importedThemes ?? [];
     const normalizeThemeId = (themeId: string) => resolveLocalThemeId(themeId, importedThemes);
+    const themeIds = resolveMobileThemeIds(preferencesResult.value, importedThemes);
     const reconciliation = reconcileSyncedClientPreferences({
       local: {
         values: {
           planModeEnabled: preferencesResult.value.planModeEnabled ?? false,
-          appearanceMode: preferencesResult.value.appearanceMode ?? DEFAULT_MOBILE_APPEARANCE_MODE,
-          themeId: preferencesResult.value.themeId ?? DEFAULT_MOBILE_THEME_ID,
+          appearanceMode: normalizeMobileThemeMode(
+            preferencesResult.value.themeMode ?? preferencesResult.value.appearanceMode,
+          ),
+          lightThemeId: themeIds.light,
+          darkThemeId: themeIds.dark,
         },
         updatedAtByField: preferencesResult.value.syncedClientPreferencesUpdatedAtByField,
         legacyUpdatedAt: preferencesResult.value.syncedClientPreferencesUpdatedAt,
@@ -199,9 +211,12 @@ export function useSyncedClientPreferences(): void {
       normalizeThemeId,
     });
     if (reconciliation.localPatch !== null) {
-      const localValues = { ...reconciliation.localPatch.values };
-      if (localValues.themeId !== undefined) {
-        localValues.themeId = normalizeThemeId(localValues.themeId);
+      const localValues = toLocalPreferencesPatch(reconciliation.localPatch.values);
+      if (localValues.lightThemeId !== undefined) {
+        localValues.lightThemeId = normalizeThemeId(localValues.lightThemeId);
+      }
+      if (localValues.darkThemeId !== undefined) {
+        localValues.darkThemeId = normalizeThemeId(localValues.darkThemeId);
       }
       savePreferences({
         ...localValues,
@@ -219,7 +234,7 @@ export function useSyncedClientPreferences(): void {
         persist: (patch) =>
           persistReconciledPreferences({
             expectedUpdatedAtByField: { [field]: target.input.updatedAt },
-            patch,
+            patch: toLocalPreferencesPatch(patch),
           }),
         normalizeThemeId,
       });
@@ -266,7 +281,7 @@ function useUpdateSyncedClientPreference(field: SyncedClientPreferenceField) {
         now: new Date().toISOString(),
       });
       savePreferences({
-        ...write.localPatch.values,
+        ...toLocalPreferencesPatch(write.localPatch.values),
         syncedClientPreferencesUpdatedAtByField: write.localPatch.updatedAtByField,
       });
       void Promise.allSettled(
@@ -276,10 +291,12 @@ function useUpdateSyncedClientPreference(field: SyncedClientPreferenceField) {
           const localPatch = writeController.settle({
             target,
             result,
-            normalizeThemeId: (themeId) =>
-              resolveLocalThemeId(themeId, importedThemes, patch.themeId),
+            normalizeThemeId: (themeId) => {
+              const writtenThemeId = patch.lightThemeId ?? patch.darkThemeId;
+              return resolveLocalThemeId(themeId, importedThemes, writtenThemeId);
+            },
           });
-          if (localPatch !== null) savePreferences(localPatch);
+          if (localPatch !== null) savePreferences(toLocalPreferencesPatch(localPatch));
         }),
       );
     },
@@ -305,12 +322,19 @@ export function useUpdatePlanModePreference() {
 export function useUpdateAppearanceModePreference() {
   const updatePreference = useUpdateSyncedClientPreference("appearanceMode");
   return useCallback(
-    (value: MobileAppearanceMode) => updatePreference({ appearanceMode: value }),
+    (value: MobileThemeMode) => updatePreference({ appearanceMode: value }),
     [updatePreference],
   );
 }
 
-export function useUpdateThemePreference() {
-  const updatePreference = useUpdateSyncedClientPreference("themeId");
-  return useCallback((themeId: string) => updatePreference({ themeId }), [updatePreference]);
+export function useUpdateThemeIdPreference() {
+  const updateLightTheme = useUpdateSyncedClientPreference("lightThemeId");
+  const updateDarkTheme = useUpdateSyncedClientPreference("darkThemeId");
+  return useCallback(
+    (appearance: MobileThemeAppearance, themeId: string) =>
+      appearance === "light"
+        ? updateLightTheme({ lightThemeId: themeId })
+        : updateDarkTheme({ darkThemeId: themeId }),
+    [updateDarkTheme, updateLightTheme],
+  );
 }

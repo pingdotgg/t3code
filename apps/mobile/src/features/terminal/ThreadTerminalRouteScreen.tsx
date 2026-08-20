@@ -34,7 +34,6 @@ import {
   TERMINAL_FONT_SIZE_STEP,
   stepTerminalFontSize,
 } from "../../lib/appearancePreferences";
-import { withAlpha } from "../../lib/mobileTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAttachedTerminalSession,
@@ -45,7 +44,7 @@ import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
-import { getPierreTerminalTheme } from "./terminalTheme";
+import { getMobileTerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
   getTerminalBufferReplayKey,
@@ -184,10 +183,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const requestedTerminalId = firstRouteParam(params.terminalId);
   const terminalId = requestedTerminalId ?? DEFAULT_TERMINAL_ID;
   const {
-    effectiveColorScheme: appearanceScheme,
     isReady: hasResolvedFontPreference,
-    nativeSurfaceColors,
     appearance,
+    importedThemes,
+    themeAppearance: appearanceScheme,
+    themeId,
     setTerminalFontSize,
   } = useAppearancePreferences();
   const fontSize = appearance.terminalFontSize;
@@ -468,10 +468,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [selectedEnvironmentConnection?.environmentLabel],
   );
 
-  const terminalTheme = useMemo(
-    () => getPierreTerminalTheme(appearanceScheme, nativeSurfaceColors),
-    [appearanceScheme, nativeSurfaceColors],
-  );
+  const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme, importedThemes);
   const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
@@ -1224,7 +1221,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           <>
             <View className="flex-1" style={{ paddingBottom: terminalBottomInset }}>
               <TerminalSurface
-                appearanceScheme={appearanceScheme}
                 autoFocus={!SHOWCASE_ENABLED}
                 buffer={terminalSurfaceBuffer}
                 fontSize={fontSize}
@@ -1255,7 +1251,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                     <ComposerToolbarScroller
                       contentPaddingRight={2}
                       fadeOpaque={terminalTheme.background}
-                      fadeTransparent={withAlpha(terminalTheme.background, "00")}
+                      fadeTransparent={`${terminalTheme.background}00`}
                     >
                       {terminalToolbarActions.map((action) => {
                         const active =

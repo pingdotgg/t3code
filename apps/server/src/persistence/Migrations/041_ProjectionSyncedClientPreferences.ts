@@ -11,8 +11,10 @@ export default Effect.gen(function* () {
       plan_mode_enabled_updated_at TEXT,
       appearance_mode TEXT,
       appearance_mode_updated_at TEXT,
-      theme_id TEXT,
-      theme_id_updated_at TEXT,
+      light_theme_id TEXT,
+      light_theme_id_updated_at TEXT,
+      dark_theme_id TEXT,
+      dark_theme_id_updated_at TEXT,
       updated_at TEXT NOT NULL
     )
   `;

@@ -530,9 +530,9 @@ describe("synced client preferences", () => {
   });
 
   it("normalizes a theme acknowledgment without changing other field stamps", () => {
-    const controller = createSyncedClientPreferenceWriteController("themeId");
+    const controller = createSyncedClientPreferenceWriteController("lightThemeId");
     const write = controller.create({
-      patch: { themeId: "custom-theme" },
+      patch: { lightThemeId: "custom-theme" },
       connectedEnvironmentIds: [environmentId("environment-1")],
       currentUpdatedAtByField: {
         appearanceMode: "2026-08-14T11:00:00.000Z",
@@ -544,16 +544,16 @@ describe("synced client preferences", () => {
       controller.settle({
         target: write.environmentPatches[0]!,
         result: AsyncResult.success({
-          themeId: "unknown-on-this-device",
-          updatedAtByField: { themeId: "2026-08-14T12:01:00.000Z" },
+          lightThemeId: "unknown-on-this-device",
+          updatedAtByField: { lightThemeId: "2026-08-14T12:01:00.000Z" },
           updatedAt: "2026-08-14T12:01:00.000Z",
         }),
         normalizeThemeId: () => "t3-code",
       }),
     ).toEqual({
-      themeId: "t3-code",
+      lightThemeId: "t3-code",
       syncedClientPreferencesUpdatedAtByField: {
-        themeId: "2026-08-14T12:01:00.000Z",
+        lightThemeId: "2026-08-14T12:01:00.000Z",
       },
     });
   });
@@ -877,16 +877,16 @@ describe("synced client preferences", () => {
     const environment = {
       environmentId: environmentId("environment-1"),
       preferences: {
-        themeId: "remote-custom-theme",
-        updatedAtByField: { themeId: "2026-08-14T13:00:00.000Z" },
+        lightThemeId: "remote-custom-theme",
+        updatedAtByField: { lightThemeId: "2026-08-14T13:00:00.000Z" },
         updatedAt: "2026-08-14T13:00:00.000Z",
       },
     } as const;
     const normalizeThemeId = () => "t3-code";
     const first = reconcileSyncedClientPreferences({
       local: {
-        values: { themeId: "t3-code" },
-        updatedAtByField: { themeId: "2026-08-14T12:00:00.000Z" },
+        values: { lightThemeId: "t3-code" },
+        updatedAtByField: { lightThemeId: "2026-08-14T12:00:00.000Z" },
       },
       environments: [environment],
       now: "2026-08-14T14:00:00.000Z",
@@ -903,8 +903,8 @@ describe("synced client preferences", () => {
     });
 
     expect(first.localPatch).toEqual({
-      values: { themeId: "t3-code" },
-      updatedAtByField: { themeId: "2026-08-14T13:00:00.000Z" },
+      values: { lightThemeId: "t3-code" },
+      updatedAtByField: { lightThemeId: "2026-08-14T13:00:00.000Z" },
     });
     expect(second.localPatch).toBeNull();
     expect(second.environmentPatches).toEqual([]);

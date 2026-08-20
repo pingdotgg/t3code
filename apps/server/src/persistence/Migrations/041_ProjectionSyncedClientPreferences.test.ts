@@ -47,8 +47,10 @@ layer("041_ProjectionSyncedClientPreferences", (it) => {
           plan_mode_enabled_updated_at TEXT,
           appearance_mode TEXT,
           appearance_mode_updated_at TEXT,
-          theme_id TEXT,
-          theme_id_updated_at TEXT,
+          light_theme_id TEXT,
+          light_theme_id_updated_at TEXT,
+          dark_theme_id TEXT,
+          dark_theme_id_updated_at TEXT,
           updated_at TEXT NOT NULL
         )
       `;
@@ -81,8 +83,10 @@ layer("041_ProjectionSyncedClientPreferences", (it) => {
           "plan_mode_enabled_updated_at",
           "appearance_mode",
           "appearance_mode_updated_at",
-          "theme_id",
-          "theme_id_updated_at",
+          "light_theme_id",
+          "light_theme_id_updated_at",
+          "dark_theme_id",
+          "dark_theme_id_updated_at",
           "updated_at",
         ],
       );

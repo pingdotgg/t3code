@@ -33,20 +33,23 @@ export function nextSyncedClientPreferencesUpdatedAt(
 const SyncedClientPreferenceFields = {
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   appearanceMode: Schema.optionalKey(SyncedClientAppearanceMode),
-  themeId: Schema.optionalKey(Schema.String),
+  lightThemeId: Schema.optionalKey(Schema.String),
+  darkThemeId: Schema.optionalKey(Schema.String),
 } as const;
 
 export const SYNCED_CLIENT_PREFERENCE_FIELDS = [
   "planModeEnabled",
   "appearanceMode",
-  "themeId",
+  "lightThemeId",
+  "darkThemeId",
 ] as const;
 export type SyncedClientPreferenceField = (typeof SYNCED_CLIENT_PREFERENCE_FIELDS)[number];
 
 export const SyncedClientPreferencesUpdatedAtByField = Schema.Struct({
   planModeEnabled: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
   appearanceMode: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
-  themeId: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  lightThemeId: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  darkThemeId: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
 });
 export type SyncedClientPreferencesUpdatedAtByField =
   typeof SyncedClientPreferencesUpdatedAtByField.Type;
@@ -73,7 +76,8 @@ export const SyncedClientPreferencesPatch = Schema.Struct(SyncedClientPreference
     (patch) =>
       patch.planModeEnabled !== undefined ||
       patch.appearanceMode !== undefined ||
-      patch.themeId !== undefined ||
+      patch.lightThemeId !== undefined ||
+      patch.darkThemeId !== undefined ||
       "Synced client preferences patch must include at least one supported preference.",
   ),
 );

@@ -239,23 +239,30 @@ describe("mobile connection storage", () => {
   });
 
   it("persists device-local appearance preferences", async () => {
-    await expect(
-      savePreferencesPatch({ appearanceMode: "dark", themeId: "ocean" }),
-    ).resolves.toEqual({ appearanceMode: "dark", themeId: "ocean" });
-
-    await expect(loadPreferences()).resolves.toEqual({
-      appearanceMode: "dark",
+    await expect(savePreferencesPatch({ themeMode: "dark", themeId: "ocean" })).resolves.toEqual({
+      themeMode: "dark",
       themeId: "ocean",
     });
 
-    await expect(savePreferencesPatch({ appearanceMode: "system" })).resolves.toEqual({
-      appearanceMode: "system",
+    await expect(loadPreferences()).resolves.toEqual({
+      themeMode: "dark",
+      themeId: "ocean",
+    });
+
+    await expect(savePreferencesPatch({ themeMode: "system" })).resolves.toEqual({
+      themeMode: "system",
       themeId: "ocean",
     });
     await expect(loadPreferences()).resolves.toEqual({
-      appearanceMode: "system",
+      themeMode: "system",
       themeId: "ocean",
     });
+  });
+
+  it("migrates the legacy appearance key into the canonical theme mode", async () => {
+    mocks.setPreferencesJson(JSON.stringify({ appearanceMode: "dark" }), 10);
+
+    await expect(loadPreferences()).resolves.toEqual({ themeMode: "dark" });
   });
 
   it("drops invalid appearance preferences while loading", async () => {
@@ -336,6 +343,25 @@ describe("mobile connection storage", () => {
     );
 
     await expect(loadPreferences()).resolves.toEqual({});
+  });
+
+  it("persists independent light and dark theme choices", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        themeId: "grove",
+        lightThemeId: "iris",
+        darkThemeId: "ocean",
+        themeMode: "system",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({
+      themeId: "grove",
+      lightThemeId: "iris",
+      darkThemeId: "ocean",
+      themeMode: "system",
+    });
   });
 
   it("falls back to secure storage when SQLite cannot save preferences", async () => {

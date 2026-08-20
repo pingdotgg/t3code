@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
+import { BUILT_IN_THEMES, getThemeColorsForAppearance } from "@t3tools/shared/themePalettes";
 
-import { buildGhosttyThemeConfig, getPierreTerminalTheme } from "./terminalTheme";
+import { themeColorToNativeColor } from "../../lib/mobileTheme";
+import { parseMobileThemeFile } from "../../lib/mobileThemeFile";
+
+import {
+  buildGhosttyThemeConfig,
+  getMobileTerminalTheme,
+  getPierreTerminalTheme,
+} from "./terminalTheme";
 
 describe("getPierreTerminalTheme", () => {
   it("keeps the default light terminal output byte-for-byte stable", () => {
@@ -60,26 +68,52 @@ describe("getPierreTerminalTheme", () => {
       ],
     });
   });
+});
 
-  it("themes native surface roles without changing ANSI colors", () => {
-    const base = getPierreTerminalTheme("dark");
-    const themed = getPierreTerminalTheme("dark", {
-      terminalBackground: "#101820",
-      terminalForeground: "#f0f4f8",
-      mutedForeground: "#8795a1",
-      border: "#334455",
-      terminalCursor: "#44aaff",
-    });
+describe("getMobileTerminalTheme", () => {
+  it("preserves the Pierre terminal for the default theme", () => {
+    for (const scheme of ["light", "dark"] as const) {
+      expect(getMobileTerminalTheme("t3-code", scheme)).toEqual(getPierreTerminalTheme(scheme));
+    }
+  });
 
-    expect(themed).toMatchObject({
-      background: "#101820",
-      foreground: "#f0f4f8",
-      mutedForeground: "#8795a1",
-      border: "#334455",
-      cursorForeground: "#44aaff",
-      cursorBackground: "#101820",
+  it("applies the selected palette without replacing ANSI status colors", () => {
+    const standard = getMobileTerminalTheme("t3-code", "dark");
+    const ocean = getMobileTerminalTheme("ocean", "dark");
+
+    expect(ocean.background).not.toBe(standard.background);
+    expect(ocean.cursorForeground).not.toBe(standard.cursorForeground);
+    expect(ocean.palette).toEqual(standard.palette);
+  });
+
+  it("uses the canonical desktop terminal roles for built-in themes", () => {
+    const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === "ocean")!;
+    const colors = getThemeColorsForAppearance(theme, "dark")!;
+    const terminal = getMobileTerminalTheme("ocean", "dark");
+
+    expect(terminal.background).toBe(themeColorToNativeColor(colors.terminalBackground));
+    expect(terminal.foreground).toBe(themeColorToNativeColor(colors.terminalForeground));
+    expect(terminal.cursorForeground).toBe(themeColorToNativeColor(colors.terminalCursor));
+  });
+
+  it("uses imported terminal roles without changing the ANSI palette", () => {
+    const imported = parseMobileThemeFile({
+      version: 1,
+      id: "custom-terminal",
+      name: "Custom Terminal",
+      appearance: "dark",
+      colors: {
+        terminalBackground: "#101820",
+        terminalForeground: "#f2f3f4",
+        terminalCursor: "#ffcc00",
+      },
     });
-    expect(themed.palette).toEqual(base.palette);
+    const terminal = getMobileTerminalTheme(imported.id, "dark", [imported]);
+
+    expect(terminal.background).toBe("#101820");
+    expect(terminal.foreground).toBe("#f2f3f4");
+    expect(terminal.cursorForeground).toBe("#ffcc00");
+    expect(terminal.palette).toEqual(getPierreTerminalTheme("dark").palette);
   });
 });
 
@@ -93,26 +127,5 @@ describe("buildGhosttyThemeConfig", () => {
     expect(config).toContain("palette = 0=#141415");
     expect(config).toContain("palette = 15=#c6c6c8");
     expect(config.endsWith("\n")).toBe(true);
-  });
-
-  it("serializes native terminal alpha colors in CSS RRGGBBAA order", () => {
-    const theme = getPierreTerminalTheme("dark", {
-      terminalBackground: "#11223344",
-      terminalForeground: "#55667788",
-      terminalCursor: "#99aabbcc",
-      mutedForeground: "#ddeeff11",
-      border: "#22446680",
-    });
-
-    expect({
-      backgroundColor: theme.background,
-      foregroundColor: theme.foreground,
-      mutedForegroundColor: theme.mutedForeground,
-    }).toEqual({
-      backgroundColor: "#11223344",
-      foregroundColor: "#55667788",
-      mutedForegroundColor: "#ddeeff11",
-    });
-    expect(buildGhosttyThemeConfig(theme)).toContain("cursor-color = #99aabbcc");
   });
 });

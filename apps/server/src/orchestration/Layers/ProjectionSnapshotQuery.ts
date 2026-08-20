@@ -121,8 +121,10 @@ const ProjectionSyncedClientPreferencesRowSchema = Schema.Struct({
   planModeEnabledUpdatedAt: Schema.NullOr(IsoDateTime),
   appearanceMode: Schema.NullOr(Schema.Literals(["system", "light", "dark"])),
   appearanceModeUpdatedAt: Schema.NullOr(IsoDateTime),
-  themeId: Schema.NullOr(Schema.String),
-  themeIdUpdatedAt: Schema.NullOr(IsoDateTime),
+  lightThemeId: Schema.NullOr(Schema.String),
+  lightThemeIdUpdatedAt: Schema.NullOr(IsoDateTime),
+  darkThemeId: Schema.NullOr(Schema.String),
+  darkThemeIdUpdatedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
 });
 const ProjectionCountsRowSchema = Schema.Struct({
@@ -235,8 +237,11 @@ function mapSyncedClientPreferences(
       if (value.appearanceMode !== null) {
         preferences = { ...preferences, appearanceMode: value.appearanceMode };
       }
-      if (value.themeId !== null) {
-        preferences = { ...preferences, themeId: value.themeId };
+      if (value.lightThemeId !== null) {
+        preferences = { ...preferences, lightThemeId: value.lightThemeId };
+      }
+      if (value.darkThemeId !== null) {
+        preferences = { ...preferences, darkThemeId: value.darkThemeId };
       }
 
       let updatedAtByField: NonNullable<SyncedClientPreferences["updatedAtByField"]> = {};
@@ -252,8 +257,11 @@ function mapSyncedClientPreferences(
           appearanceMode: value.appearanceModeUpdatedAt,
         };
       }
-      if (value.themeIdUpdatedAt !== null) {
-        updatedAtByField = { ...updatedAtByField, themeId: value.themeIdUpdatedAt };
+      if (value.lightThemeIdUpdatedAt !== null) {
+        updatedAtByField = { ...updatedAtByField, lightThemeId: value.lightThemeIdUpdatedAt };
+      }
+      if (value.darkThemeIdUpdatedAt !== null) {
+        updatedAtByField = { ...updatedAtByField, darkThemeId: value.darkThemeIdUpdatedAt };
       }
       return { ...preferences, updatedAtByField };
     },
@@ -824,8 +832,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           plan_mode_enabled_updated_at AS "planModeEnabledUpdatedAt",
           appearance_mode AS "appearanceMode",
           appearance_mode_updated_at AS "appearanceModeUpdatedAt",
-          theme_id AS "themeId",
-          theme_id_updated_at AS "themeIdUpdatedAt",
+          light_theme_id AS "lightThemeId",
+          light_theme_id_updated_at AS "lightThemeIdUpdatedAt",
+          dark_theme_id AS "darkThemeId",
+          dark_theme_id_updated_at AS "darkThemeIdUpdatedAt",
           updated_at AS "updatedAt"
         FROM projection_synced_client_preferences
         WHERE singleton_id = 1

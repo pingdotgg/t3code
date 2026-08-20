@@ -221,15 +221,34 @@ export function projectEvent(
               : {
                   ...nextBase.syncedClientPreferences,
                   updatedAtByField: {
-                    planModeEnabled:
-                      nextBase.syncedClientPreferences.updatedAtByField?.planModeEnabled ??
-                      nextBase.syncedClientPreferences.updatedAt,
-                    appearanceMode:
-                      nextBase.syncedClientPreferences.updatedAtByField?.appearanceMode ??
-                      nextBase.syncedClientPreferences.updatedAt,
-                    themeId:
-                      nextBase.syncedClientPreferences.updatedAtByField?.themeId ??
-                      nextBase.syncedClientPreferences.updatedAt,
+                    ...(nextBase.syncedClientPreferences.planModeEnabled === undefined
+                      ? undefined
+                      : {
+                          planModeEnabled:
+                            nextBase.syncedClientPreferences.updatedAtByField?.planModeEnabled ??
+                            nextBase.syncedClientPreferences.updatedAt,
+                        }),
+                    ...(nextBase.syncedClientPreferences.appearanceMode === undefined
+                      ? undefined
+                      : {
+                          appearanceMode:
+                            nextBase.syncedClientPreferences.updatedAtByField?.appearanceMode ??
+                            nextBase.syncedClientPreferences.updatedAt,
+                        }),
+                    ...(nextBase.syncedClientPreferences.lightThemeId === undefined
+                      ? undefined
+                      : {
+                          lightThemeId:
+                            nextBase.syncedClientPreferences.updatedAtByField?.lightThemeId ??
+                            nextBase.syncedClientPreferences.updatedAt,
+                        }),
+                    ...(nextBase.syncedClientPreferences.darkThemeId === undefined
+                      ? undefined
+                      : {
+                          darkThemeId:
+                            nextBase.syncedClientPreferences.updatedAtByField?.darkThemeId ??
+                            nextBase.syncedClientPreferences.updatedAt,
+                        }),
                   },
                 };
           const appliesPlanMode =
@@ -240,9 +259,13 @@ export function projectEvent(
             payload.patch.appearanceMode !== undefined &&
             (getSyncedClientPreferenceUpdatedAt(current, "appearanceMode") ?? payload.updatedAt) <=
               payload.updatedAt;
-          const appliesThemeId =
-            payload.patch.themeId !== undefined &&
-            (getSyncedClientPreferenceUpdatedAt(current, "themeId") ?? payload.updatedAt) <=
+          const appliesLightThemeId =
+            payload.patch.lightThemeId !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "lightThemeId") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          const appliesDarkThemeId =
+            payload.patch.darkThemeId !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "darkThemeId") ?? payload.updatedAt) <=
               payload.updatedAt;
           return {
             ...nextBase,
@@ -253,12 +276,14 @@ export function projectEvent(
               ...(appliesAppearanceMode
                 ? { appearanceMode: payload.patch.appearanceMode }
                 : undefined),
-              ...(appliesThemeId ? { themeId: payload.patch.themeId } : undefined),
+              ...(appliesLightThemeId ? { lightThemeId: payload.patch.lightThemeId } : undefined),
+              ...(appliesDarkThemeId ? { darkThemeId: payload.patch.darkThemeId } : undefined),
               updatedAtByField: {
                 ...current?.updatedAtByField,
                 ...(appliesPlanMode ? { planModeEnabled: payload.updatedAt } : undefined),
                 ...(appliesAppearanceMode ? { appearanceMode: payload.updatedAt } : undefined),
-                ...(appliesThemeId ? { themeId: payload.updatedAt } : undefined),
+                ...(appliesLightThemeId ? { lightThemeId: payload.updatedAt } : undefined),
+                ...(appliesDarkThemeId ? { darkThemeId: payload.updatedAt } : undefined),
               },
               updatedAt:
                 current !== undefined && current.updatedAt > payload.updatedAt

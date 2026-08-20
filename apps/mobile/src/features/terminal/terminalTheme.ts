@@ -1,4 +1,12 @@
-import type { MobileNativeSurfaceColors } from "../../lib/mobileTheme";
+import { BUILT_IN_THEMES, getThemeColorsForAppearance } from "@t3tools/shared/themePalettes";
+
+import {
+  getImportedMobileThemeColors,
+  getMobileThemeVariables,
+  themeColorToNativeColor,
+  type MobileThemeId,
+} from "../../lib/mobileTheme";
+import type { ImportedMobileTheme } from "../../lib/mobileThemeFile";
 
 export type TerminalAppearanceScheme = "light" | "dark";
 
@@ -11,11 +19,6 @@ export interface TerminalTheme {
   readonly cursorBackground: string;
   readonly palette: readonly string[];
 }
-
-export type TerminalThemeOverrides = Pick<
-  MobileNativeSurfaceColors,
-  "terminalBackground" | "terminalForeground" | "terminalCursor" | "mutedForeground" | "border"
->;
 
 const PIERRE_LIGHT_THEME: TerminalTheme = {
   // Pierre terminal palette with the app's shared screen background.
@@ -73,20 +76,33 @@ const PIERRE_DARK_THEME: TerminalTheme = {
   ],
 };
 
-export function getPierreTerminalTheme(
+export function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): TerminalTheme {
+  return scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
+}
+
+export function getMobileTerminalTheme(
+  themeId: MobileThemeId,
   scheme: TerminalAppearanceScheme,
-  overrides: TerminalThemeOverrides | null = null,
+  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
 ): TerminalTheme {
-  const base = scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
-  if (!overrides) return base;
+  const base = getPierreTerminalTheme(scheme);
+  if (themeId === "t3-code") return base;
+
+  const importedColors = getImportedMobileThemeColors(themeId, scheme, importedThemes);
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+  const palette =
+    importedColors ?? (theme ? (getThemeColorsForAppearance(theme, scheme) ?? theme.colors) : null);
+  if (!palette) return base;
+  const colors = getMobileThemeVariables(themeId, scheme, null, importedThemes);
+  const background = themeColorToNativeColor(palette.terminalBackground);
   return {
     ...base,
-    background: overrides.terminalBackground,
-    foreground: overrides.terminalForeground,
-    mutedForeground: overrides.mutedForeground,
-    border: overrides.border,
-    cursorForeground: overrides.terminalCursor,
-    cursorBackground: overrides.terminalBackground,
+    background,
+    foreground: themeColorToNativeColor(palette.terminalForeground),
+    mutedForeground: colors["--color-foreground-muted"],
+    border: colors["--color-border"],
+    cursorForeground: themeColorToNativeColor(palette.terminalCursor),
+    cursorBackground: background,
   };
 }
 

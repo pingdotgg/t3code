@@ -10,20 +10,20 @@ import {
   type NativeReviewDiffViewProps,
   resolveNativeReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
+import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
 import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
 import type { ReviewHighlightedToken } from "../review/shikiReviewHighlighter";
 import { cn } from "../../lib/cn";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   buildNativeSourceTokens,
-  createNativeSourceFileTheme,
   NATIVE_SOURCE_CONTENT_WIDTH,
   nativeSourceRowId,
 } from "./nativeSourceFileAdapter";
 import { prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
@@ -109,7 +109,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
 });
 
 function useSourceFileModel(props: SourceFileSurfaceProps) {
-  const { effectiveColorScheme: theme } = useAppearancePreferences();
+  const { themeAppearance: theme } = useAppearancePreferences();
   const document = useMemo(() => prepareSourceFileDocument(props.contents), [props.contents]);
   const { contents: normalizedContents, lines, rowsJson } = document;
   const targetIndex =
@@ -152,9 +152,9 @@ function NativeSourceFileSurface(
 ) {
   const { NativeView, onRefresh } = props;
   const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
-  const { nativeSurfaceColors } = useAppearancePreferences();
+  const { importedThemes, themeAppearance, themeId } = useAppearancePreferences();
   const { width: viewportWidth } = useWindowDimensions();
-  const { rowsJson, status, targetIndex, theme, tokens } = useSourceFileModel(props);
+  const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
     if (!onRefresh) {
@@ -173,8 +173,8 @@ function NativeSourceFileSurface(
     [targetIndex],
   );
   const themeJson = useMemo(
-    () => JSON.stringify(createNativeSourceFileTheme(theme, nativeSurfaceColors)),
-    [nativeSurfaceColors, theme],
+    () => JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId, importedThemes)),
+    [importedThemes, themeAppearance, themeId],
   );
   const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
   const contentWidth = codeWordBreak
@@ -188,7 +188,7 @@ function NativeSourceFileSurface(
         collapsable={false}
         testID="source-native-code-view"
         style={{ flex: 1 }}
-        appearanceScheme={theme}
+        appearanceScheme={themeAppearance}
         contentResetKey={props.path}
         contentWidth={contentWidth}
         initialRowIndex={targetIndex ?? -1}

@@ -148,10 +148,10 @@ describe("synced client preferences", () => {
         value: true,
         serverPreferences: {
           planModeEnabled: false,
-          themeId: "custom-from-mobile",
+          lightThemeId: "custom-from-mobile",
           updatedAtByField: {
             planModeEnabled: "2026-08-14T12:00:00.000Z",
-            themeId: "2026-08-14T13:00:00.000Z",
+            lightThemeId: "2026-08-14T13:00:00.000Z",
           },
           updatedAt: "2026-08-14T13:00:00.000Z",
         },
@@ -166,14 +166,14 @@ describe("synced client preferences", () => {
   it("advances theme writes from the theme clock instead of a newer appearance clock", () => {
     expect(
       createSyncedClientPreferenceWrite({
-        field: "themeId",
+        field: "lightThemeId",
         value: "ocean",
         serverPreferences: {
           appearanceMode: "dark",
-          themeId: "iris",
+          lightThemeId: "iris",
           updatedAtByField: {
             appearanceMode: "2026-08-14T13:00:00.000Z",
-            themeId: "2026-08-14T12:00:00.000Z",
+            lightThemeId: "2026-08-14T12:00:00.000Z",
           },
           updatedAt: "2026-08-14T13:00:00.000Z",
         },
@@ -181,7 +181,7 @@ describe("synced client preferences", () => {
       }),
     ).toEqual({
       request: {
-        patch: { themeId: "ocean" },
+        patch: { lightThemeId: "ocean" },
         updatedAt: "2026-08-14T12:30:00.000Z",
       },
     });
@@ -195,10 +195,10 @@ describe("synced client preferences", () => {
         clientValue: "light",
         serverPreferences: {
           appearanceMode: "dark",
-          themeId: "ocean",
+          lightThemeId: "ocean",
           updatedAtByField: {
             appearanceMode: "2026-08-14T12:00:00.000Z",
-            themeId: "2026-08-14T13:00:00.000Z",
+            lightThemeId: "2026-08-14T13:00:00.000Z",
           },
           updatedAt: "2026-08-14T13:00:00.000Z",
         },
@@ -215,11 +215,11 @@ describe("synced client preferences", () => {
   it("does not synchronize a device-local theme without a built-in client value", () => {
     expect(
       resolveSyncedClientPreferenceHydrationAction({
-        field: "themeId",
+        field: "lightThemeId",
         clientHydrated: true,
         clientValue: undefined,
         serverPreferences: {
-          themeId: "iris",
+          lightThemeId: "iris",
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
         seedPending: false,
@@ -605,12 +605,12 @@ describe("synced client preferences", () => {
   it("resets an exhausted retry budget only for a new theme write", async () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const scheduledRetries: Array<() => void> = [];
-    const controller = createSyncedClientPreferenceHydrationController("themeId", (retry) => {
+    const controller = createSyncedClientPreferenceHydrationController("lightThemeId", (retry) => {
       scheduledRetries.push(retry);
       return vi.fn();
     });
     const previous = {
-      themeId: "iris",
+      lightThemeId: "iris",
       updatedAt: "2026-08-14T12:00:00.000Z",
     } as const;
     const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
@@ -625,7 +625,7 @@ describe("synced client preferences", () => {
       now: "2026-08-14T12:01:00.000Z",
       patch,
       persist: vi.fn(),
-    } satisfies SyncedClientPreferenceHydrationInput<"themeId", string>;
+    } satisfies SyncedClientPreferenceHydrationInput<"lightThemeId", string>;
 
     controller.synchronize(hydrationInput);
     controller.write({

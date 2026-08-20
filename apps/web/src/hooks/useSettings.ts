@@ -35,11 +35,12 @@ import {
   getThemePreferenceMode,
   getThemeDefinition,
   getThemePreviewSidebarArtwork,
-  isBuiltInThemePreference,
   isKnownThemePreference,
   resolveThemeHalf,
   subscribeToThemePreview,
   themeAllowsSidebarArtwork,
+  type ThemeAppearance,
+  type ThemeHalves,
   type ThemePreference,
   type ThemePreferenceMode,
 } from "~/themePalette";
@@ -56,7 +57,12 @@ import {
   createSyncedClientPreferencesSliceAtom,
   useSyncedClientPreferenceHydrationEffect,
 } from "./synced-client-preferences";
-import { useTheme } from "./useTheme";
+import {
+  readAppearanceModePreference,
+  readThemeHalves,
+  readThemePreference,
+  useTheme,
+} from "./useTheme";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -212,6 +218,17 @@ export function getClientSettings(): ClientSettings {
   return getClientSettingsSnapshot();
 }
 
+/**
+ * Resolves once client settings have been read from disk.
+ *
+ * The pre-hydration snapshot is just the schema defaults, so imperative paths
+ * that open a preview must await this or they bake the built-in viewport, zoom
+ * and appearance into a tab that never picks up the user's saved values.
+ */
+export function ensureClientSettingsHydrated(): Promise<void> {
+  return hydrateClientSettings();
+}
+
 export function useClientSettingsHydrated(): boolean {
   return useSyncExternalStore(
     subscribeClientSettingsHydration,
@@ -293,7 +310,7 @@ export function syncedThemeIdFromPreference(theme: ThemePreference): string | un
   if (theme === "system" || theme === "light" || theme === "dark") {
     return DEFAULT_SYNCED_THEME_ID;
   }
-  return isBuiltInThemePreference(theme) ? canonicalThemePreference(theme) : undefined;
+  return isKnownThemePreference(theme) ? canonicalThemePreference(theme) : undefined;
 }
 
 export function themePreferenceFromSyncedThemeId(themeId: string): ThemePreference {
@@ -308,11 +325,54 @@ export function themePreferenceFromSyncedThemeId(themeId: string): ThemePreferen
   return isKnownThemePreference(themeId) ? canonicalThemePreference(themeId) : "system";
 }
 
+type SyncedThemeHalfMutation =
+  | Readonly<{ type: "none" }>
+  | Readonly<{
+      type: "set-half";
+      appearance: ThemeAppearance;
+      theme: ThemePreference | null;
+    }>
+  | Readonly<{
+      type: "reset-base";
+      baseTheme: ThemePreference;
+      preservedAppearance: ThemeAppearance;
+      preservedTheme: ThemePreference | null;
+    }>;
+
+export function resolveSyncedThemeHalfMutation(
+  baseTheme: ThemePreference,
+  themeHalves: ThemeHalves | null,
+  appearanceMode: ThemePreferenceMode,
+  appearance: ThemeAppearance,
+  theme: ThemePreference,
+): SyncedThemeHalfMutation {
+  if (resolveThemeHalf(baseTheme, themeHalves, appearance) === theme) return { type: "none" };
+  if (theme !== "system") return { type: "set-half", appearance, theme };
+  if (syncedThemeIdFromPreference(baseTheme) === DEFAULT_SYNCED_THEME_ID) {
+    return { type: "set-half", appearance, theme: null };
+  }
+
+  const preservedAppearance = appearance === "light" ? "dark" : "light";
+  const preservedTheme = resolveThemeHalf(baseTheme, themeHalves, preservedAppearance);
+  return {
+    type: "reset-base",
+    baseTheme: appearanceMode === "system" ? "system" : appearanceMode,
+    preservedAppearance,
+    preservedTheme:
+      syncedThemeIdFromPreference(preservedTheme) === DEFAULT_SYNCED_THEME_ID
+        ? null
+        : preservedTheme,
+  };
+}
+
 const syncedPlanModeHydrationController =
   createSyncedClientPreferenceHydrationController("planModeEnabled");
 const syncedAppearanceModeHydrationController =
   createSyncedClientPreferenceHydrationController("appearanceMode");
-const syncedThemeIdHydrationController = createSyncedClientPreferenceHydrationController("themeId");
+const syncedLightThemeIdHydrationController =
+  createSyncedClientPreferenceHydrationController("lightThemeId");
+const syncedDarkThemeIdHydrationController =
+  createSyncedClientPreferenceHydrationController("darkThemeId");
 
 function useEnvironmentSyncedClientPreferences(environmentId: EnvironmentId | null) {
   const preferences = useAtomValue(
@@ -353,20 +413,57 @@ function useSyncedClientPreferenceState() {
     [themeState.appearanceMode, themeState.setAppearanceMode],
   );
   const persistThemeId = useCallback(
-    (value: string) => {
+    (appearance: "light" | "dark", value: string) => {
       const theme = themePreferenceFromSyncedThemeId(value);
-      if (themeState.theme !== theme) themeState.setTheme(theme);
+      const liveBaseTheme = readThemePreference();
+      const liveThemeHalves = readThemeHalves();
+      const mutation = resolveSyncedThemeHalfMutation(
+        liveBaseTheme,
+        liveThemeHalves,
+        readAppearanceModePreference(liveBaseTheme),
+        appearance,
+        theme,
+      );
+      if (mutation.type === "none") return;
+      if (mutation.type === "set-half") {
+        themeState.setThemeHalf(mutation.appearance, mutation.theme);
+        return;
+      }
+
+      // Read storage live because both field hydration effects can run in one
+      // commit before React produces a fresh theme snapshot.
+      if (!themeState.setTheme(mutation.baseTheme)) return;
+      if (mutation.preservedTheme !== null) {
+        themeState.setThemeHalf(mutation.preservedAppearance, mutation.preservedTheme);
+      }
     },
-    [themeState.setTheme, themeState.theme],
+    [themeState.setTheme, themeState.setThemeHalf],
+  );
+
+  const lightThemeId = syncedThemeIdFromPreference(
+    resolveThemeHalf(themeState.theme, themeState.themeHalves, "light"),
+  );
+  const darkThemeId = syncedThemeIdFromPreference(
+    resolveThemeHalf(themeState.theme, themeState.themeHalves, "dark"),
+  );
+  const persistLightThemeId = useCallback(
+    (value: string) => persistThemeId("light", value),
+    [persistThemeId],
+  );
+  const persistDarkThemeId = useCallback(
+    (value: string) => persistThemeId("dark", value),
+    [persistThemeId],
   );
 
   return {
     appearanceMode: themeState.appearanceMode,
     persistAppearanceMode,
     persistPlanModeEnabled,
-    persistThemeId,
+    persistDarkThemeId,
+    persistLightThemeId,
     planModeEnabled: clientSettings.planModeEnabled,
-    themeId: syncedThemeIdFromPreference(themeState.theme),
+    darkThemeId,
+    lightThemeId,
     themeState,
   } as const;
 }
@@ -404,10 +501,15 @@ function useSynchronizeSyncedClientPreferences(
     clientValue: state.appearanceMode,
     persist: state.persistAppearanceMode,
   });
-  useSyncedClientPreferenceHydrationEffect(syncedThemeIdHydrationController, {
+  useSyncedClientPreferenceHydrationEffect(syncedLightThemeIdHydrationController, {
     ...common,
-    clientValue: state.themeId,
-    persist: state.persistThemeId,
+    clientValue: state.lightThemeId,
+    persist: state.persistLightThemeId,
+  });
+  useSyncedClientPreferenceHydrationEffect(syncedDarkThemeIdHydrationController, {
+    ...common,
+    clientValue: state.darkThemeId,
+    persist: state.persistDarkThemeId,
   });
 
   return {
@@ -455,11 +557,18 @@ function useWriteSyncedClientPreferences(
           persist: state.persistAppearanceMode,
         });
       }
-      if (valuePatch.themeId !== undefined) {
-        syncedThemeIdHydrationController.write({
+      if (valuePatch.lightThemeId !== undefined) {
+        syncedLightThemeIdHydrationController.write({
           ...common,
-          value: valuePatch.themeId,
-          persist: state.persistThemeId,
+          value: valuePatch.lightThemeId,
+          persist: state.persistLightThemeId,
+        });
+      }
+      if (valuePatch.darkThemeId !== undefined) {
+        syncedDarkThemeIdHydrationController.write({
+          ...common,
+          value: valuePatch.darkThemeId,
+          persist: state.persistDarkThemeId,
         });
       }
     },
@@ -469,7 +578,8 @@ function useWriteSyncedClientPreferences(
       patchPreferences,
       state.persistAppearanceMode,
       state.persistPlanModeEnabled,
-      state.persistThemeId,
+      state.persistDarkThemeId,
+      state.persistLightThemeId,
       synced.preferences,
     ],
   );
@@ -484,7 +594,18 @@ export function useSyncedTheme() {
     (theme: ThemePreference): boolean => {
       if (!state.themeState.setTheme(theme)) return false;
       const themeId = syncedThemeIdFromPreference(theme);
-      if (themeId !== undefined) write({ themeId });
+      if (themeId !== undefined) write({ lightThemeId: themeId, darkThemeId: themeId });
+      return true;
+    },
+    [state.themeState, write],
+  );
+  const setThemeHalf = useCallback(
+    (appearance: "light" | "dark", themeId: string | null): boolean => {
+      if (!state.themeState.setThemeHalf(appearance, themeId)) return false;
+      const syncedThemeId = syncedThemeIdFromPreference(themeId ?? state.themeState.theme);
+      if (syncedThemeId !== undefined) {
+        write(syncedThemePatchForHalf(appearance, syncedThemeId));
+      }
       return true;
     },
     [state.themeState, write],
@@ -511,7 +632,20 @@ export function useSyncedTheme() {
     [state.themeState, write],
   );
 
-  return { ...state.themeState, setAppearanceMode, setFollowSystem, setTheme } as const;
+  return {
+    ...state.themeState,
+    setAppearanceMode,
+    setFollowSystem,
+    setTheme,
+    setThemeHalf,
+  } as const;
+}
+
+export function syncedThemePatchForHalf(
+  appearance: "light" | "dark",
+  themeId: string,
+): SyncedClientPreferencesPatch {
+  return appearance === "light" ? { lightThemeId: themeId } : { darkThemeId: themeId };
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -693,7 +827,8 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationListeners.clear();
   syncedPlanModeHydrationController.reset();
   syncedAppearanceModeHydrationController.reset();
-  syncedThemeIdHydrationController.reset();
+  syncedLightThemeIdHydrationController.reset();
+  syncedDarkThemeIdHydrationController.reset();
 }
 
 export function __setClientSettingsForTests(settings: ClientSettings): void {

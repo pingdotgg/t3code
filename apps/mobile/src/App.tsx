@@ -1,12 +1,12 @@
 import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigation/native";
+import { createStaticNavigation } from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
@@ -21,9 +21,8 @@ import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
-import { DEFAULT_MOBILE_THEME_ID, resolveMobileFormSheetBackground } from "./lib/mobileTheme";
 import { useThemeColor } from "./lib/useThemeColor";
-import { NATIVE_SHEET_SURFACE_COLOR } from "./native/sheet-surface";
+import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 
 import "../global.css";
 
@@ -59,45 +58,22 @@ function SplashScreenCoordinator() {
   return null;
 }
 
-function ThemedApp() {
-  const { appearanceMode, effectiveColorScheme, importedThemes, themeId } =
-    useAppearancePreferences();
+export default function App() {
+  return (
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <CloudAuthProvider>
+        <AppearancePreferencesProvider>
+          <AppContent />
+        </AppearancePreferencesProvider>
+      </CloudAuthProvider>
+    </RegistryContext.Provider>
+  );
+}
+
+function AppContent() {
+  const { themeAppearance } = useAppearancePreferences();
   const statusBarBg = useThemeColor("--color-status-bar");
-  const navigationBackground = String(useThemeColor("--color-screen"));
-  const navigationCard = String(useThemeColor("--color-sheet"));
-  const navigationText = String(useThemeColor("--color-foreground"));
-  const navigationBorder = String(useThemeColor("--color-border"));
-  const navigationPrimary = String(useThemeColor("--color-primary"));
-  const navigationTheme = useMemo(() => {
-    const base = effectiveColorScheme === "dark" ? DarkTheme : DefaultTheme;
-    return {
-      ...base,
-      formSheetBackground:
-        appearanceMode === "system" &&
-        themeId === DEFAULT_MOBILE_THEME_ID &&
-        NATIVE_SHEET_SURFACE_COLOR !== undefined
-          ? NATIVE_SHEET_SURFACE_COLOR
-          : resolveMobileFormSheetBackground(themeId, effectiveColorScheme, importedThemes),
-      colors: {
-        ...base.colors,
-        background: navigationBackground,
-        card: navigationCard,
-        text: navigationText,
-        border: navigationBorder,
-        primary: navigationPrimary,
-      },
-    };
-  }, [
-    appearanceMode,
-    effectiveColorScheme,
-    importedThemes,
-    navigationBackground,
-    navigationBorder,
-    navigationCard,
-    navigationPrimary,
-    navigationText,
-    themeId,
-  ]);
+  const navigationTheme = useMobileNavigationTheme(themeAppearance);
 
   return (
     <>
@@ -106,7 +82,7 @@ function ThemedApp() {
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>
             <StatusBar
-              barStyle={effectiveColorScheme === "dark" ? "light-content" : "dark-content"}
+              barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"}
               backgroundColor={statusBarBg}
               translucent
             />
@@ -129,17 +105,5 @@ function ThemedApp() {
         </KeyboardProvider>
       </GestureHandlerRootView>
     </>
-  );
-}
-
-export default function App() {
-  return (
-    <RegistryContext.Provider value={appAtomRegistry}>
-      <CloudAuthProvider>
-        <AppearancePreferencesProvider>
-          <ThemedApp />
-        </AppearancePreferencesProvider>
-      </CloudAuthProvider>
-    </RegistryContext.Provider>
   );
 }

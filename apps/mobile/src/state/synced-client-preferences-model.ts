@@ -20,6 +20,27 @@ const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
 const SYNCED_CLIENT_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS = 3;
 const isString = Schema.is(Schema.String);
 
+function isThemePreferenceField(field: SyncedClientPreferenceField): boolean {
+  return field === "lightThemeId" || field === "darkThemeId";
+}
+
+function normalizeThemeIdsInPatch(
+  patch: Partial<Preferences>,
+  normalizeThemeId: ((themeId: string) => string) | undefined,
+): Partial<Preferences> {
+  const lightThemeId = patch.lightThemeId;
+  const darkThemeId = patch.darkThemeId;
+  return {
+    ...patch,
+    ...(lightThemeId === undefined
+      ? undefined
+      : { lightThemeId: normalizeThemeId?.(lightThemeId) ?? lightThemeId }),
+    ...(darkThemeId === undefined
+      ? undefined
+      : { darkThemeId: normalizeThemeId?.(darkThemeId) ?? darkThemeId }),
+  };
+}
+
 type SyncedClientPreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
 const scheduleSyncedClientPreferenceRetry: SyncedClientPreferenceRetryScheduler = (
@@ -312,11 +333,7 @@ export function createSyncedClientPreferenceReconciliationController(
           return result._tag === "Success" ? result.value : null;
         };
         current.persist = (patch) =>
-          input.persist(
-            patch.themeId === undefined
-              ? patch
-              : { ...patch, themeId: input.normalizeThemeId?.(patch.themeId) ?? patch.themeId },
-          );
+          input.persist(normalizeThemeIdsInPatch(patch, input.normalizeThemeId));
         return;
       }
       if (current !== undefined) cancel(environmentId);
@@ -329,12 +346,7 @@ export function createSyncedClientPreferenceReconciliationController(
           const result = await input.patch(input.target);
           return result._tag === "Success" ? result.value : null;
         },
-        persist: (patch) =>
-          input.persist(
-            patch.themeId === undefined
-              ? patch
-              : { ...patch, themeId: input.normalizeThemeId?.(patch.themeId) ?? patch.themeId },
-          ),
+        persist: (patch) => input.persist(normalizeThemeIdsInPatch(patch, input.normalizeThemeId)),
       };
       state.reconciliation = reconciliation;
       dispatch(reconciliation);
@@ -478,9 +490,7 @@ export function createSyncedClientPreferenceWriteController(field: SyncedClientP
       }
       settledRequestedUpdatedAt = input.target.input.updatedAt;
       const patch = canonicalSyncedClientPreferencesPatch(input.result.value, [field]);
-      return patch?.themeId === undefined
-        ? patch
-        : { ...patch, themeId: input.normalizeThemeId?.(patch.themeId) ?? patch.themeId };
+      return patch === null ? null : normalizeThemeIdsInPatch(patch, input.normalizeThemeId);
     },
   };
 }
@@ -509,7 +519,9 @@ export function reconcileSyncedClientPreferences(input: {
     field: SyncedClientPreferenceField,
     value: SyncedClientPreferencesPatch[SyncedClientPreferenceField] | undefined,
   ) =>
-    field === "themeId" && isString(value) ? (input.normalizeThemeId?.(value) ?? value) : value;
+    isThemePreferenceField(field) && isString(value)
+      ? (input.normalizeThemeId?.(value) ?? value)
+      : value;
 
   for (const field of input.fields ?? SYNCED_CLIENT_PREFERENCE_FIELDS) {
     const localValue = normalizePreferenceValue(field, input.local.values[field]);
