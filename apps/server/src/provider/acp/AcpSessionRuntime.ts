@@ -61,6 +61,7 @@ export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
   readonly cwd: string;
   readonly resumeSessionId?: string;
+  readonly authPolicy?: "eager" | "onDemand";
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
@@ -546,7 +547,7 @@ export const make = (
       );
 
       const authMethods = initializeResult.authMethods ?? [];
-      if (authMethods.length > 0) {
+      const authenticate = Effect.gen(function* () {
         const requestedAuthMethodId = options.authMethodId;
         const authMethod = authMethods.find((method) => method.id === requestedAuthMethodId);
         if (authMethod === undefined) {
@@ -569,100 +570,118 @@ export const make = (
           authenticatePayload,
           acp.agent.authenticate(authenticatePayload),
         );
+      });
+
+      if (options.authPolicy !== "onDemand" && authMethods.length > 0) {
+        yield* authenticate;
       }
 
-      let sessionId: string;
-      let sessionSetupResult:
-        | EffectAcpSchema.LoadSessionResponse
-        | EffectAcpSchema.NewSessionResponse
-        | EffectAcpSchema.ResumeSessionResponse;
-      if (options.resumeSessionId) {
-        const loadPayload = {
-          sessionId: options.resumeSessionId,
-          cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
-        } satisfies EffectAcpSchema.LoadSessionRequest;
-        const sessionLoadTimeout = Duration.fromInputUnsafe(
-          options.sessionLoadTimeout ?? defaultSessionLoadTimeout,
-        );
-        const sessionLoadReplayIdleGap = Duration.fromInputUnsafe(
-          options.sessionLoadReplayIdleGap ?? defaultSessionLoadReplayIdleGap,
-        );
-
-        yield* Ref.set(
-          sessionLoadGateRef,
-          Option.some({
-            active: true,
-            lastActivityAtMillis: undefined,
-            idleGap: sessionLoadReplayIdleGap,
-            initializeResult,
-          }),
-        );
-
-        sessionId = options.resumeSessionId;
-        sessionSetupResult = yield* Effect.gen(function* () {
-          yield* logRequest({
-            method: "session/load",
-            payload: loadPayload,
-            status: "started",
-          });
-
-          const idleFiber = yield* waitForSessionLoadReplayIdle({
-            gateRef: sessionLoadGateRef,
-          }).pipe(Effect.forkIn(runtimeScope));
-          const loaded = yield* Effect.raceFirst(
-            acp.agent.loadSession(loadPayload),
-            Fiber.join(idleFiber),
-          ).pipe(
-            Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
-            Effect.timeoutOption(sessionLoadTimeout),
-            Effect.flatMap((result) =>
-              Option.match(result, {
-                onNone: () =>
-                  Effect.fail(
-                    new EffectAcpErrors.AcpTransportError({
-                      operation: "call-rpc",
-                      method: "session/load",
-                      detail: "session/load timed out waiting for RPC response or replay idle gap",
-                      cause: undefined,
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
-            ),
-            Effect.tap((result) =>
-              logRequest({
-                method: "session/load",
-                payload: loadPayload,
-                status: "succeeded",
-                result,
-              }),
-            ),
-            Effect.onError((cause) =>
-              logRequest({
-                method: "session/load",
-                payload: loadPayload,
-                status: "failed",
-                cause,
-              }),
-            ),
+      const setupSession = Effect.gen(function* () {
+        let sessionId: string;
+        let sessionSetupResult:
+          | EffectAcpSchema.LoadSessionResponse
+          | EffectAcpSchema.NewSessionResponse
+          | EffectAcpSchema.ResumeSessionResponse;
+        if (options.resumeSessionId) {
+          const loadPayload = {
+            sessionId: options.resumeSessionId,
+            cwd: options.cwd,
+            mcpServers: options.mcpServers ?? [],
+          } satisfies EffectAcpSchema.LoadSessionRequest;
+          const sessionLoadTimeout = Duration.fromInputUnsafe(
+            options.sessionLoadTimeout ?? defaultSessionLoadTimeout,
+          );
+          const sessionLoadReplayIdleGap = Duration.fromInputUnsafe(
+            options.sessionLoadReplayIdleGap ?? defaultSessionLoadReplayIdleGap,
           );
 
-          return loaded;
-        }).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
-      } else {
-        const createPayload = {
-          cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
-        } satisfies EffectAcpSchema.NewSessionRequest;
-        const created = yield* runLoggedRequest(
-          "session/new",
-          createPayload,
-          acp.agent.createSession(createPayload),
-        );
-        sessionId = created.sessionId;
-        sessionSetupResult = created;
-      }
+          yield* Ref.set(
+            sessionLoadGateRef,
+            Option.some({
+              active: true,
+              lastActivityAtMillis: undefined,
+              idleGap: sessionLoadReplayIdleGap,
+              initializeResult,
+            }),
+          );
+
+          sessionId = options.resumeSessionId;
+          sessionSetupResult = yield* Effect.gen(function* () {
+            yield* logRequest({
+              method: "session/load",
+              payload: loadPayload,
+              status: "started",
+            });
+
+            const idleFiber = yield* waitForSessionLoadReplayIdle({
+              gateRef: sessionLoadGateRef,
+            }).pipe(Effect.forkIn(runtimeScope));
+            const loaded = yield* Effect.raceFirst(
+              acp.agent.loadSession(loadPayload),
+              Fiber.join(idleFiber),
+            ).pipe(
+              Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
+              Effect.timeoutOption(sessionLoadTimeout),
+              Effect.flatMap((result) =>
+                Option.match(result, {
+                  onNone: () =>
+                    Effect.fail(
+                      new EffectAcpErrors.AcpTransportError({
+                        operation: "call-rpc",
+                        method: "session/load",
+                        detail:
+                          "session/load timed out waiting for RPC response or replay idle gap",
+                        cause: undefined,
+                      }),
+                    ),
+                  onSome: Effect.succeed,
+                }),
+              ),
+              Effect.tap((result) =>
+                logRequest({
+                  method: "session/load",
+                  payload: loadPayload,
+                  status: "succeeded",
+                  result,
+                }),
+              ),
+              Effect.onError((cause) =>
+                logRequest({
+                  method: "session/load",
+                  payload: loadPayload,
+                  status: "failed",
+                  cause,
+                }),
+              ),
+            );
+
+            return loaded;
+          }).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
+        } else {
+          const createPayload = {
+            cwd: options.cwd,
+            mcpServers: options.mcpServers ?? [],
+          } satisfies EffectAcpSchema.NewSessionRequest;
+          const created = yield* runLoggedRequest(
+            "session/new",
+            createPayload,
+            acp.agent.createSession(createPayload),
+          );
+          sessionId = created.sessionId;
+          sessionSetupResult = created;
+        }
+        return { sessionId, sessionSetupResult };
+      });
+
+      const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
+        options.authPolicy === "onDemand"
+          ? Effect.catch((error) =>
+              error._tag === "AcpRequestError" && error.code === -32000
+                ? authenticate.pipe(Effect.flatMap(() => setupSession))
+                : Effect.fail(error),
+            )
+          : (effect) => effect,
+      );
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
       yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));

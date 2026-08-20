@@ -27,6 +27,7 @@ const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANC
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
+const requireAuthForSessionNew = process.env.T3_ACP_REQUIRE_AUTH_FOR_SESSION_NEW === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
@@ -65,6 +66,7 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let createSessionCount = 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
 
@@ -324,14 +326,17 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
-  yield* agent.handleCreateSession(() =>
-    Effect.succeed({
+  yield* agent.handleCreateSession(() => {
+    if (requireAuthForSessionNew && createSessionCount++ === 0) {
+      return Effect.fail(AcpError.AcpRequestError.authRequired("Mock authentication required"));
+    }
+    return Effect.succeed({
       sessionId,
       modes: modeState(),
       models: modelState(),
       configOptions: configOptions(),
-    }),
-  );
+    });
+  });
 
   const emitLoadReplayNotifications = (requestedSessionId: string) => {
     writeJsonRpcNotification("session/update", {

@@ -734,6 +734,91 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("does not authenticate eagerly with on-demand auth", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    const advertisedAuthMethods = JSON.stringify([{ id: "test", name: "Test" }]);
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      expect(requestEvents.some((event) => event.method === "authenticate")).toBe(false);
+      expect(
+        requestEvents.some(
+          (event) => event.method === "session/new" && event.status === "succeeded",
+        ),
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHODS: advertisedAuthMethods,
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          authPolicy: "onDemand",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("authenticates and retries session setup after auth is required", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    const advertisedAuthMethods = JSON.stringify([{ id: "test", name: "Test" }]);
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      expect(
+        requestEvents.filter((event) => event.method === "authenticate").length,
+      ).toBeGreaterThan(0);
+      expect(requestEvents.filter((event) => event.method === "session/new")).toHaveLength(4);
+      expect(
+        requestEvents.filter(
+          (event) => event.method === "session/new" && event.status === "failed",
+        ),
+      ).toHaveLength(1);
+      expect(
+        requestEvents.filter(
+          (event) => event.method === "session/new" && event.status === "succeeded",
+        ),
+      ).toHaveLength(1);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHODS: advertisedAuthMethods,
+              T3_ACP_REQUIRE_AUTH_FOR_SESSION_NEW: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          authPolicy: "onDemand",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
   it.effect("fails visibly when the requested auth method is not advertised", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     const advertisedAuthMethods = JSON.stringify([

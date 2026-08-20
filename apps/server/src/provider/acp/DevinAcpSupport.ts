@@ -68,6 +68,7 @@ export const makeDevinAcpRuntime = (
         ...input,
         spawn: buildDevinAcpSpawnInput(input.devinSettings, input.cwd, input.environment),
         authMethodId: DEVIN_AUTH_METHOD_ID,
+        authPolicy: "onDemand",
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
