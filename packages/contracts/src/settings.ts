@@ -470,8 +470,10 @@ export type GrokSettings = typeof GrokSettings.Type;
 
 export const KimiSettings = makeProviderSettingsSchema(
   {
+    // Off by default (like Cursor, Grok and OpenCode): the binding is not yet
+    // stable enough to probe on every install. Users opt in from Settings.
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("kimi").pipe(

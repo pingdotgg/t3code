@@ -25,10 +25,11 @@ Kimi CLI. For first-time setup of T3 Code itself, see [Install T3 Code](./instal
   environment variable to your `bash.exe`.
 - A Kimi account with a Kimi For Coding subscription.
 
-## Sign In
+## Enable and Sign In
 
-You can sign in from inside T3 Code: open Settings → Providers, find the Kimi provider, and press
-**Sign in with Kimi**. Approve the sign-in in your browser (the shown code must match), and the
+Kimi is off by default. Open Settings → Providers, find the Kimi provider, and switch it on.
+
+You can then sign in from inside T3 Code: press **Sign in with Kimi** on the same provider card. Approve the sign-in in your browser (the shown code must match), and the
 provider flips to authenticated on its own.
 
 Signing in from a terminal works too:

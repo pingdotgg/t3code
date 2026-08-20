@@ -114,11 +114,9 @@ function stampTestProvider(snapshot: ServerProviderDraft): ServerProvider {
 }
 
 describe("buildInitialKimiProviderSnapshot", () => {
-  it.effect("returns a disabled snapshot when settings.enabled is false", () =>
+  it.effect("returns a disabled snapshot by default (opt-in like sibling ACP providers)", () =>
     Effect.gen(function* () {
-      const snapshot = yield* buildInitialKimiProviderSnapshot(
-        decodeKimiSettings({ enabled: false }),
-      );
+      const snapshot = yield* buildInitialKimiProviderSnapshot(decodeKimiSettings({}));
       expect(snapshot.enabled).toBe(false);
       expect(snapshot.status).toBe("disabled");
       expect(snapshot.installed).toBe(false);
@@ -126,9 +124,11 @@ describe("buildInitialKimiProviderSnapshot", () => {
     }),
   );
 
-  it.effect("returns a pending snapshot by default", () =>
+  it.effect("returns a pending snapshot when enabled", () =>
     Effect.gen(function* () {
-      const snapshot = yield* buildInitialKimiProviderSnapshot(decodeKimiSettings({}));
+      const snapshot = yield* buildInitialKimiProviderSnapshot(
+        decodeKimiSettings({ enabled: true }),
+      );
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("warning");
@@ -187,7 +187,7 @@ it.layer(NodeServices.layer)("Kimi driver probe controls", (it) => {
       const turnActivity = yield* makeKimiTurnActivity;
       const threadId = ThreadId.make("thread-active");
       const probedSnapshot = stampTestProvider({
-        ...(yield* buildInitialKimiProviderSnapshot(decodeKimiSettings({}))),
+        ...(yield* buildInitialKimiProviderSnapshot(decodeKimiSettings({ enabled: true }))),
         status: "ready",
         auth: { status: "authenticated" },
         message: "probe completed",
@@ -306,7 +306,7 @@ describe("buildKimiDiscoveredModelsFromSessionModelState", () => {
 it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
   it.effect("classifies a first healthy probe and reuses its discovery cache", () =>
     Effect.gen(function* () {
-      const settings = decodeKimiSettings({});
+      const settings = decodeKimiSettings({ enabled: true });
       const first = yield* probeKimiProviderStatus(
         settings,
         {},
@@ -343,7 +343,7 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
   it.effect("rediscovers and merges custom models after settings change the cache key", () =>
     Effect.gen(function* () {
       const first = yield* probeKimiProviderStatus(
-        decodeKimiSettings({ customModels: ["moonshot-ai/custom-one"] }),
+        decodeKimiSettings({ enabled: true, customModels: ["moonshot-ai/custom-one"] }),
         {},
         { operations: makeProbeOperations() },
       );
@@ -353,7 +353,7 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
       }
 
       const changed = yield* probeKimiProviderStatus(
-        decodeKimiSettings({ customModels: ["moonshot-ai/custom-two"] }),
+        decodeKimiSettings({ enabled: true, customModels: ["moonshot-ai/custom-two"] }),
         {},
         {
           discoveryCache,
@@ -413,7 +413,7 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
 
   it.effect("keeps command-missing, non-zero, and auth-required outcomes distinct", () =>
     Effect.gen(function* () {
-      const settings = decodeKimiSettings({});
+      const settings = decodeKimiSettings({ enabled: true });
       const commandMissing = yield* probeKimiProviderStatus(
         settings,
         {},
@@ -468,7 +468,7 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
   it.effect("uses a non-destructive warning for a first transient timeout", () =>
     Effect.gen(function* () {
       const result = yield* probeKimiProviderStatus(
-        decodeKimiSettings({}),
+        decodeKimiSettings({ enabled: true }),
         {},
         {
           operations: makeProbeOperations({
@@ -488,7 +488,7 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
 
   it.effect("retains a healthy snapshot across three transient refresh cycles", () =>
     Effect.gen(function* () {
-      const settings = decodeKimiSettings({});
+      const settings = decodeKimiSettings({ enabled: true });
       const healthy = yield* probeKimiProviderStatus(
         settings,
         {},
@@ -527,7 +527,7 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
 
   it.effect("does not mask auth loss with the last healthy snapshot", () =>
     Effect.gen(function* () {
-      const settings = decodeKimiSettings({});
+      const settings = decodeKimiSettings({ enabled: true });
       const lastKnownGoodRef = yield* Ref.make<ServerProvider | null>(null);
       const healthy = yield* probeKimiProviderStatus(
         settings,
