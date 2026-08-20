@@ -389,96 +389,132 @@ describe("XAiAcpExtension", () => {
   });
 
   it("identifies Grok plan.md paths and extracts markdown from tool call data", () => {
+    const linuxHost = { platform: "linux" as const, environment: {} };
+    const windowsHost = { platform: "win32" as const, environment: {} };
+    const grokHomeHost = {
+      platform: "linux" as const,
+      environment: { GROK_HOME: "/opt/grok-data" },
+    };
     const home = NodeOS.homedir().replace(/\\/g, "/");
     const sessionPlan = `${home}/.grok/sessions/abc/plan.md`;
     const nestedSessionPlan = `${home}/.grok/sessions/%2Fhome%2Fproj/019fd20e-c563-70a0-b801-a6bc51815a9b/plan.md`;
-    expect(isGrokPlanMarkdownPath(sessionPlan)).toBe(true);
-    expect(isGrokPlanMarkdownPath(nestedSessionPlan)).toBe(true);
-    expect(isGrokPlanMarkdownPath("~/.grok/sessions/abc/plan.md")).toBe(true);
-    expect(isGrokPlanMarkdownPath("/tmp/mock-home/.grok/sessions/sess/plan.md")).toBe(true);
-    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/sess/plan.md")).toBe(true);
-    expect(isGrokPlanMarkdownPath("C:/Users/other/.grok/sessions/id/plan.md")).toBe(true);
-    expect(isGrokPlanMarkdownPath("C:\\Users\\other\\.grok\\sessions\\id\\plan.md")).toBe(true);
-    const previousGrokHome = process.env.GROK_HOME;
-    process.env.GROK_HOME = "/opt/grok-data";
-    try {
-      expect(isGrokPlanMarkdownPath("/opt/grok-data/sessions/sess/plan.md")).toBe(true);
-    } finally {
-      if (previousGrokHome === undefined) {
-        delete process.env.GROK_HOME;
-      } else {
-        process.env.GROK_HOME = previousGrokHome;
-      }
-    }
-    // Workspace plan.md must not be treated as the session plan file.
-    expect(isGrokPlanMarkdownPath("plan.md")).toBe(false);
-    expect(isGrokPlanMarkdownPath("/repo/docs/plan.md")).toBe(false);
-    expect(isGrokPlanMarkdownPath("/tmp/other.md")).toBe(false);
-    expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/example/plan.md")).toBe(false);
-    expect(isGrokPlanMarkdownPath(`${home}/project/.grok/sessions/example/plan.md`)).toBe(false);
-    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/../../project/plan.md")).toBe(false);
-    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/foo/../../../project/plan.md")).toBe(
+    expect(isGrokPlanMarkdownPath(sessionPlan, linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath(nestedSessionPlan, linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath("~/.grok/sessions/abc/plan.md", linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath("/tmp/mock-home/.grok/sessions/sess/plan.md", linuxHost)).toBe(
+      true,
+    );
+    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/sess/plan.md", linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath("C:/Users/other/.grok/sessions/id/plan.md", windowsHost)).toBe(
+      true,
+    );
+    expect(
+      isGrokPlanMarkdownPath("C:\\Users\\other\\.grok\\sessions\\id\\plan.md", windowsHost),
+    ).toBe(true);
+    expect(isGrokPlanMarkdownPath("/opt/grok-data/sessions/sess/plan.md", grokHomeHost)).toBe(true);
+    expect(
+      isGrokPlanMarkdownPath("/OPT/GROK-DATA/sessions/sess/plan.md", {
+        platform: "win32",
+        environment: { GROK_HOME: "/opt/grok-data" },
+      }),
+    ).toBe(true);
+    expect(isGrokPlanMarkdownPath("/OPT/GROK-DATA/sessions/sess/plan.md", grokHomeHost)).toBe(
       false,
     );
+    // Workspace plan.md must not be treated as the session plan file.
+    expect(isGrokPlanMarkdownPath("plan.md", linuxHost)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/docs/plan.md", linuxHost)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/tmp/other.md", linuxHost)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/example/plan.md", linuxHost)).toBe(false);
+    expect(
+      isGrokPlanMarkdownPath(`${home}/project/.grok/sessions/example/plan.md`, linuxHost),
+    ).toBe(false);
+    expect(
+      isGrokPlanMarkdownPath("/home/other/.grok/sessions/../../project/plan.md", linuxHost),
+    ).toBe(false);
+    expect(
+      isGrokPlanMarkdownPath("/home/other/.grok/sessions/foo/../../../project/plan.md", linuxHost),
+    ).toBe(false);
 
     expect(
-      extractGrokPlanMarkdownFromToolCallData({
-        rawInput: {
-          file_path: sessionPlan,
-          content: "# From rawInput\n\n- a\n",
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: {
+            file_path: sessionPlan,
+            content: "# From rawInput\n\n- a\n",
+          },
         },
-      }),
+        linuxHost,
+      ),
     ).toBe("# From rawInput\n\n- a");
 
     expect(
-      extractGrokPlanMarkdownFromToolCallData({
-        content: [
-          {
-            type: "diff",
-            path: sessionPlan,
-            oldText: "",
-            newText: "# From diff\n\n- b\n",
-          },
-        ],
-      }),
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          content: [
+            {
+              type: "diff",
+              path: sessionPlan,
+              oldText: "",
+              newText: "# From diff\n\n- b\n",
+            },
+          ],
+        },
+        linuxHost,
+      ),
     ).toBe("# From diff\n\n- b");
 
     expect(
-      extractGrokPlanMarkdownFromToolCallData({
-        rawInput: { file_path: sessionPlan, content: "" },
-        content: [
-          {
-            type: "diff",
-            path: sessionPlan,
-            oldText: "",
-            newText: "# From diff after empty rawInput\n",
-          },
-        ],
-      }),
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: sessionPlan, content: "" },
+          content: [
+            {
+              type: "diff",
+              path: sessionPlan,
+              oldText: "",
+              newText: "# From diff after empty rawInput\n",
+            },
+          ],
+        },
+        linuxHost,
+      ),
     ).toBe("# From diff after empty rawInput");
 
     expect(
-      extractGrokPlanMarkdownFromToolCallData({
-        rawInput: { file_path: sessionPlan, content: "" },
-      }),
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: sessionPlan, content: "" },
+        },
+        linuxHost,
+      ),
     ).toBe("");
 
     expect(
-      extractGrokPlanMarkdownFromToolCallData({
-        content: [{ type: "diff", path: sessionPlan, oldText: "# old", newText: "" }],
-      }),
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          content: [{ type: "diff", path: sessionPlan, oldText: "# old", newText: "" }],
+        },
+        linuxHost,
+      ),
     ).toBe("");
 
     expect(
-      extractGrokPlanMarkdownFromToolCallData({
-        rawInput: { file_path: "/tmp/readme.md", content: "nope" },
-      }),
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: "/tmp/readme.md", content: "nope" },
+        },
+        linuxHost,
+      ),
     ).toBeUndefined();
 
     expect(
-      extractGrokPlanMarkdownFromToolCallData({
-        rawInput: { file_path: "/repo/docs/plan.md", content: "# Project plan\n" },
-      }),
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: "/repo/docs/plan.md", content: "# Project plan\n" },
+        },
+        linuxHost,
+      ),
     ).toBeUndefined();
   });
 });

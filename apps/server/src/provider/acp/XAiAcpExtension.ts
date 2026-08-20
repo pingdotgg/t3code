@@ -290,15 +290,21 @@ function addGrokSessionPrefix(
   prefixes.add(nestedGrokDir ? `${root}/.grok/sessions/` : `${root}/sessions/`);
 }
 
-function grokPlanSessionPrefixes(): ReadonlySet<string> {
+/** Injected host bits so these helpers stay off `process.platform` / `process.env`. */
+export interface GrokPlanPathHost {
+  readonly platform: NodeJS.Platform;
+  readonly environment: NodeJS.ProcessEnv;
+}
+
+function grokPlanSessionPrefixes(environment: NodeJS.ProcessEnv): ReadonlySet<string> {
   const prefixes = new Set<string>();
   addGrokSessionPrefix(prefixes, NodeOS.homedir(), true);
   addGrokSessionPrefix(prefixes, "~", true);
-  addGrokSessionPrefix(prefixes, process.env.HOME ?? "", true);
-  addGrokSessionPrefix(prefixes, process.env.USERPROFILE ?? "", true);
+  addGrokSessionPrefix(prefixes, environment.HOME ?? "", true);
+  addGrokSessionPrefix(prefixes, environment.USERPROFILE ?? "", true);
   // ACP mock and isolated Grok spawns use a HOME that is not the server process home.
   addGrokSessionPrefix(prefixes, "/tmp/mock-home", true);
-  const grokHome = process.env.GROK_HOME ?? "";
+  const grokHome = environment.GROK_HOME ?? "";
   addGrokSessionPrefix(prefixes, grokHome, false);
   addGrokSessionPrefix(prefixes, grokHome, true);
   return prefixes;
@@ -313,7 +319,10 @@ const CANONICAL_HOME_GROK_SESSION_PATH =
  * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md
  * or a repo-local `.grok/sessions/.../plan.md`).
  */
-export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean {
+export function isGrokPlanMarkdownPath(
+  path: string | undefined | null,
+  host: GrokPlanPathHost,
+): boolean {
   if (typeof path !== "string") {
     return false;
   }
@@ -325,9 +334,10 @@ export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean
   ) {
     return false;
   }
-  const haystack = process.platform === "win32" ? normalized.toLowerCase() : normalized;
-  for (const prefix of grokPlanSessionPrefixes()) {
-    const needle = process.platform === "win32" ? prefix.toLowerCase() : prefix;
+  const win32 = host.platform === "win32";
+  const haystack = win32 ? normalized.toLowerCase() : normalized;
+  for (const prefix of grokPlanSessionPrefixes(host.environment)) {
+    const needle = win32 ? prefix.toLowerCase() : prefix;
     if (!haystack.startsWith(needle)) {
       continue;
     }
@@ -346,6 +356,7 @@ export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean
  */
 export function extractGrokPlanMarkdownFromToolCallData(
   data: Record<string, unknown> | undefined,
+  host: GrokPlanPathHost,
 ): string | undefined {
   if (!data) {
     return undefined;
@@ -356,7 +367,7 @@ export function extractGrokPlanMarkdownFromToolCallData(
     value: string | undefined,
     filePath: string | undefined,
   ): string | undefined => {
-    if (!isGrokPlanMarkdownPath(filePath) || value === undefined) {
+    if (!isGrokPlanMarkdownPath(filePath, host) || value === undefined) {
       return undefined;
     }
     sawPlanWrite = true;

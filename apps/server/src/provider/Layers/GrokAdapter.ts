@@ -12,6 +12,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -343,6 +344,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
+    const hostPlatform = yield* HostProcessPlatform;
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const grokPlanPathHost = { platform: hostPlatform, environment: hostEnvironment };
 
     const sessions = new Map<ThreadId, GrokSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -1353,6 +1357,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     if (ctx.planModeActive) {
                       const planMarkdown = extractGrokPlanMarkdownFromToolCallData(
                         event.toolCall.data,
+                        grokPlanPathHost,
                       );
                       if (planMarkdown !== undefined) {
                         yield* emitProposedPlanCompleted(
