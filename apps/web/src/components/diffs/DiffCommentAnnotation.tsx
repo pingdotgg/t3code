@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
+import { isMacPlatform } from "~/lib/utils";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
 
@@ -102,7 +103,9 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-[10px] text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-[10px] text-muted-foreground/70">
+          {isMacPlatform(navigator.platform) ? "\u2318Enter" : "Ctrl+Enter"} to send
+        </span>
         <Button
           className="text-muted-foreground hover:text-foreground"
           variant="ghost"

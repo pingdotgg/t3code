@@ -23,6 +23,7 @@ import {
 } from "react";
 import {
   type KeybindingCommand,
+  type KeybindingShortcut,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
@@ -35,7 +36,7 @@ import {
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { formatShortcutLabel } from "../../keybindings";
+import { formatShortcutLabel, formatShortcutLabelParts } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import {
   primaryServerAvailableEditorsAtom,
@@ -74,27 +75,12 @@ import { searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-function KeybindingPill({ value }: { value: string }) {
-  const parts = value.split("+");
+function KeybindingPill({ shortcut }: { shortcut: KeybindingShortcut }) {
   return (
     <KbdGroup className="bg-transparent p-0 shadow-none">
-      {parts.map((part) => (
+      {formatShortcutLabelParts(shortcut).map((part) => (
         <Kbd key={part} className="min-w-6 justify-center px-1.5">
-          {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
+          {part}
         </Kbd>
       ))}
     </KbdGroup>
@@ -813,7 +799,7 @@ function KeybindingTableRow({
             aria-label={`Edit shortcut for ${commandLabel(row.command)}`}
             className="group inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:bg-background focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24"
           >
-            <KeybindingPill value={row.key} />
+            <KeybindingPill shortcut={row.binding.shortcut} />
             <span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/0 transition-opacity group-hover:text-muted-foreground/70 group-focus-visible:text-muted-foreground/70">
               Edit
             </span>
