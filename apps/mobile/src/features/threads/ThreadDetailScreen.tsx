@@ -453,13 +453,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ) ?? null,
     [props.serverConfig, selectedInstanceId],
   );
-  const selectedProviderSkills = useProviderSkills({
-    activeEnvironmentId: props.environmentId,
-    provider: selectedProviderStatus,
-    isServerThread: true,
-    threadId: props.selectedThread.id,
-    projectId: props.selectedThread.projectId,
-  });
+  const { skills: selectedProviderSkills, isPending: providerSkillInventoryPending } =
+    useProviderSkills({
+      activeEnvironmentId: props.environmentId,
+      provider: selectedProviderStatus,
+      isServerThread: true,
+      threadId: props.selectedThread.id,
+      projectId: props.selectedThread.projectId,
+    });
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
@@ -736,6 +737,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 selectedThread={props.selectedThread}
                 serverConfig={props.serverConfig}
                 providerSkills={selectedProviderSkills}
+                providerSkillInventoryPending={providerSkillInventoryPending}
                 queueCount={props.selectedThreadQueueCount}
                 environmentId={props.environmentId}
                 projectCwd={props.projectWorkspaceRoot}

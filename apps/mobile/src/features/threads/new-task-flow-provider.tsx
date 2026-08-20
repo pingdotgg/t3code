@@ -451,7 +451,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ) ?? null,
     [selectedEnvironmentServerConfig, selectedModel?.instanceId],
   );
-  const selectedProviderSkills = useProviderSkills({
+  const { skills: selectedProviderSkills } = useProviderSkills({
     activeEnvironmentId: selectedEnvironmentId,
     provider: selectedProviderStatus,
     isServerThread: false,

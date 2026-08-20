@@ -107,6 +107,7 @@ export interface ThreadComposerProps {
   readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
   readonly providerSkills: ReadonlyArray<ServerProviderSkill>;
+  readonly providerSkillInventoryPending: boolean;
   readonly queueCount: number;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
@@ -533,6 +534,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
     return [];
   }, [composerTrigger, pathSearch.entries, props.providerSkills, selectedProviderStatus]);
+  const isComposerMenuLoading =
+    composerTrigger?.kind === "path"
+      ? pathSearch.isPending
+      : composerTrigger?.kind === "skill" &&
+        props.providerSkills.length === 0 &&
+        props.providerSkillInventoryPending;
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -723,12 +730,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         layout={COMPOSER_LAYOUT_TRANSITION}
         style={{ maxWidth: props.contentMaxWidth }}
       >
-        {composerTrigger && composerMenuItems.length > 0 ? (
+        {composerTrigger && (composerMenuItems.length > 0 || isComposerMenuLoading) ? (
           <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenuItems}
               triggerKind={composerTrigger.kind}
-              isLoading={pathSearch.isPending}
+              isLoading={isComposerMenuLoading}
               onSelect={handleCommandSelect}
             />
           </View>

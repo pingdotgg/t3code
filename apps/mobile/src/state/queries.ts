@@ -145,13 +145,14 @@ export function useBranches(input: {
 }
 
 /**
- * Skills for a composer or message feed. Snapshot-mode providers never hit the
- * network; project-mode providers issue one request per
- * (environment, scope, instance).
+ * Skills and inventory loading state for a composer or message feed.
+ * Snapshot-mode providers never hit the network; project-mode providers issue
+ * one request per (environment, scope, instance).
  */
-export function useProviderSkills(
-  context: ProviderSkillInventoryContext,
-): ReadonlyArray<ServerProviderSkill> {
+export function useProviderSkills(context: ProviderSkillInventoryContext): {
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly isPending: boolean;
+} {
   const target = resolveProviderSkillInventoryTarget(context);
   const request = resolveProviderSkillInventoryRequest(target);
   const result = useEnvironmentQuery(
@@ -159,7 +160,13 @@ export function useProviderSkills(
   );
   const provider = target.provider;
   const inventory = result.data;
-  return useMemo(() => selectProviderSkills({ provider, inventory }), [provider, inventory]);
+  return useMemo(
+    () => ({
+      skills: selectProviderSkills({ provider, inventory }),
+      isPending: result.isPending,
+    }),
+    [inventory, provider, result.isPending],
+  );
 }
 
 export function usePaginatedBranches(target: VcsRefTarget) {
