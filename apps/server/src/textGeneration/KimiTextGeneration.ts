@@ -27,6 +27,7 @@ import {
   advertisedKimiModelIdsFromSessionSetup,
   applyKimiAcpModelSelection,
   currentKimiModelIdFromSessionSetup,
+  kimiSessionHasModelConfigOption,
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
 } from "../provider/acp/KimiAcpSupport.ts";
@@ -89,6 +90,7 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
           currentModelId: currentKimiModelIdFromSessionSetup(started.sessionSetupResult),
           requestedModelId: resolvedModel,
           advertisedModelIds: advertisedKimiModelIdsFromSessionSetup(started.sessionSetupResult),
+          hasModelConfigOption: kimiSessionHasModelConfigOption(started.sessionSetupResult),
           mapError: (cause) =>
             new TextGenerationError({
               operation,

@@ -126,8 +126,71 @@ export const makeKimiAcpRuntime = (
   });
 
 // kimi-code aliases its managed models as `kimi-code/<id>` in config.toml,
-// and `session/set_model` only accepts those alias ids.
+// and its model-selection RPCs expect those alias ids.
 const KIMI_CODE_MODEL_NAMESPACE = "kimi-code/";
+
+type KimiSessionSetupResponse =
+  | EffectAcpSchema.LoadSessionResponse
+  | EffectAcpSchema.NewSessionResponse
+  | EffectAcpSchema.ResumeSessionResponse;
+
+type KimiModelConfigOption = Extract<
+  EffectAcpSchema.SessionConfigOption,
+  { readonly type: "select" }
+>;
+
+export function findKimiModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): KimiModelConfigOption | undefined {
+  if (!configOptions) {
+    return undefined;
+  }
+  const selectOptions = configOptions.filter(
+    (option): option is KimiModelConfigOption => option.type === "select",
+  );
+  return (
+    selectOptions.find((option) => option.category === "model") ??
+    selectOptions.find((option) => option.id.trim() === "model")
+  );
+}
+
+export function kimiModelStateFromSessionSetup(
+  sessionSetupResult: KimiSessionSetupResponse,
+): EffectAcpSchema.SessionModelState | undefined {
+  const modelConfig = findKimiModelConfigOption(sessionSetupResult.configOptions);
+  if (modelConfig) {
+    const currentModelId = modelConfig.currentValue.trim();
+    const seen = new Set<string>();
+    const availableModels = modelConfig.options
+      .flatMap((entry) => ("value" in entry ? [entry] : entry.options))
+      .flatMap((option) => {
+        const modelId = option.value.trim();
+        if (!modelId || seen.has(modelId)) {
+          return [];
+        }
+        seen.add(modelId);
+        const name = option.name.trim() || modelId;
+        const description = option.description?.trim() || undefined;
+        return [
+          {
+            modelId,
+            name,
+            ...(description ? { description } : {}),
+          } satisfies EffectAcpSchema.ModelInfo,
+        ];
+      });
+    if (currentModelId && availableModels.length > 0) {
+      return { currentModelId, availableModels };
+    }
+  }
+  return sessionSetupResult.models ?? undefined;
+}
+
+export function kimiSessionHasModelConfigOption(
+  sessionSetupResult: KimiSessionSetupResponse,
+): boolean {
+  return findKimiModelConfigOption(sessionSetupResult.configOptions) !== undefined;
+}
 
 /**
  * Kimi model ids may carry a `kimi-code/` namespace prefix and a `,thinking`
@@ -151,11 +214,10 @@ export function resolveKimiAcpBaseModelId(model: string | null | undefined): str
  *
  * kimi-cli (PyPI) advertises `availableModels` with bare ids (`k3`,
  * `k3,thinking`) and expects those on `session/set_model`. Kimi Code CLI
- * (~0.37) advertises no models at all and only accepts its config.toml alias
- * ids, which namespace managed models as `kimi-code/<id>`. Matching an
- * advertised id wins; with nothing advertised, bare ids get the `kimi-code/`
- * namespace; ids that already carry a namespace (custom models such as
- * `moonshot-ai/kimi-k3`) always pass through as-is.
+ * (~0.37) advertises namespaced config.toml alias ids through its model config
+ * option. Matching an advertised id wins; with nothing advertised, bare ids
+ * get the `kimi-code/` namespace; ids that already carry a namespace (custom
+ * models such as `moonshot-ai/kimi-k3`) always pass through as-is.
  */
 export function resolveKimiAcpWireModelId(
   baseModelId: string,
@@ -177,29 +239,29 @@ export function resolveKimiAcpWireModelId(
 }
 
 export function advertisedKimiModelIdsFromSessionSetup(
-  sessionSetupResult:
-    | EffectAcpSchema.LoadSessionResponse
-    | EffectAcpSchema.NewSessionResponse
-    | EffectAcpSchema.ResumeSessionResponse,
+  sessionSetupResult: KimiSessionSetupResponse,
 ): ReadonlyArray<string> | undefined {
-  const models = sessionSetupResult.models?.availableModels;
+  const models = kimiModelStateFromSessionSetup(sessionSetupResult)?.availableModels;
   return models && models.length > 0 ? models.map((model) => model.modelId) : undefined;
 }
 
 export function currentKimiModelIdFromSessionSetup(
-  sessionSetupResult:
-    | EffectAcpSchema.LoadSessionResponse
-    | EffectAcpSchema.NewSessionResponse
-    | EffectAcpSchema.ResumeSessionResponse,
+  sessionSetupResult: KimiSessionSetupResponse,
 ): string | undefined {
-  return sessionSetupResult.models?.currentModelId?.trim() || undefined;
+  return kimiModelStateFromSessionSetup(sessionSetupResult)?.currentModelId?.trim() || undefined;
 }
 
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
 export function applyKimiAcpModelSelection<E>(input: {
-  readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
+  readonly runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "setModel" | "setSessionModel"
+  >;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
   readonly advertisedModelIds?: ReadonlyArray<string> | undefined;
+  readonly hasModelConfigOption: boolean;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
   const currentBaseModelId = input.currentModelId
@@ -210,12 +272,18 @@ export function applyKimiAcpModelSelection<E>(input: {
   if (!shouldSwitchModel) {
     return Effect.succeed(input.currentModelId);
   }
-  return input.runtime
-    .setSessionModel(resolveKimiAcpWireModelId(input.requestedModelId, input.advertisedModelIds))
-    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+  const wireModelId = resolveKimiAcpWireModelId(input.requestedModelId, input.advertisedModelIds);
+  const applyFallbackModel = input.runtime.setSessionModel(wireModelId).pipe(Effect.asVoid);
+  const applyModel = input.hasModelConfigOption
+    ? input.runtime.setModel(wireModelId).pipe(
+        Effect.catchIf(
+          (cause) => isAcpRequestError(cause) && cause.code === -32601,
+          () => applyFallbackModel,
+        ),
+      )
+    : applyFallbackModel;
+  return applyModel.pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
 }
-
-const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 /** True when an ACP failure means "signed out", i.e. `authenticate` was rejected. */
 export function isKimiAuthRequiredError(error: unknown): boolean {

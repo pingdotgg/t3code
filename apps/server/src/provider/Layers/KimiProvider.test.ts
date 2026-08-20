@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import type * as EffectAcpSchema from "effect-acp/schema";
 import {
   KimiSettings,
   ProviderDriverKind,
@@ -14,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 
 import { stabilizeKimiProviderProbe } from "../Drivers/KimiDriver.ts";
+import { kimiModelStateFromSessionSetup } from "../acp/KimiAcpSupport.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   buildInitialKimiProviderSnapshot,
@@ -31,6 +33,29 @@ const discoveredModels = buildKimiDiscoveredModelsFromSessionModelState({
   currentModelId: "k3",
   availableModels: [{ modelId: "k3", name: "K3" }],
 });
+const dynamicModelSession = {
+  sessionId: "session-1",
+  configOptions: [
+    {
+      id: "available-model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "kimi-code/k3",
+      options: [
+        { value: "kimi-code/kimi-for-coding", name: "K2.7 Coding" },
+        { value: "kimi-code/kimi-for-coding-highspeed", name: "K2.7 Coding Highspeed" },
+        { value: "kimi-code/k3", name: "K3" },
+        { value: "kimi-code/k3-256k", name: "K3-256k" },
+        { value: "moonshot-ai/kimi-k3", name: "kimi-k3" },
+        { value: "moonshot-ai/kimi-k2.7-code-highspeed", name: "kimi-k2.7-code-highspeed" },
+        { value: "moonshot-ai/kimi-k2.7-code", name: "kimi-k2.7-code" },
+        { value: "moonshot-ai/kimi-k2.5", name: "kimi-k2.5" },
+        { value: "moonshot-ai/kimi-k2.6", name: "kimi-k2.6" },
+      ],
+    },
+  ],
+} satisfies EffectAcpSchema.NewSessionResponse;
 
 function makeProbeOperations(
   input: {
@@ -84,7 +109,7 @@ describe("buildInitialKimiProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Kimi");
-      expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.requiresNewThreadForModelChange).toBe(false);
       expect(snapshot.models.map((model) => model.slug)).toEqual([
         "k3",
         "kimi-for-coding",
@@ -103,6 +128,25 @@ describe("buildKimiDiscoveredModelsFromSessionModelState", () => {
         availableModels: [],
       }),
     ).toEqual([]);
+  });
+
+  it("builds every model advertised by the category-based config option", () => {
+    const models = buildKimiDiscoveredModelsFromSessionModelState(
+      kimiModelStateFromSessionSetup(dynamicModelSession),
+    );
+
+    expect(models.map((model) => [model.slug, model.name])).toEqual([
+      ["kimi-for-coding", "K2.7 Coding"],
+      ["kimi-for-coding-highspeed", "K2.7 Coding Highspeed"],
+      ["k3", "K3"],
+      ["k3-256k", "K3-256k"],
+      ["moonshot-ai/kimi-k3", "kimi-k3"],
+      ["moonshot-ai/kimi-k2.7-code-highspeed", "kimi-k2.7-code-highspeed"],
+      ["moonshot-ai/kimi-k2.7-code", "kimi-k2.7-code"],
+      ["moonshot-ai/kimi-k2.5", "kimi-k2.5"],
+      ["moonshot-ai/kimi-k2.6", "kimi-k2.6"],
+    ]);
+    expect(models.find((model) => model.slug === "k3")?.isDefault).toBe(true);
   });
 
   it("collapses thinking variants onto their base model and marks the current default", () => {
@@ -155,6 +199,37 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
       expect(second.classification).toEqual({ _tag: "healthy", modelSource: "cache" });
       expect(second.snapshot.status).toBe("ready");
       expect(second.snapshot.models.map((model) => model.slug)).toEqual(["k3"]);
+    }),
+  );
+
+  it.effect("rediscovers and merges custom models after settings change the cache key", () =>
+    Effect.gen(function* () {
+      const first = yield* probeKimiProviderStatus(
+        decodeKimiSettings({ customModels: ["moonshot-ai/custom-one"] }),
+        {},
+        { operations: makeProbeOperations() },
+      );
+      const discoveryCache = first.discoveryCache;
+      if (!discoveryCache) {
+        throw new Error("healthy probe did not produce a discovery cache");
+      }
+
+      const changed = yield* probeKimiProviderStatus(
+        decodeKimiSettings({ customModels: ["moonshot-ai/custom-two"] }),
+        {},
+        {
+          discoveryCache,
+          operations: {
+            ...makeProbeOperations(),
+            probeAuthentication: () => Effect.die("stale cache must not be authenticated"),
+          },
+        },
+      );
+      expect(changed.classification).toEqual({ _tag: "healthy", modelSource: "discovery" });
+      expect(changed.snapshot.models.map((model) => model.slug)).toEqual([
+        "k3",
+        "moonshot-ai/custom-two",
+      ]);
     }),
   );
 

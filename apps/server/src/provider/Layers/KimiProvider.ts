@@ -32,6 +32,7 @@ import {
 } from "../providerMaintenance.ts";
 import {
   isKimiAuthRequiredError,
+  kimiModelStateFromSessionSetup,
   makeKimiAcpRuntime,
   probeKimiAcpAuthentication,
   resolveKimiAcpBaseModelId,
@@ -42,7 +43,7 @@ const KIMI_PRESENTATION = {
   displayName: "Kimi",
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
+  requiresNewThreadForModelChange: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -246,7 +247,9 @@ const discoverKimiModelsViaAcp = (
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildKimiDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    return buildKimiDiscoveredModelsFromSessionModelState(
+      kimiModelStateFromSessionSetup(started.sessionSetupResult),
+    );
   }).pipe(Effect.scoped);
 
 const runKimiVersionCommand = (

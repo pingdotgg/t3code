@@ -56,6 +56,7 @@ import {
   advertisedKimiModelIdsFromSessionSetup,
   applyKimiAcpModelSelection,
   currentKimiModelIdFromSessionSetup,
+  kimiSessionHasModelConfigOption,
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
 } from "../acp/KimiAcpSupport.ts";
@@ -101,8 +102,9 @@ interface KimiSessionContext {
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
   currentModelId: string | undefined;
-  /** Model ids the agent advertised at session setup; kimi-code advertises none. */
+  /** Exact model ids the agent advertised at session setup. */
   readonly advertisedModelIds: ReadonlyArray<string> | undefined;
+  readonly hasModelConfigOption: boolean;
   stopped: boolean;
 }
 
@@ -654,11 +656,13 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           const advertisedModelIds = advertisedKimiModelIdsFromSessionSetup(
             started.sessionSetupResult,
           );
+          const hasModelConfigOption = kimiSessionHasModelConfigOption(started.sessionSetupResult);
           const boundModelId = yield* applyKimiAcpModelSelection({
             runtime: acp,
             currentModelId: currentKimiModelIdFromSessionSetup(started.sessionSetupResult),
             requestedModelId: requestedStartModelId,
             advertisedModelIds,
+            hasModelConfigOption,
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
@@ -695,6 +699,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             promptsInFlight: 0,
             currentModelId: boundModelId,
             advertisedModelIds,
+            hasModelConfigOption,
             stopped: false,
           };
 
@@ -870,9 +875,11 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 currentModelId: ctx.currentModelId,
                 requestedModelId: requestedTurnModelId,
                 advertisedModelIds: ctx.advertisedModelIds,
+                hasModelConfigOption: ctx.hasModelConfigOption,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
+              ctx.currentModelId = currentModelId;
 
               const text = input.input?.trim();
               const imagePromptParts = yield* Effect.forEach(
@@ -921,7 +928,6 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 });
               }
 
-              ctx.currentModelId = currentModelId;
               const displayModel = currentModelId
                 ? resolveKimiAcpBaseModelId(currentModelId)
                 : undefined;
