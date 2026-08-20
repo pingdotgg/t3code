@@ -228,7 +228,10 @@ describe("showContextMenuFallback", () => {
       { id: "unarchive", label: "Unarchive", icon: "archive-restore" },
     ]);
 
-    expect(findButton("Unarchive")?.querySelectorAll("svg")).toHaveLength(1);
+    const unarchiveButton = findButton("Unarchive");
+    expect(unarchiveButton?.querySelectorAll("svg")).toHaveLength(1);
+    expect(unarchiveButton?.querySelectorAll("rect")).toHaveLength(1);
+    expect(unarchiveButton?.querySelectorAll("path")).toHaveLength(4);
     dismissContextMenu();
     await expect(selectionPromise).resolves.toBeNull();
   });
