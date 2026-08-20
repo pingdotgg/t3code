@@ -42,7 +42,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/unstable/http";
 
-import { releaseBrowserNavigationRoutesForEnvironment } from "../browser/browserNavigationRoutes";
+import { releaseBrowserNavigationRoutesForEnvironmentEffect } from "../browser/browserNavigationRoutes";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
@@ -611,14 +611,7 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
           Effect.sync(() => {
             clearComposerDraftsEnvironment(environmentId);
           }),
-          Effect.tryPromise(() => releaseBrowserNavigationRoutesForEnvironment(environmentId)).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Could not release preview routes during environment cleanup.", {
-                environmentId,
-                cause,
-              }),
-            ),
-          ),
+          releaseBrowserNavigationRoutesForEnvironmentEffect(environmentId),
         ],
         { concurrency: "unbounded", discard: true },
       ),

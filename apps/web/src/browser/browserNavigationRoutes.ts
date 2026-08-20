@@ -1,4 +1,5 @@
 import type { EnvironmentId, PreviewUrlResolution } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -16,7 +17,8 @@ interface ManagedRoute {
   readonly generation: number;
   readonly resolution: PreviewUrlResolution;
   readonly scope: Scope.Closeable;
-  closePromise: Promise<void> | null;
+  readonly closeDeferred: Deferred.Deferred<void>;
+  closeStarted: boolean;
   phase: RoutePhase;
   tabId: string | null;
   useFinished: boolean;
@@ -28,27 +30,26 @@ const environmentVersions = new Map<EnvironmentId, number>();
 const routes = new Set<ManagedRoute>();
 let nextRouteGeneration = 0;
 
-const closeRouteScope = (scope: Scope.Closeable): Promise<void> =>
-  Effect.runPromise(Scope.close(scope, Exit.void));
+const closeRoute = (route: ManagedRoute): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    if (route.closeStarted) return Deferred.await(route.closeDeferred);
+    route.closeStarted = true;
+    route.phase = "closed";
+    routes.delete(route);
+    if (route.tabId !== null && activeRoutes.get(route.tabId) === route) {
+      activeRoutes.delete(route.tabId);
+    }
+    return Scope.close(route.scope, Exit.void).pipe(
+      Effect.onExit((exit) => Deferred.done(route.closeDeferred, exit)),
+    );
+  });
 
-const closeRoute = (route: ManagedRoute): Promise<void> => {
-  if (route.closePromise !== null) return route.closePromise;
-  route.phase = "closed";
-  routes.delete(route);
-  if (route.tabId !== null && activeRoutes.get(route.tabId) === route) {
-    activeRoutes.delete(route.tabId);
-  }
-  route.closePromise = closeRouteScope(route.scope);
-  return route.closePromise;
-};
-
-const retireRoute = async (route: ManagedRoute): Promise<void> => {
-  if (route.phase === "closed") return;
-  route.phase = "retired";
-  if (route.useFinished) {
-    await closeRoute(route);
-  }
-};
+const retireRoute = (route: ManagedRoute): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    if (route.phase === "closed") return closeRoute(route);
+    route.phase = "retired";
+    return route.useFinished ? closeRoute(route) : Effect.void;
+  });
 
 export function readBrowserNavigationRouteEnvironmentVersion(environmentId: EnvironmentId): number {
   return environmentVersions.get(environmentId) ?? 0;
@@ -80,7 +81,8 @@ export function createBrowserNavigationRoute(input: {
     generation: input.generation,
     resolution: input.resolution,
     scope: input.scope,
-    closePromise: null,
+    closeDeferred: Deferred.makeUnsafe(),
+    closeStarted: false,
     phase: "pending",
     tabId: null,
     useFinished: false,
@@ -94,7 +96,7 @@ export function createBrowserNavigationRoute(input: {
       route.tabId = tabId;
       const latestGeneration = latestRouteGenerationByTab.get(tabId) ?? 0;
       if (route.generation < latestGeneration) {
-        await retireRoute(route);
+        await Effect.runPromise(retireRoute(route));
         return;
       }
 
@@ -108,28 +110,37 @@ export function createBrowserNavigationRoute(input: {
         activeRoutes.delete(tabId);
       }
       if (previous !== undefined && previous !== route) {
-        await retireRoute(previous);
+        await Effect.runPromise(retireRoute(previous));
       }
     },
     release: async () => {
       if (route.phase === "closed") return;
       route.useFinished = true;
       if (route.phase === "active") return;
-      await closeRoute(route);
+      await Effect.runPromise(closeRoute(route));
     },
   };
 }
 
-export async function releaseBrowserNavigationRoute(tabId: string): Promise<void> {
-  latestRouteGenerationByTab.set(tabId, ++nextRouteGeneration);
-  const matchingRoutes = [...routes].filter((route) => route.tabId === tabId);
-  activeRoutes.delete(tabId);
-  await Promise.all(matchingRoutes.map(retireRoute));
+const releaseBrowserNavigationRouteEffect = Effect.fn("web.browserNavigationRoutes.releaseTab")(
+  function* (tabId: string) {
+    latestRouteGenerationByTab.set(tabId, ++nextRouteGeneration);
+    const matchingRoutes = [...routes].filter((route) => route.tabId === tabId);
+    activeRoutes.delete(tabId);
+    yield* Effect.forEach(matchingRoutes, retireRoute, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+  },
+);
+
+export function releaseBrowserNavigationRoute(tabId: string): Promise<void> {
+  return Effect.runPromise(releaseBrowserNavigationRouteEffect(tabId));
 }
 
-export async function releaseBrowserNavigationRoutesForEnvironment(
-  environmentId: EnvironmentId,
-): Promise<void> {
+export const releaseBrowserNavigationRoutesForEnvironmentEffect = Effect.fn(
+  "web.browserNavigationRoutes.releaseEnvironment",
+)(function* (environmentId: EnvironmentId) {
   environmentVersions.set(
     environmentId,
     readBrowserNavigationRouteEnvironmentVersion(environmentId) + 1,
@@ -143,14 +154,24 @@ export async function releaseBrowserNavigationRoutesForEnvironment(
       }
     }
   }
-  await Promise.all(matchingRoutes.map(closeRoute));
-}
+  yield* Effect.forEach(matchingRoutes, closeRoute, {
+    concurrency: "unbounded",
+    discard: true,
+  });
+});
 
-export async function resetBrowserNavigationRoutesForTests(): Promise<void> {
-  const existingRoutes = [...routes];
-  activeRoutes.clear();
-  latestRouteGenerationByTab.clear();
-  environmentVersions.clear();
-  await Promise.all(existingRoutes.map(closeRoute));
-  nextRouteGeneration = 0;
+export function resetBrowserNavigationRoutesForTests(): Promise<void> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const existingRoutes = [...routes];
+      activeRoutes.clear();
+      latestRouteGenerationByTab.clear();
+      environmentVersions.clear();
+      yield* Effect.forEach(existingRoutes, closeRoute, {
+        concurrency: "unbounded",
+        discard: true,
+      });
+      nextRouteGeneration = 0;
+    }),
+  );
 }

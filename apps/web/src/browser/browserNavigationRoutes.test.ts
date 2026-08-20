@@ -8,7 +8,7 @@ import {
   createBrowserNavigationRoute,
   readBrowserNavigationRouteEnvironmentVersion,
   releaseBrowserNavigationRoute,
-  releaseBrowserNavigationRoutesForEnvironment,
+  releaseBrowserNavigationRoutesForEnvironmentEffect,
   reserveBrowserNavigationRouteGeneration,
   resetBrowserNavigationRoutesForTests,
 } from "./browserNavigationRoutes";
@@ -131,7 +131,7 @@ describe("browser navigation routes", () => {
       yield* Effect.promise(() => route.commit("tab-1"));
       yield* Effect.promise(() => route.release());
 
-      yield* Effect.promise(() => releaseBrowserNavigationRoutesForEnvironment(environmentId));
+      yield* releaseBrowserNavigationRoutesForEnvironmentEffect(environmentId);
 
       expect(closes).toBe(1);
       expect(readBrowserNavigationRouteEnvironmentVersion(environmentId)).toBe(version + 1);
