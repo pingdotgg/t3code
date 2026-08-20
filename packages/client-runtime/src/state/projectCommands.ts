@@ -1,12 +1,11 @@
 import { type EnvironmentId, type ProjectReadFileResult, WS_METHODS } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
 import { Atom } from "effect/unstable/reactivity";
 
-import { request } from "../rpc/client.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
-  createEnvironmentQueryAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
@@ -56,18 +55,24 @@ export function createProjectEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { projectId: string } }) =>
       JSON.stringify([environmentId, input.projectId]),
   };
-  const pendingListEntriesRefresh = new Set<string>();
-  const listEntriesFamily = createEnvironmentQueryAtomFamily(runtime, {
+  const listEntries = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:projects:list-entries",
+    tag: WS_METHODS.projectsListEntries,
     staleTimeMs: 30_000,
     idleTtlMs: 5 * 60_000,
-    execute: (input: { readonly cwd: string }) => {
-      const refresh = pendingListEntriesRefresh.delete(input.cwd);
-      return request(WS_METHODS.projectsListEntries, {
-        cwd: input.cwd,
-        ...(refresh ? { refresh: true } : {}),
-      });
-    },
+  });
+  const refreshEntries = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:projects:refresh-entries",
+    tag: WS_METHODS.projectsListEntries,
+    onSuccess: (target, registry) =>
+      Effect.sync(() => {
+        registry.refresh(
+          listEntries({
+            environmentId: target.environmentId,
+            input: { cwd: target.input.cwd },
+          }),
+        );
+      }),
   });
   return {
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -75,18 +80,8 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
     }),
-    listEntries: (target: {
-      readonly environmentId: EnvironmentId;
-      readonly input: { readonly cwd: string; readonly refresh?: boolean };
-    }) => {
-      if (target.input.refresh === true) {
-        pendingListEntriesRefresh.add(target.input.cwd);
-      }
-      return listEntriesFamily({
-        environmentId: target.environmentId,
-        input: { cwd: target.input.cwd },
-      });
-    },
+    listEntries,
+    refreshEntries,
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,

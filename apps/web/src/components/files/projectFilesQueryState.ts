@@ -11,6 +11,7 @@ import { useCallback } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { useProjectPathSearch } from "~/state/queries";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
@@ -127,11 +128,12 @@ export function useProjectEntriesQuery(
 ): ProjectQueryState<ProjectListEntriesResult> {
   const atom = getProjectEntriesQueryAtom(environmentId, cwd);
   const result = useAtomValue(atom);
+  const refreshEntries = useAtomCommand(projectEnvironment.refreshEntries, {
+    reportFailure: false,
+  });
   const refresh = useCallback(() => {
-    appAtomRegistry.refresh(
-      projectEnvironment.listEntries({ environmentId, input: { cwd, refresh: true } }),
-    );
-  }, [cwd, environmentId]);
+    void refreshEntries({ environmentId, input: { cwd, refresh: true } });
+  }, [cwd, environmentId, refreshEntries]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: errorMessage(result),

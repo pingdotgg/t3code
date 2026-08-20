@@ -1,7 +1,6 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { RegistryContext } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -25,6 +24,7 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
@@ -252,7 +252,9 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
-  const registry = useContext(RegistryContext);
+  const refreshEntriesCommand = useAtomCommand(projectEnvironment.refreshEntries, {
+    reportFailure: false,
+  });
   const entriesQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
@@ -263,10 +265,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   );
   const refreshEntries = useCallback(() => {
     if (environmentId === null || cwd === null) return;
-    registry.refresh(
-      projectEnvironment.listEntries({ environmentId, input: { cwd, refresh: true } }),
-    );
-  }, [cwd, environmentId, registry]);
+    void refreshEntriesCommand({ environmentId, input: { cwd, refresh: true } });
+  }, [cwd, environmentId, refreshEntriesCommand]);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handleReturnToThread = useCallback(() => {
     if (navigation.canGoBack()) {

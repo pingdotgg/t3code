@@ -1,7 +1,6 @@
-import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
-import { useCallback, useContext, useMemo, useState, type ComponentProps } from "react";
+import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
 import {
   Screen,
@@ -15,6 +14,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
@@ -34,7 +34,9 @@ export function ThreadFileNavigatorPane(props: {
   const foregroundColor = String(useThemeColor("--color-foreground"));
   const sheetColor = String(useThemeColor("--color-sheet"));
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-  const registry = useContext(RegistryContext);
+  const refreshEntriesCommand = useAtomCommand(projectEnvironment.refreshEntries, {
+    reportFailure: false,
+  });
   const entriesQuery = useEnvironmentQuery(
     projectEnvironment.listEntries({
       environmentId: props.environmentId,
@@ -42,13 +44,11 @@ export function ThreadFileNavigatorPane(props: {
     }),
   );
   const refreshEntries = useCallback(() => {
-    registry.refresh(
-      projectEnvironment.listEntries({
-        environmentId: props.environmentId,
-        input: { cwd: props.cwd, refresh: true },
-      }),
-    );
-  }, [props.cwd, props.environmentId, registry]);
+    void refreshEntriesCommand({
+      environmentId: props.environmentId,
+      input: { cwd: props.cwd, refresh: true },
+    });
+  }, [props.cwd, props.environmentId, refreshEntriesCommand]);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handlePreviewFile = useCallback(
     (relativePath: string) => {
