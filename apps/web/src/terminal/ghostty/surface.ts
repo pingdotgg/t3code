@@ -358,6 +358,18 @@ export function clearPrimedTerminalCopyInput(input: TerminalCopyInput): void {
 }
 
 /**
+ * Primed copy text must leave the IME textarea before the next encoded
+ * keydown. During composition that same field holds the preedit, so clearing
+ * it would abort the IME after the first composing keystroke.
+ */
+export function shouldClearPrimedTerminalCopyOnKeyDown(
+  event: Pick<KeyboardEvent, "isComposing">,
+  composing: boolean,
+): boolean {
+  return !event.isComposing && !composing;
+}
+
+/**
  * Apply a `copy` event to a Ghostty selection. Only claim the gesture when
  * `clipboardData` is present and the selection was written: a macOS Edit menu
  * copy often delivers a `copy` event with no data and then writes the DOM
@@ -1031,8 +1043,11 @@ export class GhosttyTerminalSurface {
       this.suppressedKeyCodes.add(event.code);
       return;
     }
-    // Drop copy-primed text before encoding or IME so it cannot leak into the PTY.
-    clearPrimedTerminalCopyInput(this.input);
+    // Drop copy-primed text before encoding so it cannot leak into the PTY.
+    // Skip while composing: the textarea holds the IME preedit.
+    if (shouldClearPrimedTerminalCopyOnKeyDown(event, this.composing)) {
+      clearPrimedTerminalCopyInput(this.input);
+    }
     if (isTerminalPasteShortcut(event)) {
       this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;

@@ -13,6 +13,7 @@ import {
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   primeTerminalCopyInput,
+  shouldClearPrimedTerminalCopyOnKeyDown,
   loadTerminalFontFamily,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
@@ -252,6 +253,17 @@ describe("primeTerminalCopyInput", () => {
     expect(input.value).toBe("hello\nworld");
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe("hello\nworld".length);
+  });
+});
+
+describe("shouldClearPrimedTerminalCopyOnKeyDown", () => {
+  it("keeps the textarea intact while an IME composition is running", () => {
+    expect(shouldClearPrimedTerminalCopyOnKeyDown({ isComposing: true }, false)).toBe(false);
+    expect(shouldClearPrimedTerminalCopyOnKeyDown({ isComposing: false }, true)).toBe(false);
+  });
+
+  it("still drops primed copy text on a normal keydown", () => {
+    expect(shouldClearPrimedTerminalCopyOnKeyDown({ isComposing: false }, false)).toBe(true);
   });
 });
 
