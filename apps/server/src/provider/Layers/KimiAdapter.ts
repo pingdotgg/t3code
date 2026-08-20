@@ -1376,6 +1376,12 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             const interruptedTurnId =
               observed.interruptedTurnId ?? turnId ?? activeTurnId ?? ctx.session.activeTurnId;
             yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+            // Kill the session's terminals before cancelling: Kimi may be
+            // parked in terminal/wait_for_exit for a never-exiting command,
+            // and it cannot process session/cancel (or answer the prompt)
+            // until that client request resolves. killAll keeps the terminal
+            // entries readable; only stopSession disposes them.
+            yield* Effect.ignore(ctx.terminals.killAll);
             yield* Effect.ignore(
               ctx.acp.cancel.pipe(
                 Effect.mapError((error) =>

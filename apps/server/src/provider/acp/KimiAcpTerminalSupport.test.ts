@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -150,6 +151,56 @@ describe("KimiAcpTerminalSupport", () => {
         });
       }),
     ),
+  );
+
+  it.effect(
+    "killAll settles pending waits with SIGTERM, keeps terminals readable, and is idempotent",
+    () =>
+      withTerminalManager((manager) =>
+        Effect.gen(function* () {
+          const { command, args } = nodeScript("setInterval(() => {}, 1000)");
+          const created = yield* manager.handleCreateTerminal({
+            sessionId: SESSION_ID,
+            command,
+            args,
+          });
+          // Park a wait_for_exit on the never-exiting command, mirroring an
+          // agent blocked mid-turn.
+          const waitFiber = yield* manager
+            .handleTerminalWaitForExit({
+              sessionId: SESSION_ID,
+              terminalId: created.terminalId,
+            })
+            .pipe(Effect.forkChild);
+
+          yield* manager.killAll;
+          const exit = yield* Fiber.join(waitFiber);
+          assert.isUndefined(exit.exitCode);
+          assert.strictEqual(exit.signal, "SIGTERM");
+          assert.notProperty(exit, "exitStatus");
+
+          // Kill, not release: output and exit status stay readable afterward.
+          const output = yield* manager.handleTerminalOutput({
+            sessionId: SESSION_ID,
+            terminalId: created.terminalId,
+          });
+          assert.strictEqual(output.exitStatus?.signal, "SIGTERM");
+
+          // Already-killed terminals are no-ops.
+          yield* manager.killAll;
+          const exitAfter = yield* manager.handleTerminalWaitForExit({
+            sessionId: SESSION_ID,
+            terminalId: created.terminalId,
+          });
+          assert.strictEqual(exitAfter.signal, "SIGTERM");
+
+          // The agent may still release a killed terminal.
+          yield* manager.handleTerminalRelease({
+            sessionId: SESSION_ID,
+            terminalId: created.terminalId,
+          });
+        }),
+      ),
   );
 
   it.effect("shutdown kills open terminals and forgets them", () =>

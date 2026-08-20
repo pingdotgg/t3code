@@ -39,6 +39,15 @@ export interface KimiAcpTerminalManager {
   readonly handleTerminalRelease: (
     request: EffectAcpSchema.ReleaseTerminalRequest,
   ) => Effect.Effect<EffectAcpSchema.ReleaseTerminalResponse, EffectAcpErrors.AcpError>;
+  /**
+   * Kills every live terminal's process and settles its exit with a SIGTERM
+   * status, but keeps the terminal registered: per ACP the agent may still
+   * call `terminal/output`/`terminal/release` on a killed terminal. Used at
+   * turn interrupt to unblock an agent parked in `terminal/wait_for_exit`;
+   * `shutdown` remains the full-dispose session-stop path. Idempotent:
+   * already-exited or already-killed terminals are no-ops.
+   */
+  readonly killAll: Effect.Effect<void>;
   /** Kills and disposes every terminal still open; used at session stop. */
   readonly shutdown: Effect.Effect<void>;
 }
@@ -282,6 +291,22 @@ export const makeKimiAcpTerminalManager = (input: {
         return {} satisfies EffectAcpSchema.ReleaseTerminalResponse;
       });
 
+    const killAll: Effect.Effect<void> = Effect.suspend(() =>
+      Effect.forEach(
+        Array.from(terminals.values()),
+        (state) =>
+          // Settle the exit first so a concurrent wait_for_exit observes the
+          // SIGTERM status deterministically; Deferred.succeed is a no-op when
+          // the process already exited. The kill then stops the process (a
+          // no-op for an already-dead one) while the entry stays readable.
+          Effect.gen(function* () {
+            yield* Deferred.succeed(state.exit, { exitCode: null, signal: "SIGTERM" });
+            yield* state.kill;
+          }),
+        { discard: true },
+      ),
+    );
+
     const shutdown: Effect.Effect<void> = Effect.suspend(() =>
       Effect.forEach(
         Array.from(terminals.entries()),
@@ -296,6 +321,7 @@ export const makeKimiAcpTerminalManager = (input: {
       handleTerminalWaitForExit,
       handleTerminalKill,
       handleTerminalRelease,
+      killAll,
       shutdown,
     } satisfies KimiAcpTerminalManager;
   });

@@ -48,6 +48,9 @@ let permissionId = 0;
 const pendingPermissions = new Map();
 let clientRequestId = 0;
 const pendingClientRequests = new Map();
+let promptOrdinal = 0;
+let cancelRequested = false;
+const cancelWaiters = [];
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
@@ -77,6 +80,21 @@ async function runTerminalCommandFlow(promptId) {
       env: [{ name: "T3_MOCK_TERMINAL_ENV", value: "from-mock-agent" }],
       ...(spec.outputByteLimit !== undefined ? { outputByteLimit: spec.outputByteLimit } : {}),
     });
+    if (spec.cancelAfterWait) {
+      // Surface "terminal created" so the test can interrupt while this flow
+      // is parked in wait_for_exit below.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "terminal-created" },
+          },
+        },
+      });
+    }
     const waitResult = await sendClientRequest("terminal/wait_for_exit", {
       sessionId,
       terminalId: created.terminalId,
@@ -90,6 +108,30 @@ async function runTerminalCommandFlow(promptId) {
       terminalId: created.terminalId,
     });
     logLine("mock/terminal_result", { created, waitResult, outputResult });
+    if (spec.cancelAfterWait) {
+      // Signal that the killed terminal stayed readable through release, so
+      // the test can assert on the logged results without racing this flow.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "terminal-finished" },
+          },
+        },
+      });
+      // Mirror real Kimi: the prompt only responds once session/cancel
+      // arrives, and cancel is honored only after the blocked
+      // terminal/wait_for_exit resolves.
+      if (cancelRequested) {
+        completePrompt(promptId, "cancelled");
+      } else {
+        cancelWaiters.push(() => completePrompt(promptId, "cancelled"));
+      }
+      return;
+    }
     completePrompt(promptId, "end_turn");
   } catch (err) {
     logLine("mock/terminal_error", { message: String(err) });
@@ -189,6 +231,14 @@ function handleRequest(message) {
         process.exit(7);
       }
       if (terminalCommandJson) {
+        const spec = JSON.parse(terminalCommandJson);
+        promptOrdinal += 1;
+        if (spec.cancelAfterWait && promptOrdinal > 1) {
+          // Only the first prompt blocks on the never-exiting terminal;
+          // follow-ups behave normally so the session stays usable.
+          completePrompt(message.id, "end_turn");
+          return;
+        }
         runTerminalCommandFlow(message.id);
         return;
       }
@@ -221,6 +271,10 @@ function handleRequest(message) {
     }
     case "session/cancel":
       result(message.id, {});
+      cancelRequested = true;
+      for (const waiter of cancelWaiters.splice(0)) {
+        waiter();
+      }
       for (const [id, pending] of pendingPermissions) {
         pendingPermissions.delete(id);
         completePrompt(pending.promptId, "cancelled");
@@ -973,6 +1027,119 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       assert.isFalse(params.outputResult.truncated);
       assert.strictEqual(params.outputResult.exitStatus?.exitCode, 5);
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("interrupt kills the terminals blocking the agent in wait_for_exit", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-interrupt-terminal-wait");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-terminal-interrupt-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - free-form mock agent fixture config.
+          T3_ACP_TERMINAL_COMMAND: JSON.stringify({
+            command: mockAgentCommand,
+            // No arrow `=>` here: the Windows wrapper passes this JSON through
+            // cmd's `set`, where `>` would be parsed as a redirection.
+            args: ["-e", "setInterval(function () {}, 1000)"],
+            cancelAfterWait: true,
+          }),
+        }),
+      );
+      const terminalFinished = yield* Deferred.make<void>();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        // The adapter drops post-cancel session updates from the event stream,
+        // but the native event log still observes them: the mock agent's
+        // "terminal-finished" update is the deterministic signal that it
+        // logged its terminal results after the kill.
+        nativeEventLogger: {
+          filePath: "memory://kimi-terminal-interrupt-native-events",
+          write: (record: unknown) =>
+            JSON.stringify(record).includes("terminal-finished")
+              ? Deferred.succeed(terminalFinished, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          close: () => Effect.void,
+        },
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      const terminalCreated = yield* Deferred.make<void>();
+      const turnStarted = yield* Deferred.make<TurnId>();
+      const firstTurnCompleted = yield* Deferred.make<void>();
+      const secondTurnCompleted = yield* Deferred.make<void>();
+      const completedCount = yield* Ref.make(0);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "content.delta" && String(event.threadId) === String(threadId)) {
+            yield* Deferred.succeed(terminalCreated, undefined).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.started" && event.turnId !== undefined) {
+            yield* Deferred.succeed(turnStarted, event.turnId).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.completed") {
+            const count = yield* Ref.updateAndGet(completedCount, (current) => current + 1);
+            yield* Deferred.succeed(
+              count === 1 ? firstTurnCompleted : secondTurnCompleted,
+              undefined,
+            ).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* startTestSession(adapter, threadId);
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "serve forever", attachments: [] })
+        .pipe(Effect.forkChild);
+      // The mock agent notifies after terminal/create, right before parking in
+      // terminal/wait_for_exit on the never-exiting command.
+      yield* Deferred.await(terminalCreated).pipe(Effect.timeout("5 seconds"));
+      const turnId = yield* Deferred.await(turnStarted).pipe(Effect.timeout("5 seconds"));
+
+      // Without killing the session's terminals this deadlocks: the agent
+      // waits on wait_for_exit and cannot process session/cancel.
+      yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(firstTurnCompleted).pipe(Effect.timeout("5 seconds"));
+
+      assert.deepEqual(
+        terminalEvents(events, threadId).map((event) => [
+          String(event.turnId),
+          event.payload.state,
+        ]),
+        [[String(turnId), "cancelled"]],
+      );
+
+      // The session survives the interrupt: a follow-up turn on the same
+      // session prompts the agent and completes normally.
+      yield* adapter.sendTurn({ threadId, input: "follow up", attachments: [] });
+      yield* Deferred.await(secondTurnCompleted).pipe(Effect.timeout("5 seconds"));
+      assert.deepEqual(
+        terminalEvents(events, threadId).map((event) => event.payload.state),
+        ["cancelled", "completed"],
+      );
+
+      // The killed terminal stayed readable through output and release: the
+      // mock agent signals "terminal-finished" only after logging its
+      // terminal results, and the interrupted wait_for_exit reported the
+      // SIGTERM kill.
+      yield* Deferred.await(terminalFinished).pipe(Effect.timeout("5 seconds"));
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isUndefined(requests.find((request) => request.method === "mock/terminal_error"));
+      const result = requests.find((request) => request.method === "mock/terminal_result");
+      const params = result?.params as {
+        waitResult: Record<string, unknown>;
+        outputResult: { exitStatus?: { signal?: string } };
+      };
+      assert.strictEqual(params.waitResult.signal, "SIGTERM");
+      assert.notProperty(params.waitResult, "exitStatus");
+      assert.strictEqual(params.outputResult.exitStatus?.signal, "SIGTERM");
+
+      yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
     }),
   );
