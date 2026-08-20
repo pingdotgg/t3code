@@ -6,12 +6,13 @@
  *
  * @module usageMerge
  */
-import type {
-  EnvironmentId,
-  UsageBucket,
-  UsageProviderKind,
-  UsageSourceFingerprint,
-  UsageSummary,
+import {
+  USAGE_MERGE_COMPATIBLE_SINCE,
+  type EnvironmentId,
+  type UsageBucket,
+  type UsageProviderKind,
+  type UsageSourceFingerprint,
+  type UsageSummary,
 } from "@t3tools/contracts";
 
 export interface EnvironmentUsage {
@@ -172,6 +173,10 @@ function bucketTokens(bucket: UsageBucket): number {
   );
 }
 
+function isCompatibleContractVersion(version: number, expected: number): boolean {
+  return version >= USAGE_MERGE_COMPATIBLE_SINCE && version <= expected;
+}
+
 const EMPTY_MERGED: MergedUsage = {
   costUsd: 0,
   uncachedInputTokens: 0,
@@ -201,8 +206,10 @@ const EMPTY_MERGED: MergedUsage = {
  * Merges every connected environment's summary.
  *
  * `expectedContractVersion` guards against an environment running older server
- * code: rather than blocking the page, its data is excluded and its id is
- * reported so the UI can say coverage is partial.
+ * code: rather than blocking the page, incompatible data is excluded and its
+ * id is reported so the UI can say coverage is partial. Versions in
+ * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
+ * provider expansion does not drop Claude/Codex totals from older servers.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
@@ -213,7 +220,7 @@ export function mergeUsage(
   const current: EnvironmentUsage[] = [];
   const staleEnvironments: EnvironmentId[] = [];
   for (const environment of environments) {
-    if (environment.summary.contractVersion === expectedContractVersion) {
+    if (isCompatibleContractVersion(environment.summary.contractVersion, expectedContractVersion)) {
       current.push(environment);
     } else {
       staleEnvironments.push(environment.environmentId);
