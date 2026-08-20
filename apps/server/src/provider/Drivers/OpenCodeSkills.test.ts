@@ -245,6 +245,38 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
       }),
   );
 
+  it.effect("discovers user skills from global .claude and .agents directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+      const customHome = path.join(tempDir, "custom-home");
+
+      yield* writeSkill(
+        path.join(customHome, ".claude", "skills"),
+        "global-claude-skill",
+        ["---", "name: global-claude-skill", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(customHome, ".agents", "skills"),
+        "global-agents-skill",
+        ["---", "name: global-agents-skill", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverOpenCodeSkills(undefined, {
+        HOME: customHome,
+        XDG_CONFIG_HOME: path.join(tempDir, "empty-xdg"),
+      });
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["global-agents-skill", "global-claude-skill"],
+      );
+      assert.equal(skills[0]?.scope, "user");
+      assert.equal(skills[1]?.scope, "user");
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -252,6 +284,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
 
       const skills = yield* discoverOpenCodeSkills(path.join(tempDir, "missing-workspace"), {
+        HOME: path.join(tempDir, "missing-home"),
         OPENCODE_CONFIG_DIR: path.join(tempDir, "missing-home"),
       });
 

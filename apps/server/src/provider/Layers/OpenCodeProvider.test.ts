@@ -324,6 +324,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       );
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), workspace, {
+        HOME: path.join(tempDir, "empty-home"),
         OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-config"),
       });
 

@@ -1,12 +1,13 @@
 /**
  * OpenCodeSkills — filesystem discovery of OpenCode skills for the `$` picker.
  *
- * OpenCode loads skills from user directories (~/.config/opencode/skills,
- * ~/.opencode/skills, or $OPENCODE_CONFIG_DIR/skills), then project directories
- * (<cwd>/.claude/skills, <cwd>/.agents/skills, and <cwd>/.opencode/skills), one
- * directory per skill with a `SKILL.md` carrying YAML frontmatter. Later roots
- * win on name collisions, so project skills override user skills, and `.opencode`
- * wins over `.agents` and `.claude`.
+ * OpenCode loads skills from user directories (~/.claude/skills, ~/.agents/skills,
+ * ~/.config/opencode/skills, ~/.opencode/skills, or $OPENCODE_CONFIG_DIR/skills),
+ * then project directories from git ancestors down to <cwd> (.claude/skills,
+ * .agents/skills, and .opencode/skills), one directory per skill with a `SKILL.md`
+ * carrying YAML frontmatter. Later roots win on name collisions, so project skills
+ * override user skills, deeper child workspaces override ancestor directories, and
+ * `.opencode` wins over `.agents` and `.claude`.
  *
  * @module provider/Drivers/OpenCodeSkills
  */
@@ -82,7 +83,12 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
 
   const userRoots: ReadonlyArray<string> = resolvedCustomConfigDir
     ? [path.join(resolvedCustomConfigDir, "skills")]
-    : [path.join(defaultConfigDir, "skills"), path.join(homeDir, ".opencode", "skills")];
+    : [
+        path.join(homeDir, ".claude", "skills"),
+        path.join(homeDir, ".agents", "skills"),
+        path.join(defaultConfigDir, "skills"),
+        path.join(homeDir, ".opencode", "skills"),
+      ];
 
   const projectDirs: ReadonlyArray<string> = cwd
     ? yield* Effect.gen(function* () {
