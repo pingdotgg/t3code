@@ -265,17 +265,18 @@ export function createSyncedClientPreferenceHydrationController<
       state.cancelRetry !== undefined ||
       getSynchronizeAgain(state) === undefined
     ) {
-      return;
+      return false;
     }
     const delayMs = syncedClientPreferenceRetryDelayMs(attempt);
     state.cancelRetry = scheduleRetry(() => {
       delete state.cancelRetry;
       getSynchronizeAgain(state)?.();
     }, delayMs);
+    return true;
   };
   const requestPersistenceRetry = (state: SyncedClientPreferenceEnvironmentState) => {
-    state.persistenceAttempt += 1;
-    requestRetry(state, state.persistenceAttempt);
+    const nextAttempt = state.persistenceAttempt + 1;
+    if (requestRetry(state, nextAttempt)) state.persistenceAttempt = nextAttempt;
   };
   const completePersistence = (state: SyncedClientPreferenceEnvironmentState) => {
     cancelRetry(state);

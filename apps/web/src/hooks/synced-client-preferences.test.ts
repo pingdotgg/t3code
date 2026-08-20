@@ -141,12 +141,21 @@ describe("synced client preferences", () => {
 
   it("retries local adoption instead of completing hydration after persistence fails", () => {
     const environmentId = EnvironmentId.make("primary");
-    const scheduledRetries: Array<() => void> = [];
-    const controller = createSyncedClientPreferenceHydrationController("lightThemeId", (retry) => {
-      scheduledRetries.push(retry);
-      return vi.fn();
-    });
-    const persist = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    const scheduledRetries: Array<{ readonly delayMs: number; readonly run: () => void }> = [];
+    const controller = createSyncedClientPreferenceHydrationController(
+      "lightThemeId",
+      (retry, delayMs) => {
+        scheduledRetries.push({ delayMs, run: retry });
+        return vi.fn();
+      },
+    );
+    const persist = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
     const onHydrated = vi.fn();
     const input = {
       environmentId,
@@ -171,8 +180,20 @@ describe("synced client preferences", () => {
     expect(onHydrated).not.toHaveBeenCalled();
     expect(scheduledRetries).toHaveLength(1);
 
-    scheduledRetries[0]?.();
-    expect(persist).toHaveBeenCalledTimes(2);
+    // React may re-enter synchronization while the first timer owns the retry
+    // slot. Those renders must not consume future scheduled attempts.
+    controller.synchronize(input);
+    controller.synchronize(input);
+    expect(persist).toHaveBeenCalledTimes(3);
+    expect(scheduledRetries.map(({ delayMs }) => delayMs)).toEqual([1_000]);
+
+    scheduledRetries[0]?.run();
+    expect(persist).toHaveBeenCalledTimes(4);
+    expect(scheduledRetries.map(({ delayMs }) => delayMs)).toEqual([1_000, 2_000]);
+    expect(onHydrated).not.toHaveBeenCalled();
+
+    scheduledRetries[1]?.run();
+    expect(persist).toHaveBeenCalledTimes(5);
     expect(onHydrated).toHaveBeenCalledOnce();
   });
 
