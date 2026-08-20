@@ -1602,11 +1602,18 @@ export const make = Effect.gen(function* () {
           directive: { type: "link-revoked" },
         });
       }
-      // Drop the host-side watermark so a recreated project reseeds cleanly.
-      yield* sql`
-        DELETE FROM mirror_sync_runtime
-        WHERE project_id = ${projectId}
-      `.pipe(Effect.ignore);
+      // Serialized with the same per-project lock every sync/apply-back
+      // core runs under: an in-flight operation's later saveRuntime call
+      // would otherwise recreate the watermark this delete just cleared,
+      // letting a subsequent relink reuse stale state instead of reseeding.
+      yield* withProjectLock(
+        projectId,
+        // Drop the host-side watermark so a recreated project reseeds cleanly.
+        sql`
+          DELETE FROM mirror_sync_runtime
+          WHERE project_id = ${projectId}
+        `.pipe(Effect.ignore),
+      );
     },
   );
 

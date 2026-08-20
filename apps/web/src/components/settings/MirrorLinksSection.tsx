@@ -4,7 +4,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { FolderSyncIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { mirrorEnvironment } from "../../state/mirror";
 import { useEnvironmentQuery } from "../../state/query";
@@ -23,7 +23,27 @@ export function MirrorLinksSection({
 }: {
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>;
 }) {
+  // null: still loading, true/false: has at least one row to show. Only
+  // rendered once every environment has reported, so the empty state can't
+  // flash before the first fetch resolves.
+  const [hasContentByEnvironment, setHasContentByEnvironment] = useState<
+    ReadonlyMap<EnvironmentId, boolean | null>
+  >(new Map());
+  const reportHasContent = useCallback((environmentId: EnvironmentId, hasContent: boolean) => {
+    setHasContentByEnvironment((current) => {
+      const next = new Map(current);
+      next.set(environmentId, hasContent);
+      return next;
+    });
+  }, []);
+
   if (environments.length === 0) return null;
+  const statuses = environments.map(
+    (environment) => hasContentByEnvironment.get(environment.environmentId) ?? null,
+  );
+  const allReported = statuses.every((status) => status !== null);
+  const anyHasContent = statuses.some((status) => status === true);
+
   return (
     <SettingsSection title="Shared folders">
       <p className="px-3 pb-1 text-[13px] leading-[1.45] text-muted-foreground/80 sm:px-4">
@@ -35,8 +55,15 @@ export function MirrorLinksSection({
           key={environment.environmentId}
           environmentId={environment.environmentId}
           environmentLabel={environment.label}
+          onHasContentChange={reportHasContent}
         />
       ))}
+      {allReported && !anyHasContent ? (
+        <SettingsRow
+          title="No shared folders"
+          description="Mirrored projects you share from this device to a host will show up here."
+        />
+      ) : null}
     </SettingsSection>
   );
 }
@@ -44,9 +71,11 @@ export function MirrorLinksSection({
 function EnvironmentMirrorLinks({
   environmentId,
   environmentLabel,
+  onHasContentChange,
 }: {
   environmentId: EnvironmentId;
   environmentLabel: string;
+  onHasContentChange: (environmentId: EnvironmentId, hasContent: boolean) => void;
 }) {
   const linksQuery = useEnvironmentQuery(mirrorEnvironment.listLinks({ environmentId, input: {} }));
   const detach = useAtomCommand(mirrorEnvironment.detach, { reportFailure: false });
@@ -82,7 +111,14 @@ function EnvironmentMirrorLinks({
   );
 
   const links = linksQuery.data?.links ?? [];
-  if (links.length === 0 && linksQuery.error === null) return null;
+  const hasContent = links.length > 0 || linksQuery.error !== null;
+  useEffect(() => {
+    if (linksQuery.data !== null || linksQuery.error !== null) {
+      onHasContentChange(environmentId, hasContent);
+    }
+  }, [environmentId, hasContent, linksQuery.data, linksQuery.error, onHasContentChange]);
+
+  if (!hasContent) return null;
   return (
     <>
       {linksQuery.error !== null ? (
