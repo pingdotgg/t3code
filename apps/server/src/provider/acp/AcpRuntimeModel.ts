@@ -378,24 +378,28 @@ function distributeRetainedTailAcrossContent(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
   tail: string,
 ): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
-  const textRanges: Array<{
-    readonly index: number;
-    readonly start: number;
-    readonly end: number;
-    readonly text: string;
-  }> = [];
+  const textRanges: Array<
+    | {
+        readonly start: number;
+        readonly end: number;
+        readonly text: string;
+      }
+    | undefined
+  > = Array.from({ length: content.length });
   let offset = 0;
+  let seenText = false;
   for (let index = 0; index < content.length; index += 1) {
     const text = toolCallContentText(content[index])?.trim();
     if (!text) {
       continue;
     }
-    if (textRanges.length > 0) {
+    if (seenText) {
       offset += 1;
     }
+    seenText = true;
     const start = offset;
     const end = offset + text.length;
-    textRanges.push({ index, start, end, text });
+    textRanges[index] = { start, end, text };
     offset = end;
   }
   const tailStart = Math.max(0, offset - tail.length);
@@ -404,7 +408,7 @@ function distributeRetainedTailAcrossContent(
     if (toolCallContentText(entry) === undefined) {
       return [entry];
     }
-    const range = textRanges.find((item) => item.index === index);
+    const range = textRanges[index];
     if (range === undefined) {
       return [];
     }
@@ -626,7 +630,7 @@ export function decideToolCallUpdateEmission(
   if (next.status === "completed" || next.status === "failed") {
     return { emit: true, skippedSinceEmit: 0 };
   }
-  if (previous === undefined || previous.title !== next.title) {
+  if (previous === undefined || previous.title !== next.title || previous.status !== next.status) {
     return { emit: true, skippedSinceEmit: 0 };
   }
   if (previous.detail === next.detail && toolCallOutputUnchanged(previous, next)) {

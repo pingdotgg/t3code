@@ -471,9 +471,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           }
         }
         ctx.lastTurnActivityAtNanos = activityAtNanos;
-        yield* signalTurnLiveness(ctx, turnId);
       } finally {
+        // Decrement before signaling. The watchdog treats in-flight updates as a
+        // pause; if it consumed a signal while the counter was still > 0 it would
+        // wait on the next take with no follow-up wake after this decrement.
         ctx.livenessUpdatesInFlight = Math.max(0, ctx.livenessUpdatesInFlight - 1);
+        yield* signalTurnLiveness(ctx, turnId);
       }
     });
 
