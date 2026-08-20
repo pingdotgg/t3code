@@ -180,4 +180,29 @@ describe("DesktopApplicationMenu", () => {
       assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
     }),
   );
+
+  it.effect("lets the renderer own Edit clipboard accelerators", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "Edit");
+      assert.isDefined(editMenu);
+      if (!Array.isArray(editMenu.submenu)) {
+        throw new Error("Expected Edit menu submenu to be an array.");
+      }
+
+      for (const role of ["cut", "copy", "paste", "selectAll"] as const) {
+        const item: Electron.MenuItemConstructorOptions | undefined = editMenu.submenu.find(
+          (entry) => entry.role === role,
+        );
+        assert.isDefined(item);
+        assert.equal(item.registerAccelerator, false);
+      }
+    }),
+  );
 });

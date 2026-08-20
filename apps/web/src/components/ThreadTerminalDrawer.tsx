@@ -34,8 +34,9 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { openUrlInHostBrowser } from "~/lib/openUrlInHostBrowser";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
+import { cn } from "~/lib/utils";
 import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
@@ -66,8 +67,11 @@ import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
-import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
+import {
+  canOpenTerminalLinkInPreview,
+  openTerminalLinkInPreview,
+} from "./preview/openTerminalLinkInPreview";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
   resolveTerminalFontPreference,
@@ -750,26 +754,24 @@ export function TerminalViewport({
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (/^https?:\/\//u.test(text)) {
-          if (!localApi) {
-            writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
+          const fallbackToBrowser = () => {
+            if (!openUrlInHostBrowser(text)) {
+              writeSystemMessage(latestTerminal, "Unable to open link");
+            }
+          };
+          // Loopback URLs can open the in-app preview without a user gesture.
+          // Public URLs must click a _blank link in this same tick, or the
+          // current browser never sees them.
+          if (canOpenTerminalLinkInPreview(text, threadRef)) {
+            void openTerminalLinkInPreview({
+              url: text,
+              threadRef,
+              openPreview,
+              fallbackToBrowser,
+            });
             return;
           }
-          const fallbackToBrowser = () => {
-            void localApi.shell.openExternal(text).catch((error: unknown) => {
-              writeSystemMessage(
-                latestTerminal,
-                error instanceof Error ? error.message : "Unable to open link",
-              );
-            });
-          };
-          void openTerminalLinkInPreview({
-            url: text,
-            position: { x: event.clientX, y: event.clientY },
-            threadRef,
-            openPreview,
-            localApi,
-            fallbackToBrowser,
-          });
+          fallbackToBrowser();
           return;
         }
         const target = resolvePathLinkTarget(text, cwd);

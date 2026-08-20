@@ -66,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -93,6 +94,47 @@ describe("LocalApi", () => {
     await createLocalApi().contextMenu.close();
 
     expect(dismissContextMenuMock).toHaveBeenCalledOnce();
+  });
+
+  it("opens http links in the current browser without a desktop bridge", async () => {
+    const clicks: Array<{ href: string; target: string; rel: string }> = [];
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => {
+        expect(tag).toBe("a");
+        const anchor = {
+          href: "",
+          target: "",
+          rel: "",
+          click() {
+            clicks.push({ href: this.href, target: this.target, rel: this.rel });
+          },
+          remove() {},
+        };
+        return anchor;
+      },
+      body: { append: () => undefined },
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    await createLocalApi().shell.openExternal("https://example.com/path");
+
+    expect(clicks).toEqual([
+      { href: "https://example.com/path", target: "_blank", rel: "noopener noreferrer" },
+    ]);
+  });
+
+  it("refuses to open non-http links without a desktop bridge", async () => {
+    const createElement = vi.fn();
+    vi.stubGlobal("document", {
+      createElement,
+      body: { append: () => undefined },
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().shell.openExternal("javascript:alert(1)")).rejects.toThrow(
+      "Unable to open link.",
+    );
+    expect(createElement).not.toHaveBeenCalled();
   });
 
   it("uses the themed confirmation host when it is available", async () => {

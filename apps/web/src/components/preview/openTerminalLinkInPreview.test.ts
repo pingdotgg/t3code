@@ -1,17 +1,19 @@
-import type { LocalApi, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  canOpenTerminalLinkInPreview,
   openTerminalLinkInPreview,
-  TerminalLinkContextMenuShowError,
   TerminalLinkPreviewOpenError,
 } from "./openTerminalLinkInPreview";
 
+const previewSupported = vi.hoisted(() => ({ value: true }));
+
 vi.mock("~/previewStateStore", () => ({
   applyPreviewServerSnapshot: vi.fn(),
-  isPreviewSupportedInRuntime: () => true,
+  isPreviewSupportedInRuntime: () => previewSupported.value,
 }));
 
 vi.mock("~/rightPanelStore", () => ({
@@ -35,44 +37,31 @@ const snapshot: PreviewSessionSnapshot = {
 };
 
 afterEach(() => {
+  previewSupported.value = true;
   vi.restoreAllMocks();
 });
 
+describe("canOpenTerminalLinkInPreview", () => {
+  it("keeps loopback URLs in preview and sends public URLs to the host browser", () => {
+    expect(canOpenTerminalLinkInPreview("http://localhost:3000/app", threadRef)).toBe(true);
+    expect(canOpenTerminalLinkInPreview("https://example.com/docs", threadRef)).toBe(false);
+  });
+});
+
 describe("openTerminalLinkInPreview", () => {
-  it("preserves context-menu failures with terminal link context before falling back", async () => {
-    const cause = new Error("menu unavailable");
+  it("falls back without opening preview when the URL is not previewable", async () => {
     const fallbackToBrowser = vi.fn();
     const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
-    const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await openTerminalLinkInPreview({
-      url: "http://localhost:3000/path?token=secret",
-      position: { x: 12, y: 34 },
+      url: "https://example.com/docs",
       threadRef,
       openPreview,
-      localApi: {
-        contextMenu: {
-          show: vi.fn(async () => {
-            throw cause;
-          }),
-        },
-      } as unknown as LocalApi,
       fallbackToBrowser,
     });
 
     expect(fallbackToBrowser).toHaveBeenCalledOnce();
     expect(openPreview).not.toHaveBeenCalled();
-    expect(reportError).toHaveBeenCalledOnce();
-    const error = reportError.mock.calls[0]?.[0];
-    expect(error).toBeInstanceOf(TerminalLinkContextMenuShowError);
-    expect(error).toMatchObject({
-      environmentId: "local",
-      threadId: "thread-1",
-      targetOrigin: "http://localhost:3000",
-      cause,
-    });
-    expect(error.message).not.toContain("menu unavailable");
-    expect(error.targetOrigin).not.toContain("secret");
   });
 
   it("preserves the complete preview failure cause before falling back", async () => {
@@ -83,14 +72,8 @@ describe("openTerminalLinkInPreview", () => {
 
     await openTerminalLinkInPreview({
       url: "http://127.0.0.1:5173/",
-      position: { x: 12, y: 34 },
       threadRef,
       openPreview: async () => AsyncResult.failure(cause),
-      localApi: {
-        contextMenu: {
-          show: vi.fn(async () => "open-in-preview"),
-        },
-      } as unknown as LocalApi,
       fallbackToBrowser,
     });
 
@@ -113,14 +96,8 @@ describe("openTerminalLinkInPreview", () => {
 
     await openTerminalLinkInPreview({
       url: "http://localhost:5173/",
-      position: { x: 12, y: 34 },
       threadRef,
       openPreview: async () => AsyncResult.failure(Cause.interrupt()),
-      localApi: {
-        contextMenu: {
-          show: vi.fn(async () => "open-in-preview"),
-        },
-      } as unknown as LocalApi,
       fallbackToBrowser,
     });
 

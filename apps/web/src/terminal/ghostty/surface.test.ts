@@ -5,12 +5,15 @@ import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   advanceTerminalSelectionClickSequence,
+  applyTerminalCopyEvent,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
+  primeTerminalCopyInput,
+  shouldClearPrimedTerminalCopyOnKeyDown,
   loadTerminalFontFamily,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
@@ -230,6 +233,96 @@ describe("isTerminalCopyShortcut", () => {
   it("uses the produced character instead of the physical key position", () => {
     expect(isTerminalCopyShortcut(event({ key: "C", metaKey: true }), "MacIntel")).toBe(true);
     expect(isTerminalCopyShortcut(event({ key: "j", metaKey: true }), "MacIntel")).toBe(false);
+  });
+});
+
+describe("primeTerminalCopyInput", () => {
+  it("puts the Ghostty selection into the textarea and selects it", () => {
+    const input = {
+      value: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+      setSelectionRange(start: number, end: number) {
+        this.selectionStart = start;
+        this.selectionEnd = end;
+      },
+    };
+
+    primeTerminalCopyInput(input, "hello\nworld");
+
+    expect(input.value).toBe("hello\nworld");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("hello\nworld".length);
+  });
+});
+
+describe("shouldClearPrimedTerminalCopyOnKeyDown", () => {
+  it("keeps the textarea intact while an IME composition is running", () => {
+    expect(shouldClearPrimedTerminalCopyOnKeyDown({ isComposing: true }, false)).toBe(false);
+    expect(shouldClearPrimedTerminalCopyOnKeyDown({ isComposing: false }, true)).toBe(false);
+  });
+
+  it("still drops primed copy text on a normal keydown", () => {
+    expect(shouldClearPrimedTerminalCopyOnKeyDown({ isComposing: false }, false)).toBe(true);
+  });
+});
+
+describe("applyTerminalCopyEvent", () => {
+  it("claims the fallback only when clipboardData can take the selection", () => {
+    const setData = vi.fn();
+    const preventDefault = vi.fn();
+
+    expect(
+      applyTerminalCopyEvent(
+        {
+          clipboardData: { setData } as unknown as DataTransfer,
+          preventDefault,
+        },
+        "selected text",
+      ),
+    ).toBe("claimed");
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(setData).toHaveBeenCalledExactlyOnceWith("text/plain", "selected text");
+  });
+
+  it("leaves the writeText fallback alive when clipboardData is missing", () => {
+    const preventDefault = vi.fn();
+
+    expect(
+      applyTerminalCopyEvent(
+        {
+          clipboardData: null,
+          preventDefault,
+        },
+        "selected text",
+      ),
+    ).toBe("deferred");
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("still primes the textarea when a copy event has no clipboardData", () => {
+    const input = {
+      value: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+      setSelectionRange(start: number, end: number) {
+        this.selectionStart = start;
+        this.selectionEnd = end;
+      },
+    };
+
+    expect(
+      applyTerminalCopyEvent(
+        {
+          clipboardData: null,
+          preventDefault: vi.fn(),
+        },
+        "menu copy",
+      ),
+    ).toBe("deferred");
+    primeTerminalCopyInput(input, "menu copy");
+    expect(input.value).toBe("menu copy");
+    expect(input.selectionEnd).toBe("menu copy".length);
   });
 });
 
