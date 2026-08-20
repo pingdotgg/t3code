@@ -5,7 +5,7 @@ import {
   useNavigation,
   usePreventRemove,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
@@ -34,7 +34,10 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerSurface } from "./ThreadComposer";
+import type { ComposerBuiltInCommand } from "./composer-trigger-menu";
+import { useComposerTriggerMenu } from "./use-composer-trigger-menu";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
@@ -66,6 +69,12 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+
+// `/model` is left out because it only inserts dead text on mobile: nothing
+// handles the `slash-model` trigger the inserted text becomes. Plan and
+// default only appear when the flow actually honors an interaction mode.
+const DRAFT_BUILT_IN_COMMANDS: ReadonlyArray<ComposerBuiltInCommand> = ["plan", "default"];
+const NO_BUILT_IN_COMMANDS: ReadonlyArray<ComposerBuiltInCommand> = [];
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -636,6 +645,34 @@ export function NewTaskDraftScreen(props: {
     [flow],
   );
 
+  const selectedProviderStatus = useMemo(
+    () =>
+      selectedEnvironmentServerConfig?.providers.find(
+        (provider) => provider.instanceId === flow.selectedModel?.instanceId,
+      ) ?? null,
+    [selectedEnvironmentServerConfig, flow.selectedModel?.instanceId],
+  );
+  // Mentions resolve against the directory this task will actually run in:
+  // a new worktree does not exist yet, so those drafts search the checkout.
+  // Empty paths fall through to null — a queued task edited without a cwd
+  // snapshot carries `workspaceRoot: ""`, which is not a directory to search.
+  const composerSearchCwd =
+    flow.workspaceMode === "worktree"
+      ? selectedProject?.workspaceRoot || null
+      : flow.selectedWorktreePath || selectedProject?.workspaceRoot || null;
+  const composerTriggerMenu = useComposerTriggerMenu({
+    text: flow.prompt,
+    environmentId: selectedProject?.environmentId ?? null,
+    projectCwd: composerSearchCwd,
+    provider: selectedProviderStatus,
+    builtInCommands: flow.planModeEnabled ? DRAFT_BUILT_IN_COMMANDS : NO_BUILT_IN_COMMANDS,
+    // The screen stays mounted across draft switches, so the caret has to be
+    // re-parked when the composer starts pointing at another project's draft.
+    resetKey: flow.draftKey,
+    onChangeText: flow.setPrompt,
+    onSelectInteractionMode: flow.setInteractionMode,
+  });
+
   async function handleStart(): Promise<void> {
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
@@ -806,6 +843,11 @@ export function NewTaskDraftScreen(props: {
     !isImportingShare &&
     !flow.submitting &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+  // A share transfer locks the editor, so its rows must not be tappable.
+  const showComposerTriggerMenu =
+    !isIncomingShareTransferPending &&
+    composerTriggerMenu.trigger !== null &&
+    composerTriggerMenu.items.length > 0;
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
@@ -817,7 +859,9 @@ export function NewTaskDraftScreen(props: {
       scrollEnabled
       value={flow.prompt}
       skills={flow.selectedProviderSkills}
+      selection={composerTriggerMenu.selection}
       onChangeText={flow.setPrompt}
+      onSelectionChange={composerTriggerMenu.onSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
@@ -956,6 +1000,20 @@ export function NewTaskDraftScreen(props: {
 
   const composerDock = (
     <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+      {/* Zero-height anchor so the popover floats above the dock without
+          shifting the controls below it, as it does in the thread composer. */}
+      {showComposerTriggerMenu ? (
+        <View>
+          <View className="absolute inset-x-0 bottom-full z-10 mb-2">
+            <ComposerCommandPopover
+              items={composerTriggerMenu.items}
+              triggerKind={composerTriggerMenu.trigger?.kind ?? null}
+              isLoading={composerTriggerMenu.isLoading}
+              onSelect={composerTriggerMenu.onSelect}
+            />
+          </View>
+        </View>
+      ) : null}
       <View className="pb-1">{workspaceControls}</View>
 
       <ComposerSurface
