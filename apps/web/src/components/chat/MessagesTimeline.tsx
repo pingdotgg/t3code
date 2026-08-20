@@ -2403,6 +2403,8 @@ function liveWorkEntryLabel(
 ): string {
   const command = workEntry.command?.trim();
   if (command) {
+    // This row describes the active parent turn, not the command lifecycle.
+    // Keep its live "Running" copy until the turn or contiguous tool run settles.
     const program = commandProgramName(command);
     if (program) return `Running ${program}`;
     return "Running command";
