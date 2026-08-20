@@ -6,8 +6,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { releaseBrowserNavigationRoute } from "~/browser/browserNavigationRoutes";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
-import { releaseBrowserNavigationRoute } from "~/browser/browserTargetResolver";
 
 interface ClosePreviewSessionInput<E> {
   readonly closePreview: (input: {

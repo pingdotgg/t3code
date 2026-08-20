@@ -27,12 +27,6 @@ import {
   type BrowserNavigationRoute,
 } from "./browserNavigationRoutes";
 
-export {
-  releaseBrowserNavigationRoute,
-  resetBrowserNavigationRoutesForTests,
-  type BrowserNavigationRoute,
-} from "./browserNavigationRoutes";
-
 interface AcquiredRoute {
   readonly resolution: PreviewUrlResolution;
   readonly scope: Scope.Closeable;

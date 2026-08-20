@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const releaseBrowserNavigationRoute = vi.hoisted(() => vi.fn(async () => undefined));
 
-vi.mock("~/browser/browserTargetResolver", () => ({ releaseBrowserNavigationRoute }));
+vi.mock("~/browser/browserNavigationRoutes", () => ({ releaseBrowserNavigationRoute }));
 
 import {
   applyPreviewServerSnapshot,
