@@ -179,6 +179,8 @@ describe("VS Code theme import", () => {
       "color(srgb 0 0 0 / 1 / 0)",
       "color(srgb 0wat 0 0)",
       "color(srgb 0 0 0 / 100% trailing)",
+      "color(srgb 1. 0 0)",
+      "color(srgb 1.e2 0 0)",
     ]) {
       expect(() =>
         parseVsCodeThemeFile({

@@ -24,7 +24,7 @@ type VsCodeRgba = { r: number; g: number; b: number; a: number };
 type VsCodeRgb = { r: number; g: number; b: number };
 
 const CSS_COLOR_NUMBER =
-  "[+-]?(?:(?:\\d+\\.?\\d*)|(?:\\.\\d+))(?:[eE][+-]?\\d+)?";
+  "[+-]?(?:(?:\\d+(?:\\.\\d+)?)|(?:\\.\\d+))(?:[eE][+-]?\\d+)?";
 const CSS_COLOR_COMPONENT = new RegExp(`^(${CSS_COLOR_NUMBER})(%)?$`);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
