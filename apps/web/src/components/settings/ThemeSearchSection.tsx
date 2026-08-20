@@ -126,6 +126,7 @@ export function ThemeSearchSection({
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
+      setError(null);
       setIsSearching(true);
       try {
         const nextResults = await searchOpenVsxThemes(trimmed, {
@@ -177,7 +178,6 @@ export function ThemeSearchSection({
     const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
     if (!nextSort) return;
     setSortBy(nextSort);
-    setError(null);
   }, []);
 
   const handleInstall = useCallback(
@@ -239,10 +239,7 @@ export function ThemeSearchSection({
         <InputGroupInput
           aria-label="Search Open VSX themes"
           autoFocus
-          onChange={(event) => {
-            setQuery(event.currentTarget.value);
-            setError(null);
-          }}
+          onChange={(event) => setQuery(event.currentTarget.value)}
           placeholder="Search themes..."
           size="lg"
           type="search"
@@ -260,8 +257,12 @@ export function ThemeSearchSection({
                 size="xs"
                 variant="ghost"
                 onClick={() => {
-                  setQuery(suggestion);
-                  setError(null);
+                  if (query.trim() === suggestion) {
+                    if (installingId !== null) return;
+                    void runSearch(suggestion);
+                  } else {
+                    setQuery(suggestion);
+                  }
                 }}
               >
                 {suggestion}
