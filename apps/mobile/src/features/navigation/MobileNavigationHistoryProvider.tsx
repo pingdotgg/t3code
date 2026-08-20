@@ -1,4 +1,4 @@
-import { useLinkTo } from "@react-navigation/native";
+import { useLinkTo, useNavigation } from "@react-navigation/native";
 import {
   createContext,
   useCallback,
@@ -48,6 +48,7 @@ function useMobileNavigationHistoryCoordinator(
   location: MobileNavigationLocation,
 ) {
   const linkTo = useLinkTo();
+  useCancelBlockedTraversal(history);
 
   useEffect(() => {
     history.visit(location);
@@ -71,6 +72,28 @@ function useMobileNavigationHistoryCoordinator(
   }, [history, requestTraversal]);
 
   return { back, forward };
+}
+
+function useCancelBlockedTraversal(
+  history: ReturnType<typeof createMobileNavigationHistory>,
+): void {
+  const navigation = useNavigation();
+
+  useEffect(() => {
+    // React Navigation emits this pinned core event after routing an action.
+    // `noop` is true when a beforeRemove guard blocks it or no navigator handles it.
+    const actionEvents = navigation as typeof navigation & {
+      addListener: (
+        type: "__unsafe_action__",
+        listener: (event: { readonly data: { readonly noop: boolean } }) => void,
+      ) => () => void;
+    };
+    return actionEvents.addListener("__unsafe_action__", (event) => {
+      if (event.data.noop) {
+        history.cancelPending();
+      }
+    });
+  }, [history, navigation]);
 }
 
 export function useMobileNavigationHistory(): MobileNavigationHistoryValue {

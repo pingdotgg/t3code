@@ -86,4 +86,17 @@ describe("createMobileNavigationHistory", () => {
 
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
   });
+
+  it("treats a later visit as new after a blocked traversal is cancelled", () => {
+    const history = createMobileNavigationHistory(location("/threads/env/thread-a", "thread"));
+    history.visit(location("/threads/env/thread-b", "thread"));
+    history.visit(location("/threads/env/thread-c", "thread"));
+
+    history.requestBack();
+    history.cancelPending();
+    history.visit(location("/threads/env/thread-b", "thread"));
+
+    expect(history.requestBack()?.location.pathname).toBe("/threads/env/thread-c");
+    expect(history.requestForward()).toBeNull();
+  });
 });
