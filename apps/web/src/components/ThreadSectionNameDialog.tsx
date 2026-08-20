@@ -20,6 +20,20 @@ interface DialogRequest {
   readonly resolve: (name: string | null) => void;
 }
 
+export function isThreadSectionNameDuplicate(input: {
+  readonly name: string;
+  readonly initialName: string;
+  readonly existingNames: ReadonlyArray<string>;
+}): boolean {
+  const normalizedName = input.name.trim().toLocaleLowerCase();
+  if (!normalizedName || normalizedName === input.initialName.trim().toLocaleLowerCase()) {
+    return false;
+  }
+  return input.existingNames.some(
+    (existingName) => existingName.toLocaleLowerCase() === normalizedName,
+  );
+}
+
 export function useThreadSectionNameDialog() {
   const [request, setRequest] = useState<DialogRequest | null>(null);
   const [name, setName] = useState("");
@@ -54,10 +68,11 @@ export function useThreadSectionNameDialog() {
   const trimmedName = name.trim();
   const duplicate =
     request !== null &&
-    trimmedName !== request.initialName &&
-    request.existingNames.some(
-      (existingName) => existingName.toLocaleLowerCase() === trimmedName.toLocaleLowerCase(),
-    );
+    isThreadSectionNameDuplicate({
+      name: trimmedName,
+      initialName: request.initialName,
+      existingNames: request.existingNames,
+    });
   const valid =
     trimmedName.length > 0 && trimmedName.length <= THREAD_SECTION_NAME_MAX_CHARS && !duplicate;
 

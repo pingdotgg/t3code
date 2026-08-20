@@ -3178,9 +3178,6 @@ export default function Sidebar() {
         ) {
           return;
         }
-        if (clicked.value === "section:new" && sectionName !== null) {
-          rememberThreadSection(sectionName, false);
-        }
         const moved = await moveThreadsToSection(selectedThreads, sectionName);
         if (moved) clearSelection();
         return;
@@ -3429,9 +3426,6 @@ export default function Sidebar() {
             (clicked.value === "section:new" && sectionName === null)
           ) {
             return;
-          }
-          if (clicked.value === "section:new" && sectionName !== null) {
-            rememberThreadSection(sectionName, false);
           }
           await moveThreadsToSection([thread], sectionName);
           return;

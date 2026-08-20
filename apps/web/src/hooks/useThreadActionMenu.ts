@@ -183,9 +183,6 @@ export function useThreadActionMenu(input: {
           }
           const previousSectionName = thread.sectionName ?? null;
           if (nextSectionName === previousSectionName) return;
-          if (action === "section:new" && nextSectionName !== null) {
-            rememberThreadSection(nextSectionName, false);
-          }
           const result = await updateThreadMetadata({
             environmentId: threadRef.environmentId,
             input: { threadId: threadRef.threadId, sectionName: nextSectionName },
