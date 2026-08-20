@@ -375,6 +375,12 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+export const THREAD_SECTION_NAME_MAX_CHARS = 80;
+export const ThreadSectionName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(THREAD_SECTION_NAME_MAX_CHARS),
+);
+export type ThreadSectionName = typeof ThreadSectionName.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -409,6 +415,10 @@ export const OrchestrationThread = Schema.Struct({
   // servers never need each other's threads to agree on the merged list.
   // Optional so payloads from pre-reorder servers still decode.
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // User-defined sidebar bucket. Independent from unread and lifecycle
+  // overlays, so snooze/settle can temporarily hide the thread without
+  // forgetting where it belongs.
+  sectionName: Schema.optional(Schema.NullOr(ThreadSectionName)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -468,6 +478,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  sectionName: Schema.optional(Schema.NullOr(ThreadSectionName)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
@@ -772,6 +783,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  sectionName: Schema.optional(Schema.NullOr(ThreadSectionName)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -1215,6 +1227,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  sectionName: Schema.optional(Schema.NullOr(ThreadSectionName)),
   updatedAt: IsoDateTime,
 });
 

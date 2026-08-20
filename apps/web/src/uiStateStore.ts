@@ -27,6 +27,8 @@ export interface PersistedUiState {
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpansionVersion?: typeof THREAD_CHANGED_FILES_EXPANSION_VERSION;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  threadSectionNames?: string[];
+  threadSectionExpandedByName?: Record<string, boolean>;
 }
 
 export interface UiProjectState {
@@ -37,6 +39,8 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  threadSectionNames: string[];
+  threadSectionExpandedByName: Record<string, boolean>;
 }
 
 export interface UiEndpointState {
@@ -50,6 +54,8 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadSectionNames: [],
+  threadSectionExpandedByName: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -130,6 +136,8 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
+    threadSectionNames: sanitizeStringArray(parsed.threadSectionNames),
+    threadSectionExpandedByName: sanitizeBooleanRecord(parsed.threadSectionExpandedByName),
     defaultAdvertisedEndpointKey:
       typeof parsed.defaultAdvertisedEndpointKey === "string" &&
       parsed.defaultAdvertisedEndpointKey.length > 0
@@ -207,6 +215,8 @@ export function persistState(state: UiState): void {
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+        threadSectionNames: state.threadSectionNames,
+        threadSectionExpandedByName: state.threadSectionExpandedByName,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -304,6 +314,76 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+export function rememberThreadSection(state: UiState, name: string, expanded?: boolean): UiState {
+  const sectionName = name.trim();
+  if (!sectionName) return state;
+  const hasName = state.threadSectionNames.includes(sectionName);
+  const expansionUnchanged =
+    expanded === undefined || state.threadSectionExpandedByName[sectionName] === expanded;
+  if (hasName && expansionUnchanged) return state;
+  return {
+    ...state,
+    threadSectionNames: hasName
+      ? state.threadSectionNames
+      : [...state.threadSectionNames, sectionName],
+    threadSectionExpandedByName:
+      expanded === undefined
+        ? state.threadSectionExpandedByName
+        : { ...state.threadSectionExpandedByName, [sectionName]: expanded },
+  };
+}
+
+export function renameThreadSection(
+  state: UiState,
+  previousName: string,
+  nextName: string,
+): UiState {
+  const sectionName = nextName.trim();
+  if (!sectionName || previousName === sectionName) return state;
+  const names = state.threadSectionNames.filter(
+    (name) => name !== previousName && name !== sectionName,
+  );
+  const previousIndex = state.threadSectionNames.indexOf(previousName);
+  names.splice(
+    previousIndex < 0 ? names.length : Math.min(previousIndex, names.length),
+    0,
+    sectionName,
+  );
+  const { [previousName]: previousExpanded, ...remainingExpansion } =
+    state.threadSectionExpandedByName;
+  return {
+    ...state,
+    threadSectionNames: names,
+    threadSectionExpandedByName: {
+      ...remainingExpansion,
+      ...(previousExpanded === undefined ? {} : { [sectionName]: previousExpanded }),
+    },
+  };
+}
+
+export function forgetThreadSection(state: UiState, name: string): UiState {
+  if (
+    !state.threadSectionNames.includes(name) &&
+    state.threadSectionExpandedByName[name] === undefined
+  ) {
+    return state;
+  }
+  const { [name]: _removed, ...threadSectionExpandedByName } = state.threadSectionExpandedByName;
+  return {
+    ...state,
+    threadSectionNames: state.threadSectionNames.filter((sectionName) => sectionName !== name),
+    threadSectionExpandedByName,
+  };
+}
+
+export function setThreadSectionExpanded(state: UiState, name: string, expanded: boolean): UiState {
+  if (state.threadSectionExpandedByName[name] === expanded) return state;
+  return {
+    ...state,
+    threadSectionExpandedByName: { ...state.threadSectionExpandedByName, [name]: expanded },
+  };
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -386,6 +466,10 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  rememberThreadSection: (name: string, expanded?: boolean) => void;
+  renameThreadSection: (previousName: string, nextName: string) => void;
+  forgetThreadSection: (name: string) => void;
+  setThreadSectionExpanded: (name: string, expanded: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -404,6 +488,13 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  rememberThreadSection: (name, expanded) =>
+    set((state) => rememberThreadSection(state, name, expanded)),
+  renameThreadSection: (previousName, nextName) =>
+    set((state) => renameThreadSection(state, previousName, nextName)),
+  forgetThreadSection: (name) => set((state) => forgetThreadSection(state, name)),
+  setThreadSectionExpanded: (name, expanded) =>
+    set((state) => setThreadSectionExpanded(state, name, expanded)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

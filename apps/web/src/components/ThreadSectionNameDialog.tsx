@@ -1,0 +1,133 @@
+import { THREAD_SECTION_NAME_MAX_CHARS } from "@t3tools/contracts";
+import { useCallback, useId, useState } from "react";
+
+import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+
+interface DialogRequest {
+  readonly mode: "create" | "rename";
+  readonly initialName: string;
+  readonly existingNames: ReadonlyArray<string>;
+  readonly resolve: (name: string | null) => void;
+}
+
+export function isThreadSectionNameDuplicate(input: {
+  readonly name: string;
+  readonly initialName: string;
+  readonly existingNames: ReadonlyArray<string>;
+}): boolean {
+  const normalizedName = input.name.trim().toLocaleLowerCase();
+  if (!normalizedName || normalizedName === input.initialName.trim().toLocaleLowerCase()) {
+    return false;
+  }
+  return input.existingNames.some(
+    (existingName) => existingName.toLocaleLowerCase() === normalizedName,
+  );
+}
+
+export function useThreadSectionNameDialog() {
+  const [request, setRequest] = useState<DialogRequest | null>(null);
+  const [name, setName] = useState("");
+  const formId = useId();
+  const nameInputId = useId();
+
+  const requestName = useCallback(
+    (input: {
+      readonly mode?: "create" | "rename";
+      readonly initialName?: string;
+      readonly existingNames: ReadonlyArray<string>;
+    }) =>
+      new Promise<string | null>((resolve) => {
+        const initialName = input.initialName ?? "";
+        setName(initialName);
+        setRequest({
+          mode: input.mode ?? "create",
+          initialName,
+          existingNames: input.existingNames,
+          resolve,
+        });
+      }),
+    [],
+  );
+
+  const close = useCallback(
+    (result: string | null) => {
+      request?.resolve(result);
+      setRequest(null);
+    },
+    [request],
+  );
+
+  const trimmedName = name.trim();
+  const duplicate =
+    request !== null &&
+    isThreadSectionNameDuplicate({
+      name: trimmedName,
+      initialName: request.initialName,
+      existingNames: request.existingNames,
+    });
+  const valid =
+    trimmedName.length > 0 && trimmedName.length <= THREAD_SECTION_NAME_MAX_CHARS && !duplicate;
+
+  const dialog = (
+    <Dialog
+      open={request !== null}
+      onOpenChange={(open) => {
+        if (!open) close(null);
+      }}
+    >
+      <DialogPopup className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{request?.mode === "rename" ? "Rename section" : "New section"}</DialogTitle>
+          <DialogDescription>
+            Sections keep threads out of the active list until you move them back.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <form
+            id={formId}
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (valid) close(trimmedName);
+            }}
+          >
+            <Label htmlFor={nameInputId}>Name</Label>
+            <Input
+              id={nameInputId}
+              autoFocus
+              value={name}
+              maxLength={THREAD_SECTION_NAME_MAX_CHARS}
+              onChange={(event) => setName(event.currentTarget.value)}
+              placeholder="Later"
+              aria-invalid={duplicate || undefined}
+            />
+            {duplicate ? (
+              <p className="text-xs text-destructive">That section already exists.</p>
+            ) : null}
+          </form>
+        </DialogPanel>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => close(null)}>
+            Cancel
+          </Button>
+          <Button type="submit" form={formId} disabled={!valid}>
+            {request?.mode === "rename" ? "Rename" : "Create"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+
+  return { requestName, dialog };
+}

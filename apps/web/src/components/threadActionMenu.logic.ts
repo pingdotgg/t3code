@@ -18,6 +18,10 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "move-to-section"
+  | "section:new"
+  | "section:active"
+  | `section:name:${string}`
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -32,6 +36,8 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
+  readonly sectionName: string | null;
+  readonly sectionNames: ReadonlyArray<string>;
   /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   readonly supports: {
@@ -39,6 +45,7 @@ export interface ThreadActionMenuState {
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+    readonly sections: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
@@ -106,6 +113,36 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.supports.sections
+      ? [
+          {
+            id: "move-to-section" as const,
+            label: "Move to section",
+            icon: "folder",
+            children: [
+              ...state.sectionNames.map((name) => ({
+                id: threadSectionMenuId(name),
+                label: name,
+                disabled: name === state.sectionName,
+              })),
+              ...(state.sectionName === null
+                ? []
+                : [
+                    {
+                      id: "section:active" as const,
+                      label: "Active list",
+                      separatorBefore: state.sectionNames.length > 0,
+                    },
+                  ]),
+              {
+                id: "section:new" as const,
+                label: "New section…",
+                separatorBefore: state.sectionNames.length > 0 || state.sectionName !== null,
+              },
+            ],
+          },
+        ]
+      : []),
     {
       id: "copy",
       label: "Copy",
@@ -138,4 +175,25 @@ export function buildThreadActionMenuItems(
       icon: "trash",
     },
   ];
+}
+
+export function threadSectionMenuId(name: string): `section:name:${string}` {
+  const wellFormedName = Array.from(name, (character) => {
+    const codeUnit = character.charCodeAt(0);
+    return character.length === 1 && codeUnit >= 0xd800 && codeUnit <= 0xdfff
+      ? "\uFFFD"
+      : character;
+  }).join("");
+  return `section:name:${encodeURIComponent(wellFormedName)}`;
+}
+
+export function parseThreadSectionMenuId(id: string): string | null | undefined {
+  if (id === "section:active") return null;
+  if (!id.startsWith("section:name:")) return undefined;
+  try {
+    const name = decodeURIComponent(id.slice("section:name:".length)).trim();
+    return name.length > 0 ? name : undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -666,6 +666,30 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
+it.effect("accepts setting and clearing a custom thread section", () =>
+  Effect.gen(function* () {
+    const assigned = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-section-assign",
+      threadId: "thread-1",
+      sectionName: "Waiting",
+    });
+    const cleared = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-section-clear",
+      threadId: "thread-1",
+      sectionName: null,
+    });
+
+    assert.strictEqual(assigned.type, "thread.meta.update");
+    assert.strictEqual(cleared.type, "thread.meta.update");
+    if (assigned.type === "thread.meta.update" && cleared.type === "thread.meta.update") {
+      assert.strictEqual(assigned.sectionName, "Waiting");
+      assert.strictEqual(cleared.sectionName, null);
+    }
+  }),
+);
+
 it.effect("accepts an internal title regeneration completion", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationCommand({
