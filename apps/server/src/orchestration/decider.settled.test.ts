@@ -529,6 +529,27 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("ignores a stale conditional session update", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-stale-session-set"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            ...makeSession("running"),
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+          expectedSessionUpdatedAt: "2025-12-31T23:59:59.000Z",
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null),
+      });
+
+      expect(result).toEqual([]);
+    }),
+  );
+
   it.effect("does not unsettle for session stop/error status writes", () =>
     Effect.gen(function* () {
       for (const status of ["stopped", "error", "ready", "idle"] as const) {

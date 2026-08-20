@@ -430,18 +430,25 @@ const make = Effect.gen(function* () {
   const setThreadSession = (input: {
     readonly threadId: ThreadId;
     readonly session: OrchestrationSession;
+    readonly expectedSessionUpdatedAt?: string;
     readonly createdAt: string;
   }) =>
     serverCommandId("provider-session-set").pipe(
-      Effect.flatMap((commandId) =>
-        orchestrationEngine.dispatch({
+      Effect.flatMap((commandId) => {
+        const command = {
           type: "thread.session.set",
           commandId,
           threadId: input.threadId,
           session: input.session,
           createdAt: input.createdAt,
-        }),
-      ),
+        } as const;
+        if (input.expectedSessionUpdatedAt !== undefined) {
+          Object.assign(command, {
+            expectedSessionUpdatedAt: input.expectedSessionUpdatedAt,
+          });
+        }
+        return orchestrationEngine.dispatch(command);
+      }),
     );
 
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
@@ -607,7 +614,7 @@ const make = Effect.gen(function* () {
           runtimeMode: desiredRuntimeMode,
           activeTurnId: null,
           lastError: null,
-          updatedAt: createdAt,
+          updatedAt: activeSession?.updatedAt ?? createdAt,
         },
         createdAt,
       });
@@ -829,6 +836,34 @@ const make = Effect.gen(function* () {
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     };
+  });
+
+  const refreshProviderLifecycleAfterTurnStart = Effect.fn(
+    "refreshProviderLifecycleAfterTurnStart",
+  )(function* (threadId: ThreadId) {
+    const thread = yield* resolveThread(threadId);
+    if (thread?.session === null || thread?.session === undefined) {
+      return;
+    }
+    if (thread.session.status === "stopped") {
+      return;
+    }
+    const providerSession = (yield* providerService.listSessions()).find(
+      (session) => session.threadId === threadId,
+    );
+    if (providerSession === undefined || thread.session.updatedAt === providerSession.updatedAt) {
+      return;
+    }
+    const updatedAt = yield* nowIso;
+    yield* setThreadSession({
+      threadId,
+      session: {
+        ...thread.session,
+        updatedAt: providerSession.updatedAt,
+      },
+      expectedSessionUpdatedAt: thread.session.updatedAt,
+      createdAt: updatedAt,
+    });
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fn(
@@ -1218,9 +1253,20 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap(() =>
+        refreshProviderLifecycleAfterTurnStart(event.payload.threadId).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider lifecycle snapshot refresh failed", {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        ),
+      ),
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1332,18 +1378,23 @@ const make = Effect.gen(function* () {
     const providerTurnId = providerSession?.activeTurnId ?? null;
     const providerTurnChanged =
       event.payload.expectedTurnId !== undefined && event.payload.expectedTurnId !== providerTurnId;
-    if (providerSession === undefined || providerTurnChanged) {
+    const expectedSessionUpdatedAt = event.payload.expectedSessionUpdatedAt;
+    if (
+      providerSession === undefined ||
+      providerTurnChanged ||
+      expectedSessionUpdatedAt === undefined
+    ) {
       return yield* publishWorkChanged(providerTurnId);
     }
 
-    // ProviderService rechecks this exact adapter-session snapshot while
-    // holding the same per-thread lock used by session creation and turn
-    // start. That closes the gap between this read and the adapter interrupt.
+    // Recheck the provider lifecycle snapshot that belonged to the accepted
+    // orchestration session. Reading a fresh provider timestamp here would let
+    // a newer steer replace the client's guard before the atomic interrupt.
     yield* providerService
       .interruptTurn({
         threadId: event.payload.threadId,
         expectedTurnId: providerTurnId,
-        expectedSessionUpdatedAt: providerSession.updatedAt,
+        expectedSessionUpdatedAt,
       })
       .pipe(
         Effect.matchCauseEffect({

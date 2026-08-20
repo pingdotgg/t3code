@@ -337,6 +337,17 @@ describe("ProviderRuntimeIngestion", () => {
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
+    const lifecycleUpdatedAt = "2026-01-01T00:00:00.001Z";
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: asThreadId("thread-1"),
+      activeTurnId: asTurnId("turn-1"),
+      createdAt: now,
+      updatedAt: lifecycleUpdatedAt,
+    });
 
     harness.emit({
       type: "turn.started",
@@ -347,10 +358,11 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-1"),
     });
 
-    await waitForThread(
+    const startedThread = await waitForThread(
       harness.readModel,
       (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === "turn-1",
     );
+    expect(startedThread.session?.updatedAt).toBe(lifecycleUpdatedAt);
 
     harness.emit({
       type: "turn.completed",

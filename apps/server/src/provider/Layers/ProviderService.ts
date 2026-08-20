@@ -85,6 +85,8 @@ export interface ProviderServiceLiveOptions {
   readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
   /** Test receipt emitted immediately before a lifecycle-lock acquisition. */
   readonly beforeLifecycleLockAcquire?: (threadId: ThreadId) => Effect.Effect<void>;
+  /** Test receipt emitted inside the uninterruptible lifecycle-lock release. */
+  readonly beforeLifecycleLockRelease?: (threadId: ThreadId) => Effect.Effect<void>;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -347,9 +349,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       return true;
     });
     if (shouldRelease) {
+      yield* options?.beforeLifecycleLockRelease?.(marker.threadId) ?? Effect.void;
       yield* marker.lifecycleLock.release(1);
     }
-  });
+  }, Effect.uninterruptible);
 
   const completeTurnStart = Effect.fn("completeProviderTurnStart")(function* (
     marker: TurnStartMarker,
@@ -370,11 +373,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     });
     if (shouldRelease) {
       yield* forgetMarker;
+      yield* options?.beforeLifecycleLockRelease?.(marker.threadId) ?? Effect.void;
       yield* marker.lifecycleLock.release(1);
       return;
     }
     yield* withThreadLock(marker.threadId, forgetMarker);
-  });
+  }, Effect.uninterruptible);
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
    *

@@ -300,6 +300,12 @@ export const make = (
       cancelled: boolean;
     }
     const promptRegistrations = new Set<PromptRegistration>();
+    const cancelPromptRegistrations = Effect.sync(() => {
+      for (const registration of promptRegistrations) {
+        registration.cancelled = true;
+      }
+    });
+    yield* Effect.addFinalizer(() => cancelPromptRegistrations);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
     >(Option.none());
@@ -750,41 +756,48 @@ export const make = (
                     sessionId: started.sessionId,
                     ...payload,
                   } satisfies EffectAcpSchema.PromptRequest;
-                  const dispatchGate = yield* Deferred.make<void>();
-                  const promptRpcFiber = yield* Deferred.await(dispatchGate).pipe(
-                    Effect.andThen(
-                      runLoggedRequest(
-                        "session/prompt",
-                        requestPayload,
-                        acp.agent.prompt(requestPayload),
-                      ),
-                    ),
-                    Effect.forkIn(runtimeScope, { startImmediately: true }),
-                  );
-                  yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
-                  if (registration.cancelled) {
-                    yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
-                  } else {
-                    yield* Deferred.succeed(dispatchGate, undefined);
-                  }
-                  return yield* Fiber.join(promptRpcFiber).pipe(
-                    Effect.catchCause((cause) =>
-                      Cause.hasInterruptsOnly(cause)
-                        ? Effect.succeed(cancelledResponse)
-                        : Effect.failCause(cause),
-                    ),
-                    Effect.ensuring(
+                  return yield* Effect.acquireUseRelease(
+                    Effect.gen(function* () {
+                      const dispatchGate = yield* Deferred.make<void>();
+                      const promptRpcFiber = yield* Deferred.await(dispatchGate).pipe(
+                        Effect.andThen(
+                          runLoggedRequest(
+                            "session/prompt",
+                            requestPayload,
+                            acp.agent.prompt(requestPayload),
+                          ),
+                        ),
+                        Effect.forkIn(runtimeScope, { startImmediately: true }),
+                      );
+                      yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
+                      return { dispatchGate, promptRpcFiber };
+                    }),
+                    ({ dispatchGate, promptRpcFiber }) =>
+                      Effect.gen(function* () {
+                        if (registration.cancelled) {
+                          yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                        } else {
+                          yield* Deferred.succeed(dispatchGate, undefined);
+                        }
+                        return yield* Fiber.join(promptRpcFiber).pipe(
+                          Effect.catchCause((cause) =>
+                            Cause.hasInterruptsOnly(cause)
+                              ? Effect.succeed(cancelledResponse)
+                              : Effect.failCause(cause),
+                          ),
+                          Effect.tap(() =>
+                            closeActiveAssistantSegment({
+                              queue: eventQueue,
+                              assistantSegmentRef,
+                            }),
+                          ),
+                        );
+                      }),
+                    ({ promptRpcFiber }) =>
                       Effect.gen(function* () {
                         yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
                         yield* Ref.set(activePromptFiberRef, Option.none());
                       }),
-                    ),
-                    Effect.tap(() =>
-                      closeActiveAssistantSegment({
-                        queue: eventQueue,
-                        assistantSegmentRef,
-                      }),
-                    ),
                   );
                 }),
               );
@@ -797,11 +810,7 @@ export const make = (
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
-            yield* Effect.sync(() => {
-              for (const registration of promptRegistrations) {
-                registration.cancelled = true;
-              }
-            });
+            yield* cancelPromptRegistrations;
             const activePromptFiber = yield* Ref.get(activePromptFiberRef);
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);

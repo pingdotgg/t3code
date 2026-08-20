@@ -283,6 +283,44 @@ it.effect("decodes additive thread interrupt preconditions without changing lega
   }),
 );
 
+it.effect("decodes additive internal session preconditions without changing legacy commands", () =>
+  Effect.gen(function* () {
+    const session = {
+      threadId: "thread-1",
+      status: "running",
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: "turn-1",
+      lastError: null,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    };
+    const legacy = yield* decodeOrchestrationCommand({
+      type: "thread.session.set",
+      commandId: "cmd-session-legacy",
+      threadId: "thread-1",
+      session,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    const conditional = yield* decodeOrchestrationCommand({
+      type: "thread.session.set",
+      commandId: "cmd-session-conditional",
+      threadId: "thread-1",
+      session,
+      expectedSessionUpdatedAt: "2026-01-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    assert.strictEqual(legacy.type, "thread.session.set");
+    if (legacy.type === "thread.session.set") {
+      assert.strictEqual(legacy.expectedSessionUpdatedAt, undefined);
+    }
+    assert.strictEqual(conditional.type, "thread.session.set");
+    if (conditional.type === "thread.session.set") {
+      assert.strictEqual(conditional.expectedSessionUpdatedAt, "2026-01-01T00:00:00.000Z");
+    }
+  }),
+);
+
 it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

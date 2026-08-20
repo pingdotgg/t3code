@@ -286,6 +286,7 @@ function makeProviderServiceLayer() {
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
   const beforeLifecycleLockAcquire = vi.fn((_threadId: ThreadId) => Effect.void);
+  const beforeLifecycleLockRelease = vi.fn((_threadId: ThreadId) => Effect.void);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
@@ -303,7 +304,7 @@ function makeProviderServiceLayer() {
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive({ beforeLifecycleLockAcquire }).pipe(
+      makeProviderServiceLive({ beforeLifecycleLockAcquire, beforeLifecycleLockRelease }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
@@ -328,6 +329,7 @@ function makeProviderServiceLayer() {
     claude,
     cursor,
     beforeLifecycleLockAcquire,
+    beforeLifecycleLockRelease,
     layer,
   };
 }
@@ -1056,6 +1058,50 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("releases the provider thread lock when turn observation is interrupted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-observation-interrupted");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const releaseStarted = yield* Deferred.make<void>();
+      const allowRelease = yield* Deferred.make<void>();
+      const stopWaitingForLock = yield* Deferred.make<void>();
+      const stopEnteredAdapter = yield* Deferred.make<void>();
+      routing.beforeLifecycleLockRelease.mockImplementationOnce(() =>
+        Deferred.succeed(releaseStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowRelease)),
+        ),
+      );
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Deferred.succeed(stopEnteredAdapter, undefined).pipe(
+          Effect.andThen(routing.codex.stopAll()),
+        ),
+      );
+
+      const sendFiber = yield* provider
+        .sendTurn({ threadId, input: "interrupt the release seam", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(releaseStarted);
+      routing.beforeLifecycleLockAcquire.mockImplementationOnce(() =>
+        Deferred.succeed(stopWaitingForLock, undefined).pipe(Effect.asVoid),
+      );
+      const stopFiber = yield* provider.stopSession({ threadId }).pipe(Effect.forkChild);
+      yield* Deferred.await(stopWaitingForLock);
+      const interruptFiber = yield* Fiber.interrupt(sendFiber).pipe(Effect.forkChild);
+
+      yield* Deferred.succeed(allowRelease, undefined);
+      yield* Deferred.await(stopEnteredAdapter);
+      yield* Fiber.join(stopFiber);
+      yield* Fiber.join(interruptFiber);
+    }),
+  );
+
   it.effect("serializes rollback behind an in-flight guarded interrupt", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -1546,11 +1592,30 @@ routing.layer("ProviderServiceLive routing", (it) => {
       );
       assert.isDefined(staleSnapshot);
 
-      yield* provider.sendTurn({
-        threadId,
-        input: "steer and return immediately",
-        attachments: [],
-      });
+      const adapterReturned = yield* Deferred.make<void>();
+      const fallbackReleaseStarted = yield* Deferred.make<void>();
+      const allowFallbackRelease = yield* Deferred.make<void>();
+      routing.claude.sendTurn.mockImplementationOnce((input) =>
+        Deferred.succeed(adapterReturned, undefined).pipe(
+          Effect.as({ threadId: input.threadId, turnId: activeTurnId }),
+        ),
+      );
+      routing.beforeLifecycleLockRelease.mockImplementationOnce(() =>
+        Deferred.succeed(fallbackReleaseStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowFallbackRelease)),
+        ),
+      );
+      const sendFiber = yield* provider
+        .sendTurn({
+          threadId,
+          input: "steer and return immediately",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(adapterReturned);
+      yield* Deferred.await(fallbackReleaseStarted);
+      yield* Deferred.succeed(allowFallbackRelease, undefined);
+      yield* Fiber.join(sendFiber);
       routing.claude.interruptTurn.mockClear();
 
       const error = yield* provider

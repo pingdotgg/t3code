@@ -1651,6 +1651,15 @@ const make = Effect.gen(function* () {
             );
           }
 
+          const providerSession =
+            event.type === "turn.started"
+              ? (yield* providerService.listSessions()).find(
+                  (session) => session.threadId === thread.id,
+                )
+              : undefined;
+          const lifecycleUpdatedAt = sameId(providerSession?.activeTurnId, eventTurnId)
+            ? (providerSession?.updatedAt ?? now)
+            : now;
           const nextSession: OrchestrationSession = {
             threadId: thread.id,
             status,
@@ -1658,7 +1667,7 @@ const make = Effect.gen(function* () {
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
             activeTurnId: nextActiveTurnId,
             lastError,
-            updatedAt: now,
+            updatedAt: lifecycleUpdatedAt,
           };
           if (event.providerInstanceId !== undefined) {
             Object.assign(nextSession, { providerInstanceId: event.providerInstanceId });

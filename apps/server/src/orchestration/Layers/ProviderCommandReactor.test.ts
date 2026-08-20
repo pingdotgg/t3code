@@ -17,6 +17,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  type OrchestrationSession,
   ProjectId,
   ThreadId,
   TurnId,
@@ -34,7 +35,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import { ProviderAdapterRequestError, ProviderTurnChangedError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -160,6 +161,13 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly beforeListSessions?: (sessions: Array<ProviderSession>) => void;
+    readonly listSessionsEffect?: (
+      sessions: Array<ProviderSession>,
+    ) => Effect.Effect<ReadonlyArray<ProviderSession>>;
+    readonly onInterruptReceipt?: (
+      receipt: ProviderTurnInterruptResolvedReceipt,
+    ) => Effect.Effect<void>;
+    readonly onSessionSet?: (session: OrchestrationSession) => Effect.Effect<void>;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -245,7 +253,7 @@ describe("ProviderCommandReactor", () => {
         turnId: asTurnId("turn-1"),
       }),
     );
-    const interruptTurn = vi.fn((_: unknown) => Effect.void);
+    const interruptTurn = vi.fn<ProviderServiceShape["interruptTurn"]>(() => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
@@ -326,10 +334,11 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () =>
-        Effect.sync(() => {
-          input?.beforeListSessions?.(runtimeSessions);
-          return runtimeSessions;
-        }),
+        Effect.sync(() => input?.beforeListSessions?.(runtimeSessions)).pipe(
+          Effect.andThen(
+            input?.listSessionsEffect?.(runtimeSessions) ?? Effect.succeed(runtimeSessions),
+          ),
+        ),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -407,7 +416,11 @@ describe("ProviderCommandReactor", () => {
                 return Effect.die(new Error("Injected title regeneration completion failure"));
               }
             }
-            return engine.dispatch(command);
+            const dispatch = engine.dispatch(command);
+            const onSessionSet = input?.onSessionSet;
+            return command.type === "thread.session.set" && onSessionSet !== undefined
+              ? dispatch.pipe(Effect.tap(() => onSessionSet(command.session)))
+              : dispatch;
           },
           get streamDomainEvents() {
             return engine.streamDomainEvents;
@@ -521,7 +534,9 @@ describe("ProviderCommandReactor", () => {
     await Effect.runPromise(
       Stream.runForEach(receiptBus.streamEventsForTest, (receipt) =>
         receipt.type === "provider.turn.interrupt.resolved"
-          ? Effect.sync(() => interruptReceipts.push(receipt))
+          ? Effect.sync(() => interruptReceipts.push(receipt)).pipe(
+              Effect.andThen(input?.onInterruptReceipt?.(receipt) ?? Effect.void),
+            )
           : Effect.void,
       ).pipe(Effect.forkIn(scope)),
     );
@@ -2873,7 +2888,7 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("ignores provider session timestamp changes when the orchestration guard still matches", async () => {
+  it("passes the lifecycle snapshot owned by the accepted orchestration session", async () => {
     const sessionUpdatedAt = "2026-01-01T00:00:00.000Z";
     const providerUpdatedAt = "2026-01-01T00:00:01.000Z";
     const harness = await createHarness();
@@ -2919,6 +2934,11 @@ describe("ProviderCommandReactor", () => {
 
     await harness.drain();
     expect(harness.interruptTurn).toHaveBeenCalledOnce();
+    expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
+      threadId: "thread-1",
+      expectedTurnId: "turn-1",
+      expectedSessionUpdatedAt: sessionUpdatedAt,
+    });
     expect(harness.interruptReceipts).toContainEqual({
       type: "provider.turn.interrupt.resolved",
       threadId: "thread-1",
@@ -2928,6 +2948,148 @@ describe("ProviderCommandReactor", () => {
       actualTurnId: "turn-1",
       createdAt: expect.any(String),
     });
+  });
+
+  it("rejects a pre-steer Stop while a non-blocking Claude steer is being projected", async () => {
+    const sessionUpdatedAt = "2026-01-01T00:00:00.000Z";
+    const preSteerLifecycle = "2026-01-01T00:00:00.100Z";
+    const postSteerLifecycle = "2026-01-01T00:00:00.101Z";
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-1");
+    const steerReturned = Effect.runSync(Deferred.make<void>());
+    const refreshListEntered = Effect.runSync(Deferred.make<void>());
+    const allowRefreshList = Effect.runSync(Deferred.make<void>());
+    const interruptResolved = Effect.runSync(Deferred.make<void>());
+    const lifecycleRefreshed = Effect.runSync(Deferred.make<void>());
+    let refreshBlocked = false;
+    const interruptCommandId = CommandId.make("cmd-stop-racing-claude-steer");
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-4-6",
+      },
+      listSessionsEffect: (sessions) => {
+        if (!refreshBlocked && sessions[0]?.updatedAt === postSteerLifecycle) {
+          refreshBlocked = true;
+          return Deferred.succeed(refreshListEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(allowRefreshList)),
+            Effect.as(sessions),
+          );
+        }
+        return Effect.succeed(sessions);
+      },
+      onInterruptReceipt: (receipt) =>
+        receipt.commandId === interruptCommandId
+          ? Deferred.succeed(interruptResolved, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      onSessionSet: (session) =>
+        session.updatedAt === postSteerLifecycle
+          ? Deferred.succeed(lifecycleRefreshed, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-claude-steer"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeMode: "approval-required",
+          activeTurnId,
+          lastError: null,
+          updatedAt: preSteerLifecycle,
+        },
+        createdAt: sessionUpdatedAt,
+      }),
+    );
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      activeTurnId,
+      model: "claude-opus-4-6",
+      cwd: "/tmp/provider-project",
+      createdAt: sessionUpdatedAt,
+      updatedAt: preSteerLifecycle,
+    });
+    harness.sendTurn.mockImplementationOnce(() =>
+      Effect.sync(() => {
+        const session = harness.runtimeSessions[0];
+        if (session !== undefined) {
+          harness.runtimeSessions[0] = { ...session, updatedAt: postSteerLifecycle };
+        }
+      }).pipe(
+        Effect.andThen(Deferred.succeed(steerReturned, undefined)),
+        Effect.as({ threadId, turnId: activeTurnId }),
+      ),
+    );
+    harness.interruptTurn.mockImplementationOnce(() =>
+      Effect.fail(
+        new ProviderTurnChangedError({
+          threadId,
+          expectedTurnId: activeTurnId,
+          actualTurnId: activeTurnId,
+        }),
+      ),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-claude-steer"),
+        threadId,
+        message: {
+          messageId: asMessageId("message-claude-steer"),
+          role: "user",
+          text: "steer the active Claude turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.200Z",
+      }),
+    );
+    await harness.runEffect(Deferred.await(steerReturned));
+    await harness.runEffect(Deferred.await(refreshListEntered));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: interruptCommandId,
+        threadId,
+        expectedTurnId: activeTurnId,
+        expectedSessionUpdatedAt: preSteerLifecycle,
+        createdAt: "2026-01-01T00:00:00.300Z",
+      }),
+    );
+    await harness.runEffect(Deferred.await(interruptResolved));
+
+    expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
+      threadId,
+      expectedTurnId: activeTurnId,
+      expectedSessionUpdatedAt: preSteerLifecycle,
+    });
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId,
+      commandId: interruptCommandId,
+      outcome: "work-changed",
+      expectedTurnId: activeTurnId,
+      actualTurnId: activeTurnId,
+      createdAt: expect.any(String),
+    });
+
+    await harness.runEffect(Deferred.succeed(allowRefreshList, undefined));
+    await harness.runEffect(Deferred.await(lifecycleRefreshed));
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.updatedAt).toBe(postSteerLifecycle);
   });
 
   it("rejects a guarded interrupt when provider work changes at dispatch time", async () => {

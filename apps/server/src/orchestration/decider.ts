@@ -1211,6 +1211,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (
+        command.expectedSessionUpdatedAt !== undefined &&
+        command.expectedSessionUpdatedAt !== thread.session?.updatedAt
+      ) {
+        return [];
+      }
       const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
