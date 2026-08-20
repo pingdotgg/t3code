@@ -4,10 +4,8 @@ import { useCallback, useRef, useState } from "react";
 
 import type { useThreadActions } from "./useThreadActions";
 import { readThreadShell } from "../state/entities";
-import {
-  canArchiveSettledSidebarThread,
-  isThreadArchiveBlocked,
-} from "../components/SidebarArchiveControls.logic";
+import { canArchiveSettledSidebarThread } from "../components/SidebarArchiveControls.logic";
+import { isThreadArchiveBlocked } from "../components/threadArchive.logic";
 import { useThreadArchiveActions, type ThreadArchiveEntry } from "./useThreadArchiveActions";
 
 export type SidebarArchiveEntry = ThreadArchiveEntry;

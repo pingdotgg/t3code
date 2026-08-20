@@ -8,17 +8,19 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   canArchiveSettledSidebarThread,
   filterArchivableSidebarThreads,
+  shouldRenderSidebarArchiveAll,
+} from "./SidebarArchiveControls.logic";
+import {
+  archiveSelectedThreadEntries,
   formatArchiveSkippedDescription,
   getCompletedArchiveThreadKeys,
   isThreadArchiveBlocked,
   isThreadSessionRunning,
-  shouldRenderSidebarArchiveAll,
   withCoordinatedThreadArchiveEntries,
-} from "./SidebarArchiveControls.logic";
+} from "./threadArchive.logic";
 
 describe("formatArchiveSkippedDescription", () => {
   it("describes eligibility skips without assuming why they happened", () => {

@@ -12,7 +12,7 @@ import {
   formatArchiveSkippedDescription,
   getCompletedArchiveThreadKeys,
   withCoordinatedThreadArchiveEntries,
-} from "../components/SidebarArchiveControls.logic";
+} from "../components/threadArchive.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
 import { readThreadShell } from "../state/entities";

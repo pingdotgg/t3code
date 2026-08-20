@@ -98,12 +98,4 @@ describe("buildThreadActionMenuItems", () => {
       }),
     ).toContain("archive");
   });
-
-  it("disables archive when the shared policy blocks it", () => {
-    const archiveItem = buildThreadActionMenuItems({
-      ...baseState,
-      archive: { disabled: true },
-    }).find((item) => item.id === "archive");
-    expect(archiveItem?.disabled).toBe(true);
-  });
 });

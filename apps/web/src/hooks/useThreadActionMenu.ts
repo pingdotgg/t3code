@@ -15,7 +15,7 @@ import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useCallback } from "react";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
-import { isThreadArchiveBlocked } from "../components/SidebarArchiveControls.logic";
+import { isThreadArchiveBlocked } from "../components/threadArchive.logic";
 import {
   buildThreadActionMenuItems,
   type ThreadActionMenuId,
