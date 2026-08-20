@@ -1011,7 +1011,7 @@ export const make = Effect.gen(function* () {
         const syncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
         const upload = yield* transfer
           .issueUrl({ projectId, syncId, direction: "upload" })
-          .pipe(Effect.mapError((cause) => syncFailed(projectId, syncId, cause.message)));
+          .pipe(Effect.mapError((cause) => syncFailed(projectId, syncId, cause.message, cause)));
         const response = yield* request({
           projectId,
           originLabel: project.origin?.label ?? null,
@@ -1033,7 +1033,7 @@ export const make = Effect.gen(function* () {
         }
         const root = project.workspaceRoot;
         const gitFailed = (cause: { readonly message: string }) =>
-          syncFailed(projectId, syncId, cause.message);
+          syncFailed(projectId, syncId, cause.message, cause);
         const isRepo = yield* gitSync.isRepository(root).pipe(Effect.mapError(gitFailed));
         if (!isRepo) {
           yield* gitSync.initRepository(root).pipe(Effect.mapError(gitFailed));
@@ -1101,8 +1101,8 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const syncFailed = (projectId: ProjectId, syncId: string, detail: string) =>
-    new MirrorSyncFailedError({ projectId, syncId, detail });
+  const syncFailed = (projectId: ProjectId, syncId: string, detail: string, cause?: unknown) =>
+    new MirrorSyncFailedError({ projectId, syncId, detail, cause });
 
   const ensureFreshCore = Effect.fn("MirrorService.ensureFresh")(function* (
     projectId: ProjectId,
@@ -1123,7 +1123,7 @@ export const make = Effect.gen(function* () {
         const syncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
         const upload = yield* transfer
           .issueUrl({ projectId, syncId, direction: "upload" })
-          .pipe(Effect.mapError((cause) => syncFailed(projectId, syncId, cause.message)));
+          .pipe(Effect.mapError((cause) => syncFailed(projectId, syncId, cause.message, cause)));
         const response = yield* request({
           projectId,
           originLabel: project.origin?.label ?? null,
@@ -1163,7 +1163,7 @@ export const make = Effect.gen(function* () {
         }
         const root = project.workspaceRoot;
         const gitFailed = (cause: { readonly message: string }) =>
-          syncFailed(projectId, syncId, cause.message);
+          syncFailed(projectId, syncId, cause.message, cause);
         const bundlePath = yield* transfer.stagingPath(syncId);
         yield* gitSync
           .fetchBundle({

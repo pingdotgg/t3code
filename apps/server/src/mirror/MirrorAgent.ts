@@ -230,7 +230,7 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError(
           (cause) =>
-            new MirrorSyncFailedError({ projectId: link.projectId, detail: cause.message }),
+            new MirrorSyncFailedError({ projectId: link.projectId, detail: cause.message, cause }),
         ),
       );
     const request = HttpClientRequest.put(`${hostHttpBase(link.hostUrl)}${relativeUrl}`).pipe(
@@ -307,7 +307,12 @@ export const make = Effect.gen(function* () {
     MirrorSyncFailedError
   > {
     const gitFailed = (cause: { readonly message: string }) =>
-      new MirrorSyncFailedError({ projectId: link.projectId, syncId, detail: cause.message });
+      new MirrorSyncFailedError({
+        projectId: link.projectId,
+        syncId,
+        detail: cause.message,
+        cause,
+      });
     const includePaths = yield* includePathsWithExtra(link, root);
     const snapshot = yield* gitSync
       .createSnapshot({ root, syncId, includePaths })
@@ -348,7 +353,12 @@ export const make = Effect.gen(function* () {
     MirrorSyncFailedError
   > {
     const gitFailed = (cause: { readonly message: string }) =>
-      new MirrorSyncFailedError({ projectId: link.projectId, syncId, detail: cause.message });
+      new MirrorSyncFailedError({
+        projectId: link.projectId,
+        syncId,
+        detail: cause.message,
+        cause,
+      });
     if (baseSnapshotOid === null) {
       return yield* new MirrorSyncFailedError({
         projectId: link.projectId,
@@ -426,7 +436,12 @@ export const make = Effect.gen(function* () {
     MirrorSyncFailedError
   > {
     const gitFailed = (cause: { readonly message: string }) =>
-      new MirrorSyncFailedError({ projectId: link.projectId, syncId, detail: cause.message });
+      new MirrorSyncFailedError({
+        projectId: link.projectId,
+        syncId,
+        detail: cause.message,
+        cause,
+      });
     const bundlePath = agentStagingPath(syncId);
     yield* downloadBundle(link, downloadUrl, bundlePath);
     yield* gitSync
@@ -851,7 +866,8 @@ export const make = Effect.gen(function* () {
           .initRepository(localRoot)
           .pipe(
             Effect.mapError(
-              (cause) => new MirrorNotARepositoryError({ path: localRoot, detail: cause.message }),
+              (cause) =>
+                new MirrorNotARepositoryError({ path: localRoot, detail: cause.message, cause }),
             ),
           );
         yield* Effect.logInfo("Initialized a git repository for a plain mirror origin folder.", {

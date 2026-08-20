@@ -352,6 +352,7 @@ export class MirrorSyncFailedError extends Schema.TaggedErrorClass<MirrorSyncFai
     projectId: ProjectId,
     syncId: Schema.optional(MirrorSyncId),
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -373,6 +374,7 @@ export class MirrorNotARepositoryError extends Schema.TaggedErrorClass<MirrorNot
   {
     path: TrimmedNonEmptyString,
     detail: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
