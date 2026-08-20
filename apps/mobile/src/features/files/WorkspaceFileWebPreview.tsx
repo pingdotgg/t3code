@@ -4,17 +4,23 @@ import { WebView } from "react-native-webview";
 
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
+import type { AssetUrlState } from "../../state/assets";
+import { WorkspaceFileAssetPreviewPlaceholder } from "./WorkspaceFileAssetPreviewPlaceholder";
 
-export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
+export function WorkspaceFileWebPreview(props: {
+  readonly status: AssetUrlState;
+  readonly onRetry: () => void;
+}) {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  if (props.uri === null) {
+  if (props.status._tag !== "Success") {
     return (
-      <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Preparing preview...</Text>
-      </View>
+      <WorkspaceFileAssetPreviewPlaceholder
+        preparingLabel="Preparing preview..."
+        status={props.status}
+        onRetry={props.onRetry}
+      />
     );
   }
 
@@ -28,7 +34,7 @@ export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) 
         </View>
       ) : null}
       <WebView
-        source={{ uri: props.uri }}
+        source={{ uri: props.status.url }}
         originWhitelist={["*"]}
         allowsBackForwardNavigationGestures
         allowsFullscreenVideo

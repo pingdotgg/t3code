@@ -6,7 +6,9 @@ import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
+import type { AssetUrlState } from "../../state/assets";
 import { workspaceFileImageAtom } from "./workspace-file-image-cache";
+import { WorkspaceFileAssetPreviewPlaceholder } from "./WorkspaceFileAssetPreviewPlaceholder";
 
 function ResolvedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
@@ -96,23 +98,23 @@ function CachedWorkspaceFileImagePreview(props: {
 
 export function WorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
-  readonly uri: string | null;
+  readonly status: AssetUrlState;
+  readonly onRetry: () => void;
 }) {
-  if (props.uri === null) {
+  if (props.status._tag !== "Success") {
     return (
-      <View className="flex-1 items-center justify-center gap-3 bg-card px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">
-          Preparing image preview...
-        </Text>
-      </View>
+      <WorkspaceFileAssetPreviewPlaceholder
+        preparingLabel="Preparing image preview..."
+        status={props.status}
+        onRetry={props.onRetry}
+      />
     );
   }
 
   return (
     <CachedWorkspaceFileImagePreview
       accessibilityLabel={props.accessibilityLabel}
-      uri={props.uri}
+      uri={props.status.url}
     />
   );
 }
