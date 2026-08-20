@@ -25,6 +25,7 @@ vi.mock("../lib/runtime", async () => {
 import type { Preferences } from "../persistence/mobile-preferences";
 import {
   createMobilePreferencesState,
+  mergeConfirmedPreferences,
   MobilePreferencesLoadError,
   MobilePreferencesSaveError,
   MobilePreferencesStore,
@@ -350,6 +351,32 @@ describe("mobile preferences state", () => {
       registry.dispose();
     }),
   );
+
+  it("keeps a newer in-memory reconciliation over an unrelated saved preference", () => {
+    expect(
+      mergeConfirmedPreferences(
+        {
+          baseFontSize: 18,
+          planModeEnabled: false,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:00:00.000Z",
+          },
+        },
+        {
+          planModeEnabled: true,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:01:00.000Z",
+          },
+        },
+      ),
+    ).toEqual({
+      baseFontSize: 18,
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-15T12:01:00.000Z",
+      },
+    });
+  });
 
   it.effect("rolls back to the last confirmed value after a later save fails", () =>
     Effect.gen(function* () {

@@ -37,6 +37,30 @@ export interface ReconciledPreferencesPatch {
   readonly patch: Partial<Preferences>;
 }
 
+export function mergeConfirmedPreferences(saved: Preferences, current: Preferences): Preferences {
+  const currentUpdatedAt =
+    current.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
+    current.syncedClientPreferencesUpdatedAt;
+  const savedUpdatedAt =
+    saved.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
+    saved.syncedClientPreferencesUpdatedAt;
+  if (
+    current.planModeEnabled === undefined ||
+    currentUpdatedAt === undefined ||
+    (savedUpdatedAt !== undefined && savedUpdatedAt >= currentUpdatedAt)
+  ) {
+    return saved;
+  }
+  return {
+    ...saved,
+    planModeEnabled: current.planModeEnabled,
+    syncedClientPreferencesUpdatedAtByField: {
+      ...saved.syncedClientPreferencesUpdatedAtByField,
+      planModeEnabled: currentUpdatedAt,
+    },
+  };
+}
+
 /**
  * Owns the device preference blob for the lifetime of the app registry.
  * Optimistic patches are kept separately so writes made while persistence is
@@ -107,7 +131,10 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
           Effect.flatMap((store) => store.savePatch(patch)),
           Effect.tap((saved) =>
             Effect.sync(() => {
-              get.set(confirmedPreferencesAtom, saved);
+              get.set(
+                confirmedPreferencesAtom,
+                mergeConfirmedPreferences(saved, get(confirmedPreferencesAtom)),
+              );
               const optimistic = get(optimisticPatchAtom);
               get.set(
                 optimisticPatchAtom,
