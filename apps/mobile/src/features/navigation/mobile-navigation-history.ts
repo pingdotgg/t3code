@@ -8,7 +8,15 @@ export interface MobileNavigationHistory {
   readonly forwardTarget: () => string | null;
   readonly getSnapshot: () => MobileNavigationHistorySnapshot;
   readonly subscribe: (listener: () => void) => () => void;
-  readonly visit: (pathname: string) => void;
+  readonly visit: (
+    location: MobileNavigationLocation,
+    options?: { readonly traversal?: boolean },
+  ) => void;
+}
+
+export interface MobileNavigationLocation {
+  readonly pathname: string;
+  readonly transitionKey: string;
 }
 
 function snapshotFor(cursor: number, entryCount: number): MobileNavigationHistorySnapshot {
@@ -18,8 +26,10 @@ function snapshotFor(cursor: number, entryCount: number): MobileNavigationHistor
   };
 }
 
-export function createMobileNavigationHistory(initialPathname: string): MobileNavigationHistory {
-  let entries = [initialPathname];
+export function createMobileNavigationHistory(
+  initialLocation: MobileNavigationLocation,
+): MobileNavigationHistory {
+  let entries = [initialLocation];
   let cursor = 0;
   let snapshot = snapshotFor(cursor, entries.length);
   const listeners = new Set<() => void>();
@@ -37,40 +47,55 @@ export function createMobileNavigationHistory(initialPathname: string): MobileNa
   };
 
   return {
-    backTarget: () => entries[cursor - 1] ?? null,
-    forwardTarget: () => entries[cursor + 1] ?? null,
+    backTarget: () => entries[cursor - 1]?.pathname ?? null,
+    forwardTarget: () => entries[cursor + 1]?.pathname ?? null,
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    visit: (pathname) => {
-      if (pathname === entries[cursor]) {
+    visit: (location, options) => {
+      const current = entries[cursor];
+      if (
+        location.pathname === current?.pathname &&
+        location.transitionKey === current.transitionKey
+      ) {
         return;
       }
-      if (pathname === entries[cursor - 1]) {
-        cursor -= 1;
-        publish();
-        return;
+
+      if (options?.traversal) {
+        const adjacentIndex =
+          entries[cursor - 1]?.pathname === location.pathname
+            ? cursor - 1
+            : entries[cursor + 1]?.pathname === location.pathname
+              ? cursor + 1
+              : -1;
+        if (adjacentIndex >= 0) {
+          entries = entries.map((entry, index) => (index === adjacentIndex ? location : entry));
+          cursor = adjacentIndex;
+          publish();
+          return;
+        }
+      } else if (location.transitionKey !== current?.transitionKey) {
+        const priorIndex = entries.findLastIndex(
+          (entry, index) => index < cursor && entry.transitionKey === location.transitionKey,
+        );
+        if (priorIndex >= 0) {
+          cursor = priorIndex;
+          publish();
+          return;
+        }
+        const forwardIndex = entries.findIndex(
+          (entry, index) => index > cursor && entry.transitionKey === location.transitionKey,
+        );
+        if (forwardIndex >= 0) {
+          cursor = forwardIndex;
+          publish();
+          return;
+        }
       }
-      if (pathname === entries[cursor + 1]) {
-        cursor += 1;
-        publish();
-        return;
-      }
-      const priorIndex = entries.lastIndexOf(pathname, cursor - 1);
-      if (priorIndex >= 0) {
-        cursor = priorIndex;
-        publish();
-        return;
-      }
-      const forwardIndex = entries.indexOf(pathname, cursor + 1);
-      if (forwardIndex >= 0) {
-        cursor = forwardIndex;
-        publish();
-        return;
-      }
-      entries = [...entries.slice(0, cursor + 1), pathname];
+
+      entries = [...entries.slice(0, cursor + 1), location];
       cursor = entries.length - 1;
       publish();
     },

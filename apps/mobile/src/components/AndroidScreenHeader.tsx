@@ -47,6 +47,7 @@ export function AndroidScreenHeader(props: {
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
+  readonly backDisabled?: boolean;
   readonly embedded?: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -61,11 +62,15 @@ export function AndroidScreenHeader(props: {
       <View className="min-h-12 flex-row items-center gap-2">
         {props.onBack ? (
           <Pressable
-            accessibilityLabel="Navigate up"
+            accessibilityLabel="Back"
             accessibilityRole="button"
+            disabled={props.backDisabled}
             hitSlop={8}
             onPress={props.onBack}
-            className="-mr-2 size-11 items-center justify-center"
+            className={cn(
+              "-mr-2 size-11 items-center justify-center",
+              props.backDisabled && "opacity-55",
+            )}
           >
             <SymbolView
               name="chevron.left"

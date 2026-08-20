@@ -640,19 +640,16 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
-  const compactRightHeaderItemsWithHistory = useMemo<NativeHeaderItems>(
-    () => [
-      ...createNativeNavigationHistoryItems({
+  const compactNavigationHeaderItems = useMemo<NativeHeaderItems>(
+    () =>
+      createNativeNavigationHistoryItems({
         canGoBack: navigationHistory.canGoBack,
         canGoForward: navigationHistory.canGoForward,
         identifierPrefix: "thread-navigation",
-        includeBack: false,
         onBack: navigationHistory.back,
         onForward: navigationHistory.forward,
       }),
-      ...compactRightHeaderItems,
-    ],
-    [compactRightHeaderItems, navigationHistory],
+    [navigationHistory],
   );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
@@ -705,6 +702,13 @@ function ThreadRouteContent(
       icon: "chevron.right",
       onPress: navigationHistory.forward,
     });
+    if (!navigationHistory.canGoBack) {
+      actions.push({
+        accessibilityLabel: "Go to threads list",
+        icon: "list.bullet",
+        onPress: () => navigation.dispatch(StackActions.replace("Home")),
+      });
+    }
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -746,6 +750,7 @@ function ThreadRouteContent(
     handleOpenGitInspector,
     handleToggleInspector,
     navigationHistory,
+    navigation,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -754,7 +759,6 @@ function ThreadRouteContent(
   // Deep links / cold starts land with Thread as the ONLY route, where the
   // native back button does not render. Provide an explicit Home escape for
   // that case; when history exists the native back button is used instead.
-  const canGoBack = navigation.canGoBack();
   const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       withNativeGlassHeaderItem({
@@ -852,27 +856,26 @@ function ThreadRouteContent(
               }
             : undefined,
           title: selectedThread.title,
-          headerBackVisible: !layout.usesSplitView,
-          // Compact uses the NATIVE back button when a previous route exists;
-          // deep links / cold starts get an explicit Home button instead.
-          // Split view always uses its custom left items.
+          headerBackVisible: false,
+          // Compact uses the app history pair so Back and Forward share one
+          // cursor. Deep links also get an explicit Home escape. Split view
+          // keeps its workspace-specific left items because the sidebar owns
+          // the history pair there.
           unstable_headerLeftItems:
             Platform.OS === "ios"
               ? layout.usesSplitView
                 ? () => splitLeftHeaderItems
-                : canGoBack
-                  ? undefined
-                  : () => compactHomeHeaderItems
+                : () => [
+                    ...compactNavigationHeaderItems,
+                    ...(navigationHistory.canGoBack ? [] : compactHomeHeaderItems),
+                  ]
               : undefined,
           // Search lives in the persistent sidebar, so the split header keeps
           // the git controls on the RIGHT (no center items — center space is
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () =>
-                  layout.usesSplitView
-                    ? threadCenterHeaderItems
-                    : compactRightHeaderItemsWithHistory
+              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}
@@ -880,9 +883,10 @@ function ThreadRouteContent(
 
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
+          backDisabled={!navigationHistory.canGoBack}
           title={selectedThread.title}
           subtitle={headerSubtitle}
-          onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
+          onBack={layout.usesSplitView ? undefined : navigationHistory.back}
           actions={androidHeaderActions}
         />
       ) : null}
