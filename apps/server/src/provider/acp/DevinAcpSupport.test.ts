@@ -464,6 +464,64 @@ describe("applyDevinAcpModelSelection", () => {
       }),
   );
 
+  it.effect("does not switch when default reasoning is already unset", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      const result = yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: { familySlug: "claude-opus-5", reasoningValue: undefined },
+        requested: { familySlug: "claude-opus-5", reasoningValue: "default" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-5",
+            options: [{ value: "claude-opus-5", name: "Claude Opus 5" }],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).not.toHaveBeenCalled();
+      expect(setConfigOption).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        familySlug: "claude-opus-5",
+        reasoningValue: undefined,
+      });
+    }),
+  );
+
+  it.effect("switches to the base model when default reasoning clears a selection", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        requested: { familySlug: "claude-opus-5", reasoningValue: "default" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-5-high",
+            options: [{ value: "claude-opus-5", name: "Claude Opus 5" }],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).toHaveBeenCalledWith("claude-opus-5");
+      expect(setConfigOption).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("switches model variants for reasoning-only changes without a reasoning config", () =>
     Effect.gen(function* () {
       const setModel = vi.fn().mockReturnValue(Effect.void);

@@ -245,7 +245,7 @@ export function applyDevinAcpModelSelection<E>(input: {
       : requested.reasoningValue;
 
   const reasoningChanged =
-    requestedReasoningDefault ||
+    (requestedReasoningDefault && current?.reasoningValue !== undefined) ||
     (requestedReasoning !== undefined && requestedReasoning !== current?.reasoningValue);
   const needsReasoningSwitch = reasoningConfigId !== undefined && reasoningChanged;
   const needsModelSwitch =
