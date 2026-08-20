@@ -36,6 +36,10 @@ export function formatProviderDisplayName(provider: string | null | undefined): 
       return "Codex";
     case "cursor":
       return "Cursor";
+    case "devin":
+      return "Devin";
+    case "devinCloud":
+      return "Devin Cloud";
     case "opencode":
       return "OpenCode";
     default: {

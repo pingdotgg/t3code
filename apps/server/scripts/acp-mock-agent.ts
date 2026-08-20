@@ -18,6 +18,13 @@ const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitDevinElicitation = process.env.T3_ACP_EMIT_DEVIN_ELICITATION === "1";
+const emitDevinStreaming = process.env.T3_ACP_EMIT_DEVIN_STREAMING === "1";
+const emitExitPlanPermission = process.env.T3_ACP_EMIT_EXIT_PLAN_PERMISSION === "1";
+const requireAuthForPrompt = process.env.T3_ACP_REQUIRE_AUTH_FOR_PROMPT === "1";
+// Emulates the real CLI persisting credentials to disk: a restarted agent
+// process (new ACP session after sign-in) must see the stored credential.
+const authStatePath = process.env.T3_ACP_AUTH_STATE_PATH;
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
@@ -50,6 +57,16 @@ const sessionId = "mock-session-1";
 let currentModeId = "ask";
 let currentModelId = "default";
 let parameterizedModelPicker = false;
+let clientSupportsFormElicitation = false;
+let authenticateCalled = false;
+// Like the real Devin CLI, a session snapshots the credential state when it
+// is created: signing in later never repairs an existing session, only a new
+// one (in practice: a restarted agent process) picks up the stored credential.
+let sessionCreatedAuthenticated = false;
+
+function hasStoredCredential(): boolean {
+  return authenticateCalled || (authStatePath !== undefined && NodeFS.existsSync(authStatePath));
+}
 let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
@@ -300,21 +317,36 @@ const program = Effect.gen(function* () {
     Effect.sync(() => {
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      clientSupportsFormElicitation = Boolean(request.clientCapabilities?.elicitation?.form);
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
+        ...(requireAuthForPrompt
+          ? { authMethods: [{ id: "mock-browser", name: "Log in with browser" }] }
+          : {}),
       };
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  yield* agent.handleAuthenticate(() =>
+    Effect.sync(() => {
+      authenticateCalled = true;
+      if (authStatePath) {
+        NodeFS.writeFileSync(authStatePath, "authenticated\n", "utf8");
+      }
+      return {};
+    }),
+  );
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.sync(() => {
+      sessionCreatedAuthenticated = hasStoredCredential();
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
@@ -463,6 +495,16 @@ const program = Effect.gen(function* () {
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      // Mirrors Devin's lazy credential check: prompts fail with
+      // auth-required (-32000) when the session was created without a stored
+      // credential, even after `authenticate` succeeds later in the same
+      // process — only a fresh session picks up the new credential.
+      if (requireAuthForPrompt && !sessionCreatedAuthenticated) {
+        return yield* AcpError.AcpRequestError.authRequired(
+          "Authentication failed: Please authenticate to continue.",
+        );
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
@@ -751,6 +793,120 @@ const program = Effect.gen(function* () {
           },
         });
 
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitDevinStreaming) {
+        // Mirrors a real `devin acp` turn: thought chunks stream before the
+        // assistant text and `usage_update` reports context usage at the end.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "thinking about it" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "hello from mock" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 15141,
+            size: 202752,
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitDevinElicitation) {
+        // Devin only asks structured questions when the client advertised
+        // form elicitation, and sends them via the unstable underscore method.
+        if (!clientSupportsFormElicitation) {
+          return { stopReason: "refusal" };
+        }
+        const result = yield* agent.client.extRequest("_session/elicitation", {
+          mode: "form",
+          sessionId: requestedSessionId,
+          message: "Pick a color",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              q0: {
+                type: "string",
+                title: "Color",
+                description: "Pick a color",
+                oneOf: [
+                  { const: "Red", title: "The color red" },
+                  { const: "Blue", title: "The color blue" },
+                ],
+              },
+            },
+            required: ["q0"],
+          },
+        });
+        // Devin parses the internally-tagged wire shape:
+        // `{ action: "accept", content: { ... } }`.
+        const response = result as { action?: string; content?: { q0?: string } } | undefined;
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `elicitation:${response?.action ?? "unknown"}:${response?.content?.q0 ?? ""}`,
+            },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitExitPlanPermission) {
+        // Mirrors Devin ending a plan-mode turn: an `exit_plan_mode` tool call
+        // carrying the plan markdown, then a permission request for it.
+        const toolCallId = "exit-plan-tool-call-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Exit plan mode",
+            kind: "switch_mode",
+            rawInput: { plan: "1. Create hello.js\n2. Run node hello.js" },
+          },
+        });
+        const permission = yield* agent.client.requestPermission({
+          sessionId: requestedSessionId,
+          toolCall: { toolCallId },
+          options: [
+            {
+              optionId: "plan_accept_edits",
+              name: "Yes, implement plan and accept edits",
+              kind: "allow_once",
+            },
+            {
+              optionId: "reject_once",
+              name: "No, plan needs changes",
+              kind: "reject_once",
+            },
+          ],
+        });
+        const outcome = permission.outcome;
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `exit-plan:${outcome.outcome}:${outcome.outcome === "selected" ? outcome.optionId : ""}`,
+            },
+          },
+        });
         return { stopReason: "end_turn" };
       }
 

@@ -68,7 +68,14 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /**
+   * ACP authentication method invoked right after `initialize`. When omitted,
+   * the runtime skips `authenticate` entirely and relies on the agent's stored
+   * credentials — Devin's advertised method (`devin-browser`) opens a browser
+   * login, so auto-negotiating an advertised method would interrupt every
+   * session start.
+   */
+  readonly authMethodId?: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -194,6 +201,14 @@ export class AcpSessionRuntime extends Context.Service<
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Runs the ACP `authenticate` request for one of the methods the agent
+     * advertised during initialize. For adapters that authenticate lazily —
+     * e.g. Devin's `devin-browser` method opens a browser sign-in — instead of
+     * during startup. Resolves when the agent reports the flow finished.
+     * @see https://agentclientprotocol.com/protocol/schema#authenticate
+     */
+    readonly authenticate: (methodId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     /**
      * Sends a real ACP `session/cancel` notification for the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
@@ -541,15 +556,17 @@ export const make = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      if (options.authMethodId) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -758,6 +775,17 @@ export const make = (
             );
           }),
         ),
+      authenticate: (methodId) =>
+        Effect.gen(function* () {
+          const authenticatePayload = {
+            methodId,
+          } satisfies EffectAcpSchema.AuthenticateRequest;
+          yield* runLoggedRequest(
+            "authenticate",
+            authenticatePayload,
+            acp.agent.authenticate(authenticatePayload),
+          );
+        }),
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {

@@ -43,6 +43,15 @@ export function mapAcpToAdapterError(
   });
 }
 
+/**
+ * ACP agents signal a missing/expired credential with JSON-RPC code -32000
+ * ("Authentication required"). Adapters that authenticate lazily use this to
+ * decide when to run an advertised auth method and retry.
+ */
+export function isAcpAuthRequiredError(error: EffectAcpErrors.AcpError): boolean {
+  return isAcpRequestError(error) && error.code === -32000;
+}
+
 export function acpPermissionOutcome(decision: ProviderApprovalDecision): string {
   switch (decision) {
     case "acceptForSession":

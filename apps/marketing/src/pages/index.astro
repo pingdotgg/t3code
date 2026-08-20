@@ -41,6 +41,9 @@ const mobileEndorsementRows = [
       <span class="hero-float-mark hf-grok" title="Grok">
         <img src="/harnesses/grok-dark.svg" alt="" />
       </span>
+      <span class="hero-float-mark hf-devin" title="Devin">
+        <img src="/harnesses/devin-dark.svg" alt="" />
+      </span>
     </div>
 
     <div class="container hero-inner">
@@ -49,7 +52,7 @@ const mobileEndorsementRows = [
       </h1>
 
       <p class="hero-sub">
-        Orchestrate Claude Code, Codex, OpenCode, Cursor, and Grok from one surface.
+        Orchestrate Claude Code, Codex, OpenCode, Cursor, Devin, and Grok from one surface.
         Bring your own subscription. Fork the whole thing.
       </p>
 
@@ -187,8 +190,8 @@ const mobileEndorsementRows = [
         <h2>Bring your own sub</h2>
         <p>
           T3 Code doesn't resell tokens. Plug in Claude Code, Codex, OpenCode,
-          Cursor, or Grok with the credentials you already have — we orchestrate
-          them, you keep your plan.
+          Cursor, Devin, or Grok with the credentials you already have — we
+          orchestrate them, you keep your plan.
         </p>
       </div>
 
@@ -219,6 +222,13 @@ const mobileEndorsementRows = [
           <div class="harness-meta">
             <div class="harness-name">Cursor</div>
             <div class="harness-tag">cursor-agent</div>
+          </div>
+        </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/devin-dark.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">Devin CLI</div>
+            <div class="harness-tag">devin auth login</div>
           </div>
         </div>
         <div class="harness">
@@ -661,6 +671,7 @@ const mobileEndorsementRows = [
   .hero-float-mark.hf-opencode { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.06), rgba(20, 20, 24, 0.92) 65%); top: 30%; left: 5%;  animation-delay: -5s;   transform: rotate(4deg); }
   .hero-float-mark.hf-cursor   { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 30%; right: 5%; animation-delay: -7s;   transform: rotate(-5deg); }
   .hero-float-mark.hf-grok     { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 52%; left: 6%;  animation-delay: -1.2s; transform: rotate(3deg); }
+  .hero-float-mark.hf-devin    { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 52%; right: 6%; animation-delay: -4s;   transform: rotate(-4deg); }
 
   @media (max-width: 1180px) {
     .hero-float-mark { width: 76px; height: 76px; border-radius: 20px; }
@@ -670,6 +681,7 @@ const mobileEndorsementRows = [
     .hero-float-mark.hf-opencode { top: 26%; left: 2%; }
     .hero-float-mark.hf-cursor   { top: 24%; right: 2%; }
     .hero-float-mark.hf-grok     { top: 48%; left: 2%;  transform: rotate(3deg); }
+    .hero-float-mark.hf-devin    { top: 48%; right: 2%; transform: rotate(-4deg); }
   }
 
   @media (max-width: 820px) {
@@ -704,7 +716,12 @@ const mobileEndorsementRows = [
       height: 44px;
     }
 
-    /* Three above the headline, two beside the CTA — keeps the copy clear. */
+    /* Three above the headline, two beside the CTA — keeps the copy clear.
+       Devin sits out on small screens; six marks crowd the headline. */
+    .hero-float-mark.hf-devin {
+      display: none;
+    }
+
     .hero-float-mark.hf-claude {
       top: 44px;
       left: 10px;

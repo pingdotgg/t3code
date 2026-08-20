@@ -59,11 +59,12 @@ to use, then authenticate it.
 | Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
 | Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
 | Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
+| Devin      | [Devin CLI](https://docs.devin.ai/cli)                | `devin`        | `devin auth login`    |
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
-them on in **Settings** → the provider's card when you want to use them.
+Codex and Claude are on by default. Cursor, Devin, Grok Build, and OpenCode are off by default;
+turn them on in **Settings** → the provider's card when you want to use them.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
