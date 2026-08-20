@@ -34,6 +34,7 @@ Primary files:
 - `apps/server/scripts/t3-sqlite-state.ts`
 - `apps/web/src/browser/previewThreadLifecycle.ts`
 - `apps/web/src/browser/usePreviewThreadLifecycleCleanup.ts`
+- `apps/web/src/components/settings/ArchivedThreadsPanel.logic.ts`
 - `apps/web/src/components/settings/ArchivedThreadsPanel.tsx`
 - `apps/web/src/components/settings/ProjectSettingsPanel.tsx`
 - `apps/web/src/components/settings/ProjectSettingsPanel.logic.ts`
@@ -46,6 +47,7 @@ Primary files:
 - `apps/web/src/components/Sidebar.tsx`
 - `apps/web/src/components/LegacySidebar.tsx`
 - `apps/web/src/components/ThreadCommandSubtitle.tsx`
+- `apps/web/src/contextMenuFallback.test.ts`
 
 ## Sidebar And Shell Consistency
 
@@ -54,6 +56,8 @@ Sidebar archive visibility is centralized across persisted and optimistic archiv
 The command palette builds its thread and project activity through shared production item builders that apply the filtered thread set while preserving each new-thread project item's environment location and workspace path. `apps/web/src/components/ThreadCommandSubtitle.tsx` owns the location subtitle and location search-term helper used by `apps/web/src/components/CommandPalette.tsx`; local projects remain searchable by `Local`, remote projects remain searchable by their environment label, unknown remote locations remain searchable by the rendered `Remote` fallback, and all retain their workspace-root search term and rendered path. `apps/web/src/components/CommandPalette.merged-seam.test.tsx` exercises those same item builders to cover the combined contract by excluding an optimistically archived thread while asserting the surviving project's location description and search metadata.
 
 The web Archive settings route renders `apps/web/src/components/settings/ArchivedThreadsPanel.tsx`, which reads archived snapshots across connected environments, groups archived threads by project, uses each project's configured favicon, and exposes unarchive plus permanent-delete actions. Keeping this branch-owned surface separate from the general panels in `apps/web/src/components/settings/SettingsPanels.tsx` limits archive behavior to the Archive route; the panel uses the upstream settings-search catalog for its title and scroll anchor so Archive search results still target this standalone surface.
+
+The archived-row context menu defines its action IDs and presentation metadata in `apps/web/src/components/settings/ArchivedThreadsPanel.logic.ts`, while `ArchivedThreadsPanel.tsx` owns the unarchive and delete handlers. The menu follows the upstream context-menu contract implemented by `apps/web/src/contextMenuFallback.ts`: Unarchive uses the archive icon, Delete uses the trash icon and destructive styling, and a separator distinguishes permanent deletion from restoration. `apps/web/src/contextMenuFallback.test.ts` covers that branch-specific metadata alongside the upstream fallback renderer. Desktop native menus preserve the separator and destructive state through `apps/desktop/src/electron/ElectronMenu.ts`, which omits web-only icons.
 
 Authoritative shell synchronization is shared runtime behavior in `packages/client-runtime/src/state/shell.ts`, `packages/client-runtime/src/rpc/client.ts`, and `apps/server/src/ws.ts`, rather than a branch-specific subscription implementation. HTTP snapshots provide an early shell, while completion-capable WebSocket sessions revalidate it with a socket-owned snapshot after live buffering begins; the same refresh runs when the app returns to the foreground. Cold archive storage relies on this contract because compacted per-thread history cannot prove that cached projects and threads still exist.
 
