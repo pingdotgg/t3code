@@ -6,9 +6,11 @@ public struct SettingsView: View {
     @State private var settings: FeatureSettings
     @State private var isSaving = false
     @State private var saveErrorMessage: String?
+    private let whatsNewChangelog: WhatsNewChangelog?
 
     public init(model: FeatureRootModel) {
         self.model = model
+        whatsNewChangelog = WhatsNewChangelog.load(info: Bundle.main.infoDictionary)
         _settings = State(initialValue: model.snapshot.settings)
     }
 
@@ -233,10 +235,6 @@ public struct SettingsView: View {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             ?? "?"
         return "\(version) (\(build))"
-    }
-
-    private var whatsNewChangelog: WhatsNewChangelog? {
-        WhatsNewChangelog.load(info: Bundle.main.infoDictionary)
     }
 
     /// Like `appVersionLabel`, but `nil` rather than `?` when a build did not

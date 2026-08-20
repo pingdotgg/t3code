@@ -318,6 +318,38 @@ struct WhatsNewChangelogTests {
     }
 
     @Test
+    func onlyDecodedBundleImagesMakeImageOnlyEntriesOpenable() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whats-new-openable-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let png = try #require(UIImage(systemName: "sparkles")?.pngData())
+        try png.write(to: directory.appendingPathComponent("good.png"))
+        try Data("not an image".utf8).write(to: directory.appendingPathComponent("bogus.png"))
+
+        let json = """
+            {"builds":[{"build":"90","entries":[
+              {"title":"Missing only","images":[{"name":"missing.png"}]},
+              {"title":"Undecodable only","images":[{"name":"bogus.png"}]},
+              {"title":"Decoded image","images":[{"name":"good.png"}]},
+              {"title":"Text detail","detail":"Still opens.","images":[{"name":"missing.png"}]}
+            ]}]}
+            """
+
+        let entries = WhatsNewChangelog.load(
+            info: payload(json),
+            imageDirectory: directory
+        )?.builds.first?.entries
+
+        #expect(entries?.map(\.hasDetail) == [false, false, true, true])
+        #expect(entries?.map { $0.images?.count } == [nil, nil, 1, nil])
+    }
+
+    @Test
     func treatsAnythingABuildMightLeaveBehindAsNoChangelog() {
         let payloads: [String] = [
             "$(T3_BUILD_CHANGELOG)",

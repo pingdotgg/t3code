@@ -44,6 +44,8 @@ struct WhatsNewView: View {
         .background(T3Colors.background)
         .navigationTitle("What's New")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .t3NavigationChrome()
     }
 
     private var hero: some View {
@@ -245,6 +247,8 @@ struct WhatsNewDetailView: View {
         .background(T3Colors.background)
         .navigationTitle(entry.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .t3NavigationChrome()
         // Keyed on the appearance so switching between light and dark reloads
         // the screenshots that match it.
         .task(id: colorScheme) { loadImages() }

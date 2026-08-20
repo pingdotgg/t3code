@@ -82,9 +82,12 @@ struct WhatsNewChangelog: Equatable, Sendable {
 
     static let infoDictionaryKey = "T3BuildChangelog"
 
-    static func load(info: [String: Any]?) -> WhatsNewChangelog? {
+    static func load(
+        info: [String: Any]?,
+        imageDirectory: URL = Bundle.main.bundleURL
+    ) -> WhatsNewChangelog? {
         guard let encoded = info?[infoDictionaryKey] as? String else { return nil }
-        return decode(encoded, info: info)
+        return decode(encoded, info: info)?.filteringUnavailableImages(in: imageDirectory)
     }
 
     /// Decodes an embedded payload, returning `nil` for anything a build can
@@ -170,6 +173,32 @@ struct WhatsNewChangelog: Equatable, Sendable {
     private struct Payload: Decodable {
         let builds: [Build]?
         let entries: [Entry]?
+    }
+
+    /// Bundle image references are presentation content only after they decode.
+    /// Filtering once at load time keeps malformed image-only entries inert and
+    /// avoids repeating file work whenever SwiftUI reevaluates a row.
+    private func filteringUnavailableImages(in directory: URL) -> WhatsNewChangelog {
+        WhatsNewChangelog(
+            builds: builds.map { build in
+                Build(
+                    version: build.version,
+                    build: build.build,
+                    entries: build.entries.map { entry in
+                        let images = (entry.images ?? []).filter {
+                            WhatsNewImageStore.image(named: $0.name, in: directory) != nil
+                        }
+                        return Entry(
+                            title: entry.title,
+                            summary: entry.summary,
+                            detail: entry.detail,
+                            symbol: entry.symbol,
+                            images: images.isEmpty ? nil : images
+                        )
+                    }
+                )
+            }
+        )
     }
 }
 
