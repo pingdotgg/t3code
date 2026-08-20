@@ -148,7 +148,7 @@ import {
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
   resolveGeneralSettingsEnvironmentId,
-  resolveTextGenerationModelDefaults,
+  resolveTextGenerationModelDefault,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -504,29 +504,30 @@ export function useSettingsRestore(onRestored?: () => void) {
     textGenSettings,
     serverProviders,
   );
-  const {
-    effectiveSelection: defaultTextGenerationModelSelection,
-    resetSelection: resetTextGenerationModelSelection,
-  } = resolveTextGenerationModelDefaults(textGenSettings, serverProviders);
+  const defaultTextGenerationModelSelection = resolveTextGenerationModelDefault(
+    textGenSettings,
+    serverProviders,
+  );
 
   const textGenerationResetStateRef = useRef({
     targetEnvironmentId,
     updateTextGenSettings,
-    resetTextGenerationModelSelection,
+    resetTextGenerationModelSelection: defaultTextGenerationModelSelection,
   });
   textGenerationResetStateRef.current = {
     targetEnvironmentId,
     updateTextGenSettings,
-    resetTextGenerationModelSelection,
+    resetTextGenerationModelSelection: defaultTextGenerationModelSelection,
   };
 
   const isTextGenerationModelDirty =
-    textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
-    textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
-    !Equal.equals(
-      textGenerationModelSelection.options ?? [],
-      defaultTextGenerationModelSelection.options ?? [],
-    );
+    defaultTextGenerationModelSelection !== null &&
+    (textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
+      textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
+      !Equal.equals(
+        textGenerationModelSelection.options ?? [],
+        defaultTextGenerationModelSelection.options ?? [],
+      ));
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = useMemo(
@@ -739,13 +740,15 @@ export function useSettingsRestore(onRestored?: () => void) {
     // The target environment can change while the confirmation dialog is open.
     // Use its latest updater, but do not reset a different environment from the
     // one the user chose before confirming.
+    const currentTextGenerationResetState = textGenerationResetStateRef.current;
     if (
       isTextGenerationModelDirty &&
-      textGenerationResetStateRef.current.targetEnvironmentId === initialTargetEnvironmentId
+      currentTextGenerationResetState.targetEnvironmentId === initialTargetEnvironmentId &&
+      currentTextGenerationResetState.resetTextGenerationModelSelection !== null
     ) {
-      textGenerationResetStateRef.current.updateTextGenSettings({
+      currentTextGenerationResetState.updateTextGenSettings({
         textGenerationModelSelection:
-          textGenerationResetStateRef.current.resetTextGenerationModelSelection,
+          currentTextGenerationResetState.resetTextGenerationModelSelection,
       });
     }
     onRestored?.();
@@ -1931,17 +1934,18 @@ export function GeneralSettingsPanel() {
     textGenModel,
   );
 
-  const {
-    effectiveSelection: defaultTextGenerationModelSelection,
-    resetSelection: resetTextGenerationModelSelection,
-  } = resolveTextGenerationModelDefaults(textGenSettings, serverProviders);
+  const defaultTextGenerationModelSelection = resolveTextGenerationModelDefault(
+    textGenSettings,
+    serverProviders,
+  );
   const isTextGenerationModelDirty =
-    textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
-    textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
-    !Equal.equals(
-      textGenerationModelSelection.options ?? [],
-      defaultTextGenerationModelSelection.options ?? [],
-    );
+    defaultTextGenerationModelSelection !== null &&
+    (textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
+      textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
+      !Equal.equals(
+        textGenerationModelSelection.options ?? [],
+        defaultTextGenerationModelSelection.options ?? [],
+      ));
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
@@ -2424,12 +2428,12 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("text-generation-model")}
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
           resetAction={
-            isTextGenerationModelDirty ? (
+            isTextGenerationModelDirty && defaultTextGenerationModelSelection !== null ? (
               <SettingResetButton
                 label="text generation model"
                 onClick={() =>
                   updateTextGenSettings({
-                    textGenerationModelSelection: resetTextGenerationModelSelection,
+                    textGenerationModelSelection: defaultTextGenerationModelSelection,
                   })
                 }
               />

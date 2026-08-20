@@ -11,7 +11,7 @@ import type {
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -21,6 +21,11 @@ import {
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import { resolveAppModelSelectionState } from "../../modelSelection";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
+} from "../../providerInstances";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -197,21 +202,30 @@ export function backgroundActivitySharedPolicySettings(
   };
 }
 
-export function resolveTextGenerationModelDefaults(
+export function resolveTextGenerationModelDefault(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
 ) {
-  const resetSelection = DEFAULT_SERVER_SETTINGS.textGenerationModelSelection;
-  return {
-    effectiveSelection: resolveAppModelSelectionState(
-      {
-        ...settings,
-        textGenerationModelSelection: resetSelection,
-      },
-      providers,
-    ),
-    resetSelection,
-  };
+  const usableProviders = resolvePickerUsableProviders(settings, providers);
+  if (usableProviders.length === 0) {
+    return null;
+  }
+  return resolveAppModelSelectionState(
+    {
+      ...settings,
+      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+    },
+    usableProviders,
+  );
+}
+
+function resolvePickerUsableProviders(
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings)
+    .filter((entry) => isProviderInstancePickerReady(entry) && entry.models.length > 0)
+    .map((entry) => ({ ...entry.snapshot, enabled: entry.enabled }));
 }
 
 function collapseOtelSignalsUrl(input: {
@@ -356,19 +370,18 @@ export function resolveGeneralSettingsEnvironmentId(
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly serverConfig?: {
-      readonly providers?: ReadonlyArray<
-        Pick<ServerProvider, "installed" | "models"> & {
-          readonly enabled?: boolean | undefined;
-        }
-      > | null;
+      readonly providers?: ReadonlyArray<ServerProvider> | null;
+      readonly settings: Pick<ServerSettings, "providerInstances" | "providers">;
     } | null;
   }>,
   primaryEnvironmentId: EnvironmentId | null,
 ): EnvironmentId | null {
   const hasModels = (env?: (typeof environments)[number]) =>
-    env?.serverConfig?.providers?.some((p) =>
-      Boolean(p.installed && p.enabled !== false && p.models?.length),
-    ) ?? false;
+    Boolean(
+      env?.serverConfig?.providers &&
+      resolvePickerUsableProviders(env.serverConfig.settings, env.serverConfig.providers).length >
+        0,
+    );
 
   const primary = environments.find((env) => env.environmentId === primaryEnvironmentId);
   if (hasModels(primary)) {
@@ -377,7 +390,7 @@ export function resolveGeneralSettingsEnvironmentId(
 
   return (
     environments.find(hasModels)?.environmentId ??
-    primaryEnvironmentId ??
+    primary?.environmentId ??
     environments[0]?.environmentId ??
     null
   );

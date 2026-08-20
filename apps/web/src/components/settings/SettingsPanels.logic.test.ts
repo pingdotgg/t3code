@@ -23,7 +23,7 @@ import {
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
   resolveGeneralSettingsEnvironmentId,
-  resolveTextGenerationModelDefaults,
+  resolveTextGenerationModelDefault,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -158,9 +158,22 @@ describe("project grouping toggle", () => {
 });
 
 describe("text generation model defaults", () => {
-  it("uses the environment context for comparison without persisting its fallback", () => {
+  it("ignores an enabled but unusable Codex snapshot and preserves target model preferences", () => {
     const instanceId = ProviderInstanceId.make("opencode");
     const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      },
       {
         instanceId,
         driver: ProviderDriverKind.make("opencode"),
@@ -182,6 +195,10 @@ describe("text generation model defaults", () => {
     ];
     const settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        opencode: { ...DEFAULT_UNIFIED_SETTINGS.providers.opencode, enabled: true },
+      },
       providerModelPreferences: {
         [instanceId]: {
           hiddenModels: [],
@@ -190,14 +207,48 @@ describe("text generation model defaults", () => {
       },
     };
 
-    const result = resolveTextGenerationModelDefaults(settings, providers);
+    const resolvedDefault = resolveTextGenerationModelDefault(settings, providers);
 
-    expect(result.effectiveSelection).toMatchObject({
+    expect(resolvedDefault).toMatchObject({
       instanceId,
       model: "anthropic/claude-sonnet-4-6",
     });
-    expect(result.resetSelection).toEqual(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
-    expect(result.resetSelection).not.toEqual(result.effectiveSelection);
+    expect(resolvedDefault).not.toEqual(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+  });
+
+  it("returns no reset default when no provider is picker-ready", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        opencode: { ...DEFAULT_UNIFIED_SETTINGS.providers.opencode, enabled: true },
+      },
+    };
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId,
+        driver: ProviderDriverKind.make("opencode"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "warning",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [
+          {
+            slug: "openai/gpt-5",
+            name: "GPT-5",
+            isCustom: false,
+            capabilities: {},
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+
+    expect(resolveTextGenerationModelDefault(settings, providers)).toBeNull();
   });
 });
 
@@ -355,10 +406,36 @@ describe("resolveGeneralSettingsEnvironmentId", () => {
     isCustom: false,
     capabilities: null,
   };
-  const env = (id: EnvironmentId, hasModels = true, enabled?: boolean) => ({
+  const provider = (overrides: Partial<ServerProvider> = {}): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("opencode"),
+    driver: ProviderDriverKind.make("opencode"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [mockModel],
+    slashCommands: [],
+    skills: [],
+    ...overrides,
+  });
+  const enabledSettings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providers: {
+      ...DEFAULT_SERVER_SETTINGS.providers,
+      opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: true },
+    },
+  };
+  const env = (
+    id: EnvironmentId,
+    providers: ReadonlyArray<ServerProvider> = [provider()],
+    settings = enabledSettings,
+  ) => ({
     environmentId: id,
     serverConfig: {
-      providers: [{ installed: hasModels, enabled, models: hasModels ? [mockModel] : [] }],
+      providers,
+      settings,
     },
   });
 
@@ -370,35 +447,73 @@ describe("resolveGeneralSettingsEnvironmentId", () => {
 
   it("falls back to connected environment with models when primary environment has no models", () => {
     expect(
-      resolveGeneralSettingsEnvironmentId(
-        [env(primaryEnvId, false), env(wslEnvId, true)],
-        primaryEnvId,
-      ),
+      resolveGeneralSettingsEnvironmentId([env(primaryEnvId, []), env(wslEnvId)], primaryEnvId),
     ).toBe(wslEnvId);
   });
 
   it("falls back to connected environment with models when primary environment has installed models that are disabled", () => {
+    const disabledSettings = {
+      ...enabledSettings,
+      providers: {
+        ...enabledSettings.providers,
+        opencode: { ...enabledSettings.providers.opencode, enabled: false },
+      },
+    };
     expect(
       resolveGeneralSettingsEnvironmentId(
-        [env(primaryEnvId, true, false), env(wslEnvId, true, true)],
+        [env(primaryEnvId, [provider()], disabledSettings), env(wslEnvId)],
         primaryEnvId,
       ),
     ).toBe(wslEnvId);
   });
 
   it("returns remote environment with models in a remote-only setup", () => {
-    expect(resolveGeneralSettingsEnvironmentId([env(remoteEnvId, true)], null)).toBe(remoteEnvId);
+    expect(resolveGeneralSettingsEnvironmentId([env(remoteEnvId)], null)).toBe(remoteEnvId);
+  });
+
+  it("prefers a ready remote over an errored primary with cached models", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, [provider({ status: "error" })]), env(remoteEnvId)],
+        primaryEnvId,
+      ),
+    ).toBe(remoteEnvId);
+  });
+
+  it("ignores a snapshot that the current settings overlay disables", () => {
+    const disabledSettings = {
+      ...enabledSettings,
+      providers: {
+        ...enabledSettings.providers,
+        opencode: { ...enabledSettings.providers.opencode, enabled: false },
+      },
+    };
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, [provider()], disabledSettings), env(remoteEnvId)],
+        primaryEnvId,
+      ),
+    ).toBe(remoteEnvId);
+  });
+
+  it("keeps a connected remote fallback when the disconnected primary is absent", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(remoteEnvId, [provider({ status: "warning" })])],
+        primaryEnvId,
+      ),
+    ).toBe(remoteEnvId);
   });
 
   it("falls back to primary or first environment when no models exist in any environment", () => {
     expect(
       resolveGeneralSettingsEnvironmentId(
-        [env(primaryEnvId, false), { environmentId: wslEnvId, serverConfig: null }],
+        [env(primaryEnvId, []), { environmentId: wslEnvId, serverConfig: null }],
         primaryEnvId,
       ),
     ).toBe(primaryEnvId);
 
-    expect(resolveGeneralSettingsEnvironmentId([env(wslEnvId, false)], null)).toBe(wslEnvId);
+    expect(resolveGeneralSettingsEnvironmentId([env(wslEnvId, [])], null)).toBe(wslEnvId);
 
     expect(resolveGeneralSettingsEnvironmentId([], null)).toBe(null);
   });
