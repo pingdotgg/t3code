@@ -264,6 +264,36 @@ describe("serverSettings helpers", () => {
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
   });
 
+  it("does not use a preferred fallback whose instance is missing from loaded providers", () => {
+    const preferredFallback = createModelSelection(
+      ProviderInstanceId.make("gone-thread"),
+      "claude-opus-4-6",
+    );
+    const loadedProvider = {
+      instanceId: ProviderInstanceId.make("claude"),
+      driver: ProviderDriverKind.make("claude"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-27T00:00:00.000Z",
+      availability: "available",
+      unavailableReason: undefined,
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    expect(
+      resolveSourceControlWriterModelSelection(
+        DEFAULT_SERVER_SETTINGS,
+        [loadedProvider],
+        preferredFallback,
+      ),
+    ).toBe(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+  });
+
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {

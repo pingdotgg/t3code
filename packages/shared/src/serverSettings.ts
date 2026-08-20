@@ -81,14 +81,7 @@ function isFallbackWriterUsable(
   selection: ModelSelection,
   providers?: ReadonlyArray<ServerProvider>,
 ): boolean {
-  if (!isModelSelectionProviderEnabled(settings, selection)) {
-    return false;
-  }
-  const provider = findWriterProvider(providers, selection);
-  if (provider === undefined) {
-    return true;
-  }
-  return isWriterProviderUsable(provider);
+  return isDedicatedWriterUsable(settings, selection, providers);
 }
 
 function firstAvailableWriterModelSelection(
