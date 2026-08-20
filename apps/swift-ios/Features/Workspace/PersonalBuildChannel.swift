@@ -39,7 +39,7 @@ enum PersonalBuildChannel: String, Equatable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
         guard !raw.isEmpty, !raw.hasPrefix("$(") else { return nil }
-        return PersonalBuildChannel(rawValue: raw)
+        return PersonalBuildChannel(rawValue: raw) ?? .upstream
     }
 
     private static func inferred(in info: [String: Any]?) -> PersonalBuildChannel {

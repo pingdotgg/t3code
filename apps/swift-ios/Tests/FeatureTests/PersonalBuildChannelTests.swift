@@ -29,6 +29,12 @@ struct PersonalBuildChannelTests {
     }
 
     @Test
+    func anUnrecognisedDeclaredChannelOverridesTheBundleIdentifier() {
+        let staging = info(channel: "staging", bundleID: "com.saphid.t3code.swiftui.dev")
+        #expect(PersonalBuildChannel(info: staging) == .upstream)
+    }
+
+    @Test
     func anUndeclaredChannelFallsBackToTheBundleIdentifier() {
         let undeclared = ["", "   ", "$(T3_BUILD_CHANNEL)"]
         for value in undeclared {
