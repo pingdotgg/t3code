@@ -916,6 +916,64 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps a terminal provider error visible when no assistant message was produced", () => {
+    const runId = "turn-provider-error" as never;
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-provider-error" as never,
+            role: "user",
+            text: "Start the turn",
+            runId,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "provider-error-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:08Z",
+          entry: {
+            id: "provider-error",
+            createdAt: "2026-01-01T00:00:08Z",
+            runId,
+            label: "Provider error",
+            detail: "The model is currently at capacity.",
+            tone: "info",
+            itemType: "error",
+            toolLifecycleStatus: "failed",
+          },
+        },
+      ],
+      latestRun: {
+        runId,
+        status: "failed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:08Z",
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(["user-entry", "provider-error-entry"]);
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(rows.find((row) => row.kind === "work")).toMatchObject({
+      groupedEntries: [
+        expect.objectContaining({
+          id: "provider-error",
+          detail: "The model is currently at capacity.",
+        }),
+      ],
+    });
+  });
+
   it("keeps persistent cards after the Worked-for row when they arrive before commentary", () => {
     const timelineEntries = [
       {

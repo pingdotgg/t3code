@@ -687,6 +687,14 @@ function timelineEntryFoldRunId(entry: TimelineEntry): RunId | null {
   return null;
 }
 
+function timelineEntryIsTerminalError(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "work" &&
+    entry.entry.itemType === "error" &&
+    entry.entry.toolLifecycleStatus === "failed"
+  );
+}
+
 /**
  * Settled turns fold their commentary and tool activity behind a
  * "Worked for ..." row anchored at the turn's first foldable entry; the
@@ -769,7 +777,11 @@ function deriveTurnFolds(input: {
     }
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id !== group.terminalEntry?.id && !timelineEntryIsPersistentResourceCard(entry)) {
+      if (
+        entry.id !== group.terminalEntry?.id &&
+        !timelineEntryIsPersistentResourceCard(entry) &&
+        !timelineEntryIsTerminalError(entry)
+      ) {
         hiddenEntryIds.add(entry.id);
       }
     }
