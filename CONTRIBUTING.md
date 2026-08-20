@@ -38,6 +38,9 @@ If you open a 1,000+ line PR full of new features, we will probably close it qui
 
 ## If You Still Want To Open A PR
 
+If you work from a fork, follow the
+[fork-to-upstream development workflow](docs/internals/upstream-development.md).
+
 Keep it small.
 
 Explain exactly what changed.
