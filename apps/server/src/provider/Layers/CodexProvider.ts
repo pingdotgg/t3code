@@ -67,7 +67,9 @@ const CURRENT_CODEX_MODELS = new Set([
   "gpt-5.6-terra",
   "gpt-5.6-sol",
   "gpt-daybreak-blue",
+  "gpt-daybreak-blue-latest",
   "gpt-daybreak-red",
+  "gpt-daybreak-red-latest",
 ]);
 
 export function isLegacyCodexModel(model: string): boolean {
