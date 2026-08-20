@@ -70,6 +70,16 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
   }
 
   if (
+    normalized.includes("api rate limit") ||
+    normalized.includes("rate limit exceeded") ||
+    normalized.includes("secondary rate limit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("http 429")
+  ) {
+    return "rate-limited";
+  }
+
+  if (
     (command === "gh" &&
       (normalized.includes("could not resolve to a pullrequest") ||
         normalized.includes("repository.pullrequest") ||

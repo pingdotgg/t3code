@@ -3,12 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { normalizePreviewOpenInput } from "./handlers.ts";
 
 describe("normalizePreviewOpenInput", () => {
-  it("opens the inline preview and reuses the current tab by default", () => {
-    expect(normalizePreviewOpenInput({})).toEqual({
-      open: true,
-      reuseExistingTab: true,
-      show: true,
-    });
+  it("leaves an unstated visibility for the client preference to decide", () => {
+    // Filling `open` in here would outrank `browserAutoShowFloatingPreview`,
+    // which is desktop-local and cannot be read from the server.
+    expect(normalizePreviewOpenInput({})).toEqual({ reuseExistingTab: true });
   });
 
   it("preserves an explicit background-only opt-out", () => {
