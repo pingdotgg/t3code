@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
+  type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -22,6 +23,7 @@ import {
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
   resolveGeneralSettingsEnvironmentId,
+  resolveTextGenerationModelDefaults,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -152,6 +154,50 @@ describe("project grouping toggle", () => {
   it("restores repository path grouping when the toggle is cycled", () => {
     expect(projectGroupingModeFromToggle(false, "repository_path")).toBe("separate");
     expect(projectGroupingModeFromToggle(true, "repository_path")).toBe("repository_path");
+  });
+});
+
+describe("text generation model defaults", () => {
+  it("uses the environment context for comparison without persisting its fallback", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId,
+        driver: ProviderDriverKind.make("opencode"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: ["openai/gpt-5", "anthropic/claude-sonnet-4-6"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {},
+        })),
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerModelPreferences: {
+        [instanceId]: {
+          hiddenModels: [],
+          modelOrder: ["anthropic/claude-sonnet-4-6", "openai/gpt-5"],
+        },
+      },
+    };
+
+    const result = resolveTextGenerationModelDefaults(settings, providers);
+
+    expect(result.effectiveSelection).toMatchObject({
+      instanceId,
+      model: "anthropic/claude-sonnet-4-6",
+    });
+    expect(result.resetSelection).toEqual(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+    expect(result.resetSelection).not.toEqual(result.effectiveSelection);
   });
 });
 

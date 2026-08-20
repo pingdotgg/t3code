@@ -148,6 +148,7 @@ import {
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
   resolveGeneralSettingsEnvironmentId,
+  resolveTextGenerationModelDefaults,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -503,20 +504,20 @@ export function useSettingsRestore(onRestored?: () => void) {
     textGenSettings,
     serverProviders,
   );
-  const defaultTextGenerationModelSelection = resolveAppModelSelectionState(
-    DEFAULT_UNIFIED_SETTINGS,
-    serverProviders,
-  );
+  const {
+    effectiveSelection: defaultTextGenerationModelSelection,
+    resetSelection: resetTextGenerationModelSelection,
+  } = resolveTextGenerationModelDefaults(textGenSettings, serverProviders);
 
   const textGenerationResetStateRef = useRef({
     targetEnvironmentId,
     updateTextGenSettings,
-    defaultTextGenerationModelSelection,
+    resetTextGenerationModelSelection,
   });
   textGenerationResetStateRef.current = {
     targetEnvironmentId,
     updateTextGenSettings,
-    defaultTextGenerationModelSelection,
+    resetTextGenerationModelSelection,
   };
 
   const isTextGenerationModelDirty =
@@ -735,16 +736,16 @@ export function useSettingsRestore(onRestored?: () => void) {
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
-    // Provider discovery can update the default while the confirmation dialog is
-    // open. Use the latest reset state, but do not reset a different environment
-    // from the one the user chose before confirming.
+    // The target environment can change while the confirmation dialog is open.
+    // Use its latest updater, but do not reset a different environment from the
+    // one the user chose before confirming.
     if (
       isTextGenerationModelDirty &&
       textGenerationResetStateRef.current.targetEnvironmentId === initialTargetEnvironmentId
     ) {
       textGenerationResetStateRef.current.updateTextGenSettings({
         textGenerationModelSelection:
-          textGenerationResetStateRef.current.defaultTextGenerationModelSelection,
+          textGenerationResetStateRef.current.resetTextGenerationModelSelection,
       });
     }
     onRestored?.();
@@ -1930,10 +1931,10 @@ export function GeneralSettingsPanel() {
     textGenModel,
   );
 
-  const defaultTextGenerationModelSelection = resolveAppModelSelectionState(
-    DEFAULT_UNIFIED_SETTINGS,
-    serverProviders,
-  );
+  const {
+    effectiveSelection: defaultTextGenerationModelSelection,
+    resetSelection: resetTextGenerationModelSelection,
+  } = resolveTextGenerationModelDefaults(textGenSettings, serverProviders);
   const isTextGenerationModelDirty =
     textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
     textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
@@ -2428,7 +2429,7 @@ export function GeneralSettingsPanel() {
                 label="text generation model"
                 onClick={() =>
                   updateTextGenSettings({
-                    textGenerationModelSelection: defaultTextGenerationModelSelection,
+                    textGenerationModelSelection: resetTextGenerationModelSelection,
                   })
                 }
               />

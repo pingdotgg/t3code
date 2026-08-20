@@ -11,7 +11,7 @@ import type {
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { DEFAULT_SERVER_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -20,6 +20,7 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import { resolveAppModelSelectionState } from "../../modelSelection";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -193,6 +194,23 @@ export function backgroundActivitySharedPolicySettings(
     profile: "custom",
     baseProfile: profile,
     overrides: normalized.profile === "custom" ? normalized.overrides : {},
+  };
+}
+
+export function resolveTextGenerationModelDefaults(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+) {
+  const resetSelection = DEFAULT_SERVER_SETTINGS.textGenerationModelSelection;
+  return {
+    effectiveSelection: resolveAppModelSelectionState(
+      {
+        ...settings,
+        textGenerationModelSelection: resetSelection,
+      },
+      providers,
+    ),
+    resetSelection,
   };
 }
 
