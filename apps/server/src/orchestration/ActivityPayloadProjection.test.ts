@@ -20,7 +20,7 @@ function activity(payload: Record<string, unknown>): OrchestrationThreadActivity
  * If slimming ever moves to an allowlist over the whole payload, these
  * assertions are the tripwire.
  */
-describe("projectActivityPayload agent-field survival", () => {
+describe("projectActivityPayload", () => {
   it("preserves tool attribution (agentId/parentToolUseId) through data slimming", () => {
     const projected = projectActivityPayload(
       activity({
@@ -95,6 +95,45 @@ describe("projectActivityPayload agent-field survival", () => {
     expect(acpData.rawOutput).toEqual({ content: "hello from acp" });
     expect(JSON.stringify(claude.payload).length).toBeLessThan(500);
     expect(JSON.stringify(acp.payload).length).toBeLessThan(500);
+  });
+
+  it("normalizes Claude and OpenCode command inputs before slimming provider data", () => {
+    const claude = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        toolCallId: "claude-call-1",
+        data: {
+          toolName: "Bash",
+          input: { command: "vp test run" },
+          result: { content: "x".repeat(5_000) },
+        },
+      }),
+    );
+    const openCode = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        toolCallId: "opencode-call-1",
+        data: {
+          tool: "bash",
+          state: {
+            status: "running",
+            input: { command: "vp lint" },
+            output: "x".repeat(5_000),
+          },
+        },
+      }),
+    );
+
+    expect(claude.payload).toMatchObject({
+      toolCallId: "claude-call-1",
+      data: { command: "vp test run" },
+    });
+    expect(openCode.payload).toMatchObject({
+      toolCallId: "opencode-call-1",
+      data: { command: "vp lint" },
+    });
+    expect(JSON.stringify(claude.payload).length).toBeLessThan(200);
+    expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
   it("slims Codex-shaped mcp_tool_call items to rendered fields plus a result summary", () => {
