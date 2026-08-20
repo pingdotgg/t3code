@@ -161,6 +161,16 @@ export function ThemeSearchSection({
   const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
 
   useEffect(() => {
+    if (query.trim() || installingId !== null) return;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    lastSearchKeyRef.current = null;
+    setResults(null);
+    setError(null);
+    setIsSearching(false);
+  }, [query, installingId]);
+
+  useEffect(() => {
     if (!open) return;
     const searchKey = `${debouncedQuery}\u0000${sortBy}`;
     const keyChanged = prevSearchKeyRef.current !== searchKey;
@@ -269,6 +279,9 @@ export function ThemeSearchSection({
           aria-label="Search Open VSX themes"
           autoFocus
           onChange={(event) => setQuery(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && installingId === null) void runSearch(query.trim());
+          }}
           placeholder="Search themes..."
           size="lg"
           type="search"
