@@ -1,5 +1,23 @@
 import { AlertTriangleIcon, GaugeIcon, RefreshCwIcon } from "lucide-react";
 import type { VibeProxyUsageAccount } from "@t3tools/contracts";
+import {
+  describeMissingConfiguration,
+  formatQuotaPercent,
+  formatQuotaReset,
+  formatSnapshotAge,
+  formatSuccessRate,
+  groupVibeProxyAccounts,
+  resolveVibeProxyUsageStage,
+  vibeProxyAccountName,
+  vibeProxyAccountStatus,
+  vibeProxyAccountSubtitle,
+  vibeProxyQuotaSummary,
+  vibeProxyRecentActivity,
+  vibeProxyRequestHealth,
+  type VibeProxyAccountTone,
+  type VibeProxyQuotaState,
+  type VibeProxyQuotaWindowView,
+} from "@t3tools/shared/vibeProxyUsage";
 import { useMemo } from "react";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "~/hooks/useSettings";
@@ -19,24 +37,6 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { VibeProxyProviderMark } from "./VibeProxyProviderMark";
-import {
-  describeMissingConfiguration,
-  formatQuotaPercent,
-  formatQuotaReset,
-  formatSnapshotAge,
-  formatSuccessRate,
-  groupVibeProxyAccounts,
-  resolveVibeProxyUsageStage,
-  vibeProxyAccountName,
-  vibeProxyAccountStatus,
-  vibeProxyAccountSubtitle,
-  vibeProxyQuotaSummary,
-  vibeProxyRecentActivity,
-  vibeProxyRequestHealth,
-  type VibeProxyAccountTone,
-  type VibeProxyQuotaState,
-  type VibeProxyQuotaWindowView,
-} from "./vibeProxyUsages.logic";
 
 const TONE_TEXT_CLASS: Readonly<Record<VibeProxyAccountTone, string>> = {
   ok: "text-success-foreground",

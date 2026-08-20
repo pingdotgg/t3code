@@ -1,5 +1,5 @@
 /**
- * Presentation logic for the Settings → Usages page.
+ * Shared presentation logic for Vibe-Proxy usage views.
  *
  * The Vibe-Proxy wire contract is deliberately permissive: `provider` is a free
  * string, quota windows may be unknown or unsupported, and a snapshot can be a
@@ -22,6 +22,19 @@ export type VibeProxyProviderKind =
   | "gemini"
   | "grok"
   | "unknown";
+
+/** Cache identity for a complete, enabled Vibe-Proxy configuration. */
+export function vibeProxyConfigurationKey(settings: VibeProxySettings): string | null {
+  const baseUrl = settings.baseUrl.trim();
+  if (
+    !settings.enabled ||
+    baseUrl.length === 0 ||
+    (settings.apiKey.trim().length === 0 && !settings.apiKeyRedacted)
+  ) {
+    return null;
+  }
+  return `${baseUrl}:${settings.apiKeyRedacted ? "stored" : settings.apiKey.length}`;
+}
 
 /** Reading order for provider groups. Unrecognised providers sort last. */
 const PROVIDER_KIND_ORDER: readonly VibeProxyProviderKind[] = [
@@ -353,7 +366,7 @@ export function formatSuccessRate(rate: number | null): string {
  */
 export function formatQuotaReset(resetAt: string | null, nowMs: number): string | null {
   if (resetAt === null) return null;
-  const resetMs = new Date(resetAt).getTime();
+  const resetMs = Date.parse(resetAt);
   if (Number.isNaN(resetMs)) return null;
 
   const diffMs = resetMs - nowMs;
@@ -378,7 +391,7 @@ export function formatQuotaReset(resetAt: string | null, nowMs: number): string 
 
 /** "Updated 4m ago" line under the accounts header. */
 export function formatSnapshotAge(fetchedAt: string, nowMs: number): string | null {
-  const fetchedMs = new Date(fetchedAt).getTime();
+  const fetchedMs = Date.parse(fetchedAt);
   if (Number.isNaN(fetchedMs)) return null;
 
   const diffMs = nowMs - fetchedMs;

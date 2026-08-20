@@ -22,7 +22,7 @@ import {
   vibeProxyQuotaWindowView,
   vibeProxyRecentActivity,
   vibeProxyRequestHealth,
-} from "./vibeProxyUsages.logic";
+} from "@t3tools/shared/vibeProxyUsage";
 
 function account(overrides: Partial<VibeProxyUsageAccount> = {}): VibeProxyUsageAccount {
   return {

@@ -195,7 +195,7 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: UsageRouteScreen,
       linking: "usage",
       options: {
-        title: "Usage",
+        title: "Usages",
       },
     }),
   },
