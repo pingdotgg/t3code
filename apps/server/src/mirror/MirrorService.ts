@@ -891,7 +891,8 @@ export const make = Effect.gen(function* () {
         warnings,
       } = params;
       if (depth >= MIRROR_SUBMODULE_MAX_DEPTH) return;
-      const diffs = yield* diffGitlinks(gitSync, root, baseTreeOid, targetTreeOid).pipe(
+      const diffs = yield* diffGitlinks(root, baseTreeOid, targetTreeOid).pipe(
+        Effect.provideService(GitSync, gitSync),
         Effect.orElseSucceed(() => []),
       );
       const diffedPaths = new Set<string>();
@@ -1272,7 +1273,8 @@ export const make = Effect.gen(function* () {
         runtime.submoduleStateJson != null
           ? Option.getOrElse(decodeSubmoduleState(runtime.submoduleStateJson), () => ({}))
           : {};
-      const gitlinks = yield* discoverAllGitlinks(gitSync, root, snapshot.treeOid).pipe(
+      const gitlinks = yield* discoverAllGitlinks(root, snapshot.treeOid).pipe(
+        Effect.provideService(GitSync, gitSync),
         Effect.orElseSucceed(() => []),
       );
       for (const link of gitlinks) {

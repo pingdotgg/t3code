@@ -16,7 +16,7 @@ import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 
-import type { GitSync, GitSyncCommandError } from "./GitSync.ts";
+import { GitSync, type GitSyncCommandError } from "./GitSync.ts";
 
 /** Submodules-of-submodules are mirrored up to this many levels deep. */
 export const MIRROR_SUBMODULE_MAX_DEPTH = 4;
@@ -34,11 +34,11 @@ export interface GitlinkDiffEntry {
  * Paths whose oid did not change are dropped entirely.
  */
 export const diffGitlinks = Effect.fn("SubmoduleSync.diffGitlinks")(function* (
-  gitSync: GitSync["Service"],
   root: string,
   baseTreeOid: string | null,
   targetTreeOid: string,
-): Effect.fn.Return<ReadonlyArray<GitlinkDiffEntry>, GitSyncCommandError> {
+): Effect.fn.Return<ReadonlyArray<GitlinkDiffEntry>, GitSyncCommandError, GitSync> {
+  const gitSync = yield* GitSync;
   const targetLinks = yield* gitSync.listGitlinks(root, targetTreeOid);
   const baseLinks = baseTreeOid === null ? [] : yield* gitSync.listGitlinks(root, baseTreeOid);
 
@@ -73,12 +73,12 @@ export interface DiscoveredGitlink {
  * submodules of the superproject).
  */
 export const discoverAllGitlinks = Effect.fn("SubmoduleSync.discoverAllGitlinks")(function* (
-  gitSync: GitSync["Service"],
   root: string,
   treeOid: string,
   depth = 0,
-): Effect.fn.Return<ReadonlyArray<DiscoveredGitlink>, GitSyncCommandError> {
+): Effect.fn.Return<ReadonlyArray<DiscoveredGitlink>, GitSyncCommandError, GitSync> {
   if (depth >= MIRROR_SUBMODULE_MAX_DEPTH) return [];
+  const gitSync = yield* GitSync;
   const links = yield* gitSync.listGitlinks(root, treeOid);
   const results: DiscoveredGitlink[] = [];
   for (const link of links) {
@@ -90,7 +90,7 @@ export const discoverAllGitlinks = Effect.fn("SubmoduleSync.discoverAllGitlinks"
     if (nestedHead === null) continue;
     const nestedTree = yield* gitSync.treeOfCommit(nestedRoot, nestedHead);
     if (nestedTree === null) continue;
-    const nested = yield* discoverAllGitlinks(gitSync, nestedRoot, nestedTree, depth + 1);
+    const nested = yield* discoverAllGitlinks(nestedRoot, nestedTree, depth + 1);
     for (const entry of nested) {
       results.push({ path: `${link.path}/${entry.path}`, oid: entry.oid, depth: entry.depth });
     }

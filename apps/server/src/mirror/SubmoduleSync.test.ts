@@ -84,7 +84,6 @@ it.layer(GitSyncTestLayer)("SubmoduleSync", (it) => {
   describe("diffGitlinks", () => {
     it.effect("classifies added, changed, removed, and unchanged gitlinks", () =>
       Effect.gen(function* () {
-        const gitSync = yield* GitSync.GitSync;
         const repo = yield* makeTmpDir();
         yield* git(repo, ["init", "--initial-branch=main"]);
 
@@ -99,7 +98,7 @@ it.layer(GitSyncTestLayer)("SubmoduleSync", (it) => {
           { path: "vendor/added", oid: FAKE_OID_C },
         ]);
 
-        const diff = yield* diffGitlinks(gitSync, repo, baseTree, targetTree);
+        const diff = yield* diffGitlinks(repo, baseTree, targetTree);
         const byPath = new Map(diff.map((entry) => [entry.path, entry]));
 
         expect(byPath.has("vendor/unchanged")).toBe(false);
@@ -126,14 +125,13 @@ it.layer(GitSyncTestLayer)("SubmoduleSync", (it) => {
 
     it.effect("reports every gitlink as added when there is no base tree", () =>
       Effect.gen(function* () {
-        const gitSync = yield* GitSync.GitSync;
         const repo = yield* makeTmpDir();
         yield* git(repo, ["init", "--initial-branch=main"]);
         const targetTree = yield* buildTreeWithGitlinks(repo, [
           { path: "vendor/lib", oid: FAKE_OID_A },
         ]);
 
-        const diff = yield* diffGitlinks(gitSync, repo, null, targetTree);
+        const diff = yield* diffGitlinks(repo, null, targetTree);
         expect(diff).toEqual([
           { path: "vendor/lib", baseOid: null, targetOid: FAKE_OID_A, status: "added" },
         ]);
@@ -144,7 +142,6 @@ it.layer(GitSyncTestLayer)("SubmoduleSync", (it) => {
   describe("discoverAllGitlinks", () => {
     it.effect("finds gitlinks at the top level and respects the depth cap", () =>
       Effect.gen(function* () {
-        const gitSync = yield* GitSync.GitSync;
         const repo = yield* makeTmpDir();
         yield* git(repo, ["init", "--initial-branch=main"]);
         const tree = yield* buildTreeWithGitlinks(repo, [
@@ -152,13 +149,13 @@ it.layer(GitSyncTestLayer)("SubmoduleSync", (it) => {
           { path: "vendor/other", oid: FAKE_OID_B },
         ]);
 
-        const found = yield* discoverAllGitlinks(gitSync, repo, tree);
+        const found = yield* discoverAllGitlinks(repo, tree);
         expect(found).toEqual([
           { path: "vendor/lib", oid: FAKE_OID_A, depth: 0 },
           { path: "vendor/other", oid: FAKE_OID_B, depth: 0 },
         ]);
 
-        const atCap = yield* discoverAllGitlinks(gitSync, repo, tree, MIRROR_SUBMODULE_MAX_DEPTH);
+        const atCap = yield* discoverAllGitlinks(repo, tree, MIRROR_SUBMODULE_MAX_DEPTH);
         expect(atCap).toEqual([]);
       }),
     );
