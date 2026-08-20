@@ -136,14 +136,6 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     expect(decoded.providers.codex.enabled).toBe(true);
   });
 
-  it("enables every built-in provider by default", () => {
-    const decoded = decodeServerSettings({});
-    expect(decoded.providers.cursor.enabled).toBe(true);
-    expect(decoded.providers.claudeAgent.enabled).toBe(true);
-    expect(decoded.providers.grok.enabled).toBe(true);
-    expect(decoded.providers.opencode.enabled).toBe(true);
-  });
-
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
     const decoded = decodeServerSettings({
       providerInstances: {
@@ -192,13 +184,14 @@ describe("provider enabled defaults", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providers.codex.enabled).toBe(true);
     expect(decoded.providers.claudeAgent.enabled).toBe(true);
-    expect(decoded.providers.cursor.enabled).toBe(false);
+    expect(decoded.providers.cursor.enabled).toBe(true);
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
