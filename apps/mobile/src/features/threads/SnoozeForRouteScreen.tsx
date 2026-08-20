@@ -18,6 +18,7 @@ import { useThreadListActions } from "../home/useThreadListActions";
 
 import {
   mergeAndroidPickerValue,
+  resolveAndroidMinimumDate,
   resolveAndroidPickerValue,
   type AndroidSnoozePicker,
 } from "./SnoozeForRouteScreen.logic";
@@ -175,7 +176,7 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
 
       {Platform.OS === "android" && androidPicker !== null ? (
         <DateTimePicker
-          minimumDate={androidPicker === "date" ? new Date() : undefined}
+          minimumDate={androidPicker === "date" ? resolveAndroidMinimumDate(new Date()) : undefined}
           mode={androidPicker}
           onDismiss={() => setAndroidPicker(null)}
           onValueChange={(_event, selected) => {

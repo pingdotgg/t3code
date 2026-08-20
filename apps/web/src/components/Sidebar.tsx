@@ -173,6 +173,7 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./u
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
+import { Separator } from "./ui/separator";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
   composerDraftHasUserContent,
@@ -424,7 +425,7 @@ function SnoozePopoverButton(props: {
             </span>
           </button>
         ))}
-        <div className="my-1 border-t border-border/60" />
+        <Separator className="my-1 bg-border/60" />
         <button
           type="button"
           onClick={(event) => {
