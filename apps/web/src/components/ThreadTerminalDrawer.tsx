@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  type ContextMenuItem,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -31,7 +32,8 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { Button } from "~/components/ui/button";
+import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
@@ -57,6 +59,7 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readLocalApi } from "~/localApi";
+import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
@@ -254,6 +257,49 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
+export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+
+/** Post-selection popup: just the two selection actions, always enabled. */
+export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
+  return [
+    { id: "add-to-chat", label: "Add to chat" },
+    { id: "copy", label: "Copy" },
+  ];
+}
+
+/**
+ * Right-click menu for the terminal canvas: the selection actions (disabled
+ * until a selection exists) plus Paste. Paste is always offered: the browser
+ * (and Electron's default editing menu) can only paste into an editable
+ * element, so a canvas terminal never gets a usable entry from them.
+ */
+export function terminalContextMenuItems(options: {
+  hasSelection: boolean;
+}): ContextMenuItem<TerminalContextMenuAction>[] {
+  return [
+    ...terminalSelectionMenuItems().map((item) => ({
+      ...item,
+      disabled: !options.hasSelection,
+    })),
+    { id: "paste", label: "Paste" },
+  ];
+}
+
+/**
+ * An empty selection change may only cancel a selection-action flow that is
+ * still current: a pending popup timer, or an open popup whose request id has
+ * not been superseded. A popup already superseded by a right-click keeps its
+ * menu promise unsettled for a moment; treating it as active would cancel the
+ * newer context-menu flow instead.
+ */
+export function shouldClearTerminalSelectionAction(options: {
+  timerPending: boolean;
+  openMenuRequestId: number | null;
+  currentRequestId: number;
+}): boolean {
+  return options.timerPending || options.openMenuRequestId === options.currentRequestId;
+}
+
 export function shouldHandleTerminalExit(
   current: TerminalSessionState["status"],
   synchronized: TerminalSessionState["status"],
@@ -327,7 +373,10 @@ export function TerminalViewport({
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
-  const selectionActionMenuOpenRef = useRef(false);
+  // Holds the request id of the selection popup currently on screen, so a
+  // popup that was superseded (but whose menu promise has not settled yet)
+  // cannot be mistaken for the active flow.
+  const openSelectionMenuRequestIdRef = useRef<number | null>(null);
   const selectionActionTimerRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
@@ -440,9 +489,14 @@ export function TerminalViewport({
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
-        onCopy: (text) => handleCopy(text),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
+        // The surface listens from construction, so a right-click can land
+        // while `create` is still awaiting WASM — before the handler below it
+        // exists. The ref is only assigned once that setup has run.
+        onContextMenu: (event) => {
+          if (terminalRef.current) void showTerminalContextMenu(event);
+        },
       };
       const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
       if (cancelled) {
@@ -518,12 +572,98 @@ export function TerminalViewport({
         };
       };
 
+      const addSelectionToChat = (selection: TerminalContextSelection) => {
+        handleAddTerminalContext(selection);
+        terminalRef.current?.clearSelection();
+        terminalRef.current?.focus();
+      };
+
+      // A selection-action flow that was superseded while its async work ran
+      // must go silent: no error message, no focus steal.
+      const reportIfCurrent = (requestId: number, error: unknown, fallback: string) => {
+        if (requestId !== selectionActionRequestIdRef.current) return;
+        const activeTerminal = terminalRef.current;
+        if (activeTerminal) {
+          writeSystemMessage(activeTerminal, error instanceof Error ? error.message : fallback);
+        }
+      };
+
+      const focusIfCurrent = (requestId: number) => {
+        if (requestId === selectionActionRequestIdRef.current) {
+          terminalRef.current?.focus();
+        }
+      };
+
+      const copySelection = async (text: string, requestId: number) => {
+        try {
+          await writeTextToClipboard(text, "terminal selection");
+        } catch (error) {
+          reportIfCurrent(requestId, error, "Unable to copy terminal selection");
+        }
+        focusIfCurrent(requestId);
+      };
+
+      const pasteFromClipboard = async (requestId: number) => {
+        const activeTerminal = terminalRef.current;
+        if (!activeTerminal) return;
+        try {
+          // The surface owns the read so it can claim the paste race before it
+          // starts: a paste shortcut fired while the menu read is in flight
+          // supersedes this paste instead of landing alongside it.
+          await activeTerminal.pasteFromClipboard(
+            () => readTextFromClipboard("terminal input"),
+            () => requestId === selectionActionRequestIdRef.current,
+          );
+        } catch (error) {
+          reportIfCurrent(requestId, error, "Unable to read the clipboard");
+          return;
+        }
+        focusIfCurrent(requestId);
+      };
+
+      const showTerminalContextMenu = async (event: MouseEvent) => {
+        if (!localApi || !terminalRef.current) return;
+        // Own the gesture before anything async: leaving the default alive lets
+        // the browser (or Electron's editing menu) answer with a Paste entry
+        // that is permanently disabled over the terminal canvas.
+        event.preventDefault();
+        // A right-click supersedes a selection popup that is pending or open.
+        clearSelectionAction();
+        const selectionAction = readSelectionAction();
+        const requestId = selectionActionRequestIdRef.current;
+        let clicked: TerminalContextMenuAction | null;
+        try {
+          clicked = await localApi.contextMenu.show(
+            terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+            { x: event.clientX, y: event.clientY },
+          );
+        } catch (error) {
+          reportIfCurrent(requestId, error, "Unable to open the terminal context menu");
+          focusIfCurrent(requestId);
+          return;
+        }
+        if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
+          return;
+        }
+        switch (clicked) {
+          case "add-to-chat":
+            if (selectionAction) addSelectionToChat(selectionAction.selection);
+            return;
+          case "copy":
+            if (selectionAction) await copySelection(selectionAction.clipboardText, requestId);
+            return;
+          case "paste":
+            await pasteFromClipboard(requestId);
+            return;
+        }
+      };
+
       const showSelectionAction = async () => {
         if (!localApi) {
           clearSelectionAction();
           return;
         }
-        if (selectionActionMenuOpenRef.current) {
+        if (openSelectionMenuRequestIdRef.current !== null) {
           return;
         }
         const nextAction = readSelectionAction();
@@ -532,45 +672,23 @@ export function TerminalViewport({
           return;
         }
         const requestId = ++selectionActionRequestIdRef.current;
-        selectionActionMenuOpenRef.current = true;
+        openSelectionMenuRequestIdRef.current = requestId;
         const clicked = await localApi.contextMenu
-          .show(
-            [
-              { id: "add-to-chat", label: "Add to chat" },
-              { id: "copy", label: "Copy" },
-            ],
-            nextAction.position,
-          )
+          .show(terminalSelectionMenuItems(), nextAction.position)
           .finally(() => {
-            selectionActionMenuOpenRef.current = false;
+            if (openSelectionMenuRequestIdRef.current === requestId) {
+              openSelectionMenuRequestIdRef.current = null;
+            }
           });
         if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
           return;
         }
         switch (clicked) {
           case "add-to-chat":
-            handleAddTerminalContext(nextAction.selection);
-            terminalRef.current?.clearSelection();
-            terminalRef.current?.focus();
+            addSelectionToChat(nextAction.selection);
             return;
           case "copy":
-            try {
-              await writeTextToClipboard(nextAction.clipboardText, "terminal selection");
-            } catch (error) {
-              if (requestId !== selectionActionRequestIdRef.current) {
-                return;
-              }
-              const activeTerminal = terminalRef.current;
-              if (activeTerminal) {
-                writeSystemMessage(
-                  activeTerminal,
-                  error instanceof Error ? error.message : "Unable to copy terminal selection",
-                );
-              }
-            }
-            if (requestId === selectionActionRequestIdRef.current) {
-              terminalRef.current?.focus();
-            }
+            await copySelection(nextAction.clipboardText, requestId);
             return;
         }
       };
@@ -668,17 +786,6 @@ export function TerminalViewport({
         })();
       }
 
-      function handleCopy(text: string): void {
-        void writeTextToClipboard(text, "terminal selection").catch((error: unknown) => {
-          const activeTerminal = terminalRef.current;
-          if (!activeTerminal) return;
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : "Unable to copy terminal selection",
-          );
-        });
-      }
-
       function handleData(data: string): void {
         void (async () => {
           const result = await writeTerminal(data);
@@ -695,7 +802,19 @@ export function TerminalViewport({
         if (terminalRef.current?.hasSelection()) {
           return;
         }
+        const shouldClear = shouldClearTerminalSelectionAction({
+          timerPending: selectionActionTimerRef.current !== null,
+          openMenuRequestId: openSelectionMenuRequestIdRef.current,
+          currentRequestId: selectionActionRequestIdRef.current,
+        });
+        if (!shouldClear) return;
         clearSelectionAction();
+        // A copy shortcut that clears the selection (Ctrl+C) must also close
+        // the context menu that appears with the selection, but a clear that
+        // never opened a menu must not dismiss an unrelated one.
+        if (openSelectionMenuRequestIdRef.current !== null) {
+          void localApi?.contextMenu.close();
+        }
       }
 
       const handleMouseUp = (event: MouseEvent) => {
@@ -859,7 +978,7 @@ export function TerminalViewport({
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-full overflow-hidden rounded-[4px] bg-background"
+      className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]"
     />
   );
 }
@@ -1155,6 +1274,15 @@ export default function ThreadTerminalDrawer({
   const onNewTerminalAction = useCallback(() => {
     onNewTerminal();
   }, [onNewTerminal]);
+  const confirmCloseTerminal = useCallback(
+    (terminalId: string) => {
+      const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
+      void confirmTerminalClose([label]).then((confirmed) => {
+        if (confirmed) onCloseTerminal(terminalId);
+      });
+    },
+    [onCloseTerminal, terminalLabelById],
+  );
 
   useEffect(() => {
     onHeightChangeRef.current = onHeightChange;
@@ -1279,13 +1407,9 @@ export default function ThreadTerminalDrawer({
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
           <p>No terminal sessions for this thread yet.</p>
-          <button
-            type="button"
-            className="rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-            onClick={onNewTerminalAction}
-          >
+          <Button size="xs" variant="outline" onClick={onNewTerminalAction}>
             {newTerminalActionLabel}
-          </button>
+          </Button>
         </div>
       </aside>
     );
@@ -1349,7 +1473,7 @@ export default function ThreadTerminalDrawer({
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+              onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
               label={closeTerminalActionLabel}
             >
               <Trash2 className="size-3.25" />
@@ -1359,7 +1483,12 @@ export default function ThreadTerminalDrawer({
       )}
 
       <div className="min-h-0 w-full flex-1">
-        <div className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""}`}>
+        <div
+          className={cn(
+            "flex h-full min-h-0 bg-[var(--terminal-background)]",
+            hasTerminalSidebar && "gap-1.5",
+          )}
+        >
           <div className="min-w-0 flex-1">
             {isSplitView ? (
               <div
@@ -1394,7 +1523,7 @@ export default function ThreadTerminalDrawer({
                         }
                       }}
                     >
-                      <div className="h-full p-1">
+                      <div className="h-full">
                         <TerminalViewport
                           advancedTypography={advancedTypography}
                           threadRef={threadRef}
@@ -1422,7 +1551,7 @@ export default function ThreadTerminalDrawer({
                 })}
               </div>
             ) : (
-              <div className="h-full p-1">
+              <div className="h-full">
                 <TerminalViewport
                   advancedTypography={advancedTypography}
                   key={resolvedActiveTerminalId}
@@ -1484,7 +1613,7 @@ export default function ThreadTerminalDrawer({
                   </TerminalActionButton>
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+                    onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
                     label={closeTerminalActionLabel}
                   >
                     <Trash2 className="size-3.25" />
@@ -1554,7 +1683,7 @@ export default function ThreadTerminalDrawer({
                                       <button
                                         type="button"
                                         className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                                        onClick={() => onCloseTerminal(terminalId)}
+                                        onClick={() => confirmCloseTerminal(terminalId)}
                                         aria-label={closeTerminalLabel}
                                       />
                                     }

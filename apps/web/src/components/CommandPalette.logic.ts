@@ -3,6 +3,7 @@ import {
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -14,6 +15,19 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
+
+export function browseInputEndPaddingClass(input: {
+  readonly willCreateProjectPath: boolean;
+  readonly hasHighlightedBrowseItem: boolean;
+}): string {
+  if (input.willCreateProjectPath) {
+    return "*:data-[slot=autocomplete-input]:pe-38!";
+  }
+  if (input.hasHighlightedBrowseItem) {
+    return "*:data-[slot=autocomplete-input]:pe-30!";
+  }
+  return "*:data-[slot=autocomplete-input]:pe-24!";
+}
 
 /**
  * The global search overlay hosts three mutually exclusive surfaces: the
@@ -46,14 +60,12 @@ export function reduceCommandPaletteUiState(
 ): CommandPaletteUiState {
   switch (action._tag) {
     case "SetOpen":
-      return {
-        open: action.open,
-        mode: "command",
-        openIntent: action.open ? state.openIntent : null,
-      };
+      return action.open
+        ? { open: true, mode: "command", openIntent: state.openIntent }
+        : { ...state, open: false, openIntent: null };
     case "ToggleMode":
       return state.open && state.mode === action.mode
-        ? { open: false, mode: "command", openIntent: null }
+        ? { ...state, open: false, openIntent: null }
         : { open: true, mode: action.mode, openIntent: null };
     case "OpenAddProject":
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
@@ -136,6 +148,7 @@ export function buildProjectActionItems(input: {
   icon: (project: Project) => ReactNode;
   runProject: (project: Project) => Promise<void>;
   searchTerms?: (project: Project) => ReadonlyArray<string>;
+  renderDescription?: (project: Project) => ReactNode;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
@@ -143,7 +156,7 @@ export function buildProjectActionItems(input: {
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
     searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
     title: project.title,
-    description: project.workspaceRoot,
+    description: input.renderDescription?.(project) ?? project.workspaceRoot,
     icon: input.icon(project),
     ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
     run: async () => {
@@ -382,6 +395,25 @@ export function buildBrowseGroups(input: {
   }
 
   return [{ value: "directories", label: "Directories", items }];
+}
+
+export function filterPinnedBrowseEntries(input: {
+  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  filterQuery: string;
+  pinnedDirectoryName: string;
+  caseSensitive: boolean;
+}): ReturnType<typeof filterFilesystemBrowseEntries> {
+  const namesMatch = (left: string, right: string) =>
+    input.caseSensitive ? left === right : left.toLowerCase() === right.toLowerCase();
+  const visibleFilterQuery = namesMatch(input.filterQuery, input.pinnedDirectoryName)
+    ? ""
+    : input.filterQuery;
+  const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
+  const exactEntry =
+    input.filterQuery.length > 0
+      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
+      : null;
+  return { visibleEntries, exactEntry };
 }
 
 export function getCommandPaletteMode(input: {

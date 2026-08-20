@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
 import {
   applyThemeColorPreview,
@@ -79,6 +80,16 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
+  it("keeps every built-in palette value in canonical OKLCH form", () => {
+    for (const theme of BUILT_IN_THEMES) {
+      for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {
+        for (const value of Object.values(colors)) {
+          expect(toCanonicalThemeColor(value)).toBe(value);
+        }
+      }
+    }
+  });
+
   it("derives a readable palette from extreme simple-editor colors", () => {
     const light = createManagedThemeColors("light", "#111827", "#ffff00");
     const dark = createManagedThemeColors("dark", "#ffffff", "#ffff00");
@@ -245,6 +256,18 @@ describe("theme files", () => {
     ] as const) {
       expect(theme.colors[role]).toMatch(/^oklch\(/);
     }
+  });
+
+  it("gamut maps extreme finite OKLCH chroma from theme files", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Extreme chroma",
+      appearance: "light",
+      colors: { accent: "oklch(0.5 1e303 0)" },
+    });
+
+    expect(theme.colors.accent).toBe("oklch(0.5 1e+303 0)");
+    expect(themeColorToHex(theme.colors.accent)).toBe("#b5005e");
   });
 
   it("rejects unknown roles and invalid color values", () => {
@@ -416,24 +439,32 @@ describe("theme files", () => {
       id: "vercel-dark",
       label: "Vercel Dark",
       appearance: "dark",
-      colors: {
-        canvas: "#000000",
-        chrome: "#000000",
-        surface: "#101010",
-        surfaceRaised: "#1f1f1f",
-        text: "#ededed",
-        textMuted: "#a1a1a1",
-        border: "#1f1f1f",
-        focus: "#676767",
-        accent: "#62c073",
-        secondaryForeground: "#c472fb",
-        error: "#f75f8f",
-        errorSurface: "#1e0b11",
-        warning: "#ff9907",
-        messageAction: "#52a8ff",
-        codeBackground: "#101010",
-        terminalBackground: "#000000",
-      },
+    });
+    // Palettes are stored in canonical OKLCH, so compare back in the hex the
+    // Vercel source palette is published as.
+    const hexColors = Object.fromEntries(
+      Object.entries(VERCEL_DARK_THEME.colors).map(([role, value]) => [
+        role,
+        themeColorToHex(value),
+      ]),
+    );
+    expect(hexColors).toMatchObject({
+      canvas: "#000000",
+      chrome: "#000000",
+      surface: "#101010",
+      surfaceRaised: "#1f1f1f",
+      text: "#ededed",
+      textMuted: "#a1a1a1",
+      border: "#1f1f1f",
+      focus: "#676767",
+      accent: "#62c073",
+      secondaryForeground: "#c472fb",
+      error: "#f75f8f",
+      errorSurface: "#1e0b11",
+      warning: "#ff9907",
+      messageAction: "#52a8ff",
+      codeBackground: "#101010",
+      terminalBackground: "#000000",
     });
     expect(getThemeDefinition(VERCEL_DARK_THEME.id)).toBe(VERCEL_DARK_THEME);
     expect(getThemeModes(VERCEL_DARK_THEME)).toEqual(["dark"]);

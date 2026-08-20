@@ -99,6 +99,12 @@ describe("orchestration projector", () => {
         activities: [],
         checkpoints: [],
         session: null,
+        usageLimitWait: null,
+        operatorBatchId: null,
+        operatorParentThreadId: null,
+        operatorWorkspacePath: null,
+        operatorWorkspaceBranch: null,
+        operatorWaitStartedAt: null,
       },
     ]);
   });

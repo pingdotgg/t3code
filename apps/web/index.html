@@ -9,6 +9,7 @@
     <meta name="theme-color" content="#0a0a0a" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <script>
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
@@ -53,10 +54,10 @@
         const BUILT_IN_THEME_PALETTES = {
           "vercel-dark": {
             dark: {
-              background: "#000000",
-              foreground: "#ededed",
-              accent: "#62c073",
-              chrome: "#000000",
+              background: "oklch(0 0 0)",
+              foreground: "oklch(0.946105 0 0)",
+              accent: "oklch(0.730784 0.142312 147.99)",
+              chrome: "oklch(0 0 0)",
             },
           },
           "t3-chat": {
