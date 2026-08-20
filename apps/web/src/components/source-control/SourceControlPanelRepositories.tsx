@@ -86,7 +86,6 @@ import {
   treeKey,
   worktreeChangeSetId,
   commitCountLabel,
-  contextMenuSeparator,
   type FileDiffSource,
   type WorkingTreeChangeSetView,
 } from "./SourceControlPanelModel";
@@ -168,16 +167,15 @@ export function makeSourceControlPanelRepositoryRenderers(
               event,
               [
                 { id: "fetch", label: "Fetch remote", disabled: isActionRunning(fetchKey) },
-                contextMenuSeparator("remove-separator-before"),
                 {
                   id: "remove",
                   label: "Remove remote",
                   destructive: true,
                   disabled: isActionRunning(removeKey),
                   icon: "trash",
+                  separatorBefore: true,
                 },
-                contextMenuSeparator("remove-separator-after"),
-                { id: "copy-name", label: "Copy name", icon: "copy" },
+                { id: "copy-name", label: "Copy name", icon: "copy", separatorBefore: true },
                 { id: "copy-url", label: "Copy url", disabled: !remoteUrl, icon: "copy" },
               ],
               {
@@ -255,16 +253,9 @@ export function makeSourceControlPanelRepositoryRenderers(
           onClick={() => toggleTree(key)}
           onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
           onContextMenu={(event) =>
-            openContextMenu(
-              event,
-              [
-                contextMenuSeparator("copy-separator"),
-                { id: "copy-name", label: "Copy name", icon: "copy" },
-              ],
-              {
-                "copy-name": () => copyText("unpublished"),
-              },
-            )
+            openContextMenu(event, [{ id: "copy-name", label: "Copy name", icon: "copy" }], {
+              "copy-name": () => copyText("unpublished"),
+            })
           }
         >
           {expanded ? (
@@ -333,16 +324,20 @@ export function makeSourceControlPanelRepositoryRenderers(
               [
                 { id: "apply", label: "Apply stash", disabled: isActionRunning(applyKey) },
                 { id: "pop", label: "Pop stash", disabled: isActionRunning(popKey) },
-                contextMenuSeparator("drop-separator-before"),
                 {
                   id: "drop",
                   label: "Drop stash",
                   destructive: true,
                   disabled: isActionRunning(dropKey),
                   icon: "trash",
+                  separatorBefore: true,
                 },
-                contextMenuSeparator("drop-separator-after"),
-                { id: "copy-stash-name", label: "Copy stash name", icon: "copy" },
+                {
+                  id: "copy-stash-name",
+                  label: "Copy stash name",
+                  icon: "copy",
+                  separatorBefore: true,
+                },
                 {
                   id: "copy-branch-name",
                   label: "Copy branch name",

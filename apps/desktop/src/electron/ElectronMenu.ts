@@ -61,23 +61,9 @@ export class ElectronMenu extends Context.Service<
 
 function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
   const normalizedItems: ContextMenuItem[] = [];
-  let lastWasSeparator = false;
 
   for (const sourceItem of source) {
     if (typeof sourceItem.id !== "string" || typeof sourceItem.label !== "string") {
-      continue;
-    }
-
-    if (sourceItem.separator === true) {
-      if (normalizedItems.length === 0 || lastWasSeparator) {
-        continue;
-      }
-      normalizedItems.push({
-        id: sourceItem.id,
-        label: "",
-        separator: true,
-      });
-      lastWasSeparator = true;
       continue;
     }
 
@@ -104,11 +90,6 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
     }
 
     normalizedItems.push(normalizedItem);
-    lastWasSeparator = false;
-  }
-
-  if (normalizedItems.at(-1)?.separator === true) {
-    normalizedItems.pop();
   }
 
   return normalizedItems;
@@ -168,11 +149,6 @@ export const make = Effect.gen(function* () {
     };
 
     for (const item of entries) {
-      if (item.separator === true) {
-        appendSeparator();
-        sectionStartedByExplicitSeparator = true;
-        continue;
-      }
       if (item.separatorBefore) {
         appendSeparator();
         sectionStartedByExplicitSeparator = true;

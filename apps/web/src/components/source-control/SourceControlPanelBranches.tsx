@@ -87,7 +87,6 @@ import {
   treeKey,
   worktreeChangeSetId,
   commitCountLabel,
-  contextMenuSeparator,
   type FileDiffSource,
   type WorkingTreeChangeSetView,
 } from "./SourceControlPanelModel";
@@ -194,8 +193,12 @@ export function makeSourceControlPanelBranchRenderers(
                       { id: "rebase", label: "Rebase current branch onto commit" },
                       { id: "checkout", label: "Checkout as detached HEAD" },
                       { id: "create-branch", label: "Create branch from commit" },
-                      contextMenuSeparator("copy-separator"),
-                      { id: "copy-sha", label: "Copy SHA", icon: "copy" },
+                      {
+                        id: "copy-sha",
+                        label: "Copy SHA",
+                        icon: "copy",
+                        separatorBefore: true,
+                      },
                       { id: "copy-message", label: "Copy message", icon: "copy" },
                     ],
                     {
@@ -544,16 +547,20 @@ export function makeSourceControlPanelBranchRenderers(
                             },
                           ]
                         : []),
-                      contextMenuSeparator("delete-separator-before"),
                       {
                         id: "delete",
                         label: "Delete branch",
                         destructive: true,
                         disabled: deleteDisabled,
                         icon: "trash",
+                        separatorBefore: true,
                       },
-                      contextMenuSeparator("delete-separator-after"),
-                      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+                      {
+                        id: "copy-branch-name",
+                        label: "Copy branch name",
+                        icon: "copy",
+                        separatorBefore: true,
+                      },
                     ],
                     {
                       switch: () => switchRef(branch.name),
@@ -738,16 +745,20 @@ export function makeSourceControlPanelBranchRenderers(
                             },
                           ]
                         : []),
-                      contextMenuSeparator("delete-separator-before"),
                       {
                         id: "delete",
                         label: hasLocalBranch ? "Delete branch" : "Delete remote branch",
                         destructive: true,
                         disabled: deleteDisabled,
                         icon: "trash",
+                        separatorBefore: true,
                       },
-                      contextMenuSeparator("delete-separator-after"),
-                      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+                      {
+                        id: "copy-branch-name",
+                        label: "Copy branch name",
+                        icon: "copy",
+                        separatorBefore: true,
+                      },
                     ],
                     {
                       switch: () => switchRef(branch.name),

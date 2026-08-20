@@ -1,5 +1,4 @@
 import type {
-  ContextMenuItem,
   VcsPanelBranchDetails,
   VcsPanelChangeGroup,
   VcsPanelFileChange,
@@ -200,10 +199,6 @@ export function commitCountLabel(count: number): string {
 
 export function stashBranchName(stash: VcsPanelStash): string | null {
   return /^(?:WIP\s+)?on\s+([^:]+):/i.exec(stash.message)?.[1]?.trim() ?? null;
-}
-
-export function contextMenuSeparator<T extends string>(id: T): ContextMenuItem<T> {
-  return { id, label: "", separator: true };
 }
 
 export function branchActivityTimestamp(branch: {

@@ -31,7 +31,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
-import { resolveGitCommandTimeoutMs } from "./GitCommandTimeout.ts";
+import { type GitCommandTimeoutOverride, resolveGitCommandTimeoutMs } from "./GitCommandTimeout.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -42,7 +42,7 @@ export interface ExecuteGitInput {
   readonly stdin?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
-  readonly timeoutMs?: number | null;
+  readonly timeoutMs?: GitCommandTimeoutOverride;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   readonly progress?: ExecuteGitProgress;

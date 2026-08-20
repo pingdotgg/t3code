@@ -4,6 +4,12 @@ export const GIT_COMMAND_TIMEOUT_MS = {
   commit: 10 * 60_000,
 } as const;
 
+export type GitCommandTimeoutOverride = number | null;
+export type GitCommandTimeoutInput = GitCommandTimeoutOverride | undefined;
+type ResolvedGitCommandTimeout<Input extends GitCommandTimeoutInput> = Input extends null
+  ? null
+  : number;
+
 const NETWORK_GIT_SUBCOMMANDS = new Set(["fetch", "pull", "push"]);
 const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
   "-C",
@@ -29,19 +35,17 @@ function gitSubcommand(args: readonly string[]): string | null {
   return null;
 }
 
-export function resolveGitCommandTimeoutMs(args: readonly string[], timeoutMs?: number): number;
-export function resolveGitCommandTimeoutMs(args: readonly string[], timeoutMs: null): null;
-export function resolveGitCommandTimeoutMs(
+export function resolveGitCommandTimeoutMs<Input extends GitCommandTimeoutInput = undefined>(
   args: readonly string[],
-  timeoutMs: number | null | undefined,
-): number | null;
-export function resolveGitCommandTimeoutMs(
-  args: readonly string[],
-  timeoutMs?: number | null,
-): number | null {
-  if (timeoutMs !== undefined) return timeoutMs;
+  timeoutMs?: Input,
+): ResolvedGitCommandTimeout<Input> {
+  if (timeoutMs !== undefined) return timeoutMs as ResolvedGitCommandTimeout<Input>;
   const subcommand = gitSubcommand(args);
-  if (subcommand === "commit") return GIT_COMMAND_TIMEOUT_MS.commit;
-  if (NETWORK_GIT_SUBCOMMANDS.has(subcommand ?? "")) return GIT_COMMAND_TIMEOUT_MS.network;
-  return GIT_COMMAND_TIMEOUT_MS.local;
+  const resolved =
+    subcommand === "commit"
+      ? GIT_COMMAND_TIMEOUT_MS.commit
+      : NETWORK_GIT_SUBCOMMANDS.has(subcommand ?? "")
+        ? GIT_COMMAND_TIMEOUT_MS.network
+        : GIT_COMMAND_TIMEOUT_MS.local;
+  return resolved as ResolvedGitCommandTimeout<Input>;
 }

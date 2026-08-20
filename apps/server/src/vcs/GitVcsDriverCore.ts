@@ -37,7 +37,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
-import { resolveGitCommandTimeoutMs } from "./GitCommandTimeout.ts";
+import { type GitCommandTimeoutOverride, resolveGitCommandTimeoutMs } from "./GitCommandTimeout.ts";
 
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -140,7 +140,7 @@ interface GitRefsSnapshot {
 
 interface ExecuteGitOptions {
   stdin?: string | undefined;
-  timeoutMs?: number | null | undefined;
+  timeoutMs?: GitCommandTimeoutOverride;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;

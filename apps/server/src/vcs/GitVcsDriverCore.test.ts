@@ -16,6 +16,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
+import {
+  makeSourceControlPanelActions,
+  type SourceControlPanelActionDependencies,
+} from "../sourceControl/SourceControlPanelActions.ts";
 import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -348,6 +352,55 @@ it.effect("exposes shared ref snapshot invalidation for raw Git mutation service
       const invalidatedRefs = yield* driver.listRefs({ cwd });
       assert.equal(
         invalidatedRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        true,
+      );
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("refreshes pull-request listRefs data after a ref-changing panel action", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const headSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+      const branchName = "feature/panel-list-refs";
+      const pullRequestRefsInput = {
+        cwd,
+        includeMatchingRemoteRefs: true,
+        limit: 2,
+        query: branchName,
+      } as const;
+      const before = yield* driver.listRefs({ ...pullRequestRefsInput, refresh: true });
+      assert.equal(
+        before.refs.some((ref) => ref.name === branchName),
+        false,
+      );
+
+      const actions = makeSourceControlPanelActions({
+        invalidateRefs: driver.invalidateRefs,
+        run: (operation, commandCwd, args, options) =>
+          driver
+            .execute({
+              operation,
+              cwd: commandCwd,
+              args: [...args],
+              timeoutMs: 10_000,
+              ...(options?.allowNonZeroExit !== undefined
+                ? { allowNonZeroExit: options.allowNonZeroExit }
+                : {}),
+              ...(options?.env !== undefined ? { env: options.env } : {}),
+              ...(options?.progress !== undefined ? { progress: options.progress } : {}),
+            })
+            .pipe(Effect.map((result) => result.stdout)),
+      } as SourceControlPanelActionDependencies);
+
+      yield* actions.createBranchFromCommit({ cwd, sha: headSha, branchName });
+
+      const after = yield* driver.listRefs(pullRequestRefsInput);
+      assert.equal(
+        after.refs.some((ref) => ref.name === branchName),
         true,
       );
     }),

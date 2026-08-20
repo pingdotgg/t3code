@@ -82,7 +82,6 @@ import {
   treeKey,
   uniquePaths,
   changeSetAttention,
-  contextMenuSeparator,
   type FileDiffSource,
   type WorkingTreeChangeSetView,
 } from "./SourceControlPanelModel";
@@ -218,16 +217,20 @@ export function makeSourceControlPanelWorkingTreeRenderers(
               [
                 ...(filePanelThreadRef ? ([{ id: "open-file", label: "Open file" }] as const) : []),
                 { id: "open-vscode", label: "Open in VS Code" },
-                contextMenuSeparator("discard-separator"),
                 {
                   id: "discard",
                   label: "Discard change",
                   destructive: true,
                   disabled: isActionRunning(discardKey),
                   icon: "trash",
+                  separatorBefore: true,
                 },
-                contextMenuSeparator("copy-separator"),
-                { id: "copy-filename", label: "Copy filename", icon: "copy" },
+                {
+                  id: "copy-filename",
+                  label: "Copy filename",
+                  icon: "copy",
+                  separatorBefore: true,
+                },
                 { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
               ],
               {
@@ -625,13 +628,13 @@ export function makeSourceControlPanelWorkingTreeRenderers(
                         label: "Stash selected changes",
                         disabled: isActionRunning(stashActionKey) || selectedFiles.length === 0,
                       },
-                      contextMenuSeparator("discard-separator-before"),
                       {
                         id: "discard-selected",
                         label: "Discard selected changes",
                         destructive: true,
                         disabled: isActionRunning(discardActionKey) || selectedFiles.length === 0,
                         icon: "trash",
+                        separatorBefore: true,
                       },
                     ],
                     {

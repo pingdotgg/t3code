@@ -75,7 +75,6 @@ import {
   treeKey,
   uniquePaths,
   changeSetAttention,
-  contextMenuSeparator,
   type FileDiffSource,
   type WorkingTreeChangeSetView,
 } from "./SourceControlPanelModel";
@@ -231,8 +230,12 @@ export function useSourceControlPanelActions(
         [
           ...(filePanelThreadRef ? ([{ id: "open-file", label: "Open file" }] as const) : []),
           { id: "open-vscode", label: "Open in VS Code" },
-          contextMenuSeparator("copy-separator"),
-          { id: "copy-filename", label: "Copy filename", icon: "copy" },
+          {
+            id: "copy-filename",
+            label: "Copy filename",
+            icon: "copy",
+            separatorBefore: true,
+          },
           { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
         ],
         {
