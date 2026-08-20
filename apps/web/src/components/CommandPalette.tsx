@@ -34,6 +34,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  ArrowRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
@@ -145,6 +146,7 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
+import { useNavigationHistory } from "../navigationHistory";
 import { CommandDialog, CommandDialogPopup } from "./ui/command";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -593,6 +595,7 @@ function OpenCommandPaletteDialog(props: {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const navigationHistory = useNavigationHistory();
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByEnvironmentAndInstanceId = useMemo(() => {
@@ -1487,6 +1490,33 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  actionItems.push(
+    {
+      kind: "action",
+      value: "action:navigation-back",
+      searchTerms: ["back", "previous", "history", "navigation"],
+      title: "Go back",
+      disabled: !navigationHistory.canGoBack,
+      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "navigation.back",
+      run: async () => {
+        navigationHistory.back();
+      },
+    },
+    {
+      kind: "action",
+      value: "action:navigation-forward",
+      searchTerms: ["forward", "next", "history", "navigation"],
+      title: "Go forward",
+      disabled: !navigationHistory.canGoForward,
+      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "navigation.forward",
+      run: async () => {
+        navigationHistory.forward();
+      },
+    },
+  );
 
   if (projects.length > 0) {
     const activeProjectTitle =
