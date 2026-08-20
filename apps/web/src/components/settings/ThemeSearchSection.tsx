@@ -4,7 +4,6 @@ import {
   PaletteIcon,
   RefreshCwIcon,
   SearchIcon,
-  ShieldCheckIcon,
 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -327,9 +326,6 @@ export function ThemeSearchSection({
                   </p>
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="inline-flex items-center gap-1 text-muted-foreground text-[11px]">
-                        <ShieldCheckIcon className="size-3" /> {extension.license}
-                      </span>
                       {extension.sourceUrl ? (
                         <a
                           aria-label={`View source for ${extension.name}`}
