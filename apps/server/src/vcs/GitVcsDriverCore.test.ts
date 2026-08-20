@@ -1502,6 +1502,48 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect("fetches remote branches without updating tags", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const peer = yield* makeTmpDir("git-peer-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["tag", "release"]);
+        yield* git(cwd, ["push", "origin", "refs/tags/release"]);
+        yield* git(remote, ["symbolic-ref", "HEAD", `refs/heads/${initialBranch}`]);
+        const localTagCommit = yield* git(cwd, ["rev-parse", "refs/tags/release"]);
+
+        yield* git(peer, ["clone", remote, "."]);
+        yield* git(peer, ["config", "user.email", "test@test.com"]);
+        yield* git(peer, ["config", "user.name", "Test"]);
+        yield* writeTextFile(peer, "remote-change.txt", "remote\n");
+        yield* git(peer, ["add", "remote-change.txt"]);
+        yield* git(peer, ["commit", "-m", "remote change"]);
+        yield* git(peer, ["push", "origin", initialBranch]);
+        yield* git(peer, ["tag", "--force", "release"]);
+        yield* git(peer, ["push", "--force", "origin", "refs/tags/release"]);
+        const remoteHead = yield* git(peer, ["rev-parse", "HEAD"]);
+        assert.notEqual(localTagCommit, remoteHead);
+
+        // Mirrors users who enable global tag pruning. A normal fetch would
+        // reject the remote's moved tag before updating the tracking branch.
+        yield* git(cwd, ["config", "fetch.prune", "true"]);
+        yield* git(cwd, ["config", "fetch.pruneTags", "true"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.fetchRemote({ cwd, remoteName: "origin" });
+
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+          remoteHead,
+        );
+        assert.equal(yield* git(cwd, ["rev-parse", "refs/tags/release"]), localTagCommit);
+      }),
+    );
+
     it.effect("creates a worktree from the latest fetched remote commit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

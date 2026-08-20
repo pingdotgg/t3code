@@ -2906,7 +2906,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit(
         "GitVcsDriver.fetchRemote",
         input.cwd,
-        ["fetch", "--quiet", input.remoteName],
+        ["fetch", "--quiet", "--no-tags", "--no-prune-tags", input.remoteName],
         {
           env: STATUS_UPSTREAM_REFRESH_ENV,
           fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
