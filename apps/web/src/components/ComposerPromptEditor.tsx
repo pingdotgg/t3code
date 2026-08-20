@@ -1076,6 +1076,71 @@ function ComposerHomeEndKeyPlugin() {
   return null;
 }
 
+function ComposerTripleClickLinePlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    let snapshot: {
+      anchorNode: Node;
+      anchorOffset: number;
+      focusNode: Node;
+      focusOffset: number;
+    } | null = null;
+
+    const captureClick = (event: MouseEvent) => {
+      snapshot = null;
+      if (event.detail !== 3) return;
+      const rootElement = editor.getRootElement();
+      if (!rootElement || !(event.target instanceof Node) || !rootElement.contains(event.target)) {
+        return;
+      }
+      const selection = window.getSelection();
+      if (!selection?.anchorNode || !selection.focusNode || selection.isCollapsed) return;
+      snapshot = {
+        anchorNode: selection.anchorNode,
+        anchorOffset: selection.anchorOffset,
+        focusNode: selection.focusNode,
+        focusOffset: selection.focusOffset,
+      };
+    };
+
+    const restoreClick = (event: MouseEvent) => {
+      const saved = snapshot;
+      snapshot = null;
+      if (!saved || event.detail !== 3) return;
+      if (!saved.anchorNode.isConnected || !saved.focusNode.isConnected) return;
+      const selection = window.getSelection();
+      if (!selection) return;
+      if (
+        selection.anchorNode === saved.anchorNode &&
+        selection.anchorOffset === saved.anchorOffset &&
+        selection.focusNode === saved.focusNode &&
+        selection.focusOffset === saved.focusOffset
+      ) {
+        return;
+      }
+      selection.setBaseAndExtent(
+        saved.anchorNode,
+        saved.anchorOffset,
+        saved.focusNode,
+        saved.focusOffset,
+      );
+      editor.update(() => {
+        $setSelection($createRangeSelectionFromDom(selection, editor));
+      });
+    };
+
+    document.addEventListener("click", captureClick, true);
+    document.addEventListener("click", restoreClick);
+    return () => {
+      document.removeEventListener("click", captureClick, true);
+      document.removeEventListener("click", restoreClick);
+    };
+  }, [editor]);
+
+  return null;
+}
+
 function ComposerInlineTokenSelectionNormalizePlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1776,6 +1841,7 @@ function ComposerPromptEditorInner({
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />
+        <ComposerTripleClickLinePlugin />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
