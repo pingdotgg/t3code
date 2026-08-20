@@ -29,6 +29,7 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  sidebarRowNeedsAttention,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
   pinOrderKeyBetween,
@@ -317,6 +318,32 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("sidebarRowNeedsAttention", () => {
+  const quietRow = {
+    isUnread: false,
+    isWoke: false,
+    isActive: false,
+    isSelected: false,
+  };
+
+  it("lets a read row be dimmed", () => {
+    expect(sidebarRowNeedsAttention(quietRow)).toBe(false);
+  });
+
+  it("keeps an unread row at full contrast", () => {
+    expect(sidebarRowNeedsAttention({ ...quietRow, isUnread: true })).toBe(true);
+  });
+
+  it("keeps a woken row at full contrast", () => {
+    expect(sidebarRowNeedsAttention({ ...quietRow, isWoke: true })).toBe(true);
+  });
+
+  it("exempts the active and selected rows", () => {
+    expect(sidebarRowNeedsAttention({ ...quietRow, isActive: true })).toBe(true);
+    expect(sidebarRowNeedsAttention({ ...quietRow, isSelected: true })).toBe(true);
   });
 });
 
