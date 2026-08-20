@@ -1,13 +1,17 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
   getSyncedClientPreferenceUpdatedAt,
   SYNCED_CLIENT_PREFERENCE_FIELDS,
+  type EnvironmentId,
   type SyncedClientPreferenceField,
+  type SyncedClientPreferences,
   type SyncedClientPreferencesPatch,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import {
@@ -37,40 +41,110 @@ import {
   hasPlanModePreferenceReconciliationAttempted,
   isPlanModePreferenceReconciliationReady,
   reconcileSyncedClientPreferences,
+  shouldPreservePlanModeLocalValue,
 } from "./synced-client-preferences-model";
+
+interface EnvironmentPreferenceShellSlice {
+  readonly shellStatus: EnvironmentShellStatus;
+  readonly preferences: SyncedClientPreferences | undefined;
+}
+
+const environmentPreferenceShellSliceAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previous: EnvironmentPreferenceShellSlice | undefined;
+  return Atom.make((get) => {
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    const preferences =
+      shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
+    if (previous?.shellStatus === shell.status && previous.preferences === preferences) {
+      return previous;
+    }
+    previous = { shellStatus: shell.status, preferences };
+    return previous;
+  });
+});
+
+const environmentCanPatchPreferencesAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previous = false;
+  return Atom.make((get) => {
+    const session = get(environmentSession.sessionStateValueAtom(environmentId));
+    const next =
+      session?.authenticated === true &&
+      session.scopes?.includes(AuthOrchestrationOperateScope) === true;
+    if (next === previous) return previous;
+    previous = next;
+    return previous;
+  });
+});
+
+interface ConnectedEnvironmentPreferenceState {
+  readonly environmentId: EnvironmentId;
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly shellStatus: EnvironmentShellStatus;
+  readonly preferences: SyncedClientPreferences | undefined;
+  readonly canPatch: boolean;
+}
+
+let previousConnectedEnvironmentPreferenceStates:
+  | {
+      readonly connectionsLoaded: boolean;
+      readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+      readonly reconciliationKey: string;
+      readonly states: ReadonlyArray<ConnectedEnvironmentPreferenceState>;
+    }
+  | undefined;
 
 const connectedEnvironmentPreferenceStatesAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   const presentations = get(environmentPresentations.presentationsAtom);
   const states = [...presentations.entries()].map(([environmentId, presentation]) => {
-    const shell = get(environmentShell.stateValueAtom(environmentId));
-    const session = get(environmentSession.sessionStateValueAtom(environmentId));
+    const shell = get(environmentPreferenceShellSliceAtom(environmentId));
     return {
       environmentId,
       connectionState: presentation.connection.phase,
-      shell,
-      canPatch:
-        session?.authenticated === true &&
-        session.scopes?.includes(AuthOrchestrationOperateScope) === true,
+      shellStatus: shell.shellStatus,
+      preferences: shell.preferences,
+      canPatch: get(environmentCanPatchPreferencesAtom(environmentId)),
     };
   });
   const reconciliationKey = createPlanModePreferenceReconciliationKey(
-    states.map(({ environmentId, connectionState, shell }) => ({
+    states.map(({ environmentId, connectionState, shellStatus, preferences }) => ({
       environmentId,
       connectionState,
-      shellStatus: shell.status,
-      preferences:
-        shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
+      shellStatus,
+      preferences,
     })),
   );
-  return {
+  const connectedEnvironmentIds = states
+    .filter((state) => state.connectionState === "connected" && state.canPatch)
+    .map((state) => state.environmentId);
+  const next = {
     connectionsLoaded: catalog.isReady,
-    connectedEnvironmentIds: states
-      .filter((state) => state.connectionState === "connected" && state.canPatch)
-      .map((state) => state.environmentId),
+    connectedEnvironmentIds,
     reconciliationKey,
     states,
   } as const;
+  const previous = previousConnectedEnvironmentPreferenceStates;
+  if (
+    previous !== undefined &&
+    previous.connectionsLoaded === next.connectionsLoaded &&
+    previous.reconciliationKey === next.reconciliationKey &&
+    previous.states.length === next.states.length &&
+    previous.states.every((state, index) => {
+      const candidate = next.states[index];
+      return (
+        candidate !== undefined &&
+        state.environmentId === candidate.environmentId &&
+        state.connectionState === candidate.connectionState &&
+        state.shellStatus === candidate.shellStatus &&
+        state.preferences === candidate.preferences &&
+        state.canPatch === candidate.canPatch
+      );
+    })
+  ) {
+    return previous;
+  }
+  previousConnectedEnvironmentPreferenceStates = next;
+  return next;
 }).pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:connected-environment-states"));
 
 function useConnectedEnvironmentPreferenceStates() {
@@ -105,8 +179,28 @@ function resolveLocalThemeId(
 }
 
 function toLocalPreferencesPatch(patch: Partial<SyncedClientPreferencesPatch>) {
-  const { appearanceMode, ...rest } = patch;
-  return appearanceMode === undefined ? rest : { ...rest, themeMode: appearanceMode };
+  const { appearanceMode, ...preferences } = patch;
+  return appearanceMode === undefined ? preferences : { ...preferences, themeMode: appearanceMode };
+}
+
+function normalizeLocalThemePatch(
+  patch: Partial<SyncedClientPreferencesPatch>,
+  importedThemes: ReadonlyArray<ImportedMobileTheme>,
+  writtenThemeId?: string,
+) {
+  return {
+    ...patch,
+    ...(patch.lightThemeId === undefined
+      ? undefined
+      : {
+          lightThemeId: resolveLocalThemeId(patch.lightThemeId, importedThemes, writtenThemeId),
+        }),
+    ...(patch.darkThemeId === undefined
+      ? undefined
+      : {
+          darkThemeId: resolveLocalThemeId(patch.darkThemeId, importedThemes, writtenThemeId),
+        }),
+  };
 }
 
 export function useSyncedClientPreferences(): void {
@@ -130,6 +224,7 @@ export function useSyncedClientPreferences(): void {
     }),
     [],
   );
+  const attemptedLocalPatchKeyRef = useRef<string | null>(null);
 
   useEffect(
     () => () => {
@@ -140,7 +235,8 @@ export function useSyncedClientPreferences(): void {
 
   useEffect(() => {
     const liveStates = states.filter(
-      ({ connectionState, shell }) => connectionState === "connected" && shell.status === "live",
+      ({ connectionState, shellStatus }) =>
+        connectionState === "connected" && shellStatus === "live",
     );
     const activeEnvironmentIds = liveStates
       .filter(({ canPatch }) => canPatch)
@@ -148,9 +244,7 @@ export function useSyncedClientPreferences(): void {
     for (const controller of Object.values(reconciliationControllers)) {
       controller.setActiveEnvironmentIds(activeEnvironmentIds);
     }
-    for (const { environmentId, shell } of liveStates) {
-      const preferences =
-        shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
+    for (const { environmentId, preferences } of liveStates) {
       for (const field of SYNCED_CLIENT_PREFERENCE_FIELDS) {
         reconciliationControllers[field].observe(
           environmentId,
@@ -173,9 +267,9 @@ export function useSyncedClientPreferences(): void {
     }
     if (!AsyncResult.isSuccess(preferencesResult)) return;
     const reconciliationAttempted = hasPlanModePreferenceReconciliationAttempted(
-      states.map(({ connectionState, shell }) => ({
+      states.map(({ connectionState, shellStatus }) => ({
         connectionState,
-        shellStatus: shell.status,
+        shellStatus,
       })),
     );
     if (!reconciliationAttempted) return;
@@ -186,40 +280,37 @@ export function useSyncedClientPreferences(): void {
       return;
     }
     const importedThemes = preferencesResult.value.importedThemes ?? [];
-    const normalizeThemeId = (themeId: string) => resolveLocalThemeId(themeId, importedThemes);
     const themeIds = resolveMobileThemeIds(preferencesResult.value, importedThemes);
     const reconciliation = reconcileSyncedClientPreferences({
       local: {
         values: {
           planModeEnabled: preferencesResult.value.planModeEnabled ?? false,
-          appearanceMode: normalizeMobileThemeMode(
-            preferencesResult.value.themeMode ?? preferencesResult.value.appearanceMode,
-          ),
+          appearanceMode: normalizeMobileThemeMode(preferencesResult.value.themeMode),
           lightThemeId: themeIds.light,
           darkThemeId: themeIds.dark,
         },
         updatedAtByField: preferencesResult.value.syncedClientPreferencesUpdatedAtByField,
         legacyUpdatedAt: preferencesResult.value.syncedClientPreferencesUpdatedAt,
       },
-      environments: liveStates.map(({ environmentId, shell, canPatch }) => ({
+      environments: liveStates.map(({ environmentId, preferences, canPatch }) => ({
         environmentId,
         canPatch,
-        preferences:
-          shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
+        preferences,
       })),
       now: new Date().toISOString(),
-      normalizeThemeId,
+      preserveLocalOnEqualStamp: shouldPreservePlanModeLocalValue({
+        currentKey: reconciliationKey,
+        appliedKey: reconciledKey,
+      }),
     });
-    if (reconciliation.localPatch !== null) {
-      const localValues = toLocalPreferencesPatch(reconciliation.localPatch.values);
-      if (localValues.lightThemeId !== undefined) {
-        localValues.lightThemeId = normalizeThemeId(localValues.lightThemeId);
-      }
-      if (localValues.darkThemeId !== undefined) {
-        localValues.darkThemeId = normalizeThemeId(localValues.darkThemeId);
-      }
+    const localPatchKey =
+      reconciliation.localPatch === null ? null : JSON.stringify(reconciliation.localPatch);
+    if (reconciliation.localPatch !== null && localPatchKey !== attemptedLocalPatchKeyRef.current) {
+      attemptedLocalPatchKeyRef.current = localPatchKey;
       savePreferences({
-        ...localValues,
+        ...toLocalPreferencesPatch(
+          normalizeLocalThemePatch(reconciliation.localPatch.values, importedThemes),
+        ),
         syncedClientPreferencesUpdatedAtByField: reconciliation.localPatch.updatedAtByField,
       });
     }
@@ -234,9 +325,8 @@ export function useSyncedClientPreferences(): void {
         persist: (patch) =>
           persistReconciledPreferences({
             expectedUpdatedAtByField: { [field]: target.input.updatedAt },
-            patch: toLocalPreferencesPatch(patch),
+            patch: toLocalPreferencesPatch(normalizeLocalThemePatch(patch, importedThemes)),
           }),
-        normalizeThemeId,
       });
     }
     setReconciledKey(nextReconciledKey);
@@ -275,9 +365,7 @@ function useUpdateSyncedClientPreference(field: SyncedClientPreferenceField) {
         connectedEnvironmentIds,
         currentUpdatedAtByField: current.syncedClientPreferencesUpdatedAtByField,
         legacyCurrentUpdatedAt: current.syncedClientPreferencesUpdatedAt,
-        authoritativePreferences: states.map(({ shell }) =>
-          shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined,
-        ),
+        authoritativePreferences: states.map(({ preferences }) => preferences),
         now: new Date().toISOString(),
       });
       savePreferences({
@@ -287,16 +375,15 @@ function useUpdateSyncedClientPreference(field: SyncedClientPreferenceField) {
       void Promise.allSettled(
         write.environmentPatches.map(async (target) => {
           const result = await patchPreferences(target);
-          const importedThemes = current.importedThemes ?? [];
-          const localPatch = writeController.settle({
-            target,
-            result,
-            normalizeThemeId: (themeId) => {
-              const writtenThemeId = patch.lightThemeId ?? patch.darkThemeId;
-              return resolveLocalThemeId(themeId, importedThemes, writtenThemeId);
-            },
-          });
-          if (localPatch !== null) savePreferences(toLocalPreferencesPatch(localPatch));
+          const localPatch = writeController.settle({ target, result });
+          if (localPatch !== null) {
+            const writtenThemeId = patch.lightThemeId ?? patch.darkThemeId;
+            savePreferences(
+              toLocalPreferencesPatch(
+                normalizeLocalThemePatch(localPatch, current.importedThemes ?? [], writtenThemeId),
+              ),
+            );
+          }
         }),
       );
     },
@@ -331,10 +418,10 @@ export function useUpdateThemeIdPreference() {
   const updateLightTheme = useUpdateSyncedClientPreference("lightThemeId");
   const updateDarkTheme = useUpdateSyncedClientPreference("darkThemeId");
   return useCallback(
-    (appearance: MobileThemeAppearance, themeId: string) =>
-      appearance === "light"
-        ? updateLightTheme({ lightThemeId: themeId })
-        : updateDarkTheme({ darkThemeId: themeId }),
+    (appearance: MobileThemeAppearance, themeId: string) => {
+      if (appearance === "light") updateLightTheme({ lightThemeId: themeId });
+      else updateDarkTheme({ darkThemeId: themeId });
+    },
     [updateDarkTheme, updateLightTheme],
   );
 }

@@ -15,7 +15,6 @@ import { DEFAULT_MOBILE_THEME_VARIABLES } from "./mobileDefaultTheme";
 
 export const DEFAULT_MOBILE_THEME_ID = MOBILE_DEFAULT_THEME_ID;
 export const MOBILE_THEME_IDS = SHARED_MOBILE_THEME_IDS;
-export type MobileBuiltInThemeId = (typeof MOBILE_THEME_IDS)[number];
 export type MobileThemeId = string;
 export type MobileThemeAppearance = ThemeAppearance;
 export type MobileThemeMode = MobileThemeAppearance | "system";
@@ -25,11 +24,11 @@ export type MobileThemeIds = Readonly<{
 }>;
 
 export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
-  readonly id: MobileBuiltInThemeId;
+  readonly id: MobileThemeId;
   readonly label: string;
 }> = [
   { id: DEFAULT_MOBILE_THEME_ID, label: "T3 Code" },
-  ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileBuiltInThemeId, label: theme.label })),
+  ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id, label: theme.label })),
 ];
 
 type MobileThemeVariable = `--color-${string}`;

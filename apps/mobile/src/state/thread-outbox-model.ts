@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { resolveComposerInteractionMode } from "../features/threads/plan-mode";
+import { resolveComposerInteractionMode } from "../features/threads/legacy-plan-mode";
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";

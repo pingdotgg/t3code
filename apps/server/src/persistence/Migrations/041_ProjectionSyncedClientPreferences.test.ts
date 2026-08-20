@@ -40,20 +40,6 @@ layer("041_ProjectionSyncedClientPreferences", (it) => {
           '{}'
         )
       `;
-      yield* sql`
-        CREATE TABLE projection_synced_client_preferences (
-          singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
-          plan_mode_enabled INTEGER,
-          plan_mode_enabled_updated_at TEXT,
-          appearance_mode TEXT,
-          appearance_mode_updated_at TEXT,
-          light_theme_id TEXT,
-          light_theme_id_updated_at TEXT,
-          dark_theme_id TEXT,
-          dark_theme_id_updated_at TEXT,
-          updated_at TEXT NOT NULL
-        )
-      `;
       yield* runMigrations({ toMigrationInclusive: 41 });
       yield* runMigrations({ toMigrationInclusive: 41 });
 

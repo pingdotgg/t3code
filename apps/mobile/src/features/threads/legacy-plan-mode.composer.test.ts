@@ -8,13 +8,13 @@ import {
   resolveComposerEnqueueInteractionMode,
   resolveComposerInteractionMode,
   resolveComposerSubmitInteractionMode,
-  resolvePlanModeEnabled,
+  resolveLegacyPlanModeEnabled,
   resolveSlashCommandInteractionMode,
-} from "./plan-mode";
+} from "./legacy-plan-mode";
 
 describe("mobile plan mode", () => {
   it("defaults off and hides the legacy slash commands", () => {
-    const planModeEnabled = resolvePlanModeEnabled(undefined);
+    const planModeEnabled = resolveLegacyPlanModeEnabled({ loaded: true, preference: undefined });
 
     expect(planModeEnabled).toBe(false);
     expect(getBuiltInComposerSlashCommands({ planModeEnabled, query: "" })).toEqual([

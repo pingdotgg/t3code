@@ -26,7 +26,7 @@ const isSyncedClientPreferencesUpdatedAtByField = Schema.is(
 );
 
 export interface Preferences {
-  /** @deprecated Sync transport alias; application rendering uses themeMode. */
+  /** @deprecated Legacy sync alias; application rendering uses themeMode. */
   readonly appearanceMode?: MobileThemeMode;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
@@ -45,6 +45,10 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly autoSettleOnMerge?: boolean;
+  readonly planModeEnabled?: boolean;
+  readonly syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
+  /** @deprecated Aggregate-clock cache retained for older persisted blobs. */
+  readonly syncedClientPreferencesUpdatedAt?: string;
   /**
    * Device-local mirror of the web `legacySidebarEnabled` setting. Mobile has
    * no client-settings sync, so the legacy grouped thread list is opted into
@@ -53,11 +57,6 @@ export interface Preferences {
    * default flat list — see `resolveThreadListV2Enabled`.
    */
   readonly legacyThreadListEnabled?: boolean;
-  /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
-  readonly planModeEnabled?: boolean;
-  readonly syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
-  /** @deprecated Aggregate-clock cache retained for older persisted blobs. */
-  readonly syncedClientPreferencesUpdatedAt?: string;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -97,30 +96,12 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
+type MutablePreferences = {
+  -readonly [Key in keyof Preferences]?: Preferences[Key];
+};
+
 function sanitizePreferences(parsed: Preferences): Preferences {
-  const preferences: {
-    liveActivitiesEnabled?: boolean;
-    appearanceMode?: MobileThemeMode;
-    themeId?: MobileThemeId;
-    lightThemeId?: MobileThemeId;
-    darkThemeId?: MobileThemeId;
-    themeMode?: MobileThemeMode;
-    importedThemes?: ReadonlyArray<ImportedMobileTheme>;
-    baseFontSize?: number;
-    terminalFontSize?: number | null;
-    markdownFontSize?: number;
-    codeFontSize?: number | null;
-    codeWordBreak?: boolean;
-    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
-    collapsedProjectGroups?: readonly string[];
-    projectGroupingEnabled?: boolean;
-    projectGroupingMode?: SidebarProjectGroupingMode;
-    autoSettleOnMerge?: boolean;
-    legacyThreadListEnabled?: boolean;
-    planModeEnabled?: boolean;
-    syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
-    syncedClientPreferencesUpdatedAt?: string;
-  } = {};
+  const preferences: MutablePreferences = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
@@ -142,11 +123,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.themeMode = parsed.themeMode;
   }
   if (
-    parsed.appearanceMode === "system" ||
-    parsed.appearanceMode === "light" ||
-    parsed.appearanceMode === "dark"
+    preferences.themeMode === undefined &&
+    (parsed.appearanceMode === "system" ||
+      parsed.appearanceMode === "light" ||
+      parsed.appearanceMode === "dark")
   ) {
-    preferences.themeMode ??= parsed.appearanceMode;
+    preferences.themeMode = parsed.appearanceMode;
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
@@ -182,9 +164,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.autoSettleOnMerge === "boolean") {
     preferences.autoSettleOnMerge = parsed.autoSettleOnMerge;
   }
-  if (typeof parsed.legacyThreadListEnabled === "boolean") {
-    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
-  }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
   }
@@ -197,6 +176,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isSyncedClientPreferencesUpdatedAt(parsed.syncedClientPreferencesUpdatedAt)) {
     preferences.syncedClientPreferencesUpdatedAt = parsed.syncedClientPreferencesUpdatedAt;
+  }
+  if (typeof parsed.legacyThreadListEnabled === "boolean") {
+    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
   }
   return preferences;
 }
@@ -381,7 +363,19 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
             try: () => transform(current),
             catch: (cause) => new MobilePreferencesSaveError({ cause }),
           });
-          const next: Preferences = { ...current, ...patch };
+          let next: Preferences = {
+            ...current,
+            ...patch,
+          };
+          if (patch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+            next = {
+              ...next,
+              syncedClientPreferencesUpdatedAtByField: {
+                ...current.syncedClientPreferencesUpdatedAtByField,
+                ...patch.syncedClientPreferencesUpdatedAtByField,
+              },
+            };
+          }
           const payload = yield* encode(PREFERENCES_KEY, next);
           yield* saveJson(payload);
           return next;
@@ -399,17 +393,7 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
   return MobilePreferencesStore.of({
     load,
     update,
-    savePatch: (patch: Partial<Preferences>) =>
-      update((current: Preferences) => {
-        if (patch.syncedClientPreferencesUpdatedAtByField === undefined) return patch;
-        return {
-          ...patch,
-          syncedClientPreferencesUpdatedAtByField: {
-            ...current.syncedClientPreferencesUpdatedAtByField,
-            ...patch.syncedClientPreferencesUpdatedAtByField,
-          },
-        };
-      }),
+    savePatch: (patch) => update(() => patch),
   });
 });
 

@@ -1196,28 +1196,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           correlationId: CommandId.make("preferences-fresh"),
           metadata: {},
           payload: {
-            patch: {
-              planModeEnabled: true,
-              appearanceMode: "dark",
-              lightThemeId: "tokyo-light",
-              darkThemeId: "tokyo-night",
-            },
+            patch: { planModeEnabled: true },
             updatedAt: "2026-08-14T12:00:00.000Z",
-          },
-        });
-        yield* eventStore.append({
-          type: "client-preferences.patched",
-          eventId: EventId.make("preferences-appearance-fresh"),
-          aggregateKind: "client-preferences",
-          aggregateId: "client-preferences",
-          occurredAt: "2026-08-14T13:00:00.000Z",
-          commandId: CommandId.make("preferences-appearance-fresh"),
-          causationEventId: null,
-          correlationId: CommandId.make("preferences-appearance-fresh"),
-          metadata: {},
-          payload: {
-            patch: { appearanceMode: "light", lightThemeId: "github-light" },
-            updatedAt: "2026-08-14T13:00:00.000Z",
           },
         });
         const equalStampEvent = yield* eventStore.append({
@@ -1235,22 +1215,6 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
         });
-        yield* eventStore.append({
-          type: "client-preferences.patched",
-          eventId: EventId.make("preferences-appearance-stale"),
-          aggregateKind: "client-preferences",
-          aggregateId: "client-preferences",
-          occurredAt: "2026-08-14T12:30:00.000Z",
-          commandId: CommandId.make("preferences-appearance-stale"),
-          causationEventId: null,
-          correlationId: CommandId.make("preferences-appearance-stale"),
-          metadata: {},
-          payload: {
-            patch: { appearanceMode: "dark", darkThemeId: "stale-dark" },
-            updatedAt: "2026-08-14T12:30:00.000Z",
-          },
-        });
-
         yield* projectionPipeline.bootstrap;
         yield* projectionPipeline.projectEvent(equalStampEvent);
         yield* projectionPipeline.projectEvent(equalStampEvent);
@@ -1259,23 +1223,11 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           sql<{
             readonly planModeEnabled: number;
             readonly planModeEnabledUpdatedAt: string;
-            readonly appearanceMode: string | null;
-            readonly appearanceModeUpdatedAt: string;
-            readonly lightThemeId: string | null;
-            readonly lightThemeIdUpdatedAt: string;
-            readonly darkThemeId: string | null;
-            readonly darkThemeIdUpdatedAt: string;
             readonly updatedAt: string;
           }>`
           SELECT
             plan_mode_enabled AS "planModeEnabled",
             plan_mode_enabled_updated_at AS "planModeEnabledUpdatedAt",
-            appearance_mode AS "appearanceMode",
-            appearance_mode_updated_at AS "appearanceModeUpdatedAt",
-            light_theme_id AS "lightThemeId",
-            light_theme_id_updated_at AS "lightThemeIdUpdatedAt",
-            dark_theme_id AS "darkThemeId",
-            dark_theme_id_updated_at AS "darkThemeIdUpdatedAt",
             updated_at AS "updatedAt"
           FROM projection_synced_client_preferences
         `;
@@ -1283,13 +1235,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           {
             planModeEnabled: 0,
             planModeEnabledUpdatedAt: "2026-08-14T12:00:00.000Z",
-            appearanceMode: "light",
-            appearanceModeUpdatedAt: "2026-08-14T13:00:00.000Z",
-            lightThemeId: "github-light",
-            lightThemeIdUpdatedAt: "2026-08-14T13:00:00.000Z",
-            darkThemeId: "stale-dark",
-            darkThemeIdUpdatedAt: "2026-08-14T12:30:00.000Z",
-            updatedAt: "2026-08-14T13:00:00.000Z",
+            updatedAt: "2026-08-14T12:00:00.000Z",
           },
         ];
         assert.deepEqual(yield* readPreferences(), expected);

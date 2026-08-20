@@ -215,42 +215,7 @@ export function projectEvent(
         "payload",
       ).pipe(
         Effect.map((payload) => {
-          const current =
-            nextBase.syncedClientPreferences === undefined
-              ? undefined
-              : {
-                  ...nextBase.syncedClientPreferences,
-                  updatedAtByField: {
-                    ...(nextBase.syncedClientPreferences.planModeEnabled === undefined
-                      ? undefined
-                      : {
-                          planModeEnabled:
-                            nextBase.syncedClientPreferences.updatedAtByField?.planModeEnabled ??
-                            nextBase.syncedClientPreferences.updatedAt,
-                        }),
-                    ...(nextBase.syncedClientPreferences.appearanceMode === undefined
-                      ? undefined
-                      : {
-                          appearanceMode:
-                            nextBase.syncedClientPreferences.updatedAtByField?.appearanceMode ??
-                            nextBase.syncedClientPreferences.updatedAt,
-                        }),
-                    ...(nextBase.syncedClientPreferences.lightThemeId === undefined
-                      ? undefined
-                      : {
-                          lightThemeId:
-                            nextBase.syncedClientPreferences.updatedAtByField?.lightThemeId ??
-                            nextBase.syncedClientPreferences.updatedAt,
-                        }),
-                    ...(nextBase.syncedClientPreferences.darkThemeId === undefined
-                      ? undefined
-                      : {
-                          darkThemeId:
-                            nextBase.syncedClientPreferences.updatedAtByField?.darkThemeId ??
-                            nextBase.syncedClientPreferences.updatedAt,
-                        }),
-                  },
-                };
+          const current = nextBase.syncedClientPreferences;
           const appliesPlanMode =
             payload.patch.planModeEnabled !== undefined &&
             (getSyncedClientPreferenceUpdatedAt(current, "planModeEnabled") ?? payload.updatedAt) <=

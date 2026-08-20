@@ -1,6 +1,11 @@
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import {
+  createSyncedClientPreferencesPatchRequest,
+  SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS,
+  syncedClientPreferenceRetryDelayMs,
+} from "@t3tools/client-runtime/synced-client-preferences";
+import {
   getSyncedClientPreferenceUpdatedAt,
   nextSyncedClientPreferencesUpdatedAt,
   type EnvironmentId,
@@ -58,7 +63,7 @@ export function createSyncedClientPreferenceWrite<
   readonly field: Field;
   readonly value: SyncedClientPreferenceValue<Field>;
   readonly serverPreferences: SyncedClientPreferences | undefined;
-  readonly pendingUpdatedAt?: string;
+  readonly pendingUpdatedAt?: string | undefined;
   readonly now: string;
 }) {
   const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(input.serverPreferences, input.field);
@@ -68,10 +73,10 @@ export function createSyncedClientPreferenceWrite<
       ? input.pendingUpdatedAt
       : serverUpdatedAt;
   return {
-    request: {
-      patch: syncedClientPreferencePatch(input.field, input.value),
-      updatedAt: nextSyncedClientPreferencesUpdatedAt([currentUpdatedAt], input.now),
-    },
+    request: createSyncedClientPreferencesPatchRequest(
+      syncedClientPreferencePatch(input.field, input.value),
+      nextSyncedClientPreferencesUpdatedAt([currentUpdatedAt], input.now),
+    ),
   } as const;
 }
 
@@ -92,12 +97,14 @@ export interface SyncedClientPreferenceHydrationInput<
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly clientHydrated: boolean;
   readonly clientValue: SyncedClientPreferenceValue<Field> | undefined;
+  readonly clientUpdatedAt?: string | undefined;
   readonly live: boolean;
   readonly serverPreferences: SyncedClientPreferences | undefined;
   readonly canPatch: boolean;
   readonly now: string;
   readonly patch: SyncedClientPreferencePatch<E>;
   readonly persist: (value: SyncedClientPreferenceValue<Field>) => void;
+  readonly persistUpdatedAt?: ((updatedAt: string) => void) | undefined;
 }
 
 export type SyncedClientPreferenceHydrationAction<Field extends SyncedClientPreferenceField> =
@@ -157,9 +164,6 @@ export function resolveSyncedClientPreferenceHydrationAction<
   };
 }
 
-const SYNCED_CLIENT_PREFERENCE_RETRY_DELAY_MS = 1_000;
-const SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS = 3;
-
 type SyncedClientPreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
 const scheduleSyncedClientPreferenceRetry: SyncedClientPreferenceRetryScheduler = (
@@ -191,6 +195,8 @@ export function createSyncedClientPreferenceHydrationController<
     readonly synchronizeAgainByOwner: Map<symbol, () => void>;
     cancelRetry?: () => void;
     patchAttempt: number;
+    retryEpochActive: boolean;
+    lastCanPatch: boolean;
   }
 
   const imperativeSynchronizationOwner = Symbol();
@@ -201,6 +207,8 @@ export function createSyncedClientPreferenceHydrationController<
     const state: SyncedClientPreferenceEnvironmentState = {
       synchronizeAgainByOwner: new Map(),
       patchAttempt: 0,
+      retryEpochActive: false,
+      lastCanPatch: false,
     };
     stateByEnvironment.set(environmentId, state);
     return state;
@@ -231,7 +239,7 @@ export function createSyncedClientPreferenceHydrationController<
     ) {
       return;
     }
-    const delayMs = SYNCED_CLIENT_PREFERENCE_RETRY_DELAY_MS * 2 ** (state.patchAttempt - 1);
+    const delayMs = syncedClientPreferenceRetryDelayMs(state.patchAttempt);
     state.cancelRetry = scheduleRetry(() => {
       delete state.cancelRetry;
       getSynchronizeAgain(state)?.();
@@ -248,6 +256,7 @@ export function createSyncedClientPreferenceHydrationController<
     readonly requestedUpdatedAt: string;
     readonly result: AtomCommandResult<SyncedClientPreferences, E>;
     readonly persist: (value: SyncedClientPreferenceValue<Field>) => void;
+    readonly persistUpdatedAt: ((updatedAt: string) => void) | undefined;
   }) => {
     const state = stateByEnvironment.get(input.environmentId);
     if (state === undefined) return;
@@ -282,6 +291,7 @@ export function createSyncedClientPreferenceHydrationController<
     }
     if (getSynchronizeAgain(state) === undefined || state.pendingAdoption === undefined) return;
     input.persist(state.pendingAdoption.value);
+    input.persistUpdatedAt?.(state.pendingAdoption.updatedAt);
     markAdopted(state, state.pendingAdoption.updatedAt);
   };
 
@@ -289,6 +299,7 @@ export function createSyncedClientPreferenceHydrationController<
     readonly target: SyncedClientPreferencePatchTarget;
     readonly patch: SyncedClientPreferencePatch<E>;
     readonly persist: (value: SyncedClientPreferenceValue<Field>) => void;
+    readonly persistUpdatedAt: ((updatedAt: string) => void) | undefined;
   }) => {
     const { environmentId } = input.target;
     const requestedUpdatedAt = input.target.input.updatedAt;
@@ -296,7 +307,13 @@ export function createSyncedClientPreferenceHydrationController<
     state.patchAttempt += 1;
     state.writeInFlightUpdatedAt = requestedUpdatedAt;
     void input.patch(input.target).then((result) => {
-      settlePatch({ environmentId, requestedUpdatedAt, result, persist: input.persist });
+      settlePatch({
+        environmentId,
+        requestedUpdatedAt,
+        result,
+        persist: input.persist,
+        persistUpdatedAt: input.persistUpdatedAt,
+      });
     });
   };
 
@@ -310,18 +327,36 @@ export function createSyncedClientPreferenceHydrationController<
       deactivate(environmentId, owner);
       return;
     }
+    const state = stateFor(environmentId);
     if (!input.live) {
+      state.retryEpochActive = false;
+      state.lastCanPatch = input.canPatch;
       deactivate(environmentId, owner);
       return;
     }
-    const state = stateFor(environmentId);
+    if (!state.retryEpochActive || (!state.lastCanPatch && input.canPatch)) {
+      cancelRetry(state);
+      state.patchAttempt = 0;
+    }
+    state.retryEpochActive = true;
+    state.lastCanPatch = input.canPatch;
     state.synchronizeAgainByOwner.set(owner, () => synchronize(input, owner));
     const deactivateSynchronization = () => deactivate(environmentId, owner);
     if (input.serverPreferences?.[field] !== undefined) {
       delete state.seedPendingUpdatedAt;
     }
-    const pendingWrite = state.writePending;
     const serverUpdatedAt = getSyncedClientPreferenceUpdatedAt(input.serverPreferences, field);
+    if (
+      state.writePending === undefined &&
+      input.clientUpdatedAt !== undefined &&
+      (serverUpdatedAt === undefined || serverUpdatedAt < input.clientUpdatedAt)
+    ) {
+      state.writePending = {
+        value: input.clientValue,
+        updatedAt: input.clientUpdatedAt,
+      };
+    }
+    const pendingWrite = state.writePending;
     if (
       state.pendingAdoption !== undefined &&
       serverUpdatedAt !== undefined &&
@@ -339,6 +374,7 @@ export function createSyncedClientPreferenceHydrationController<
       if (input.clientValue !== state.pendingAdoption.value) {
         input.persist(state.pendingAdoption.value);
       }
+      input.persistUpdatedAt?.(state.pendingAdoption.updatedAt);
       markAdopted(state, state.pendingAdoption.updatedAt);
     }
     if (
@@ -363,16 +399,16 @@ export function createSyncedClientPreferenceHydrationController<
       dispatchPatch<E>({
         target: {
           environmentId,
-          input: {
-            patch: syncedClientPreferencePatch(field, activePendingWrite.value),
-            updatedAt: activePendingWrite.updatedAt,
-          },
+          input: createSyncedClientPreferencesPatchRequest(
+            syncedClientPreferencePatch(field, activePendingWrite.value),
+            activePendingWrite.updatedAt,
+          ),
         },
         patch: input.patch,
         persist: input.persist,
+        persistUpdatedAt: input.persistUpdatedAt,
       });
     }
-    if (environmentId !== input.primaryEnvironmentId) return deactivateSynchronization;
 
     let hydrationInput: Parameters<typeof resolveSyncedClientPreferenceHydrationAction<Field>>[0] =
       {
@@ -391,9 +427,36 @@ export function createSyncedClientPreferenceHydrationController<
     }
     const action = resolveSyncedClientPreferenceHydrationAction(hydrationInput);
     if (action.type === "adopt") {
+      if (environmentId !== input.primaryEnvironmentId) {
+        if (!input.canPatch || input.clientValue === action.value) {
+          return deactivateSynchronization;
+        }
+        const next = createSyncedClientPreferenceWrite({
+          field,
+          value: input.clientValue,
+          serverPreferences: input.serverPreferences,
+          ...(input.clientUpdatedAt === undefined
+            ? undefined
+            : { pendingUpdatedAt: input.clientUpdatedAt }),
+          now: input.now,
+        });
+        state.writePending = {
+          value: input.clientValue,
+          updatedAt: next.request.updatedAt,
+        };
+        input.persistUpdatedAt?.(next.request.updatedAt);
+        dispatchPatch<E>({
+          target: { environmentId, input: next.request },
+          patch: input.patch,
+          persist: input.persist,
+          persistUpdatedAt: input.persistUpdatedAt,
+        });
+        return deactivateSynchronization;
+      }
       if (!input.canPatch) return deactivateSynchronization;
       markAdopted(state, action.updatedAt);
       if (input.clientValue !== action.value) input.persist(action.value);
+      input.persistUpdatedAt?.(action.updatedAt);
       return deactivateSynchronization;
     }
     if (action.type !== "seed" || !input.canPatch) return deactivateSynchronization;
@@ -402,13 +465,14 @@ export function createSyncedClientPreferenceHydrationController<
     dispatchPatch<E>({
       target: {
         environmentId,
-        input: {
-          patch: syncedClientPreferencePatch(field, action.value),
-          updatedAt: action.updatedAt,
-        },
+        input: createSyncedClientPreferencesPatchRequest(
+          syncedClientPreferencePatch(field, action.value),
+          action.updatedAt,
+        ),
       },
       patch: input.patch,
       persist: input.persist,
+      persistUpdatedAt: input.persistUpdatedAt,
     });
 
     return deactivateSynchronization;
@@ -422,6 +486,7 @@ export function createSyncedClientPreferenceHydrationController<
     readonly now: string;
     readonly patch: SyncedClientPreferencePatch<E>;
     readonly persist: (value: SyncedClientPreferenceValue<Field>) => void;
+    readonly persistUpdatedAt?: ((updatedAt: string) => void) | undefined;
   }) => {
     if (input.environmentId === null) return;
     const environmentId = input.environmentId;
@@ -455,12 +520,14 @@ export function createSyncedClientPreferenceHydrationController<
       value: input.value,
       updatedAt: next.request.updatedAt,
     };
+    input.persistUpdatedAt?.(next.request.updatedAt);
     delete state.pendingAdoption;
     if (!input.canPatch) return;
     dispatchPatch<E>({
       target: { environmentId, input: next.request },
       patch: input.patch,
       persist: input.persist,
+      persistUpdatedAt: input.persistUpdatedAt,
     });
   };
 
@@ -496,11 +563,13 @@ export function useSyncedClientPreferenceHydrationEffect<
       controller,
       input.canPatch,
       input.clientHydrated,
+      input.clientUpdatedAt,
       input.clientValue,
       input.environmentId,
       input.live,
       input.patch,
       input.persist,
+      input.persistUpdatedAt,
       input.primaryEnvironmentId,
       input.serverPreferences,
       synchronizationOwner,

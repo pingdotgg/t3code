@@ -30,7 +30,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
-import { useClientSettings } from "../hooks/useSettings";
+import { SyncedPlanModeEnvironmentSync, useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -140,6 +140,7 @@ function RootRouteView() {
         <ConfirmDialogHost />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <SyncedPlanModeCoordinator />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
@@ -150,6 +151,16 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function SyncedPlanModeCoordinator() {
+  const { environments } = useEnvironments();
+  return environments.map((environment) => (
+    <SyncedPlanModeEnvironmentSync
+      key={environment.environmentId}
+      environmentId={environment.environmentId}
+    />
+  ));
 }
 
 function GlassAppearanceSync() {

@@ -82,8 +82,8 @@ import {
   replaceCurrentComposerTrigger,
   resolveComposerSubmitInteractionMode,
   resolveSlashCommandInteractionMode,
-} from "./plan-mode";
-import { usePlanModePreferenceState } from "./use-plan-mode-enabled";
+} from "./legacy-plan-mode";
+import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -342,8 +342,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
-  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } =
-    usePlanModePreferenceState();
+  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
   const canSend = canSubmitExistingThreadDraft({ hasContent, planModePreferenceLoaded });
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,

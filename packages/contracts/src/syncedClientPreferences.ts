@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime } from "./baseSchemas.ts";
+import { CommandId, IsoDateTime } from "./baseSchemas.ts";
 
 export const SyncedClientAppearanceMode = Schema.Literals(["system", "light", "dark"]);
 export type SyncedClientAppearanceMode = typeof SyncedClientAppearanceMode.Type;
@@ -56,9 +56,7 @@ export type SyncedClientPreferencesUpdatedAtByField =
 
 export const SyncedClientPreferences = Schema.Struct({
   ...SyncedClientPreferenceFields,
-  // Optional while mixed-version clients may still receive aggregate-only snapshots.
-  updatedAtByField: Schema.optionalKey(SyncedClientPreferencesUpdatedAtByField),
-  // Retained as the maximum field stamp so older clients can decode current snapshots.
+  updatedAtByField: SyncedClientPreferencesUpdatedAtByField,
   updatedAt: SyncedClientPreferencesUpdatedAt,
 });
 export type SyncedClientPreferences = typeof SyncedClientPreferences.Type;
@@ -68,7 +66,7 @@ export function getSyncedClientPreferenceUpdatedAt(
   field: SyncedClientPreferenceField,
 ): SyncedClientPreferencesUpdatedAt | undefined {
   if (preferences?.[field] === undefined) return undefined;
-  return preferences.updatedAtByField?.[field] ?? preferences.updatedAt;
+  return preferences.updatedAtByField[field];
 }
 
 export const SyncedClientPreferencesPatch = Schema.Struct(SyncedClientPreferenceFields).check(
@@ -83,10 +81,8 @@ export const SyncedClientPreferencesPatch = Schema.Struct(SyncedClientPreference
 );
 export type SyncedClientPreferencesPatch = typeof SyncedClientPreferencesPatch.Type;
 
-export const GetSyncedClientPreferencesRequest = Schema.Struct({});
-export type GetSyncedClientPreferencesRequest = typeof GetSyncedClientPreferencesRequest.Type;
-
 export const PatchSyncedClientPreferencesRequest = Schema.Struct({
+  commandId: CommandId,
   patch: SyncedClientPreferencesPatch,
   updatedAt: SyncedClientPreferencesUpdatedAt,
 });

@@ -17,9 +17,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   resolveComposerInteractionMode,
-  resolvePlanModeEnabled,
-} from "../features/threads/plan-mode";
-import { usePlanModePreferenceState } from "../features/threads/use-plan-mode-enabled";
+  resolveLegacyPlanModeEnabled,
+} from "../features/threads/legacy-plan-mode";
+import { useLegacyPlanModeState } from "../features/threads/use-legacy-plan-mode-enabled";
 import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -93,9 +93,10 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
 
 function readPlanModeEnabled(): boolean {
   const preferences = appAtomRegistry.get(mobilePreferencesAtom);
-  return resolvePlanModeEnabled(
-    AsyncResult.isSuccess(preferences) ? preferences.value.planModeEnabled : undefined,
-  );
+  return resolveLegacyPlanModeEnabled({
+    loaded: AsyncResult.isSuccess(preferences),
+    preference: AsyncResult.isSuccess(preferences) ? preferences.value.planModeEnabled : undefined,
+  });
 }
 
 export function useThreadOutboxDrain(): void {
@@ -115,7 +116,7 @@ export function useThreadOutboxDrain(): void {
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
   const projects = useProjects();
-  const { loaded: planModePreferenceLoaded } = usePlanModePreferenceState();
+  const { loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());

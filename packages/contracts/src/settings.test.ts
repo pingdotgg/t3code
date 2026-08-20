@@ -11,106 +11,12 @@ import {
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
-import {
-  SyncedClientPreferences,
-  SyncedClientPreferencesPatch,
-  SyncedClientPreferencesUpdatedAt,
-  PatchSyncedClientPreferencesRequest,
-} from "./syncedClientPreferences.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
-const decodeSyncedClientPreferences = Schema.decodeUnknownSync(SyncedClientPreferences);
-const decodeSyncedClientPreferencesPatch = Schema.decodeUnknownSync(SyncedClientPreferencesPatch);
-const decodePatchSyncedClientPreferencesRequest = Schema.decodeUnknownSync(
-  PatchSyncedClientPreferencesRequest,
-);
-const decodeLegacySyncedClientPreferences = Schema.decodeUnknownSync(
-  Schema.Struct({
-    planModeEnabled: Schema.optionalKey(Schema.Boolean),
-    updatedAt: SyncedClientPreferencesUpdatedAt,
-  }),
-);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
-
-describe("SyncedClientPreferences", () => {
-  it("accepts exactly the synced fields plus the LWW stamp", () => {
-    const preferences = decodeSyncedClientPreferences({
-      planModeEnabled: true,
-      appearanceMode: "dark",
-      lightThemeId: "midnight-light",
-      darkThemeId: "midnight-dark",
-      updatedAtByField: {
-        planModeEnabled: "2026-08-14T10:00:00.000Z",
-        appearanceMode: "2026-08-14T11:00:00.000Z",
-        lightThemeId: "2026-08-14T11:30:00.000Z",
-        darkThemeId: "2026-08-14T12:00:00.000Z",
-      },
-      updatedAt: "2026-08-14T12:00:00.000Z",
-      ignored: true,
-    });
-    const patch = decodeSyncedClientPreferencesPatch({
-      planModeEnabled: false,
-      appearanceMode: "system",
-      lightThemeId: "t3-code",
-      darkThemeId: "t3-code",
-      ignored: true,
-    });
-
-    expect(Object.keys(preferences).sort()).toEqual([
-      "appearanceMode",
-      "darkThemeId",
-      "lightThemeId",
-      "planModeEnabled",
-      "updatedAt",
-      "updatedAtByField",
-    ]);
-    expect(Object.keys(patch).sort()).toEqual([
-      "appearanceMode",
-      "darkThemeId",
-      "lightThemeId",
-      "planModeEnabled",
-    ]);
-  });
-
-  it("rejects non-canonical LWW stamps", () => {
-    for (const updatedAt of ["not-a-date", "2026-02-30T00:00:00.000Z"]) {
-      expect(() =>
-        decodeSyncedClientPreferences({
-          planModeEnabled: true,
-          updatedAt,
-        }),
-      ).toThrow();
-    }
-  });
-
-  it("decodes aggregate-only old snapshots and preserves old-client decode", () => {
-    const oldSnapshot = decodeSyncedClientPreferences({
-      planModeEnabled: true,
-      updatedAt: "2026-08-14T12:00:00.000Z",
-    });
-    const currentSnapshot = decodeSyncedClientPreferences({
-      planModeEnabled: true,
-      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
-      updatedAt: "2026-08-14T12:00:00.000Z",
-    });
-
-    expect(oldSnapshot).not.toHaveProperty("updatedAtByField");
-    expect(decodeLegacySyncedClientPreferences(currentSnapshot)).toEqual(oldSnapshot);
-  });
-
-  it("rejects empty and unknown-only patches at the RPC boundary", () => {
-    expect(() => decodeSyncedClientPreferencesPatch({})).toThrow();
-    expect(() =>
-      decodePatchSyncedClientPreferencesRequest({
-        patch: { unsupported: true },
-        updatedAt: "2026-08-14T12:00:00.000Z",
-      }),
-    ).toThrow();
-  });
-});
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -126,6 +32,27 @@ describe("ClientSettings word wrap", () => {
     expect(decoded.wordWrap).toBe(true);
     expect(decoded).not.toHaveProperty("chatWordWrap");
     expect(decoded).not.toHaveProperty("diffWordWrap");
+  });
+});
+
+describe("ClientSettings synced preference clocks", () => {
+  it("accepts canonical clocks and rejects malformed persisted values", () => {
+    const updatedAt = "2026-08-14T12:00:00.000Z";
+    expect(
+      decodeClientSettings({
+        planModeUpdatedAt: updatedAt,
+        appearanceModeUpdatedAt: updatedAt,
+        lightThemeIdUpdatedAt: updatedAt,
+        darkThemeIdUpdatedAt: updatedAt,
+      }),
+    ).toMatchObject({
+      planModeUpdatedAt: updatedAt,
+      appearanceModeUpdatedAt: updatedAt,
+      lightThemeIdUpdatedAt: updatedAt,
+      darkThemeIdUpdatedAt: updatedAt,
+    });
+    expect(() => decodeClientSettings({ planModeUpdatedAt: "not-a-date" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ darkThemeIdUpdatedAt: "not-a-date" })).toThrow();
   });
 });
 

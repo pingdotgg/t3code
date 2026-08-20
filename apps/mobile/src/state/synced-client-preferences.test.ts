@@ -1,4 +1,5 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { CommandId, EnvironmentId } from "@t3tools/contracts";
+import { createSyncedClientPreferencesPatchRequest } from "@t3tools/client-runtime/synced-client-preferences";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -6,23 +7,29 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   advancePlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationKey,
+  createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWrite,
-  createSyncedClientPreferenceReconciliationController,
-  createSyncedClientPreferenceWriteController,
+  createPlanModePreferenceWriteController,
   createSyncedClientPreferencesWrite,
   hasPlanModePreferenceReconciliationAttempted,
   isPlanModePreferenceReconciliationReady,
   nextMobileSyncedPreferencesUpdatedAt,
   reconcilePlanModePreferences,
-  reconcileSyncedClientPreferences,
+  resolvePlanModeLocalPatchPersistence,
 } from "./synced-client-preferences-model";
 
 const environmentId = (value: string) => EnvironmentId.make(value);
+const planModeCommandId = (value: boolean, updatedAt: string) =>
+  createSyncedClientPreferencesPatchRequest({ planModeEnabled: value }, updatedAt).commandId;
 const livePlanModeEnvironment = (id: string, value: boolean, updatedAt: string) => ({
   environmentId: environmentId(id),
   connectionState: "connected" as const,
   shellStatus: "live" as const,
-  preferences: { planModeEnabled: value, updatedAt },
+  preferences: {
+    planModeEnabled: value,
+    updatedAtByField: { planModeEnabled: updatedAt },
+    updatedAt,
+  },
 });
 
 describe("synced client preferences", () => {
@@ -108,6 +115,7 @@ describe("synced client preferences", () => {
       shellStatus: "live",
       preferences: {
         planModeEnabled: true,
+        updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
         updatedAt: "2026-08-14T12:00:00.000Z",
       },
     } as const;
@@ -233,6 +241,7 @@ describe("synced client preferences", () => {
         shellStatus: "live",
         preferences: {
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
       },
@@ -364,6 +373,7 @@ describe("synced client preferences", () => {
             environmentId: environmentId("environment-1"),
             preferences: {
               planModeEnabled: true,
+              updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
               updatedAt: "2026-08-14T12:00:00.000Z",
             },
           },
@@ -392,6 +402,7 @@ describe("synced client preferences", () => {
             canPatch: false,
             preferences: {
               planModeEnabled: true,
+              updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
               updatedAt: "2026-08-14T12:00:00.000Z",
             },
           },
@@ -409,6 +420,7 @@ describe("synced client preferences", () => {
       authoritativePreferences: [
         {
           planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:02:00.000Z" },
           updatedAt: "2026-08-14T12:02:00.000Z",
         },
       ],
@@ -425,6 +437,7 @@ describe("synced client preferences", () => {
       {
         environmentId: environmentId("environment-1"),
         input: {
+          commandId: planModeCommandId(true, "2026-08-14T12:02:00.001Z"),
           patch: { planModeEnabled: true },
           updatedAt: "2026-08-14T12:02:00.001Z",
         },
@@ -432,6 +445,7 @@ describe("synced client preferences", () => {
       {
         environmentId: environmentId("environment-2"),
         input: {
+          commandId: planModeCommandId(true, "2026-08-14T12:02:00.001Z"),
           patch: { planModeEnabled: true },
           updatedAt: "2026-08-14T12:02:00.001Z",
         },
@@ -440,37 +454,38 @@ describe("synced client preferences", () => {
   });
 
   it("ignores a stale toggle ack after a newer same-millisecond write", () => {
-    const controller = createSyncedClientPreferenceWriteController("planModeEnabled");
+    const controller = createPlanModePreferenceWriteController();
     const environment = environmentId("environment-1");
     const first = controller.create({
-      patch: { planModeEnabled: true },
+      value: true,
       connectedEnvironmentIds: [environment],
       now: "2026-08-14T12:00:00.000Z",
     });
     const second = controller.create({
-      patch: { planModeEnabled: false },
+      value: false,
       connectedEnvironmentIds: [environment],
       now: "2026-08-14T12:00:00.000Z",
     });
 
-    expect(second.localPatch.updatedAtByField.planModeEnabled).toBe("2026-08-14T12:00:00.001Z");
+    expect(second.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled).toBe(
+      "2026-08-14T12:00:00.001Z",
+    );
     expect(
       controller.settle({
         target: second.environmentPatches[0]!,
         result: AsyncResult.success({
           planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: second.environmentPatches[0]!.input.updatedAt },
           updatedAt: second.environmentPatches[0]!.input.updatedAt,
         }),
       }),
-    ).toEqual({
-      planModeEnabled: false,
-      syncedClientPreferencesUpdatedAtByField: second.localPatch.updatedAtByField,
-    });
+    ).toEqual(second.localPatch);
     expect(
       controller.settle({
         target: first.environmentPatches[0]!,
         result: AsyncResult.success({
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: first.environmentPatches[0]!.input.updatedAt },
           updatedAt: first.environmentPatches[0]!.input.updatedAt,
         }),
       }),
@@ -478,28 +493,30 @@ describe("synced client preferences", () => {
   });
 
   it("advances past a local clock reconciled after the previous write", () => {
-    const controller = createSyncedClientPreferenceWriteController("planModeEnabled");
+    const controller = createPlanModePreferenceWriteController();
     const environment = environmentId("environment-1");
     controller.create({
-      patch: { planModeEnabled: true },
+      value: true,
       connectedEnvironmentIds: [environment],
       now: "2026-08-14T12:00:00.000Z",
     });
 
     const write = controller.create({
-      patch: { planModeEnabled: false },
+      value: false,
       connectedEnvironmentIds: [environment],
       currentUpdatedAtByField: { planModeEnabled: "2026-08-14T12:05:00.000Z" },
       now: "2026-08-14T12:01:00.000Z",
     });
 
-    expect(write.localPatch.updatedAtByField.planModeEnabled).toBe("2026-08-14T12:05:00.001Z");
+    expect(write.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled).toBe(
+      "2026-08-14T12:05:00.001Z",
+    );
   });
 
   it("settles a multi-environment toggle from only the first response", () => {
-    const controller = createSyncedClientPreferenceWriteController("planModeEnabled");
+    const controller = createPlanModePreferenceWriteController();
     const write = controller.create({
-      patch: { planModeEnabled: true },
+      value: true,
       connectedEnvironmentIds: [environmentId("environment-1"), environmentId("environment-2")],
       now: "2026-08-14T12:00:00.000Z",
     });
@@ -509,6 +526,7 @@ describe("synced client preferences", () => {
         target: write.environmentPatches[1]!,
         result: AsyncResult.success({
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:01:00.000Z" },
           updatedAt: "2026-08-14T12:01:00.000Z",
         }),
       }),
@@ -523,39 +541,11 @@ describe("synced client preferences", () => {
         target: write.environmentPatches[0]!,
         result: AsyncResult.success({
           planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: "2026-08-14T11:59:00.000Z" },
           updatedAt: "2026-08-14T11:59:00.000Z",
         }),
       }),
     ).toBeNull();
-  });
-
-  it("normalizes a theme acknowledgment without changing other field stamps", () => {
-    const controller = createSyncedClientPreferenceWriteController("lightThemeId");
-    const write = controller.create({
-      patch: { lightThemeId: "custom-theme" },
-      connectedEnvironmentIds: [environmentId("environment-1")],
-      currentUpdatedAtByField: {
-        appearanceMode: "2026-08-14T11:00:00.000Z",
-      },
-      now: "2026-08-14T12:00:00.000Z",
-    });
-
-    expect(
-      controller.settle({
-        target: write.environmentPatches[0]!,
-        result: AsyncResult.success({
-          lightThemeId: "unknown-on-this-device",
-          updatedAtByField: { lightThemeId: "2026-08-14T12:01:00.000Z" },
-          updatedAt: "2026-08-14T12:01:00.000Z",
-        }),
-        normalizeThemeId: () => "t3-code",
-      }),
-    ).toEqual({
-      lightThemeId: "t3-code",
-      syncedClientPreferencesUpdatedAtByField: {
-        lightThemeId: "2026-08-14T12:01:00.000Z",
-      },
-    });
   });
 
   it("keeps offline toggles device-local", () => {
@@ -583,7 +573,6 @@ describe("synced client preferences", () => {
         connectedEnvironmentIds: [environmentId("environment-1")],
         currentUpdatedAtByField: {
           planModeEnabled: "2026-08-14T12:00:00.000Z",
-          appearanceMode: "2026-08-14T13:00:00.000Z",
         },
         now: "2026-08-14T12:30:00.000Z",
       }),
@@ -592,13 +581,13 @@ describe("synced client preferences", () => {
         values: { planModeEnabled: true },
         updatedAtByField: {
           planModeEnabled: "2026-08-14T12:30:00.000Z",
-          appearanceMode: "2026-08-14T13:00:00.000Z",
         },
       },
       environmentPatches: [
         {
           environmentId: environmentId("environment-1"),
           input: {
+            commandId: planModeCommandId(true, "2026-08-14T12:30:00.000Z"),
             patch: { planModeEnabled: true },
             updatedAt: "2026-08-14T12:30:00.000Z",
           },
@@ -616,6 +605,7 @@ describe("synced client preferences", () => {
           environmentId: environmentId("environment-1"),
           preferences: {
             planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: "2026-08-14T11:00:00.000Z" },
             updatedAt: "2026-08-14T11:00:00.000Z",
           },
         },
@@ -623,6 +613,7 @@ describe("synced client preferences", () => {
           environmentId: environmentId("environment-2"),
           preferences: {
             planModeEnabled: true,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
         },
@@ -648,10 +639,11 @@ describe("synced client preferences", () => {
       environments: [{ environmentId: lowerEnvironmentId, preferences: undefined }],
       now: updatedAt,
     });
-    const controller = createSyncedClientPreferenceReconciliationController("planModeEnabled");
+    const controller = createPlanModePreferenceReconciliationController();
     const patch = vi.fn(async (target: (typeof initial.environmentPatches)[number]) =>
       AsyncResult.success({
         planModeEnabled: target.input.patch.planModeEnabled,
+        updatedAtByField: { planModeEnabled: target.input.updatedAt },
         updatedAt: target.input.updatedAt,
       }),
     );
@@ -662,11 +654,19 @@ describe("synced client preferences", () => {
     const environments = [
       {
         environmentId: lowerEnvironmentId,
-        preferences: { planModeEnabled: false, updatedAt },
+        preferences: {
+          planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: updatedAt },
+          updatedAt,
+        },
       },
       {
         environmentId: higherEnvironmentId,
-        preferences: { planModeEnabled: true, updatedAt },
+        preferences: {
+          planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: updatedAt },
+          updatedAt,
+        },
       },
     ];
     const ascending = reconcilePlanModePreferences({
@@ -692,7 +692,11 @@ describe("synced client preferences", () => {
       environmentPatches: [
         {
           environmentId: lowerEnvironmentId,
-          input: { patch: { planModeEnabled: true }, updatedAt },
+          input: {
+            commandId: planModeCommandId(true, updatedAt),
+            patch: { planModeEnabled: true },
+            updatedAt,
+          },
         },
       ],
     };
@@ -706,14 +710,78 @@ describe("synced client preferences", () => {
       patchedValues: [
         {
           environmentId: lowerEnvironmentId,
-          input: { patch: { planModeEnabled: false }, updatedAt },
+          input: {
+            commandId: planModeCommandId(false, updatedAt),
+            patch: { planModeEnabled: false },
+            updatedAt,
+          },
         },
         {
           environmentId: lowerEnvironmentId,
-          input: { patch: { planModeEnabled: true }, updatedAt },
+          input: {
+            commandId: planModeCommandId(true, updatedAt),
+            patch: { planModeEnabled: true },
+            updatedAt,
+          },
         },
       ],
     });
+  });
+
+  it("keeps the applied equal-stamp winner after its environment disconnects", () => {
+    const updatedAt = "2026-08-14T12:00:00.000Z";
+    const reconciliation = reconcilePlanModePreferences({
+      localPlanModeEnabled: true,
+      localUpdatedAt: updatedAt,
+      environments: [
+        {
+          environmentId: environmentId("remaining"),
+          preferences: {
+            planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: updatedAt },
+            updatedAt,
+          },
+        },
+      ],
+      now: updatedAt,
+      preserveLocalOnEqualStamp: true,
+    });
+
+    expect(reconciliation.localPatch).toBeNull();
+    expect(reconciliation.environmentPatches).toEqual([
+      {
+        environmentId: environmentId("remaining"),
+        input: {
+          commandId: planModeCommandId(true, updatedAt),
+          patch: { planModeEnabled: true },
+          updatedAt,
+        },
+      },
+    ]);
+  });
+
+  it("attempts the same local reconciliation patch only once until it changes", () => {
+    const patch = {
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-14T12:00:00.000Z",
+      },
+    } as const;
+    const first = resolvePlanModeLocalPatchPersistence({ attemptedKey: null, localPatch: patch });
+    const repeated = resolvePlanModeLocalPatchPersistence({
+      attemptedKey: first.nextAttemptedKey,
+      localPatch: patch,
+    });
+    const changed = resolvePlanModeLocalPatchPersistence({
+      attemptedKey: repeated.nextAttemptedKey,
+      localPatch: { ...patch, planModeEnabled: false },
+    });
+
+    expect([first.shouldPersist, repeated.shouldPersist, changed.shouldPersist]).toEqual([
+      true,
+      false,
+      true,
+    ]);
   });
 
   it("reconciles when ES2023 change-by-copy array methods are unavailable", () => {
@@ -732,6 +800,7 @@ describe("synced client preferences", () => {
             environmentId: environmentId("older"),
             preferences: {
               planModeEnabled: false,
+              updatedAtByField: { planModeEnabled: "2026-08-14T11:00:00.000Z" },
               updatedAt: "2026-08-14T11:00:00.000Z",
             },
           },
@@ -739,6 +808,7 @@ describe("synced client preferences", () => {
             environmentId: environmentId("newer"),
             preferences: {
               planModeEnabled: true,
+              updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
               updatedAt: "2026-08-14T12:00:00.000Z",
             },
           },
@@ -762,6 +832,7 @@ describe("synced client preferences", () => {
         environmentId: environmentId("environment-1"),
         preferences: {
           planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: "2026-08-14T11:00:00.000Z" },
           updatedAt: "2026-08-14T11:00:00.000Z",
         },
       },
@@ -769,6 +840,7 @@ describe("synced client preferences", () => {
         environmentId: environmentId("environment-2"),
         preferences: {
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
       },
@@ -792,124 +864,6 @@ describe("synced client preferences", () => {
     );
   });
 
-  it("does not advance plan mode past a newer non-plan preference stamp", () => {
-    const environments = [
-      {
-        environmentId: environmentId("appearance-only"),
-        preferences: {
-          appearanceMode: "dark" as const,
-          updatedAt: "2026-08-14T13:00:00.000Z",
-        },
-      },
-      {
-        environmentId: environmentId("plan-source"),
-        preferences: {
-          planModeEnabled: true,
-          updatedAt: "2026-08-14T12:00:00.000Z",
-        },
-      },
-    ];
-    const first = reconcilePlanModePreferences({
-      localPlanModeEnabled: false,
-      localUpdatedAt: "2026-08-14T11:00:00.000Z",
-      environments,
-      now: "2026-08-14T12:59:00.000Z",
-    });
-    const second = reconcilePlanModePreferences({
-      localPlanModeEnabled: first.localPatch?.planModeEnabled,
-      localUpdatedAt: first.localPatch?.syncedClientPreferencesUpdatedAtByField?.planModeEnabled,
-      environments,
-      now: "2026-08-14T13:01:00.000Z",
-    });
-
-    expect(first.environmentPatches).toHaveLength(1);
-    expect(first.environmentPatches[0]?.input.updatedAt).toBe("2026-08-14T12:00:00.000Z");
-    expect(second.environmentPatches[0]?.input.updatedAt).toBe(
-      first.environmentPatches[0]?.input.updatedAt,
-    );
-  });
-
-  it("adopts a newer appearance while pushing only an offline plan write", () => {
-    const reconciliation = reconcileSyncedClientPreferences({
-      local: {
-        values: { planModeEnabled: true, appearanceMode: "light" },
-        updatedAtByField: {
-          planModeEnabled: "2026-08-14T12:00:00.001Z",
-          appearanceMode: "2026-08-14T11:00:00.000Z",
-        },
-      },
-      environments: [
-        {
-          environmentId: environmentId("environment-1"),
-          preferences: {
-            planModeEnabled: false,
-            appearanceMode: "dark",
-            updatedAtByField: {
-              planModeEnabled: "2026-08-14T12:00:00.000Z",
-              appearanceMode: "2026-08-14T13:00:00.000Z",
-            },
-            updatedAt: "2026-08-14T13:00:00.000Z",
-          },
-        },
-      ],
-      now: "2026-08-14T14:00:00.000Z",
-    });
-
-    expect(reconciliation.localPatch).toEqual({
-      values: { appearanceMode: "dark" },
-      updatedAtByField: {
-        planModeEnabled: "2026-08-14T12:00:00.001Z",
-        appearanceMode: "2026-08-14T13:00:00.000Z",
-      },
-    });
-    expect(reconciliation.environmentPatches).toEqual([
-      {
-        environmentId: environmentId("environment-1"),
-        input: {
-          patch: { planModeEnabled: true },
-          updatedAt: "2026-08-14T12:00:00.001Z",
-        },
-      },
-    ]);
-  });
-
-  it("stabilizes unavailable remote theme ids at the local fallback", () => {
-    const environment = {
-      environmentId: environmentId("environment-1"),
-      preferences: {
-        lightThemeId: "remote-custom-theme",
-        updatedAtByField: { lightThemeId: "2026-08-14T13:00:00.000Z" },
-        updatedAt: "2026-08-14T13:00:00.000Z",
-      },
-    } as const;
-    const normalizeThemeId = () => "t3-code";
-    const first = reconcileSyncedClientPreferences({
-      local: {
-        values: { lightThemeId: "t3-code" },
-        updatedAtByField: { lightThemeId: "2026-08-14T12:00:00.000Z" },
-      },
-      environments: [environment],
-      now: "2026-08-14T14:00:00.000Z",
-      normalizeThemeId,
-    });
-    const second = reconcileSyncedClientPreferences({
-      local: {
-        values: first.localPatch?.values ?? {},
-        updatedAtByField: first.localPatch?.updatedAtByField,
-      },
-      environments: [environment],
-      now: "2026-08-14T14:00:00.000Z",
-      normalizeThemeId,
-    });
-
-    expect(first.localPatch).toEqual({
-      values: { lightThemeId: "t3-code" },
-      updatedAtByField: { lightThemeId: "2026-08-14T13:00:00.000Z" },
-    });
-    expect(second.localPatch).toBeNull();
-    expect(second.environmentPatches).toEqual([]);
-  });
-
   it("patches only stale environments after a peer converges", () => {
     const reconciliation = reconcilePlanModePreferences({
       localPlanModeEnabled: true,
@@ -919,6 +873,7 @@ describe("synced client preferences", () => {
           environmentId: environmentId("current"),
           preferences: {
             planModeEnabled: true,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
         },
@@ -926,6 +881,7 @@ describe("synced client preferences", () => {
           environmentId: environmentId("stale"),
           preferences: {
             planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: "2026-08-14T11:00:00.000Z" },
             updatedAt: "2026-08-14T11:00:00.000Z",
           },
         },
@@ -948,6 +904,7 @@ describe("synced client preferences", () => {
           environmentId: environmentId("observed"),
           preferences: {
             planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
         },
@@ -964,6 +921,7 @@ describe("synced client preferences", () => {
           environmentId: environmentId("later"),
           preferences: {
             planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:01:00.000Z" },
             updatedAt: "2026-08-14T12:01:00.000Z",
           },
         },
@@ -978,6 +936,7 @@ describe("synced client preferences", () => {
           {
             environmentId: environmentId("observed"),
             input: {
+              commandId: planModeCommandId(true, localUpdatedAt),
               patch: { planModeEnabled: true },
               updatedAt: localUpdatedAt,
             },
@@ -990,6 +949,7 @@ describe("synced client preferences", () => {
           {
             environmentId: environmentId("later"),
             input: {
+              commandId: planModeCommandId(true, localUpdatedAt),
               patch: { planModeEnabled: true },
               updatedAt: localUpdatedAt,
             },
@@ -1009,6 +969,7 @@ describe("synced client preferences", () => {
           canPatch: true,
           preferences: {
             planModeEnabled: false,
+            updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
             updatedAt: "2026-08-14T12:00:00.000Z",
           },
         },
@@ -1026,6 +987,7 @@ describe("synced client preferences", () => {
       {
         environmentId: environmentId("environment-1"),
         input: {
+          commandId: planModeCommandId(true, "2026-08-14T12:00:00.001Z"),
           patch: { planModeEnabled: true },
           updatedAt: "2026-08-14T12:00:00.001Z",
         },
@@ -1033,53 +995,22 @@ describe("synced client preferences", () => {
     ]);
   });
 
-  it("bounds a future-skewed local stamp before seeding an empty environment", () => {
-    const reconciliation = reconcilePlanModePreferences({
-      localPlanModeEnabled: true,
-      localUpdatedAt: "2099-01-01T00:00:00.000Z",
-      environments: [
-        {
-          environmentId: environmentId("environment-1"),
-          canPatch: true,
-          preferences: undefined,
-        },
-      ],
-      now: "2026-08-14T12:01:00.000Z",
-    });
-
-    expect(reconciliation).toEqual({
-      localPatch: {
-        planModeEnabled: true,
-        syncedClientPreferencesUpdatedAtByField: {
-          planModeEnabled: "2026-08-14T12:01:00.001Z",
-        },
-      },
-      environmentPatches: [
-        {
-          environmentId: environmentId("environment-1"),
-          input: {
-            patch: { planModeEnabled: true },
-            updatedAt: "2026-08-14T12:01:00.001Z",
-          },
-        },
-      ],
-    });
-  });
-
   it("clears pending reconciliation from an older canonical patch ack", async () => {
     const target = {
       environmentId: environmentId("environment-1"),
       input: {
+        commandId: CommandId.make("client-preferences:test"),
         patch: { planModeEnabled: true },
         updatedAt: "2099-01-01T00:00:00.000Z",
       },
     } as const;
     const canonical = {
       planModeEnabled: true,
+      updatedAtByField: { planModeEnabled: "2026-08-14T12:00:30.000Z" },
       updatedAt: "2026-08-14T12:00:30.000Z",
     } as const;
 
-    const controller = createSyncedClientPreferenceReconciliationController("planModeEnabled");
+    const controller = createPlanModePreferenceReconciliationController();
     const persist = vi.fn();
     controller.setActiveEnvironmentIds([target.environmentId]);
     controller.reconcile({
@@ -1137,6 +1068,7 @@ describe("synced client preferences", () => {
             canPatch: false,
             preferences: {
               planModeEnabled: true,
+              updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
               updatedAt: "2026-08-14T12:00:00.000Z",
             },
           },
@@ -1151,21 +1083,20 @@ describe("synced client preferences", () => {
     const target = {
       environmentId: environment,
       input: {
+        commandId: CommandId.make("client-preferences:test"),
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:00:00.000Z",
       },
     } as const;
     const { schedule, scheduled } = makeRetryScheduler();
-    const controller = createSyncedClientPreferenceReconciliationController(
-      "planModeEnabled",
-      schedule,
-    );
+    const controller = createPlanModePreferenceReconciliationController(schedule);
     const patch = vi
       .fn()
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
       .mockResolvedValueOnce(
         AsyncResult.success({
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: target.input.updatedAt },
           updatedAt: target.input.updatedAt,
         }),
       );
@@ -1196,15 +1127,13 @@ describe("synced client preferences", () => {
     const target = {
       environmentId: environment,
       input: {
+        commandId: CommandId.make("client-preferences:test"),
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:00:00.000Z",
       },
     } as const;
     const { schedule, scheduled } = makeRetryScheduler();
-    const controller = createSyncedClientPreferenceReconciliationController(
-      "planModeEnabled",
-      schedule,
-    );
+    const controller = createPlanModePreferenceReconciliationController(schedule);
     const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
 
     controller.setActiveEnvironmentIds([environment]);
@@ -1219,20 +1148,18 @@ describe("synced client preferences", () => {
     expect(scheduled.map(({ delayMs }) => delayMs)).toEqual([1_000, 2_000]);
   });
 
-  it("retries an exhausted reconciliation on a later trigger", async () => {
+  it("retries an exhausted reconciliation only after reconnecting", async () => {
     const environment = environmentId("environment-1");
     const target = {
       environmentId: environment,
       input: {
+        commandId: CommandId.make("client-preferences:test"),
         patch: { planModeEnabled: true },
         updatedAt: "2026-08-14T12:00:00.000Z",
       },
     } as const;
     const { schedule, scheduled } = makeRetryScheduler();
-    const controller = createSyncedClientPreferenceReconciliationController(
-      "planModeEnabled",
-      schedule,
-    );
+    const controller = createPlanModePreferenceReconciliationController(schedule);
     const patch = vi
       .fn()
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
@@ -1241,6 +1168,7 @@ describe("synced client preferences", () => {
       .mockResolvedValueOnce(
         AsyncResult.success({
           planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: target.input.updatedAt },
           updatedAt: target.input.updatedAt,
         }),
       );
@@ -1256,6 +1184,13 @@ describe("synced client preferences", () => {
 
     expect(patch).toHaveBeenCalledTimes(3);
 
+    controller.reconcile({ target, patch, persist });
+    await flushReconciliation();
+
+    expect(patch).toHaveBeenCalledTimes(3);
+
+    controller.setActiveEnvironmentIds([]);
+    controller.setActiveEnvironmentIds([environment]);
     controller.reconcile({ target, patch, persist });
     await flushReconciliation();
 
@@ -1275,15 +1210,13 @@ describe("synced client preferences", () => {
       const target = {
         environmentId: environment,
         input: {
+          commandId: CommandId.make("client-preferences:test"),
           patch: { planModeEnabled: true },
           updatedAt: "2026-08-14T12:00:00.000Z",
         },
       } as const;
       const { schedule, scheduled } = makeRetryScheduler();
-      const controller = createSyncedClientPreferenceReconciliationController(
-        "planModeEnabled",
-        schedule,
-      );
+      const controller = createPlanModePreferenceReconciliationController(schedule);
       const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
 
       controller.setActiveEnvironmentIds([environment]);

@@ -23,6 +23,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import { SyncedClientPreferencesUpdatedAt } from "./syncedClientPreferences.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -214,6 +215,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // default UI; this beta flag restores it (plus the /plan and /default slash
   // commands) for users who still rely on the old workflow.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Internal reconciliation watermark for an offline Plan Mode write. Keeping
+  // it beside the value makes the write durable across browser/app restarts.
+  planModeUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  appearanceModeUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  lightThemeIdUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  darkThemeIdUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
   // old keys, so everyone, including prior beta opt-outs, resets to the new
@@ -902,6 +909,10 @@ export const ClientSettingsPatch = Schema.Struct({
     ),
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
+  planModeUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  appearanceModeUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  lightThemeIdUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
+  darkThemeIdUpdatedAt: Schema.optionalKey(SyncedClientPreferencesUpdatedAt),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),

@@ -9,6 +9,11 @@ import {
   type SyncedClientPreferencesPatch,
   type SyncedClientPreferencesUpdatedAtByField,
 } from "@t3tools/contracts";
+import {
+  createSyncedClientPreferencesPatchRequest,
+  SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS,
+  syncedClientPreferenceRetryDelayMs,
+} from "@t3tools/client-runtime/synced-client-preferences";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
@@ -17,30 +22,6 @@ import * as Schema from "effect/Schema";
 import type { Preferences } from "../persistence/mobile-preferences";
 
 const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
-const SYNCED_CLIENT_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS = 3;
-const isString = Schema.is(Schema.String);
-
-function isThemePreferenceField(field: SyncedClientPreferenceField): boolean {
-  return field === "lightThemeId" || field === "darkThemeId";
-}
-
-function normalizeThemeIdsInPatch(
-  patch: Partial<Preferences>,
-  normalizeThemeId: ((themeId: string) => string) | undefined,
-): Partial<Preferences> {
-  const lightThemeId = patch.lightThemeId;
-  const darkThemeId = patch.darkThemeId;
-  return {
-    ...patch,
-    ...(lightThemeId === undefined
-      ? undefined
-      : { lightThemeId: normalizeThemeId?.(lightThemeId) ?? lightThemeId }),
-    ...(darkThemeId === undefined
-      ? undefined
-      : { darkThemeId: normalizeThemeId?.(darkThemeId) ?? darkThemeId }),
-  };
-}
-
 type SyncedClientPreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
 const scheduleSyncedClientPreferenceRetry: SyncedClientPreferenceRetryScheduler = (
@@ -61,6 +42,8 @@ export interface SyncedClientPreferencePatchTarget {
   readonly environmentId: EnvironmentId;
   readonly input: PatchSyncedClientPreferencesRequest;
 }
+
+export type PlanModePreferencePatchTarget = SyncedClientPreferencePatchTarget;
 
 export interface LocalSyncedClientPreferencesState {
   readonly values: Partial<SyncedClientPreferencesPatch>;
@@ -170,6 +153,19 @@ export function isPlanModePreferenceReconciliationReady(input: {
   return current[0] === applied[0] && current[2] === applied[2];
 }
 
+export function shouldPreservePlanModeLocalValue(input: {
+  readonly currentKey: string;
+  readonly appliedKey: string | null;
+}): boolean {
+  if (input.appliedKey === null) return false;
+  return (
+    comparePlanModePreferenceReconciliationIdentities(
+      parsePlanModePreferenceReconciliationKey(input.currentKey),
+      parsePlanModePreferenceReconciliationKey(input.appliedKey),
+    ) < 0
+  );
+}
+
 export function hasPlanModePreferenceReconciliationAttempted(
   states: ReadonlyArray<{
     readonly connectionState: EnvironmentConnectionPhase;
@@ -245,6 +241,7 @@ export function createSyncedClientPreferenceReconciliationController(
   interface EnvironmentReconciliation {
     reconciliation?: Reconciliation;
     settledKey?: string;
+    exhaustedKey?: string;
   }
 
   const environmentReconciliations = new Map<EnvironmentId, EnvironmentReconciliation>();
@@ -257,11 +254,12 @@ export function createSyncedClientPreferenceReconciliationController(
     const { environmentId } = reconciliation.target;
     const state = environmentReconciliations.get(environmentId);
     if (state?.reconciliation !== reconciliation) return;
-    if (reconciliation.attempt >= SYNCED_CLIENT_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS) {
+    if (reconciliation.attempt >= SYNCED_CLIENT_PREFERENCE_MAX_ATTEMPTS) {
       state.reconciliation = undefined;
+      state.exhaustedKey = reconciliation.key;
       return;
     }
-    const delayMs = 1_000 * 2 ** (reconciliation.attempt - 1);
+    const delayMs = syncedClientPreferenceRetryDelayMs(reconciliation.attempt);
     reconciliation.cancelRetry = scheduleRetry(() => {
       reconciliation.cancelRetry = undefined;
       if (environmentReconciliations.get(environmentId)?.reconciliation === reconciliation) {
@@ -282,6 +280,7 @@ export function createSyncedClientPreferenceReconciliationController(
         }
         state.reconciliation = undefined;
         state.settledKey = reconciliation.key;
+        state.exhaustedKey = undefined;
         const localPatch = canonicalSyncedClientPreferencesPatch(preferences, [field]);
         if (localPatch !== null) reconciliation.persist(localPatch);
       },
@@ -311,6 +310,10 @@ export function createSyncedClientPreferenceReconciliationController(
       const reconciliation = environmentReconciliations.get(environmentId)?.reconciliation;
       const observedKey = reconciliationKey(value, updatedAt);
       if (observedKey !== undefined && reconciliation?.key === observedKey) cancel(environmentId);
+      const state = environmentReconciliations.get(environmentId);
+      if (observedKey !== undefined && state?.exhaustedKey === observedKey) {
+        state.exhaustedKey = undefined;
+      }
     },
     reconcile<E>(input: {
       readonly target: SyncedClientPreferencePatchTarget;
@@ -318,12 +321,14 @@ export function createSyncedClientPreferenceReconciliationController(
         target: SyncedClientPreferencePatchTarget,
       ) => Promise<AtomCommandResult<SyncedClientPreferences, E>>;
       readonly persist: (patch: Partial<Preferences>) => void;
-      readonly normalizeThemeId?: (themeId: string) => string;
     }) {
       const { environmentId } = input.target;
       const state = environmentReconciliations.get(environmentId);
       const key = targetReconciliationKey(input.target);
-      if (state === undefined || (key !== undefined && state.settledKey === key)) {
+      if (
+        state === undefined ||
+        (key !== undefined && (state.settledKey === key || state.exhaustedKey === key))
+      ) {
         return;
       }
       const current = state.reconciliation;
@@ -332,12 +337,12 @@ export function createSyncedClientPreferenceReconciliationController(
           const result = await input.patch(input.target);
           return result._tag === "Success" ? result.value : null;
         };
-        current.persist = (patch) =>
-          input.persist(normalizeThemeIdsInPatch(patch, input.normalizeThemeId));
+        current.persist = input.persist;
         return;
       }
       if (current !== undefined) cancel(environmentId);
       state.settledKey = undefined;
+      state.exhaustedKey = undefined;
       const reconciliation: Reconciliation = {
         target: input.target,
         key,
@@ -346,7 +351,7 @@ export function createSyncedClientPreferenceReconciliationController(
           const result = await input.patch(input.target);
           return result._tag === "Success" ? result.value : null;
         },
-        persist: (patch) => input.persist(normalizeThemeIdsInPatch(patch, input.normalizeThemeId)),
+        persist: input.persist,
       };
       state.reconciliation = reconciliation;
       dispatch(reconciliation);
@@ -356,6 +361,12 @@ export function createSyncedClientPreferenceReconciliationController(
       environmentReconciliations.clear();
     },
   };
+}
+
+export function createPlanModePreferenceReconciliationController(
+  scheduleRetry?: SyncedClientPreferenceRetryScheduler,
+) {
+  return createSyncedClientPreferenceReconciliationController("planModeEnabled", scheduleRetry);
 }
 
 export function canonicalSyncedClientPreferencesPatch(
@@ -374,6 +385,12 @@ export function canonicalSyncedClientPreferencesPatch(
   return Object.keys(values).length === 0
     ? null
     : { ...values, syncedClientPreferencesUpdatedAtByField: updatedAtByField };
+}
+
+export function canonicalPlanModePreferencePatch(
+  preferences: SyncedClientPreferences,
+): Partial<Preferences> | null {
+  return canonicalSyncedClientPreferencesPatch(preferences, ["planModeEnabled"]);
 }
 
 export function nextMobileSyncedPreferencesUpdatedAt(
@@ -415,7 +432,7 @@ export function createSyncedClientPreferencesWrite(input: {
     ...input.currentUpdatedAtByField,
   };
   for (const field of fields) setPreferenceUpdatedAt(updatedAtByField, field, updatedAt);
-  const request = { patch: input.patch, updatedAt };
+  const request = createSyncedClientPreferencesPatchRequest(input.patch, updatedAt);
   return {
     localPatch: { values: input.patch, updatedAtByField },
     environmentPatches: input.connectedEnvironmentIds.map((environmentId) => ({
@@ -450,6 +467,30 @@ export function createPlanModePreferenceWrite(input: {
   };
 }
 
+export function createPlanModePreferenceWriteController() {
+  const controller = createSyncedClientPreferenceWriteController("planModeEnabled");
+  return {
+    create(input: Parameters<typeof createPlanModePreferenceWrite>[0]) {
+      const write = controller.create({
+        patch: { planModeEnabled: input.value },
+        connectedEnvironmentIds: input.connectedEnvironmentIds,
+        currentUpdatedAtByField: input.currentUpdatedAtByField,
+        legacyCurrentUpdatedAt: input.legacyCurrentUpdatedAt,
+        authoritativePreferences: input.authoritativePreferences,
+        now: input.now,
+      });
+      return {
+        localPatch: {
+          planModeEnabled: input.value,
+          syncedClientPreferencesUpdatedAtByField: write.localPatch.updatedAtByField,
+        },
+        environmentPatches: write.environmentPatches,
+      };
+    },
+    settle: controller.settle,
+  };
+}
+
 export function createSyncedClientPreferenceWriteController(field: SyncedClientPreferenceField) {
   let latestRequestedUpdatedAt: string | undefined;
   let settledRequestedUpdatedAt: string | undefined;
@@ -479,7 +520,6 @@ export function createSyncedClientPreferenceWriteController(field: SyncedClientP
     settle<E>(input: {
       readonly target: SyncedClientPreferencePatchTarget;
       readonly result: AtomCommandResult<SyncedClientPreferences, E>;
-      readonly normalizeThemeId?: (themeId: string) => string;
     }): Partial<Preferences> | null {
       if (
         input.target.input.updatedAt !== latestRequestedUpdatedAt ||
@@ -489,8 +529,7 @@ export function createSyncedClientPreferenceWriteController(field: SyncedClientP
         return null;
       }
       settledRequestedUpdatedAt = input.target.input.updatedAt;
-      const patch = canonicalSyncedClientPreferencesPatch(input.result.value, [field]);
-      return patch === null ? null : normalizeThemeIdsInPatch(patch, input.normalizeThemeId);
+      return canonicalSyncedClientPreferencesPatch(input.result.value, [field]);
     },
   };
 }
@@ -500,7 +539,7 @@ export function reconcileSyncedClientPreferences(input: {
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
   readonly fields?: ReadonlyArray<SyncedClientPreferenceField>;
-  readonly normalizeThemeId?: (themeId: string) => string;
+  readonly preserveLocalOnEqualStamp?: boolean;
 }) {
   if (input.environments.length === 0) {
     return { localPatch: null, environmentPatches: [] };
@@ -510,24 +549,17 @@ export function reconcileSyncedClientPreferences(input: {
   const localUpdatedAtByField: MutableSyncedClientPreferencesUpdatedAtByField = {
     ...input.local.updatedAtByField,
   };
-  const environmentPatches: SyncedClientPreferencePatchTarget[] = [];
+  const environmentPatches: PlanModePreferencePatchTarget[] = [];
   let localChanged = false;
   const hasPatchableEnvironment = input.environments.some(
     (environment) => environment.canPatch !== false,
   );
-  const normalizePreferenceValue = (
-    field: SyncedClientPreferenceField,
-    value: SyncedClientPreferencesPatch[SyncedClientPreferenceField] | undefined,
-  ) =>
-    isThemePreferenceField(field) && isString(value)
-      ? (input.normalizeThemeId?.(value) ?? value)
-      : value;
 
   for (const field of input.fields ?? SYNCED_CLIENT_PREFERENCE_FIELDS) {
-    const localValue = normalizePreferenceValue(field, input.local.values[field]);
+    const localValue = input.local.values[field];
     const localUpdatedAt = localPreferenceUpdatedAt(input.local, field);
     const environmentCandidates = input.environments.flatMap((environment) => {
-      const value = normalizePreferenceValue(field, environment.preferences?.[field]);
+      const value = environment.preferences?.[field];
       const updatedAt = getSyncedClientPreferenceUpdatedAt(environment.preferences, field);
       return value === undefined ||
         updatedAt === undefined ||
@@ -538,20 +570,25 @@ export function reconcileSyncedClientPreferences(input: {
     environmentCandidates.sort(compareEnvironmentPreferenceCandidates);
     const latestEnvironment = environmentCandidates.at(-1);
     const latestObservedEnvironmentUpdatedAt = latestEnvironment?.updatedAt;
-    const localUpdatedAtRebase = latestObservedEnvironmentUpdatedAt ?? input.now;
     const boundedLocalUpdatedAt =
       hasPatchableEnvironment &&
       localUpdatedAt !== undefined &&
-      localUpdatedAt > localUpdatedAtRebase &&
+      latestObservedEnvironmentUpdatedAt !== undefined &&
+      localUpdatedAt > latestObservedEnvironmentUpdatedAt &&
       Date.parse(localUpdatedAt) >
         Date.parse(input.now) + SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS
-        ? nextMobileSyncedPreferencesUpdatedAt([], localUpdatedAtRebase, [localUpdatedAtRebase])
+        ? nextMobileSyncedPreferencesUpdatedAt([], latestObservedEnvironmentUpdatedAt, [
+            latestObservedEnvironmentUpdatedAt,
+          ])
         : localUpdatedAt;
     // Exact remote ties use environment id for deterministic convergence.
     const localWins =
       localValue !== undefined &&
       boundedLocalUpdatedAt !== undefined &&
-      (latestEnvironment === undefined || boundedLocalUpdatedAt > latestEnvironment.updatedAt);
+      (latestEnvironment === undefined ||
+        boundedLocalUpdatedAt > latestEnvironment.updatedAt ||
+        (input.preserveLocalOnEqualStamp === true &&
+          boundedLocalUpdatedAt === latestEnvironment.updatedAt));
     const value = localWins ? localValue : (latestEnvironment?.value ?? localValue);
     if (value === undefined) continue;
     const updatedAt =
@@ -566,7 +603,7 @@ export function reconcileSyncedClientPreferences(input: {
     for (const environment of input.environments) {
       if (environment.canPatch === false) continue;
       if (
-        normalizePreferenceValue(field, environment.preferences?.[field]) === value &&
+        environment.preferences?.[field] === value &&
         getSyncedClientPreferenceUpdatedAt(environment.preferences, field) === updatedAt
       ) {
         continue;
@@ -575,7 +612,7 @@ export function reconcileSyncedClientPreferences(input: {
       setPreferenceValue(patch, field, value);
       environmentPatches.push({
         environmentId: environment.environmentId,
-        input: { patch, updatedAt },
+        input: createSyncedClientPreferencesPatchRequest(patch, updatedAt),
       });
     }
   }
@@ -593,6 +630,7 @@ export function reconcilePlanModePreferences(input: {
   readonly localUpdatedAt: string | undefined;
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
+  readonly preserveLocalOnEqualStamp?: boolean;
 }) {
   let local: LocalSyncedClientPreferencesState = {
     values:
@@ -611,6 +649,7 @@ export function reconcilePlanModePreferences(input: {
     environments: input.environments,
     now: input.now,
     fields: ["planModeEnabled"],
+    preserveLocalOnEqualStamp: input.preserveLocalOnEqualStamp,
   });
   const planModeEnabled = reconciliation.localPatch?.values.planModeEnabled;
   return {
@@ -623,4 +662,18 @@ export function reconcilePlanModePreferences(input: {
           },
     environmentPatches: reconciliation.environmentPatches,
   };
+}
+
+export function resolvePlanModeLocalPatchPersistence(input: {
+  readonly attemptedKey: string | null;
+  readonly localPatch: ReturnType<typeof reconcilePlanModePreferences>["localPatch"];
+}) {
+  if (input.localPatch === null) {
+    return { shouldPersist: false, nextAttemptedKey: null } as const;
+  }
+  const nextAttemptedKey = JSON.stringify(input.localPatch);
+  return {
+    shouldPersist: nextAttemptedKey !== input.attemptedKey,
+    nextAttemptedKey,
+  } as const;
 }

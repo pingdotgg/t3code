@@ -406,6 +406,29 @@ function useSyncedClientPreferenceState() {
       persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
     }
   }, []);
+  const persistPlanModeUpdatedAt = useCallback((updatedAt: string) => {
+    if (getClientSettingsSnapshot().planModeUpdatedAt !== updatedAt) {
+      persistClientSettings({ ...getClientSettingsSnapshot(), planModeUpdatedAt: updatedAt });
+    }
+  }, []);
+  const persistAppearanceModeUpdatedAt = useCallback((updatedAt: string) => {
+    if (getClientSettingsSnapshot().appearanceModeUpdatedAt !== updatedAt) {
+      persistClientSettings({
+        ...getClientSettingsSnapshot(),
+        appearanceModeUpdatedAt: updatedAt,
+      });
+    }
+  }, []);
+  const persistLightThemeIdUpdatedAt = useCallback((updatedAt: string) => {
+    if (getClientSettingsSnapshot().lightThemeIdUpdatedAt !== updatedAt) {
+      persistClientSettings({ ...getClientSettingsSnapshot(), lightThemeIdUpdatedAt: updatedAt });
+    }
+  }, []);
+  const persistDarkThemeIdUpdatedAt = useCallback((updatedAt: string) => {
+    if (getClientSettingsSnapshot().darkThemeIdUpdatedAt !== updatedAt) {
+      persistClientSettings({ ...getClientSettingsSnapshot(), darkThemeIdUpdatedAt: updatedAt });
+    }
+  }, []);
   const persistAppearanceMode = useCallback(
     (value: ThemePreferenceMode) => {
       if (themeState.appearanceMode !== value) themeState.setAppearanceMode(value);
@@ -457,8 +480,16 @@ function useSyncedClientPreferenceState() {
 
   return {
     appearanceMode: themeState.appearanceMode,
+    appearanceModeUpdatedAt: clientSettings.appearanceModeUpdatedAt,
+    darkThemeIdUpdatedAt: clientSettings.darkThemeIdUpdatedAt,
+    lightThemeIdUpdatedAt: clientSettings.lightThemeIdUpdatedAt,
+    planModeUpdatedAt: clientSettings.planModeUpdatedAt,
     persistAppearanceMode,
+    persistAppearanceModeUpdatedAt,
+    persistDarkThemeIdUpdatedAt,
+    persistLightThemeIdUpdatedAt,
     persistPlanModeEnabled,
+    persistPlanModeUpdatedAt,
     persistDarkThemeId,
     persistLightThemeId,
     planModeEnabled: clientSettings.planModeEnabled,
@@ -494,22 +525,38 @@ function useSynchronizeSyncedClientPreferences(
   useSyncedClientPreferenceHydrationEffect(syncedPlanModeHydrationController, {
     ...common,
     clientValue: state.planModeEnabled,
+    ...(state.planModeUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.planModeUpdatedAt }),
     persist: state.persistPlanModeEnabled,
+    persistUpdatedAt: state.persistPlanModeUpdatedAt,
   });
   useSyncedClientPreferenceHydrationEffect(syncedAppearanceModeHydrationController, {
     ...common,
     clientValue: state.appearanceMode,
+    ...(state.appearanceModeUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.appearanceModeUpdatedAt }),
     persist: state.persistAppearanceMode,
+    persistUpdatedAt: state.persistAppearanceModeUpdatedAt,
   });
   useSyncedClientPreferenceHydrationEffect(syncedLightThemeIdHydrationController, {
     ...common,
     clientValue: state.lightThemeId,
+    ...(state.lightThemeIdUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.lightThemeIdUpdatedAt }),
     persist: state.persistLightThemeId,
+    persistUpdatedAt: state.persistLightThemeIdUpdatedAt,
   });
   useSyncedClientPreferenceHydrationEffect(syncedDarkThemeIdHydrationController, {
     ...common,
     clientValue: state.darkThemeId,
+    ...(state.darkThemeIdUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.darkThemeIdUpdatedAt }),
     persist: state.persistDarkThemeId,
+    persistUpdatedAt: state.persistDarkThemeIdUpdatedAt,
   });
 
   return {
@@ -522,6 +569,13 @@ function useSynchronizeSyncedClientPreferences(
 function useSyncedClientPreferencesHydration(environmentId: EnvironmentId | null) {
   const state = useSyncedClientPreferenceState();
   return useSynchronizeSyncedClientPreferences(environmentId, state);
+}
+
+export function SyncedPlanModeEnvironmentSync(props: {
+  readonly environmentId: EnvironmentId;
+}): null {
+  useSyncedClientPreferencesHydration(props.environmentId);
+  return null;
 }
 
 function useWriteSyncedClientPreferences(
@@ -548,6 +602,7 @@ function useWriteSyncedClientPreferences(
           ...common,
           value: valuePatch.planModeEnabled,
           persist: state.persistPlanModeEnabled,
+          persistUpdatedAt: state.persistPlanModeUpdatedAt,
         });
       }
       if (valuePatch.appearanceMode !== undefined) {
@@ -555,6 +610,7 @@ function useWriteSyncedClientPreferences(
           ...common,
           value: valuePatch.appearanceMode,
           persist: state.persistAppearanceMode,
+          persistUpdatedAt: state.persistAppearanceModeUpdatedAt,
         });
       }
       if (valuePatch.lightThemeId !== undefined) {
@@ -562,6 +618,7 @@ function useWriteSyncedClientPreferences(
           ...common,
           value: valuePatch.lightThemeId,
           persist: state.persistLightThemeId,
+          persistUpdatedAt: state.persistLightThemeIdUpdatedAt,
         });
       }
       if (valuePatch.darkThemeId !== undefined) {
@@ -569,6 +626,7 @@ function useWriteSyncedClientPreferences(
           ...common,
           value: valuePatch.darkThemeId,
           persist: state.persistDarkThemeId,
+          persistUpdatedAt: state.persistDarkThemeIdUpdatedAt,
         });
       }
     },
@@ -577,7 +635,11 @@ function useWriteSyncedClientPreferences(
       environmentId,
       patchPreferences,
       state.persistAppearanceMode,
+      state.persistAppearanceModeUpdatedAt,
+      state.persistDarkThemeIdUpdatedAt,
+      state.persistLightThemeIdUpdatedAt,
       state.persistPlanModeEnabled,
+      state.persistPlanModeUpdatedAt,
       state.persistDarkThemeId,
       state.persistLightThemeId,
       synced.preferences,
@@ -784,6 +846,14 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           persist: (value) => {
             if (getClientSettingsSnapshot().planModeEnabled !== value) {
               persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
+            }
+          },
+          persistUpdatedAt: (updatedAt) => {
+            if (getClientSettingsSnapshot().planModeUpdatedAt !== updatedAt) {
+              persistClientSettings({
+                ...getClientSettingsSnapshot(),
+                planModeUpdatedAt: updatedAt,
+              });
             }
           },
         });

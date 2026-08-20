@@ -229,6 +229,7 @@ function mapSyncedClientPreferences(
     onNone: () => undefined,
     onSome: (value) => {
       let preferences: SyncedClientPreferences = {
+        updatedAtByField: {},
         updatedAt: value.updatedAt,
       };
       if (value.planModeEnabled !== null) {
@@ -243,7 +244,6 @@ function mapSyncedClientPreferences(
       if (value.darkThemeId !== null) {
         preferences = { ...preferences, darkThemeId: value.darkThemeId };
       }
-
       let updatedAtByField: NonNullable<SyncedClientPreferences["updatedAtByField"]> = {};
       if (value.planModeEnabledUpdatedAt !== null) {
         updatedAtByField = {

@@ -130,9 +130,6 @@ describe("mobile preferences state", () => {
       const state = makePreferencesState({
         load: Effect.succeed({
           planModeEnabled: false,
-          syncedClientPreferencesUpdatedAtByField: {
-            appearanceMode: "2026-08-14T13:00:00.000Z",
-          },
           syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00.000Z",
         }),
         savePatch,
@@ -155,7 +152,6 @@ describe("mobile preferences state", () => {
         planModeEnabled: false,
         syncedClientPreferencesUpdatedAtByField: {
           planModeEnabled: "2026-08-14T12:02:00.000Z",
-          appearanceMode: "2026-08-14T13:00:00.000Z",
         },
       });
       registry.set(state.persistReconciledPreferencesAtom, {
@@ -391,9 +387,6 @@ describe("mobile preferences state", () => {
       yield* Effect.promise(() => firstSaveStarted.promise);
       registry.set(state.updatePreferencesAtom, {
         baseFontSize: 18,
-        syncedClientPreferencesUpdatedAtByField: {
-          appearanceMode: "2026-08-15T12:02:00.000Z",
-        },
       });
       releaseFirstSave.resolve();
 
@@ -405,7 +398,6 @@ describe("mobile preferences state", () => {
             planModeEnabled: false,
             syncedClientPreferencesUpdatedAtByField: {
               planModeEnabled: "2026-08-15T12:00:00.000Z",
-              appearanceMode: "2026-08-15T12:02:00.000Z",
             },
           });
         }),

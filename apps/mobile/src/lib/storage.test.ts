@@ -214,12 +214,10 @@ describe("mobile connection storage", () => {
     });
   });
 
-  it("preserves unrelated field stamps when saving a partial stamp map", async () => {
+  it("saves the Plan Mode field stamp", async () => {
     mocks.setPreferencesJson(
       JSON.stringify({
-        syncedClientPreferencesUpdatedAtByField: {
-          appearanceMode: "2026-08-14T13:00:00.000Z",
-        },
+        syncedClientPreferencesUpdatedAtByField: {},
       }),
       10,
     );
@@ -233,7 +231,6 @@ describe("mobile connection storage", () => {
     ).resolves.toMatchObject({
       syncedClientPreferencesUpdatedAtByField: {
         planModeEnabled: "2026-08-14T12:00:00.000Z",
-        appearanceMode: "2026-08-14T13:00:00.000Z",
       },
     });
   });
