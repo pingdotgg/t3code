@@ -29,9 +29,9 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
 }
 
 /**
- * Attached banner listing the stashed prompts. Keyboard-first: opened by ⌘S on an
- * empty composer, navigated with arrows, restored with Enter, dismissed
- * with Escape. The listener runs capture-phase on window so it wins over
+ * Attached banner listing the stashed prompts. Keyboard-first: opened by the
+ * stash shortcut on an empty composer, navigated with arrows, restored with
+ * Enter, dismissed with Escape. The listener runs capture-phase on window so it wins over
  * the Lexical editor's handlers while the menu is open.
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {

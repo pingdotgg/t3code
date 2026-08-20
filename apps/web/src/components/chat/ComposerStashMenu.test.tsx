@@ -5,6 +5,31 @@ import { describe, expect, it } from "vite-plus/test";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 
 describe("ComposerStashMenu", () => {
+  it("labels the empty-stash hint with the provided shortcut, or drops it", () => {
+    const withLabel = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[]}
+        stashShortcutLabel="Ctrl+S"
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(withLabel).toContain("Press Ctrl+S with a prompt");
+
+    const withoutLabel = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[]}
+        stashShortcutLabel={null}
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(withoutLabel).toContain("Nothing stashed yet.");
+    expect(withoutLabel).not.toContain("Press");
+  });
+
   it("shows saved image thumbnails and incomplete image states", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu

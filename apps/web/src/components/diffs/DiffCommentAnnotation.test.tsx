@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { isMacPlatform } from "~/lib/utils";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
 
 const callbacks = {
@@ -21,7 +22,9 @@ describe("DiffCommentAnnotation", () => {
     expect(markup).not.toContain("font-mono");
     expect(markup).not.toContain("Local comment");
     expect(markup).not.toContain("on +78");
-    expect(markup).toContain("⌘/Ctrl Enter to send");
+    expect(markup).toContain(
+      `${isMacPlatform(navigator.platform) ? "\u2318Enter" : "Ctrl+Enter"} to send`,
+    );
     expect(markup).toContain("Add a comment…");
     expect(markup).toContain(">Comment</button>");
     expect(markup).toContain("autofocus");
