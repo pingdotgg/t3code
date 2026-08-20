@@ -2935,6 +2935,7 @@ export default function Sidebar() {
             memberCount === 0
               ? `Delete section "${sectionName}"?`
               : `Delete section "${sectionName}" and move ${memberCount} thread${memberCount === 1 ? "" : "s"} to the active list?`,
+            { variant: "destructive" },
           ),
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
