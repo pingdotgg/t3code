@@ -280,7 +280,9 @@ export function ThemeSearchSection({
           autoFocus
           onChange={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && installingId === null) void runSearch(query.trim());
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Enter" && !isSearching && installingId === null)
+              void runSearch(query.trim());
           }}
           placeholder="Search themes..."
           size="lg"
