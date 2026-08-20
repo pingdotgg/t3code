@@ -70,7 +70,7 @@ jobs:
     if: |
       !failure() && !cancelled() &&
       (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       release_channel: ${{ steps.release_meta.outputs.release_channel }}
@@ -353,7 +353,7 @@ jobs:
             rust_target: x86_64-apple-darwin
             resource_key: darwin-x64
           - label: Linux x64
-            runner: blacksmith-32vcpu-ubuntu-2404
+            runner: blacksmith-8vcpu-ubuntu-2404
             platform: linux
             target: AppImage
             arch: x64
@@ -870,7 +870,7 @@ jobs:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
       T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
