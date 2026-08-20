@@ -255,6 +255,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const refreshEntriesCommand = useAtomCommand(projectEnvironment.refreshEntries, {
     reportFailure: false,
   });
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const entriesQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
@@ -265,7 +266,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   );
   const refreshEntries = useCallback(() => {
     if (environmentId === null || cwd === null) return;
-    void refreshEntriesCommand({ environmentId, input: { cwd, refresh: true } });
+    setIsRefreshing(true);
+    void refreshEntriesCommand({ environmentId, input: { cwd, refresh: true } }).finally(() => {
+      setIsRefreshing(false);
+    });
   }, [cwd, environmentId, refreshEntriesCommand]);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handleReturnToThread = useCallback(() => {
@@ -459,7 +463,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}
-        isPending={entriesQuery.isPending}
+        isPending={entriesQuery.isPending || isRefreshing}
         searchQuery={searchQuery}
         selectedPath={null}
         onPreviewFile={handlePreviewFile}

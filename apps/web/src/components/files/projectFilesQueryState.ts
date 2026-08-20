@@ -7,7 +7,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
@@ -131,13 +131,26 @@ export function useProjectEntriesQuery(
   const refreshEntries = useAtomCommand(projectEnvironment.refreshEntries, {
     reportFailure: false,
   });
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const refresh = useCallback(() => {
-    void refreshEntries({ environmentId, input: { cwd, refresh: true } });
+    setIsRefreshing(true);
+    setRefreshError(null);
+    void refreshEntries({ environmentId, input: { cwd, refresh: true } })
+      .then((commandResult) => {
+        const nextError = errorMessage(commandResult);
+        if (nextError !== null) {
+          setRefreshError(nextError);
+        }
+      })
+      .finally(() => {
+        setIsRefreshing(false);
+      });
   }, [cwd, environmentId, refreshEntries]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
-    error: errorMessage(result),
-    isPending: result.waiting,
+    error: refreshError ?? errorMessage(result),
+    isPending: result.waiting || isRefreshing,
     refresh,
   };
 }

@@ -37,6 +37,7 @@ export function ThreadFileNavigatorPane(props: {
   const refreshEntriesCommand = useAtomCommand(projectEnvironment.refreshEntries, {
     reportFailure: false,
   });
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const entriesQuery = useEnvironmentQuery(
     projectEnvironment.listEntries({
       environmentId: props.environmentId,
@@ -44,9 +45,12 @@ export function ThreadFileNavigatorPane(props: {
     }),
   );
   const refreshEntries = useCallback(() => {
+    setIsRefreshing(true);
     void refreshEntriesCommand({
       environmentId: props.environmentId,
       input: { cwd: props.cwd, refresh: true },
+    }).finally(() => {
+      setIsRefreshing(false);
     });
   }, [props.cwd, props.environmentId, refreshEntriesCommand]);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
@@ -82,7 +86,7 @@ export function ThreadFileNavigatorPane(props: {
     <FileTreeBrowser
       entries={entriesData?.entries ?? []}
       error={entriesQuery.error}
-      isPending={entriesQuery.isPending}
+      isPending={entriesQuery.isPending || isRefreshing}
       searchQuery={searchQuery}
       selectedPath={props.selectedPath}
       onPreviewFile={handlePreviewFile}
