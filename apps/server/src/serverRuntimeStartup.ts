@@ -33,6 +33,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -290,6 +291,42 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
+export const reconcileProviderSessions = Effect.gen(function* () {
+  const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const dispatch = (yield* OrchestrationEngine.OrchestrationEngineService).dispatch;
+  const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  for (const { id, session } of (yield* query.getCommandReadModel()).threads) {
+    if (session?.status !== "running" && session?.status !== "starting") continue;
+
+    yield* Effect.gen(function* () {
+      const binding = Option.getOrUndefined(yield* directory.getBinding(id));
+      if (binding) {
+        yield* directory.upsert({
+          ...binding,
+          status: "stopped",
+          runtimePayload: { activeTurnId: null },
+        });
+      }
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("provider session startup reconciliation failed to reconcile binding", {
+          error,
+          threadId: id,
+        }),
+      ),
+    );
+
+    const reconciledAt = DateTime.formatIso(yield* DateTime.now);
+    yield* dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make(yield* (yield* Crypto.Crypto).randomUUIDv4),
+      threadId: id,
+      session: { ...session, status: "stopped", activeTurnId: null, updatedAt: reconciledAt },
+      createdAt: reconciledAt,
+    });
+  }
+});
+
 interface StartupOptions {
   readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
@@ -432,6 +469,8 @@ export const make = (options?: StartupOptions) =>
 
       // This is the prepared boundary. Every dependency has been acquired and
       // every runtime root has confirmed that it is parked before this request.
+      // Reconcile before prepareTrial commits the launcher update
+      yield* reconcileProviderSessions;
       const updateOutcome = yield* launcher.prepareTrial;
       yield* runStartupPhase(
         "welcome.publish",
