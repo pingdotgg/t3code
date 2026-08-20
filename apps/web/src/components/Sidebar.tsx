@@ -3837,6 +3837,10 @@ export default function Sidebar() {
                       }
                     >
                       <ListPlusIcon />
+                      <span
+                        className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+                        aria-hidden="true"
+                      />
                     </TooltipTrigger>
                     <TooltipPopup side="right">New section</TooltipPopup>
                   </Tooltip>

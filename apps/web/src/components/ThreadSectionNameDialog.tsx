@@ -1,5 +1,5 @@
 import { THREAD_SECTION_NAME_MAX_CHARS } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useCallback, useId, useState } from "react";
 
 import { Button } from "./ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 
 interface DialogRequest {
   readonly mode: "create" | "rename";
@@ -37,6 +38,8 @@ export function isThreadSectionNameDuplicate(input: {
 export function useThreadSectionNameDialog() {
   const [request, setRequest] = useState<DialogRequest | null>(null);
   const [name, setName] = useState("");
+  const formId = useId();
+  const nameInputId = useId();
 
   const requestName = useCallback(
     (input: {
@@ -84,26 +87,24 @@ export function useThreadSectionNameDialog() {
       }}
     >
       <DialogPopup className="max-w-sm">
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (valid) close(trimmedName);
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>
-              {request?.mode === "rename" ? "Rename section" : "New section"}
-            </DialogTitle>
-            <DialogDescription>
-              Sections keep threads out of the active list until you move them back.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-2">
-            <label htmlFor="thread-section-name" className="text-sm font-medium">
-              Name
-            </label>
+        <DialogHeader>
+          <DialogTitle>{request?.mode === "rename" ? "Rename section" : "New section"}</DialogTitle>
+          <DialogDescription>
+            Sections keep threads out of the active list until you move them back.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <form
+            id={formId}
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (valid) close(trimmedName);
+            }}
+          >
+            <Label htmlFor={nameInputId}>Name</Label>
             <Input
-              id="thread-section-name"
+              id={nameInputId}
               autoFocus
               value={name}
               maxLength={THREAD_SECTION_NAME_MAX_CHARS}
@@ -114,16 +115,16 @@ export function useThreadSectionNameDialog() {
             {duplicate ? (
               <p className="text-xs text-destructive">That section already exists.</p>
             ) : null}
-          </DialogPanel>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => close(null)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!valid}>
-              {request?.mode === "rename" ? "Rename" : "Create"}
-            </Button>
-          </DialogFooter>
-        </form>
+          </form>
+        </DialogPanel>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => close(null)}>
+            Cancel
+          </Button>
+          <Button type="submit" form={formId} disabled={!valid}>
+            {request?.mode === "rename" ? "Rename" : "Create"}
+          </Button>
+        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
