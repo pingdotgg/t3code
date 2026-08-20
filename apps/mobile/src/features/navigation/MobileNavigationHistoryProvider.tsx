@@ -90,7 +90,7 @@ function useCancelBlockedTraversal(
     };
     return actionEvents.addListener("__unsafe_action__", (event) => {
       if (event.data.noop) {
-        history.cancelPending();
+        history.cancelPendingTraversal();
       }
     });
   }, [history, navigation]);

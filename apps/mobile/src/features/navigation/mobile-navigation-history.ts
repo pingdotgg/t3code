@@ -4,7 +4,7 @@ export interface MobileNavigationHistorySnapshot {
 }
 
 export interface MobileNavigationHistory {
-  readonly cancelPending: () => void;
+  readonly cancelPendingTraversal: () => void;
   readonly getSnapshot: () => MobileNavigationHistorySnapshot;
   readonly requestBack: () => MobileNavigationTarget | null;
   readonly requestForward: () => MobileNavigationTarget | null;
@@ -52,7 +52,7 @@ export function createMobileNavigationHistory(
   };
 
   return {
-    cancelPending: () => {
+    cancelPendingTraversal: () => {
       pendingTarget = null;
     },
     getSnapshot: () => snapshot,

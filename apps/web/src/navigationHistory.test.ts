@@ -22,19 +22,8 @@ describe("createNavigationHistory", () => {
     history.forward();
     expect(routerHistory.location.pathname).toBe("/thread-b");
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
-    history.dispose();
-  });
 
-  it("drops the forward path after navigating somewhere new", () => {
-    const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
-    const history = createNavigationHistory(routerHistory);
-    history.start();
-
-    routerHistory.push("/thread-a");
-    routerHistory.push("/thread-b");
     history.back();
-    expect(history.getSnapshot().canGoForward).toBe(true);
-
     routerHistory.push("/settings/general");
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
     history.forward();

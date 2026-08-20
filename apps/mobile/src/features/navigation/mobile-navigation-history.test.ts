@@ -93,7 +93,7 @@ describe("createMobileNavigationHistory", () => {
     history.visit(location("/threads/env/thread-c", "thread"));
 
     history.requestBack();
-    history.cancelPending();
+    history.cancelPendingTraversal();
     history.visit(location("/threads/env/thread-b", "thread"));
 
     expect(history.requestBack()?.location.pathname).toBe("/threads/env/thread-c");
