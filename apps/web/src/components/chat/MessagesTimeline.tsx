@@ -2423,7 +2423,11 @@ function liveWorkEntryLabel(
     return "Running command";
   }
 
-  return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
+  const preview = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
+  // A streaming reasoning preview is the full thinking text (up to 20k): the
+  // visible row truncates to one line, but this string also becomes the live
+  // button's accessible name — keep it a label, not a transcript.
+  return preview.length > 200 ? `${preview.slice(0, 200)}…` : preview;
 }
 
 function buildToolCallExpandedBody(

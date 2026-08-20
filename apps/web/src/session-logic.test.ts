@@ -1071,12 +1071,13 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
     expect(entries.map((entry) => entry.itemType)).toEqual(["reasoning", "dynamic_tool_call"]);
-    // The reasoning row anchors where thinking started; the merged row keeps
-    // the latest activity's identity (upstream collapse semantics).
-    expect(entries[0]?.id).toBe(EventId.make("reasoning-completed"));
+    // The reasoning row anchors where thinking started and keeps the FIRST
+    // activity's id/createdAt, so it neither jumps past interleaved tool rows
+    // nor remounts mid-stream.
+    expect(entries[0]?.id).toBe(EventId.make("reasoning-updated-1"));
     expect(entries[0]?.detail).toBe("Let me look at the code");
     expect(entries[0]?.toolLifecycleStatus).toBe("completed");
-    expect(entries[1]?.id).toBe(EventId.make("grep-completed"));
+    expect(entries[1]?.id).toBe(EventId.make("grep-updated"));
     expect(entries[1]?.detail).toBe('Grep: {"pattern":"reasoning"}');
   });
 
@@ -1134,8 +1135,8 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries.map((entry) => entry.detail)).toEqual(["First block done", "Second block done"]);
     expect(entries.map((entry) => entry.id)).toEqual([
-      EventId.make("block-a-end"),
-      EventId.make("block-b-end"),
+      EventId.make("block-a-start"),
+      EventId.make("block-b-start"),
     ]);
   });
 
@@ -1515,13 +1516,15 @@ describe("deriveWorkLogEntries", () => {
 
     expect(deriveWorkLogEntries(activities)).toMatchObject([
       {
-        id: "tool-a-complete",
+        // The anchor keeps the FIRST activity's id/createdAt: the row neither
+        // jumps past interleaved rows nor remounts when the completion lands.
+        id: "tool-a-progress",
         command: "vp test run",
         toolCallId: "call-a",
         toolLifecycleStatus: "completed",
       },
       {
-        id: "tool-b-complete",
+        id: "tool-b-progress",
         command: "vp lint",
         toolCallId: "call-b",
         toolLifecycleStatus: "completed",
@@ -1772,7 +1775,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "grep-complete",
+      id: "grep-update",
       toolTitle: "grep",
       detail: "19 files",
       itemType: "web_search",
@@ -1821,7 +1824,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "read-complete",
+      id: "read-update",
       toolTitle: "Read File",
       detail: 'import * as Effect from "effect/Effect"',
       itemType: "dynamic_tool_call",

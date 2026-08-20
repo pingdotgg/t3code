@@ -1131,7 +1131,15 @@ function collapseDerivedWorkLogEntries(
         matchingEntry &&
         shouldCollapseToolLifecycleEntries(matchingEntry, entry)
       ) {
-        collapsed[matchingLifecycleIndex] = mergeDerivedWorkLogEntries(matchingEntry, entry);
+        // Pin the anchor's identity: merged rows keep the FIRST activity's
+        // id/createdAt, so the live row neither jumps past interleaved tool
+        // rows (the timeline sorts by createdAt) nor remounts mid-stream.
+        collapsed[matchingLifecycleIndex] = {
+          ...mergeDerivedWorkLogEntries(matchingEntry, entry),
+          id: matchingEntry.id,
+          createdAt: matchingEntry.createdAt,
+          turnId: matchingEntry.turnId ?? null,
+        };
         continue;
       }
       toolLifecycleRowIndex.delete(lifecycleKey);

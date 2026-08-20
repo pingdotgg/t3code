@@ -2874,6 +2874,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (event.type === "content_block_stop") {
       const { index } = event;
       const reasoningBlock = context.turnState?.reasoningBlocks.get(index);
+      const assistantBlock =
+        reasoningBlock === undefined
+          ? context.turnState?.assistantTextBlocks.get(index)
+          : undefined;
+      // A subagent's stop at the same block index (commonly 0) must not seal
+      // the PARENT's text/thinking block — subagent starts/deltas are dropped
+      // above, so any mapped block at this index belongs to the parent.
+      if ((reasoningBlock ?? assistantBlock) !== undefined && streamParentToolUseId != null) {
+        return;
+      }
       if (reasoningBlock) {
         yield* completeReasoningBlock(context, reasoningBlock, {
           rawMethod: "claude/stream_event/content_block_stop",
@@ -2881,7 +2891,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       }
-      const assistantBlock = context.turnState?.assistantTextBlocks.get(index);
       if (assistantBlock) {
         assistantBlock.streamClosed = true;
         yield* completeAssistantTextBlock(context, assistantBlock, {
