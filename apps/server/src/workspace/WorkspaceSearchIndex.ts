@@ -13,9 +13,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 
 import type {
   ProjectEntry,
@@ -24,15 +22,8 @@ import type {
   ProjectSearchContentsInput,
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
-  VcsError,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import {
-  insertRankedSearchResult,
-  scoreQueryMatch,
-  type RankedSearchResult,
-} from "@t3tools/shared/searchRanking";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -41,22 +32,11 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
-const NATIVE_COMPATIBILITY_ERROR_PATTERNS = [
-  "GLIBC_",
-  "undefined symbol: memfd_create",
-  "ERR_DLOPEN_FAILED",
-] as const;
 
 type FileFinderModule = Pick<typeof import("@ff-labs/fff-node"), "FileFinder">;
 
-interface WorkspaceFileList {
-  readonly paths: ReadonlyArray<string>;
-  readonly truncated: boolean;
-}
-
 export interface WorkspaceSearchIndexMakeOptions {
   readonly loadFileFinderModule?: () => Promise<FileFinderModule>;
-  readonly listWorkspaceFiles?: (cwd: string) => Effect.Effect<WorkspaceFileList, VcsError>;
 }
 
 const loadFileFinderModule = (): Promise<FileFinderModule> => import("@ff-labs/fff-node");
@@ -325,184 +305,6 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
-function isNativeCompatibilityError(cause: unknown): boolean {
-  const pending = [cause];
-  const visited = new Set<unknown>();
-
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === undefined || current === null || visited.has(current)) {
-      continue;
-    }
-    visited.add(current);
-
-    const details =
-      current instanceof Error
-        ? `${current.name}: ${current.message} ${
-            "code" in current ? String((current as NodeJS.ErrnoException).code ?? "") : ""
-          }`
-        : typeof current === "string"
-          ? current
-          : "";
-    if (NATIVE_COMPATIBILITY_ERROR_PATTERNS.some((pattern) => details.includes(pattern))) {
-      return true;
-    }
-
-    if (current instanceof AggregateError) {
-      pending.push(...current.errors);
-    }
-    if (typeof current === "object" && "cause" in current) {
-      pending.push((current as { readonly cause?: unknown }).cause);
-    }
-  }
-
-  return false;
-}
-
-function toFallbackSnapshot(input: WorkspaceFileList): {
-  readonly entries: ReadonlyArray<ProjectEntry>;
-  readonly truncated: boolean;
-} {
-  const files: ProjectEntry[] = [];
-  const seen = new Set<string>();
-  let truncated = input.truncated;
-
-  for (const rawPath of input.paths) {
-    const path = trimDirectorySeparator(toPosixPath(rawPath));
-    if (!path || seen.has(path)) {
-      continue;
-    }
-    seen.add(path);
-    files.push({ path, kind: "file" });
-    if (files.length > WORKSPACE_INDEX_MAX_ENTRIES) {
-      truncated = true;
-      break;
-    }
-  }
-
-  const sortedEntries = withDirectoryAncestors(files).toSorted((left, right) =>
-    left.path.localeCompare(right.path),
-  );
-  return {
-    entries: sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES),
-    truncated: truncated || sortedEntries.length > WORKSPACE_INDEX_MAX_ENTRIES,
-  };
-}
-
-function fallbackPathScore(path: string, query: string): number | null {
-  if (!query) {
-    return 0;
-  }
-  const normalizedPath = path.toLowerCase();
-  const basename = normalizedPath.slice(normalizedPath.lastIndexOf("/") + 1);
-  const basenameScore = scoreQueryMatch({
-    value: basename,
-    query,
-    exactBase: 0,
-    prefixBase: 100,
-    boundaryBase: 200,
-    includesBase: 300,
-    fuzzyBase: 500,
-  });
-  const pathScore = scoreQueryMatch({
-    value: normalizedPath,
-    query,
-    exactBase: 1_000,
-    prefixBase: 1_100,
-    boundaryBase: 1_200,
-    includesBase: 1_300,
-    fuzzyBase: 1_500,
-  });
-
-  if (basenameScore === null) return pathScore;
-  if (pathScore === null) return basenameScore;
-  return Math.min(basenameScore, pathScore);
-}
-
-const makeVcsFallback = Effect.fn("WorkspaceSearchIndex.makeVcsFallback")(function* (
-  cwd: string,
-  variant: WorkspaceSearchIndexVariant,
-  listWorkspaceFiles: NonNullable<WorkspaceSearchIndexMakeOptions["listWorkspaceFiles"]>,
-) {
-  const loadSnapshot = <E>(
-    onFailure: (cause: unknown) => E,
-  ): Effect.Effect<ReturnType<typeof toFallbackSnapshot>, E> =>
-    listWorkspaceFiles(cwd).pipe(Effect.map(toFallbackSnapshot), Effect.mapError(onFailure));
-
-  const snapshotRef = yield* Ref.make(
-    yield* loadSnapshot(
-      (cause) =>
-        new WorkspaceSearchIndexCreateFailed({
-          cwd,
-          reason: "VCS workspace file listing failed.",
-          cause,
-        }),
-    ),
-  );
-  const refreshSemaphore = yield* Semaphore.make(1);
-
-  const list: WorkspaceSearchIndex["Service"]["list"] = () => Ref.get(snapshotRef);
-
-  const search: WorkspaceSearchIndex["Service"]["search"] = (query, limit, kind, imageOnly) =>
-    Ref.get(snapshotRef).pipe(
-      Effect.map((snapshot) => {
-        const ranked: Array<RankedSearchResult<ProjectEntry>> = [];
-        const resultLimit = Math.max(0, limit);
-        const normalizedQuery = query.toLowerCase();
-
-        for (const entry of snapshot.entries) {
-          if (!imageOnly && kind !== undefined && entry.kind !== kind) {
-            continue;
-          }
-          if (imageOnly && (entry.kind !== "file" || !isWorkspaceImagePreviewPath(entry.path))) {
-            continue;
-          }
-          const score = fallbackPathScore(entry.path, normalizedQuery);
-          if (score === null) {
-            continue;
-          }
-          insertRankedSearchResult(
-            ranked,
-            { item: entry, score, tieBreaker: entry.path },
-            resultLimit + 1,
-          );
-        }
-
-        return {
-          entries: ranked.slice(0, resultLimit).map(({ item }) => item),
-          truncated: snapshot.truncated || ranked.length > resultLimit,
-        };
-      }),
-    );
-
-  const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = (input) =>
-    Effect.fail(
-      new WorkspaceSearchIndexSearchFailed({
-        cwd,
-        queryLength: input.query.length,
-        pageSize: input.limit,
-        reason:
-          variant === "content"
-            ? "Content search is unavailable because the native workspace index is incompatible with this system."
-            : "Content search is unavailable in the path-only workspace index.",
-      }),
-    );
-
-  const refresh: WorkspaceSearchIndex["Service"]["refresh"] = () =>
-    refreshSemaphore.withPermits(1)(
-      loadSnapshot(
-        (cause) =>
-          new WorkspaceSearchIndexRefreshFailed({
-            cwd,
-            reason: "VCS workspace file listing failed.",
-            cause,
-          }),
-      ).pipe(Effect.flatMap((snapshot) => Ref.set(snapshotRef, snapshot))),
-    );
-
-  return WorkspaceSearchIndex.of({ list, refresh, search, searchContents });
-});
-
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
@@ -573,22 +375,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   variant: WorkspaceSearchIndexVariant = "paths",
   options: WorkspaceSearchIndexMakeOptions = {},
 ) {
-  const finderResult = yield* Effect.result(
+  const finder = yield* Effect.acquireRelease(
     createFinder(cwd, variant, options.loadFileFinderModule ?? loadFileFinderModule),
-  );
-  if (finderResult._tag === "Failure") {
-    const error = finderResult.failure;
-    if (options.listWorkspaceFiles && isNativeCompatibilityError(error.cause ?? error.reason)) {
-      return yield* makeVcsFallback(cwd, variant, options.listWorkspaceFiles);
-    }
-    return yield* error;
-  }
-
-  const finder = yield* Effect.acquireRelease(Effect.succeed(finderResult.success), (finder) =>
-    Effect.try({
-      try: () => finder.destroy(),
-      catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
-    }).pipe(Effect.orDie),
+    (finder) =>
+      Effect.try({
+        try: () => finder.destroy(),
+        catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
+      }).pipe(Effect.orDie),
   );
   yield* waitForIndexReady(
     cwd,
@@ -782,19 +575,7 @@ function parseWorkspaceSearchIndexKey(key: string): {
  */
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
-  return Layer.effect(
-    WorkspaceSearchIndex,
-    Effect.gen(function* () {
-      const vcsDrivers = yield* VcsDriverRegistry.VcsDriverRegistry;
-      return yield* make(cwd, variant, {
-        listWorkspaceFiles: (workspaceRoot) =>
-          vcsDrivers.resolve({ cwd: workspaceRoot }).pipe(
-            Effect.flatMap(({ driver }) => driver.listWorkspaceFiles(workspaceRoot)),
-            Effect.map(({ paths, truncated }) => ({ paths, truncated })),
-          ),
-      });
-    }),
-  );
+  return Layer.effect(WorkspaceSearchIndex, make(cwd, variant));
 };
 
 export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchIndexMap>()(

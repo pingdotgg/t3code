@@ -85,69 +85,17 @@ it.effect("preserves unexpected FileFinder creation failures", () =>
   }),
 );
 
-it.effect("falls back to the VCS file list on native compatibility failures", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const compatibilityError = Object.assign(new Error("version `GLIBC_2.32' not found"), {
-        code: "ERR_DLOPEN_FAILED",
-      });
-      let paths = ["src/components/Composer.tsx", "src/index.ts", "public/icon.svg"];
-      const listWorkspaceFiles = vi.fn(() => Effect.succeed({ paths, truncated: false }));
-
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "paths", {
-        loadFileFinderModule: async () => {
-          throw compatibilityError;
-        },
-        listWorkspaceFiles,
-      });
-
-      const initialList = yield* searchIndex.list();
-      expect(initialList).toEqual({
-        entries: [
-          { path: "public", kind: "directory" },
-          { path: "public/icon.svg", kind: "file" },
-          { path: "src", kind: "directory" },
-          { path: "src/components", kind: "directory" },
-          { path: "src/components/Composer.tsx", kind: "file" },
-          { path: "src/index.ts", kind: "file" },
-        ],
-        truncated: false,
-      });
-      const fuzzySearch = yield* searchIndex.search("cmp", 10);
-      expect(fuzzySearch.entries).toEqual(
-        expect.arrayContaining([
-          { path: "src/components", kind: "directory" },
-          { path: "src/components/Composer.tsx", kind: "file" },
-        ]),
-      );
-      const imageSearch = yield* searchIndex.search("", 10, undefined, true);
-      expect(imageSearch).toEqual({
-        entries: [{ path: "public/icon.svg", kind: "file" }],
-        truncated: false,
-      });
-
-      paths = ["README.md"];
-      yield* searchIndex.refresh();
-      const refreshedList = yield* searchIndex.list();
-      expect(refreshedList).toEqual({
-        entries: [{ path: "README.md", kind: "file" }],
-        truncated: false,
-      });
-      expect(listWorkspaceFiles).toHaveBeenCalledTimes(2);
-    }),
-  ),
-);
-
-it.effect("preserves unrelated native module load failures", () =>
+it.effect("reports native module load failures when the index is requested", () =>
   Effect.gen(function* () {
-    const cause = new Error("module syntax is invalid");
+    const cause = Object.assign(new Error("version `GLIBC_2.32' not found"), {
+      code: "ERR_DLOPEN_FAILED",
+    });
     const error = yield* Effect.flip(
       Effect.scoped(
         WorkspaceSearchIndex.make("/workspace/project", "paths", {
           loadFileFinderModule: async () => {
             throw cause;
           },
-          listWorkspaceFiles: () => Effect.succeed({ paths: [], truncated: false }),
         }),
       ),
     );
