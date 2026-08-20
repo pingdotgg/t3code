@@ -28,6 +28,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -66,8 +67,14 @@ const { logInfo: logBootstrapInfo, logWarning: logBootstrapWarning } =
 const { logInfo: logStartupInfo, logError: logStartupError } =
   DesktopObservability.makeComponentLogger("desktop-startup");
 
-const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
+// `portsHeldInDistro` is non-empty only when the primary backend will bind
+// inside a WSL distro. The host probes below run in the Electron main process,
+// which is the Windows side, and WSL2's localhost forwarding does not reserve a
+// WSL-side listener's port in the Windows port namespace — so a port that binds
+// fine here can still be taken in the distro the backend actually runs in.
+export const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
   configuredPort: Option.Option<number>,
+  portsHeldInDistro: ReadonlySet<number>,
 ) {
   if (Option.isSome(configuredPort)) {
     return {
@@ -78,6 +85,7 @@ const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(functio
 
   const net = yield* NetService.NetService;
   for (let port = DEFAULT_DESKTOP_BACKEND_PORT; port <= MAX_TCP_PORT; port += 1) {
+    if (portsHeldInDistro.has(port)) continue;
     let availableOnEveryHost = true;
 
     for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
@@ -147,6 +155,7 @@ const bootstrap = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* logBootstrapInfo("bootstrap start");
 
@@ -154,7 +163,46 @@ const bootstrap = Effect.gen(function* () {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
-  const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
+  const settings = yield* desktopSettings.get;
+  // wsl-only mode hands this port to a backend that binds inside the distro, so
+  // the port has to be free on both sides. Ask the distro what it already holds
+  // before scanning; every consumer of the port (the renderer origin registered
+  // below, the advertised endpoints, the backend's own bind) derives from the
+  // single value chosen here, so this is the only place it can be corrected.
+  // Both steps are skipped once something has already asked the app to quit:
+  // the splash would paint a window on the way out, and the probe's wsl.exe
+  // cold start is seconds of work for a port nobody will bind.
+  const startingWslPrimary =
+    settings.wslOnly === true &&
+    settings.wslBackendEnabled === true &&
+    !(yield* Ref.get(state.quitting));
+  if (startingWslPrimary) {
+    // In wsl-only mode the renderer is served by the WSL backend, which can be
+    // slow to cold-boot — show a "Connecting to WSL" splash instead of
+    // presenting no window until WSL is ready. (Dual mode opens fast off the
+    // Windows primary, so no splash there.) It goes up before the port probe
+    // below because that probe is what cold-starts the VM.
+    yield* desktopWindow.showConnectingSplash;
+  }
+  const distroPorts =
+    startingWslPrimary && (yield* wslEnvironment.isAvailable)
+      ? yield* wslEnvironment.probeListeningPorts(settings.wslDistro)
+      : Option.none<ReadonlySet<number>>();
+  if (startingWslPrimary && Option.isNone(distroPorts)) {
+    // Worth a warning rather than a quiet field on the info line below: the
+    // fallback is the Windows-only scan, which for a WSL primary is exactly the
+    // unsound check this probe replaces. If the backend then dies on
+    // EADDRINUSE, this is the line that explains why we did not know better.
+    yield* logBootstrapWarning(
+      "could not read the WSL distro's listening ports; falling back to a Windows-only port scan",
+      { distro: settings.wslDistro },
+    );
+  }
+
+  const backendPortSelection = yield* resolveDesktopBackendPort(
+    environment.configuredBackendPort,
+    Option.getOrElse(distroPorts, () => new Set<number>()),
+  );
   const backendPort = backendPortSelection.port;
   yield* logBootstrapInfo(
     backendPortSelection.selectedByScan
@@ -163,10 +211,11 @@ const bootstrap = Effect.gen(function* () {
     {
       port: backendPort,
       ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
+      // A failed probe is not a guarantee that the distro is clear; the child
+      // can still lose the race and hit EADDRINUSE at launch.
+      ...(startingWslPrimary ? { wslDistroPortsProbed: Option.isSome(distroPorts) } : {}),
     },
   );
-
-  const settings = yield* desktopSettings.get;
   if (settings.serverExposureMode !== environment.defaultDesktopSettings.serverExposureMode) {
     yield* logBootstrapInfo("bootstrap restoring persisted server exposure mode", {
       mode: settings.serverExposureMode,
@@ -201,13 +250,6 @@ const bootstrap = Effect.gen(function* () {
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
 
   if (!(yield* Ref.get(state.quitting))) {
-    // In wsl-only mode the renderer is served by the WSL backend, which can be
-    // slow to cold-boot — show a "Connecting to WSL" splash immediately so the
-    // app feels responsive instead of presenting no window until WSL is ready.
-    // (Dual mode opens fast off the Windows primary, so no splash there.)
-    if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
-      yield* desktopWindow.showConnectingSplash;
-    }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
     // Bring up the WSL backend if the user previously enabled it. The
