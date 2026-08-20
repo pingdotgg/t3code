@@ -132,16 +132,17 @@ export interface ThreadStatusPill {
 }
 
 // Rollup order mirrors the per-thread resolver exactly: attention states,
-// then active work, then the actionable plan prompt, then passive
-// monitoring. A Monitoring sibling must never hide a Plan Ready thread.
+// then active work, then the actionable plan prompt, then an unread
+// completion, then passive monitoring. A Monitoring sibling must never hide
+// a Plan Ready or Completed thread.
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 6,
   "Awaiting Input": 5,
   Working: 4,
   Connecting: 4,
   "Plan Ready": 3,
-  Monitoring: 2,
-  Completed: 1,
+  Completed: 2,
+  Monitoring: 1,
 };
 
 type ThreadStatusInput = Pick<
@@ -498,6 +499,42 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+/** Which signal the sidebar row's top-right label shows, highest priority first. */
+export type SidebarThreadTopStatusKind =
+  | "approval"
+  | "input"
+  | "failed"
+  | "working"
+  | "woke"
+  | "done"
+  | "monitoring"
+  | null;
+
+/**
+ * Attention outranks passive monitoring. `backgroundLiveness: "monitoring"`
+ * means watch loops (a long-running shell) are the ONLY live work, so the
+ * turn has already settled — an unseen completion or a wake is exactly the
+ * news the user is waiting for, and monitoring would otherwise mask it for
+ * as long as the shell lives. `working` still wins: real background work is
+ * in flight, so the thread is not done yet. Monitoring re-appears once the
+ * user has read the completion.
+ */
+export function resolveSidebarThreadTopStatusKind(input: {
+  status: SidebarThreadStatus;
+  isWoke: boolean;
+  isUnread: boolean;
+}): SidebarThreadTopStatusKind {
+  const { isUnread, isWoke, status } = input;
+  if (status === "approval") return "approval";
+  if (status === "input") return "input";
+  if (status === "failed") return "failed";
+  if (status === "working") return "working";
+  if (isWoke) return "woke";
+  if (isUnread) return "done";
+  if (status === "monitoring") return "monitoring";
+  return null;
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 export function parseTimestampMs(isoDate: string): number {
@@ -705,20 +742,23 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.backgroundLiveness === "monitoring") {
-    return {
-      label: "Monitoring",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: false,
-    };
-  }
-
+  // Monitoring means watch loops are the only live work, so the turn has
+  // settled: an unseen completion is the news, and monitoring would mask it
+  // for as long as the watch loop lives. Monitoring returns once it is read.
   if (hasUnseenCompletion(thread)) {
     return {
       label: "Completed",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.backgroundLiveness === "monitoring") {
+    return {
+      label: "Monitoring",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: false,
     };
   }
