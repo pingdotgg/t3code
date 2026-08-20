@@ -84,7 +84,7 @@ function parseColorFunction(value: string): VsCodeRgba | null {
 function parseVsCodeColor(value: unknown): VsCodeRgba | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (trimmed.startsWith("color(")) return parseColorFunction(trimmed);
+  if (/^color\(/i.test(trimmed)) return parseColorFunction(trimmed);
   const hex = trimmed.replace(/^#/, "");
   if (!/^(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex)) return null;
   const expand = (part: string) =>
