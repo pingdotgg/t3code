@@ -54,7 +54,7 @@ function SnoozeForForm(props: {
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
-        <form id={FORM_ID} className="space-y-2" onSubmit={submit}>
+        <form id={FORM_ID} className="space-y-2" noValidate onSubmit={submit}>
           <Label htmlFor="snooze-for-time">Date and time</Label>
           <Input
             id="snooze-for-time"

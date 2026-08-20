@@ -5,6 +5,10 @@ export function resolveAndroidPickerValue(value: Date, part: AndroidSnoozePicker
   return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
 }
 
+export function resolveAndroidMinimumDate(now: Date): Date {
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
 export function mergeAndroidPickerValue(
   current: Date,
   selected: Date,
