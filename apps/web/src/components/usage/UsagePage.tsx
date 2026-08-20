@@ -68,15 +68,12 @@ export function UsagePage() {
         : enumerateHourStarts(window.sinceTime, window.untilTime),
     [window.sinceTime, window.untilTime],
   );
-  // The hourly window is small enough to render every period: the table then
-  // reads chronologically like the chart, instead of jumping between the hours
-  // that happened to have activity. Daily windows can run 90 periods, so those
-  // stay newest-first with the interesting end on top.
-  const breakdownPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(() => {
-    if (!isPast24Hours) return merged.daily.toReversed();
-    const byHour = new Map(merged.hourly.map((entry) => [entry.hourStart, entry]));
-    return hours.map((hourStart) => byHour.get(hourStart) ?? zeroHour(hourStart));
-  }, [isPast24Hours, merged.daily, merged.hourly, hours]);
+  // Newest first: the window can run 90 periods, so the interesting end
+  // belongs at the top of the table.
+  const breakdownPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(
+    () => (isPast24Hours ? merged.hourly : merged.daily).toReversed(),
+    [isPast24Hours, merged.daily, merged.hourly],
+  );
 
   const selectWindow = (days: number) => {
     setWindowSelection({
@@ -436,17 +433,6 @@ export function UsagePage() {
       </div>
     </SidebarInset>
   );
-}
-
-/** A zero-filled hourly period so the breakdown lists every hour in the window. */
-function zeroHour(hourStart: string): HourlyTotals {
-  return {
-    day: "",
-    hourStart,
-    costUsd: 0,
-    totalTokens: 0,
-    byProvider: new Map<UsageProviderKind, { costUsd: number; totalTokens: number }>(),
-  };
 }
 
 /** Brand mark for the harness a row belongs to. */
