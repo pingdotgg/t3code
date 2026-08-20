@@ -25,6 +25,13 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ThreadSnapshotLoader, type ThreadSnapshotWindow } from "./threadSnapshotHttp.ts";
+import {
+  cachedThreadGeneration,
+  evictCachedThread,
+  persistCachedThread,
+  retainCachedThread,
+  reviveCachedThread,
+} from "./threadCache.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -128,7 +135,7 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
 
 function shouldPersistThread(thread: OrchestrationThread): boolean {
   const status = thread.session?.status;
-  return status !== "starting" && status !== "running";
+  return thread.archivedAt === null && status !== "starting" && status !== "running";
 }
 
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
@@ -139,6 +146,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const snapshotLoader = yield* ThreadSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
+  // Keep the cross-surface cache generation alive until this detail state's
+  // persistence worker and teardown write have both finalized.
+  yield* retainCachedThread(cache, environmentId, threadId);
   const cached = yield* cache.loadThread(environmentId, threadId).pipe(
     Effect.catch((error) =>
       Effect.logWarning("Could not load cached thread.").pipe(
@@ -185,22 +195,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     readonly snapshot: OrchestrationThreadDetailSnapshot;
     readonly epoch: number;
   } | null>(null);
-  const persistence = yield* Queue.sliding<OrchestrationThreadDetailSnapshot>(1);
+  const persistence = yield* Queue.sliding<{
+    readonly generation: number;
+    readonly snapshot: OrchestrationThreadDetailSnapshot;
+  }>(1);
 
-  const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
-    snapshot: OrchestrationThreadDetailSnapshot,
-  ) {
-    yield* cache.saveThread(environmentId, snapshot).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not persist the thread cache.").pipe(
-          Effect.annotateLogs({
-            environmentId,
-            threadId,
-            error: error.message,
-          }),
-        ),
-      ),
-    );
+  const persist = Effect.fn("EnvironmentThreadState.persist")(function* (pending: {
+    readonly generation: number;
+    readonly snapshot: OrchestrationThreadDetailSnapshot;
+  }) {
+    yield* persistCachedThread(cache, environmentId, pending.snapshot, pending.generation);
   });
 
   yield* Stream.fromQueue(persistence).pipe(
@@ -208,6 +212,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     Stream.runForEach(persist),
     Effect.forkScoped,
   );
+
+  const removeCachedThread = Effect.fn("EnvironmentThreadState.removeCachedThread")(function* () {
+    yield* evictCachedThread(cache, environmentId, threadId);
+  });
 
   const setSynchronizing = SubscriptionRef.update(state, (current) =>
     current.status === "deleted"
@@ -270,23 +278,27 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // persist once it settles so cache encoding stays off the streaming path.
     if (shouldPersistThread(thread)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
+      const generation = cachedThreadGeneration(cache, environmentId, threadId);
       const currentPage = yield* SubscriptionRef.get(state).pipe(Effect.map((value) => value.page));
       yield* Queue.offer(persistence, {
-        snapshotSequence,
-        thread,
-        // Persist the window boundary with the window's content so a cache
-        // restore can keep paging from where the loaded history ends.
-        ...Option.match(currentPage, {
-          onNone: () => ({}),
-          onSome: (value) =>
-            ({
-              page: {
-                beforeCursor: value.beforeCursor,
-                hasMore: value.hasMore,
-                snapshotSequence,
-              },
-            }) as const,
-        }),
+        generation,
+        snapshot: {
+          snapshotSequence,
+          thread,
+          // Persist the window boundary with the window's content so a cache
+          // restore can keep paging from where the loaded history ends.
+          ...Option.match(currentPage, {
+            onNone: () => ({}),
+            onSome: (value) =>
+              ({
+                page: {
+                  beforeCursor: value.beforeCursor,
+                  hasMore: value.hasMore,
+                  snapshotSequence,
+                },
+              }) as const,
+          }),
+        },
       });
     }
   });
@@ -300,17 +312,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       error: Option.none(),
       page: Option.none(),
     });
-    yield* cache.removeThread(environmentId, threadId).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not remove the cached thread.").pipe(
-          Effect.annotateLogs({
-            environmentId,
-            threadId,
-            error: error.message,
-          }),
-        ),
-      ),
-    );
+    yield* removeCachedThread();
   });
 
   // Body of applyItem, running under applyLock.
@@ -334,6 +336,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       // epoch bump discards any older-page fetch racing this snapshot.
       yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
       yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
+      if (item.snapshot.thread.archivedAt !== null) {
+        yield* removeCachedThread();
+      } else {
+        yield* reviveCachedThread(cache, environmentId, threadId);
+      }
       yield* setThread(item.snapshot.thread, pageStateFromSnapshot(item.snapshot.page));
       return;
     }
@@ -362,7 +369,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
     const result = applyThreadDetailEvent(current.data.value, item.event);
     if (result.kind === "updated") {
+      if (item.event.type === "thread.unarchived") {
+        yield* reviveCachedThread(cache, environmentId, threadId);
+      }
       yield* setThread(result.thread, "keep");
+      if (item.event.type === "thread.archived") {
+        yield* removeCachedThread();
+      }
     } else if (result.kind === "deleted") {
       yield* setDeleted();
     }
@@ -454,9 +467,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (merged !== null && shouldPersistThread(merged)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
       yield* Queue.offer(persistence, {
-        snapshotSequence,
-        thread: merged,
-        ...(snapshot.page === undefined ? {} : { page: { ...snapshot.page, snapshotSequence } }),
+        generation: cachedThreadGeneration(cache, environmentId, threadId),
+        snapshot: {
+          snapshotSequence,
+          thread: merged,
+          ...(snapshot.page === undefined ? {} : { page: { ...snapshot.page, snapshotSequence } }),
+        },
       });
     }
   });
@@ -639,6 +655,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       {
         onExpectedFailure: setStreamError,
         retryExpectedFailureAfter: "250 millis",
+        // A retained route can stay mounted while another surface unarchives
+        // the thread. Keep retrying after cold storage makes the detail
+        // temporarily unavailable so this subscription can observe the later
+        // unarchive without requiring a wakeup or a replacement session.
+        shouldRetryExpectedFailure: () => true,
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(Stream.runForEach(applyItem)),
@@ -670,19 +691,22 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           onSome: (thread) =>
             shouldPersistThread(thread)
               ? persist({
-                  snapshotSequence,
-                  thread,
-                  ...Option.match(current.page, {
-                    onNone: () => ({}),
-                    onSome: (page) =>
-                      ({
-                        page: {
-                          beforeCursor: page.beforeCursor,
-                          hasMore: page.hasMore,
-                          snapshotSequence,
-                        },
-                      }) as const,
-                  }),
+                  generation: cachedThreadGeneration(cache, environmentId, threadId),
+                  snapshot: {
+                    snapshotSequence,
+                    thread,
+                    ...Option.match(current.page, {
+                      onNone: () => ({}),
+                      onSome: (page) =>
+                        ({
+                          page: {
+                            beforeCursor: page.beforeCursor,
+                            hasMore: page.hasMore,
+                            snapshotSequence,
+                          },
+                        }) as const,
+                    }),
+                  },
                 })
               : Effect.void,
         }),

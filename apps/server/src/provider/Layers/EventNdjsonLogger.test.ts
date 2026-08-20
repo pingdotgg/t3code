@@ -237,6 +237,40 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("flushes one thread before destructive cleanup without closing the store", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const archivedPath = ownedLogPath(basePath, "thread-archived");
+      const activePath = ownedLogPath(basePath, "thread-active");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
+        const native = store.logger("native");
+        const canonical = store.logger("canonical");
+
+        yield* native.write({ id: "before-archive" }, ThreadId.make("thread-archived"));
+        assert.equal(NodeFS.existsSync(archivedPath), false);
+
+        assert.exists(native.closeThread);
+        if (!native.closeThread) return;
+        yield* native.closeThread(ThreadId.make("thread-archived"));
+        assert.equal(NodeFS.existsSync(archivedPath), true);
+
+        yield* canonical.write(
+          { type: "item.completed", id: "still-active" },
+          ThreadId.make("thread-active"),
+        );
+        yield* store.close();
+
+        assert.include(NodeFS.readFileSync(archivedPath, "utf8"), '"id":"before-archive"');
+        assert.include(NodeFS.readFileSync(activePath, "utf8"), '"id":"still-active"');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("flushes an active batch without a permanent polling loop", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));

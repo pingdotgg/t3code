@@ -29,6 +29,7 @@ import { cli, makeCli } from "./bin.ts";
 import * as ServerConfig from "./config.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import * as ThreadColdStorage from "./orchestration/ThreadColdStorage.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
@@ -98,6 +99,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
 const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
   Layer.mergeAll(
     OrchestrationLayerLive.pipe(
+      Layer.provide(ThreadColdStorage.noOpLayer),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(SqlitePersistenceLayerLive),
     ),

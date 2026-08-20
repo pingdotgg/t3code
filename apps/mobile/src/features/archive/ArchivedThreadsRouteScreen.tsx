@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useArchivedThreadListActions } from "../home/useThreadListActions";
@@ -15,12 +15,18 @@ import {
   refreshArchivedThreadsForEnvironment,
   useArchivedThreadSnapshots,
 } from "./useArchivedThreadSnapshots";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 export function ArchivedThreadsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const [sortOrder, setSortOrder] = useState<ArchivedThreadSortOrder>("newest");
+  const [unarchivingThreadKeys, setUnarchivingThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const unarchivingThreadKeysRef = useRef(new Set<string>());
   const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>
       Arr.sort(
@@ -65,6 +71,25 @@ export function ArchivedThreadsRouteScreen() {
   );
   const { unarchiveThread, confirmDeleteThread } =
     useArchivedThreadListActions(refreshChangedEnvironment);
+  const handleUnarchiveThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+      if (unarchivingThreadKeysRef.current.has(threadKey)) return;
+      unarchivingThreadKeysRef.current.add(threadKey);
+      setUnarchivingThreadKeys((current) => new Set(current).add(threadKey));
+      try {
+        await unarchiveThread(thread);
+      } finally {
+        unarchivingThreadKeysRef.current.delete(threadKey);
+        setUnarchivingThreadKeys((current) => {
+          const next = new Set(current);
+          next.delete(threadKey);
+          return next;
+        });
+      }
+    },
+    [unarchiveThread],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -83,10 +108,11 @@ export function ArchivedThreadsRouteScreen() {
       onRefresh={refresh}
       onSearchQueryChange={setSearchQuery}
       onSortOrderChange={setSortOrder}
-      onUnarchiveThread={unarchiveThread}
+      onUnarchiveThread={(thread) => void handleUnarchiveThread(thread)}
       searchQuery={searchQuery}
       selectedEnvironmentId={selectedEnvironmentId}
       sortOrder={sortOrder}
+      unarchivingThreadKeys={unarchivingThreadKeys}
     />
   );
 }

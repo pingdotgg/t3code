@@ -46,6 +46,7 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
@@ -84,6 +85,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const threadColdStorage = yield* ThreadColdStorage.ThreadColdStorage;
   const crypto = yield* Crypto.Crypto;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -91,6 +93,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+
+  const finishRestoredUnarchiveTree = (threadId: ThreadId) =>
+    threadColdStorage.finishRestoreTree(threadId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to finalize restored archive bundle", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,
@@ -107,6 +119,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     const dispatchStartSequence = commandReadModel.snapshotSequence;
     let processingStartedAtMs = 0;
+    let restoredUnarchiveThreadId: ThreadId | null = null;
+    let restoredUnarchiveCommitted = false;
+    let unarchiveRestoreFailed = false;
     const aggregateRef = commandToAggregateRef(envelope.command);
     const baseMetricAttributes = {
       commandType: envelope.command.type,
@@ -137,6 +152,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           "orchestration.aggregate_id": aggregateRef.aggregateId,
         });
 
+        const unarchiveThreadId =
+          envelope.command.type === "thread.unarchive" ? envelope.command.threadId : null;
         const existingReceipt = yield* commandReceiptRepository.getByCommandId({
           commandId: envelope.command.commandId,
         });
@@ -157,6 +174,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             });
           }
           if (existingReceipt.value.status === "accepted") {
+            if (
+              unarchiveThreadId !== null &&
+              existingReceipt.value.aggregateKind === "thread" &&
+              existingReceipt.value.aggregateId === unarchiveThreadId
+            ) {
+              yield* finishRestoredUnarchiveTree(unarchiveThreadId);
+            }
             return {
               sequence: existingReceipt.value.resultSequence,
             };
@@ -165,6 +189,29 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             commandId: envelope.command.commandId,
             detail: existingReceipt.value.error ?? "Previously rejected.",
           });
+        }
+
+        if (unarchiveThreadId !== null) {
+          restoredUnarchiveThreadId = unarchiveThreadId;
+          const restored = yield* threadColdStorage.restoreTree(unarchiveThreadId).pipe(
+            Effect.mapError((cause) => {
+              unarchiveRestoreFailed = true;
+              return new OrchestrationCommandInvariantError({
+                commandType: envelope.command.type,
+                detail: "Failed to restore the archived conversation.",
+                cause,
+              });
+            }),
+          );
+          if (restored) {
+            commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
+          } else {
+            unarchiveRestoreFailed = true;
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail: "Failed to restore the archived conversation.",
+            });
+          }
         }
 
         const eventBase = yield* decideOrchestrationCommand({
@@ -183,7 +230,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ),
         );
         const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
-        const committedCommand = yield* sql
+        const commitCommand = sql
           .withTransaction(
             Effect.gen(function* () {
               const committedEvents: OrchestrationEvent[] = [];
@@ -229,7 +276,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           );
 
+        const committedCommand = yield* Effect.uninterruptibleMask(() =>
+          Effect.gen(function* () {
+            // The transaction helper restores interruptibility after COMMIT, so
+            // keep the entire command masked until ownership has transferred.
+            const result = yield* commitCommand;
+            restoredUnarchiveCommitted = restoredUnarchiveThreadId !== null;
+            return result;
+          }),
+        );
+
         commandReadModel = committedCommand.nextCommandReadModel;
+        if (restoredUnarchiveThreadId !== null) {
+          yield* finishRestoredUnarchiveTree(restoredUnarchiveThreadId);
+        }
         for (const [index, event] of committedCommand.committedEvents.entries()) {
           yield* PubSub.publish(eventPubSub, event);
           if (index === 0) {
@@ -278,6 +338,36 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             return;
           }
 
+          if (restoredUnarchiveThreadId !== null && !restoredUnarchiveCommitted) {
+            const rolledBack = yield* threadColdStorage
+              .rollbackRestoreTree(restoredUnarchiveThreadId)
+              .pipe(
+                Effect.as(true),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("failed to roll back restored archive bundle", {
+                    threadId: restoredUnarchiveThreadId,
+                    cause: Cause.pretty(cause),
+                  }).pipe(Effect.as(false)),
+                ),
+              );
+            if (rolledBack) {
+              const refreshedReadModel = yield* projectionSnapshotQuery.getCommandReadModel().pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    "failed to refresh orchestration read model after archive rollback",
+                    {
+                      threadId: restoredUnarchiveThreadId,
+                      cause: Cause.pretty(cause),
+                    },
+                  ).pipe(Effect.as(null)),
+                ),
+              );
+              if (refreshedReadModel !== null) {
+                commandReadModel = refreshedReadModel;
+              }
+            }
+          }
+
           const error = Cause.squash(exit.cause) as OrchestrationDispatchError;
           if (
             !isOrchestrationCommandPreviouslyRejectedError(error) &&
@@ -296,7 +386,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ),
             );
 
-            if (isOrchestrationCommandInvariantError(error)) {
+            if (isOrchestrationCommandInvariantError(error) && !unarchiveRestoreFailed) {
               yield* commandReceiptRepository
                 .upsert({
                   commandId: envelope.command.commandId,

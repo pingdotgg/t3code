@@ -44,6 +44,10 @@ import {
 } from "../../hooks/useSettings";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
+import {
+  buildArchivedProjectRemovalPlans,
+  getArchivedProjectRemovalWarning,
+} from "./ProjectSettingsPanel.logic";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
 import { readLocalApi } from "../../localApi";
@@ -658,6 +662,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       const projectThreads = threads.filter((thread) =>
         memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
+      const memberRemovalPlans = buildArchivedProjectRemovalPlans(members, projectThreads);
       const isWholeGroup = members.length === group.memberProjects.length;
       const singleMember = members.length === 1 ? members[0]! : null;
       const targetLabel = singleMember?.title ?? group.displayName;
@@ -675,9 +680,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     : []),
                 ]
               : [`This removes ${members.length} grouped project entries.`]),
-            ...(projectThreads.length > 0
-              ? ["This permanently clears conversation history for those threads."]
-              : []),
+            getArchivedProjectRemovalWarning({
+              memberCount: members.length,
+              hasLiveThreads: projectThreads.length > 0,
+            }),
             isWholeGroup
               ? "This removes only the project entries, not the files on disk."
               : "Other entries in this grouped project are unaffected.",
@@ -689,17 +695,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       if (confirmed._tag === "Failure" || !confirmed.value) return;
 
       const draftStore = useComposerDraftStore.getState();
-      for (const member of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === member.environmentId && thread.projectId === member.id,
-        );
+      for (const { member, commandOptions } of memberRemovalPlans) {
         const result = mapAtomCommandResult(
           await deleteProject({
             environmentId: member.environmentId,
             input: {
               projectId: member.id,
-              ...(memberThreads.length > 0 ? { force: true } : {}),
+              ...commandOptions,
             },
           }),
           () => undefined,

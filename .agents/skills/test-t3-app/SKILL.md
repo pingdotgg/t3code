@@ -62,7 +62,7 @@ Tokens from `pair` carry standard client scopes. The startup pairing URL carries
 
 Read [references/sqlite-fixtures.md](references/sqlite-fixtures.md) before changing the database.
 
-- Use `node apps/server/scripts/t3-sqlite-state.ts query` for schema discovery and read-only checks.
+- Use `node apps/server/scripts/t3-sqlite-state.ts query` for schema discovery and read-only checks. It targets `state.sqlite` by default; pass `--database archive` when inspecting cold archive manifests or chunks.
 - Stop the dev server before using `node apps/server/scripts/t3-sqlite-state.ts exec`, then restart it with the same base directory.
 - Seed projection tables only for disposable UI fixtures. Use application commands and APIs when testing business behavior or projection correctness.
 - Use the auth CLI, not direct `auth_*` table edits, for pairing and sessions.

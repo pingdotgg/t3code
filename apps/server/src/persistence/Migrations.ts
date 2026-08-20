@@ -47,12 +47,16 @@ import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
-import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
-import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
-import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
-import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
-import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts";
-import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
+import Migration0035 from "./Migrations/035_ThreadColdArchive.ts";
+import Migration0036 from "./Migrations/036_DeletedThreadCleanupQueue.ts";
+import Migration0037 from "./Migrations/037_ProjectionThreadTitleRegeneration.ts";
+import Migration0038 from "./Migrations/038_ThreadColdArchiveCompatibility.ts";
+import Migration0039 from "./Migrations/039_ProjectionThreadsPinned.ts";
+import Migration0040 from "./Migrations/040_ProjectionTurnsKeysetIndex.ts";
+import Migration0041 from "./Migrations/041_ProjectionThreadsPinOrderKey.ts";
+import Migration0042 from "./Migrations/042_ProjectionProjectsDefaultThreadEnvMode.ts";
+import Migration0043 from "./Migrations/043_ProjectionProjectFaviconPath.ts";
+import Migration0044 from "./Migrations/044_ThreadStorageLifecycleCompatibility.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -99,12 +103,16 @@ export const migrationEntries = [
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
   [34, "ProjectionThreadsSnoozed", Migration0034],
-  [35, "ProjectionThreadTitleRegeneration", Migration0035],
-  [36, "ProjectionThreadsPinned", Migration0036],
-  [37, "ProjectionTurnsKeysetIndex", Migration0037],
-  [38, "ProjectionThreadsPinOrderKey", Migration0038],
-  [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
-  [40, "ProjectionProjectFaviconPath", Migration0040],
+  [35, "ThreadColdArchive", Migration0035],
+  [36, "DeletedThreadCleanupQueue", Migration0036],
+  [37, "ProjectionThreadTitleRegeneration", Migration0037],
+  [38, "ThreadColdArchiveCompatibility", Migration0038],
+  [39, "ProjectionThreadsPinned", Migration0039],
+  [40, "ProjectionTurnsKeysetIndex", Migration0040],
+  [41, "ProjectionThreadsPinOrderKey", Migration0041],
+  [42, "ProjectionProjectsDefaultThreadEnvMode", Migration0042],
+  [43, "ProjectionProjectFaviconPath", Migration0043],
+  [44, "ThreadStorageLifecycleCompatibility", Migration0044],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

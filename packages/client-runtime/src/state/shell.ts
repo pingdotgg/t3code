@@ -4,6 +4,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
   type ServerConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -24,6 +25,7 @@ import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { evictCachedThread, reviveCachedThread } from "./threadCache.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -72,6 +74,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
+  const pendingThreadEvictions = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
   const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
@@ -163,6 +166,52 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       return;
     }
 
+    const nextThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+    const currentThreadIds = Option.match(current.snapshot, {
+      onNone: () => new Set<ThreadId>(),
+      onSome: (snapshot) => new Set(snapshot.threads.map((thread) => thread.id)),
+    });
+    const removedThreadIds = Option.match(current.snapshot, {
+      onNone: () => [] as ReadonlyArray<ThreadId>,
+      onSome: (snapshot) =>
+        snapshot.threads
+          .filter((thread) => !nextThreadIds.has(thread.id))
+          .map((thread) => thread.id),
+    });
+    const addedThreadIds = Option.match(current.snapshot, {
+      onNone: () => [] as ReadonlyArray<ThreadId>,
+      onSome: () =>
+        nextSnapshot.threads
+          .filter((thread) => !currentThreadIds.has(thread.id))
+          .map((thread) => thread.id),
+    });
+
+    const evictionCandidates = new Set([
+      ...(yield* Ref.get(pendingThreadEvictions)),
+      ...removedThreadIds,
+    ]);
+    for (const threadId of nextThreadIds) {
+      evictionCandidates.delete(threadId);
+    }
+    // Advance cache tombstones before publishing the new shell so detail
+    // observers cannot enqueue an obsolete write in the transition window.
+    // Keep failed disk removals pending while the shell still omits the thread;
+    // a later snapshot or event can then retry instead of stranding stale data.
+    const evictionResults = yield* Effect.forEach(evictionCandidates, (threadId) =>
+      evictCachedThread(cache, environmentId, threadId).pipe(
+        Effect.map((removed) => [threadId, removed] as const),
+      ),
+    );
+    yield* Ref.set(
+      pendingThreadEvictions,
+      new Set(evictionResults.filter(([, removed]) => !removed).map(([threadId]) => threadId)),
+    );
+    yield* Effect.forEach(
+      addedThreadIds,
+      (threadId) => reviveCachedThread(cache, environmentId, threadId),
+      { discard: true },
+    );
+
     const waiting = yield* Ref.get(awaitingCompletion);
     yield* SubscriptionRef.set(state, {
       snapshot: Option.some(nextSnapshot),
@@ -198,12 +247,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* setSynchronizing;
 
         // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
+        // a socket-owned snapshot. A new session reloads the authoritative
+        // HTTP snapshot first so a valid cursor cannot preserve incomplete
+        // cached data.
         const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
-        if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
+        if (
+          !hasAuthoritativeSnapshot ||
+          Option.isNone(current.snapshot) ||
+          !supportsCompletionMarker
+        ) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -240,9 +294,16 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             error: Option.none(),
           }));
         }
+        // A cold archive can compact the event that removed a thread after an
+        // HTTP snapshot was read or while the app was backgrounded. Servers
+        // with the synchronized handoff therefore revalidate using a full
+        // socket-owned snapshot instead of resuming from a potentially stale
+        // cursor. Older servers retain the HTTP-refresh cursor path above.
+        if (supportsCompletionMarker) {
+          return { requestCompletionMarker: true as const };
+        }
         return {
           afterSequence: current.snapshot.value.snapshotSequence,
-          ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
         };
       }),
       {

@@ -61,4 +61,18 @@ describe("previewMiniPlayerStore", () => {
       selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
     ).toMatchObject({ tabId: "tab-b", size: { width: 480, height: 320 } });
   });
+
+  it("removes only the targeted thread lifecycle state", () => {
+    usePreviewMiniPlayerStore.getState().open(refA, "tab-a");
+    usePreviewMiniPlayerStore.getState().open(refB, "tab-b");
+
+    usePreviewMiniPlayerStore.getState().removeThread(refA);
+
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
+    ).toBeNull();
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refB),
+    ).toMatchObject({ tabId: "tab-b" });
+  });
 });
