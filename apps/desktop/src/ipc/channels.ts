@@ -1,5 +1,7 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
+export const GET_OMARCHY_THEME_CHANNEL = "desktop:get-omarchy-theme";
+export const OMARCHY_THEME_CHANGE_CHANNEL = "desktop:omarchy-theme-change";
 export const SET_THEME_CHANNEL = "desktop:set-theme";
 export const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";

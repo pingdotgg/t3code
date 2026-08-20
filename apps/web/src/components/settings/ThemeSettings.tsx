@@ -103,6 +103,7 @@ function ThemeLibraryCard({
   onDuplicate,
   onDownload,
   onRemove,
+  tooltip,
   variantNavigation,
 }: {
   theme: ThemeCardDefinition;
@@ -114,6 +115,7 @@ function ThemeLibraryCard({
   onDuplicate?: () => void;
   onDownload?: () => void;
   onRemove?: () => void;
+  tooltip?: string;
   variantNavigation?: {
     collectionLabel: string;
     options: ReadonlyArray<{
@@ -406,11 +408,12 @@ function ThemeLibraryCard({
         }
       />
       <TooltipPopup>
-        {variantNavigation
-          ? "Use the first variants for light and dark"
-          : cardModes.length > 1
-            ? "Use for both light and dark"
-            : `Use for ${cardModes[0]} mode only`}
+        {tooltip ??
+          (variantNavigation
+            ? "Use the first variants for light and dark"
+            : cardModes.length > 1
+              ? "Use for both light and dark"
+              : `Use for ${cardModes[0]} mode only`)}
       </TooltipPopup>
     </Tooltip>
   );
@@ -503,6 +506,7 @@ export function ThemeLibrary({
   appearanceMode,
   setAppearanceMode,
   customThemes,
+  omarchyLinkedTheme,
   initialAppearance,
   refreshTheme,
   isImportOpen,
@@ -515,6 +519,7 @@ export function ThemeLibrary({
   appearanceMode: ThemeMode;
   setAppearanceMode: (mode: ThemeMode) => boolean;
   customThemes: ReadonlyArray<ThemeDefinition>;
+  omarchyLinkedTheme: ThemeDefinition | null;
   initialAppearance: ThemeAppearance;
   refreshTheme: () => void;
   isImportOpen: boolean;
@@ -809,6 +814,17 @@ export function ThemeLibrary({
             />
           );
         })}
+        {omarchyLinkedTheme ? (
+          <ThemeLibraryCard
+            activeModes={pickedModesFor(omarchyLinkedTheme.id)}
+            isActive={baseCardId === omarchyLinkedTheme.id}
+            key={omarchyLinkedTheme.id}
+            onUse={() => persistTheme(omarchyLinkedTheme.id)}
+            onUseMode={handlePairPick(omarchyLinkedTheme.id)}
+            theme={getThemeCardDefinition(omarchyLinkedTheme)}
+            tooltip="Follow your current Omarchy theme"
+          />
+        ) : null}
         {customThemeCollections.map(([collectionId, themes]) => (
           <CustomThemeCollectionCard
             activeModesFor={pickedModesFor}

@@ -34,6 +34,8 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const OMARCHY_LINKED_THEME_ID = "__omarchy-linked";
+export const OMARCHY_LINKED_THEME_LABEL = "Omarchy Linked";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -73,6 +75,8 @@ const RESERVED_THEME_IDS = new Set([
 ]);
 
 const customThemeListeners = new Set<() => void>();
+const omarchyLinkedThemeListeners = new Set<() => void>();
+let omarchyLinkedTheme: ThemeDefinition | null = null;
 type CustomThemeLibrarySnapshot =
   | Readonly<{
       status: "ready";
@@ -197,6 +201,27 @@ function parseStoredThemes(storedThemes: ReadonlyArray<unknown>): ReadonlyArray<
     }
   }
   return themes;
+}
+
+function notifyOmarchyLinkedThemeListeners(): void {
+  for (const listener of omarchyLinkedThemeListeners) listener();
+}
+
+export function getAvailableOmarchyLinkedTheme(): ThemeDefinition | null {
+  return omarchyLinkedTheme;
+}
+
+export function subscribeToOmarchyLinkedTheme(listener: () => void): () => void {
+  omarchyLinkedThemeListeners.add(listener);
+  return () => omarchyLinkedThemeListeners.delete(listener);
+}
+
+export function setOmarchyLinkedTheme(theme: ThemeDefinition | null): void {
+  if (theme !== null && theme.id !== OMARCHY_LINKED_THEME_ID) {
+    throw new Error("The Omarchy linked theme is invalid.");
+  }
+  omarchyLinkedTheme = theme;
+  notifyOmarchyLinkedThemeListeners();
 }
 
 function readCustomThemeLibrarySnapshot(): CustomThemeLibrarySnapshot {
@@ -1423,6 +1448,7 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   const themeId = themeIdFromPreference(theme);
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
+    (themeId === OMARCHY_LINKED_THEME_ID ? omarchyLinkedTheme : null) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??
     null
   );

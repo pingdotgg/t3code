@@ -456,6 +456,8 @@ export interface PickedThemeFile {
   text: string;
 }
 
+export const THEME_FILE_MAX_BYTES = 256 * 1024;
+
 export const PickedThemeFileSchema = Schema.Struct({
   name: Schema.String,
   size: Schema.Number,
@@ -1116,6 +1118,12 @@ export interface DesktopBridge {
    * web callers fall back to a plain file input.
    */
   pickThemeFiles?: () => Promise<readonly PickedThemeFile[] | null>;
+  /**
+   * Omarchy's generated VS Code palette on the desktop host. Optional so web,
+   * mobile, and older desktop shells simply omit the linked theme.
+   */
+  getOmarchyTheme?: () => Promise<PickedThemeFile | null>;
+  onOmarchyThemeChange?: (listener: (theme: PickedThemeFile | null) => void) => () => void;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
