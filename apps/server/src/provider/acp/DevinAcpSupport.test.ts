@@ -425,6 +425,51 @@ describe("applyDevinAcpModelSelection", () => {
     }),
   );
 
+  it.effect("ignores boolean model config options when finding reasoning", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: { familySlug: "claude-opus-5", reasoningValue: "low" },
+        requested: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-5",
+            options: [{ value: "claude-opus-5", name: "Claude Opus 5" }],
+          },
+          {
+            id: "thinking",
+            name: "Thinking",
+            category: "model_config",
+            type: "boolean",
+            currentValue: true,
+          },
+          {
+            id: "effort",
+            name: "Effort",
+            category: "model_config",
+            type: "select",
+            currentValue: "low",
+            options: [
+              { value: "low", name: "Low" },
+              { value: "high", name: "High" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).not.toHaveBeenCalled();
+      expect(setConfigOption).toHaveBeenCalledWith("effort", "high");
+    }),
+  );
+
   it.effect(
     "uses the base model when default reasoning is requested and no reasoning config is present",
     () =>

@@ -675,11 +675,12 @@ export const make = (
 
       const { sessionId, sessionSetupResult } = yield* setupSession.pipe(
         options.authPolicy === "onDemand"
-          ? Effect.catch((error) =>
-              error._tag === "AcpRequestError" && error.code === -32000
-                ? authenticate.pipe(Effect.flatMap(() => setupSession))
-                : Effect.fail(error),
-            )
+          ? Effect.catchTags({
+              AcpRequestError: (error) =>
+                error.code === -32000
+                  ? authenticate.pipe(Effect.flatMap(() => setupSession))
+                  : Effect.fail(error),
+            })
           : (effect) => effect,
       );
 

@@ -155,6 +155,7 @@ function resolveDevinDefaultReasoningValue(
 }
 
 function isDevinReasoningConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
+  if (option.type !== "select") return false;
   if (option.category === "thought_level") return true;
   const id = normalizeConfigIdToken(option.id);
   if (DEVIN_REASONING_CONFIG_OPTION_IDS.has(id)) return true;
