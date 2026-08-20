@@ -545,7 +545,7 @@ describe("deriveMessagesTimelineRows", () => {
       "user-entry",
       "turn-fold:turn-1",
       "assistant-thought-entry",
-      "work-entry-1",
+      "work-toggle:work-entry-1",
       "assistant-final-entry",
     ]);
     expect(
@@ -800,9 +800,9 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
     expect(rows.map((row) => row.id)).toEqual([
-      "assistant-thought-entry",
-      "work-entry-1",
       "working-indicator-row",
+      "assistant-thought-entry",
+      "work-live:work-entry-1",
     ]);
   });
 
@@ -864,7 +864,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.filter((row) => row.kind === "turn-fold").map((row) => row.turnId)).toEqual([
       "turn-1",
     ]);
-    expect(rows.map((row) => row.id)).toContain("running-work-entry");
+    expect(rows.map((row) => row.id)).toContain("work-live:running-work-entry");
   });
 
   it("only shows assistant metadata on the terminal assistant message", () => {
@@ -1006,18 +1006,19 @@ describe("deriveMessagesTimelineRows", () => {
       expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
     });
 
-    expect(collapsedRows.map((row) => row.id)).toEqual(["work-3", "work-toggle:work-entry-1"]);
+    expect(collapsedRows.map((row) => row.id)).toEqual(["work-toggle:work-entry-1"]);
     expect(collapsedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       groupId: "work-group:work-entry-1",
-      hiddenCount: 2,
+      hiddenCount: 3,
       expanded: false,
       onlyToolEntries: true,
+      summary: "Used 3 tools",
     });
     expect(expandedRows.map((row) => row.id)).toEqual([
+      "work-toggle:work-entry-1",
       "work-1",
       "work-2",
       "work-3",
-      "work-toggle:work-entry-1",
     ]);
     expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       expanded: true,

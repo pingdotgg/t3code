@@ -1184,6 +1184,7 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolData).toEqual(item);
+    expect(entry?.toolCallId).toBe("call-1");
   });
 
   it("unwraps PowerShell command wrappers for displayed command text", () => {
@@ -1845,6 +1846,20 @@ describe("deriveActiveWorkStartedAt", () => {
           status: "running",
           activeTurnId: TurnId.make("turn-2"),
         },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
+  });
+
+  it("falls back to the latest user message while a running turn is being acknowledged", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          status: "running",
+          activeTurnId: TurnId.make("turn-2"),
+        },
+        null,
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
