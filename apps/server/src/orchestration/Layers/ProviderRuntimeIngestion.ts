@@ -1683,13 +1683,28 @@ const make = Effect.gen(function* () {
             currentSession.lastError === nextSession.lastError;
 
           if (!sessionStateUnchanged) {
-            yield* orchestrationEngine.dispatch({
+            const command = {
               type: "thread.session.set",
               commandId: yield* providerCommandId(event, "thread-session-set"),
               threadId: thread.id,
               session: nextSession,
               createdAt: now,
-            });
+            } as const;
+            if (thread.session !== null) {
+              Object.assign(command, {
+                expectedSessionUpdatedAt: thread.session.updatedAt,
+              });
+            }
+            yield* orchestrationEngine
+              .dispatch(command)
+              .pipe(
+                Effect.catchTag("OrchestrationCommandInvariantError", (error) =>
+                  error.commandType === "thread.session.set" &&
+                  error.detail === "Command produced no events."
+                    ? Effect.void
+                    : Effect.fail(error),
+                ),
+              );
           }
         }
       }

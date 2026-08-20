@@ -24,6 +24,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -97,7 +98,11 @@ function isLegacyTurnCompletedEvent(
   );
 }
 
-function createProviderServiceHarness() {
+function createProviderServiceHarness(options?: {
+  readonly listSessionsEffect?: (
+    sessions: ReadonlyArray<ProviderSession>,
+  ) => Effect.Effect<ReadonlyArray<ProviderSession>>;
+}) {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const runtimeSessions: ProviderSession[] = [];
 
@@ -109,7 +114,8 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
-    listSessions: () => Effect.succeed([...runtimeSessions]),
+    listSessions: () =>
+      options?.listSessionsEffect?.([...runtimeSessions]) ?? Effect.succeed([...runtimeSessions]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
@@ -228,10 +234,17 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
+    listSessionsEffect?: (
+      sessions: ReadonlyArray<ProviderSession>,
+    ) => Effect.Effect<ReadonlyArray<ProviderSession>>;
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
-    const provider = createProviderServiceHarness();
+    const provider = createProviderServiceHarness(
+      options?.listSessionsEffect !== undefined
+        ? { listSessionsEffect: options.listSessionsEffect }
+        : undefined,
+    );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -358,11 +371,13 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-1"),
     });
 
-    const startedThread = await waitForThread(
-      harness.readModel,
-      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === "turn-1",
+    await harness.drain();
+    const startedThread = (await harness.readModel()).threads.find(
+      (thread) => thread.id === asThreadId("thread-1"),
     );
-    expect(startedThread.session?.updatedAt).toBe(lifecycleUpdatedAt);
+    expect(startedThread?.session?.status).toBe("running");
+    expect(startedThread?.session?.activeTurnId).toBe(asTurnId("turn-1"));
+    expect(startedThread?.session?.updatedAt).toBe(lifecycleUpdatedAt);
 
     harness.emit({
       type: "turn.completed",
@@ -387,6 +402,75 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
   });
+
+  effectIt.effect("does not overwrite a Stop while resolving a turn lifecycle snapshot", () =>
+    Effect.gen(function* () {
+      const listSessionsEntered = yield* Deferred.make<void>();
+      const allowListSessions = yield* Deferred.make<void>();
+      let shouldBlock = true;
+      const threadId = asThreadId("thread-1");
+      const turnId = asTurnId("turn-racing-stop");
+      const providerUpdatedAt = "2026-01-01T00:00:00.001Z";
+      const stoppedAt = "2026-01-01T00:00:00.002Z";
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          listSessionsEffect: (sessions) => {
+            if (!shouldBlock) {
+              return Effect.succeed(sessions);
+            }
+            shouldBlock = false;
+            return Deferred.succeed(listSessionsEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(allowListSessions)),
+              Effect.as(sessions),
+            );
+          },
+        }),
+      );
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        status: "running",
+        runtimeMode: "approval-required",
+        threadId,
+        activeTurnId: turnId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: providerUpdatedAt,
+      });
+
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-turn-started-racing-stop"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        turnId,
+        createdAt: providerUpdatedAt,
+      });
+      yield* Deferred.await(listSessionsEntered);
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-stop-racing-turn-start"),
+        threadId,
+        session: {
+          threadId,
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: stoppedAt,
+        },
+        createdAt: stoppedAt,
+      });
+      yield* Deferred.succeed(allowListSessions, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.session?.status).toBe("stopped");
+      expect(thread?.session?.activeTurnId).toBeNull();
+      expect(thread?.session?.updatedAt).toBe(stoppedAt);
+    }),
+  );
 
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();

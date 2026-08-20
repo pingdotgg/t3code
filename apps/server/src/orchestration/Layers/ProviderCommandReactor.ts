@@ -447,13 +447,25 @@ const make = Effect.gen(function* () {
             expectedSessionUpdatedAt: input.expectedSessionUpdatedAt,
           });
         }
-        return orchestrationEngine.dispatch(command);
+        const dispatch = orchestrationEngine.dispatch(command);
+        return input.expectedSessionUpdatedAt === undefined
+          ? dispatch.pipe(Effect.asVoid)
+          : dispatch.pipe(
+              Effect.catchTag("OrchestrationCommandInvariantError", (error) =>
+                error.commandType === "thread.session.set" &&
+                error.detail === "Command produced no events."
+                  ? Effect.void
+                  : Effect.fail(error),
+              ),
+              Effect.asVoid,
+            );
       }),
     );
 
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly detail: string;
+    readonly expectedSessionUpdatedAt?: string;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -461,7 +473,9 @@ const make = Effect.gen(function* () {
       return;
     }
     const session = thread.session;
-    yield* setThreadSession({
+    const status: OrchestrationSession["status"] =
+      session?.status === "stopped" ? "stopped" : "error";
+    const sessionUpdate = {
       threadId: input.threadId,
       session: {
         ...(session ?? {
@@ -470,13 +484,19 @@ const make = Effect.gen(function* () {
           providerInstanceId: thread.modelSelection.instanceId,
           runtimeMode: thread.runtimeMode,
         }),
-        status: session?.status === "stopped" ? "stopped" : "error",
+        status,
         activeTurnId: null,
         lastError: input.detail,
         updatedAt: input.createdAt,
       },
       createdAt: input.createdAt,
-    });
+    };
+    if (input.expectedSessionUpdatedAt !== undefined) {
+      Object.assign(sessionUpdate, {
+        expectedSessionUpdatedAt: input.expectedSessionUpdatedAt,
+      });
+    }
+    yield* setThreadSession(sessionUpdate);
   });
 
   const resolveProject = Effect.fnUntraced(function* (projectId: ProjectId) {
@@ -829,12 +849,22 @@ const make = Effect.gen(function* () {
           : requestedModelSelection
         : input.modelSelection;
 
+    const request = { threadId: input.threadId };
+    if (normalizedInput !== undefined) {
+      Object.assign(request, { input: normalizedInput });
+    }
+    if (normalizedAttachments.length > 0) {
+      Object.assign(request, { attachments: normalizedAttachments });
+    }
+    if (modelForTurn !== undefined) {
+      Object.assign(request, { modelSelection: modelForTurn });
+    }
+    if (input.interactionMode !== undefined) {
+      Object.assign(request, { interactionMode: input.interactionMode });
+    }
     return {
-      threadId: input.threadId,
-      ...(normalizedInput ? { input: normalizedInput } : {}),
-      ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
-      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      request,
+      expectedSessionUpdatedAt: activeSession?.updatedAt ?? thread.session?.updatedAt,
     };
   });
 
@@ -1199,16 +1229,23 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
+    const handleTurnStartFailure = (
+      cause: Cause.Cause<unknown>,
+      expectedSessionUpdatedAt: string | undefined,
+    ) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
       }
       const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
+      const failure = {
         threadId: event.payload.threadId,
         detail,
         createdAt: event.payload.createdAt,
-      }).pipe(
+      };
+      if (expectedSessionUpdatedAt !== undefined) {
+        Object.assign(failure, { expectedSessionUpdatedAt });
+      }
+      return setThreadSessionErrorOnTurnStartFailure(failure).pipe(
         Effect.flatMap(() =>
           appendProviderFailureActivity({
             threadId: event.payload.threadId,
@@ -1223,18 +1260,6 @@ const make = Effect.gen(function* () {
       );
     };
 
-    const recoverTurnStartFailure = (cause: Cause.Cause<unknown>) =>
-      handleTurnStartFailure(cause).pipe(
-        Effect.catchCause((recoveryCause) =>
-          Effect.logWarning("provider command reactor failed to recover turn start failure", {
-            eventType: event.type,
-            threadId: event.payload.threadId,
-            cause: Cause.pretty(recoveryCause),
-            originalCause: Cause.pretty(cause),
-          }),
-        ),
-      );
-
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
@@ -1246,14 +1271,28 @@ const make = Effect.gen(function* () {
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      Effect.catchCause((cause) =>
+        handleTurnStartFailure(cause, thread.session?.updatedAt).pipe(Effect.as(Option.none())),
+      ),
     );
 
     if (Option.isNone(sendTurnRequest)) {
       return;
     }
 
-    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+    const recoverTurnStartFailure = (cause: Cause.Cause<unknown>) =>
+      handleTurnStartFailure(cause, sendTurnRequest.value.expectedSessionUpdatedAt).pipe(
+        Effect.catchCause((recoveryCause) =>
+          Effect.logWarning("provider command reactor failed to recover turn start failure", {
+            eventType: event.type,
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(recoveryCause),
+            originalCause: Cause.pretty(cause),
+          }),
+        ),
+      );
+
+    yield* providerService.sendTurn(sendTurnRequest.value.request).pipe(
       Effect.tap(() =>
         refreshProviderLifecycleAfterTurnStart(event.payload.threadId).pipe(
           Effect.catchCause((cause) =>

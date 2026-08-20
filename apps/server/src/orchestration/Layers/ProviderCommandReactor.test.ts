@@ -168,6 +168,7 @@ describe("ProviderCommandReactor", () => {
       receipt: ProviderTurnInterruptResolvedReceipt,
     ) => Effect.Effect<void>;
     readonly onSessionSet?: (session: OrchestrationSession) => Effect.Effect<void>;
+    readonly onTurnStartFailureActivity?: () => Effect.Effect<void>;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -247,7 +248,7 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
+    const sendTurn = vi.fn<ProviderServiceShape["sendTurn"]>(() =>
       Effect.succeed({
         threadId: ThreadId.make("thread-1"),
         turnId: asTurnId("turn-1"),
@@ -405,6 +406,17 @@ describe("ProviderCommandReactor", () => {
                 (input?.interruptResolutionActivityDispatchFailures ?? 0)
               ) {
                 return Effect.die(new Error("Injected interrupt resolution activity failure"));
+              }
+            }
+            if (
+              command.type === "thread.activity.append" &&
+              command.activity.kind === "provider.turn.start.failed"
+            ) {
+              const onTurnStartFailureActivity = input?.onTurnStartFailureActivity;
+              if (onTurnStartFailureActivity !== undefined) {
+                return engine
+                  .dispatch(command)
+                  .pipe(Effect.tap(() => onTurnStartFailureActivity()));
               }
             }
             if (command.type === "thread.title.regeneration.complete") {
@@ -717,6 +729,81 @@ describe("ProviderCommandReactor", () => {
       thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       expect(thread?.session?.status).toBe("starting");
       expect(thread?.session?.lastError).toBeNull();
+    }),
+  );
+
+  effectIt.effect("does not let an old send failure poison a replacement session", () =>
+    Effect.gen(function* () {
+      const sendStarted = yield* Deferred.make<void>();
+      const allowSendFailure = yield* Deferred.make<void>();
+      const failureProjected = yield* Deferred.make<void>();
+      const threadId = ThreadId.make("thread-1");
+      const replacementUpdatedAt = "2026-01-01T00:00:01.000Z";
+      const replacementTurnId = asTurnId("turn-replacement");
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          onTurnStartFailureActivity: () =>
+            Deferred.succeed(failureProjected, undefined).pipe(Effect.asVoid),
+        }),
+      );
+      harness.sendTurn.mockImplementationOnce(() =>
+        Deferred.succeed(sendStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSendFailure)),
+          Effect.andThen(
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread.send",
+                detail: "delayed old send failure",
+              }),
+            ),
+          ),
+        ),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-old-send"),
+        threadId,
+        message: {
+          messageId: asMessageId("message-old-send"),
+          role: "user",
+          text: "start old work",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Deferred.await(sendStarted);
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-replacement-session"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeMode: "approval-required",
+          activeTurnId: replacementTurnId,
+          lastError: null,
+          updatedAt: replacementUpdatedAt,
+        },
+        createdAt: replacementUpdatedAt,
+      });
+      yield* Deferred.succeed(allowSendFailure, undefined);
+      yield* Deferred.await(failureProjected);
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.session?.status).toBe("running");
+      expect(thread?.session?.providerName).toBe("claudeAgent");
+      expect(thread?.session?.activeTurnId).toBe(replacementTurnId);
+      expect(thread?.session?.lastError).toBeNull();
+      expect(thread?.session?.updatedAt).toBe(replacementUpdatedAt);
     }),
   );
 
