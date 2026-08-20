@@ -95,6 +95,96 @@ The negative space matters as much as the goal.
   — at the cost of O(N) traffic and crypto per message. For a PTY stream it
   would be pathological. Unicast to a named peer is correct.
 
+## Two planes, so no single dependency owns both
+
+Discovery and transport are separate concerns and want separate interfaces.
+
+- **Directory** — who exists, what they will run, whether you are trusted there,
+  where they were last reachable.
+- **Transport** — how bytes get from here to there.
+
+Keeping them apart is what makes any particular mesh optional. tinc is tempting
+precisely because it can fill both slots — mesh transport plus a broadcast
+channel to gossip over — and that is also how it becomes a dependency nobody
+chose. Behind two interfaces it is one backend among several: Tailscale for
+transport where it already exists, mDNS for a directory on a LAN, T3 Connect's
+relay where NAT is hostile, tinc where someone wants a self-hosted mesh and no
+third party.
+
+Bridging networks then costs nothing conceptually. A peer on the tailnet and a
+peer reachable only over a private mesh are two records with different
+transports, and nothing above cares which is which as long as a name resolves
+to a route.
+
+## Discovery: a hello protocol
+
+Peers announce themselves and answer one question: *who else do you know?* A
+client asks a peer, receives its list, and asks the peers on it in turn. No
+central registry, and no new transport — the exchange rides whatever route
+already reaches each peer.
+
+A peer record carries a stable name, an online hint, and the addresses it was
+last reachable on, each tagged with its transport (`tailscale`, `tinc`, `lan`,
+`relay`) and ordered by most recent success. Names are the identity; addresses
+are cache.
+
+Three properties this must keep, each easy to lose:
+
+**Trust is not transitive.** A peer list is a list of *candidates*, not of
+admitted machines. Peer A naming B tells you B exists; admitting B stays a
+deliberate act with a visible moment of consent. Gossip that also carries trust
+turns one compromised peer into a way to introduce arbitrary machines.
+
+**Status and addresses are hints.** Anything learned second-hand is stale by
+construction — a peer's view of a third machine is as old as its last exchange.
+Show them as hints, verify on connect, and let the connection be the source of
+truth rather than the record.
+
+**Records carry no tokens.** A record saying "machine `sol` exists, reachable
+here, you hold a grant there" is safe to replicate to every peer. A record
+carrying a bearer credential with `terminal:operate` is a shell key on a
+broadcast channel, and a gossip layer will diligently copy it everywhere. The
+fabric mints a scoped, revocable credential when a connection is made; it never
+warehouses one. This is the same rule as "a peer offers capabilities, not
+access", applied to the directory.
+
+## Packaging: standalone first, plugin second
+
+It must work with no T3 present, and plug into T3 when wanted. That ordering is
+a maintenance decision, not a preference: a tool that depends on T3 inherits the
+churn of a fast-moving codebase, and this fork already carries enough of that.
+
+That argues for the shape the ACP bridge already uses in this project — its own
+repository, its own tests, no import of T3, and a protocol boundary rather than
+a code one:
+
+- **A daemon plus a CLI.** The daemon holds the directory, answers hello, and
+  runs on machines with no T3 at all. The CLI is how a person uses it without a
+  GUI, which is also how it stays debuggable.
+- **A library API for embedding**, so a client can use the directory in-process
+  rather than shelling out.
+- **A local HTTP or WebSocket API**, which is what T3 should actually talk to.
+  Then the daemon runs whether or not T3 does, and the plugin is a thin adapter.
+
+On language: TypeScript on Node keeps the embedding option genuinely available,
+since T3 is a pnpm/TypeScript workspace and anything else would force the
+protocol route. Two constraints follow, and they matter more than the language
+choice:
+
+- **No Effect in the core.** T3 runs an Effect v4 *beta*; taking that dependency
+  would tie this tool's maintenance to T3's upgrade schedule, which is the exact
+  coupling being avoided. Plain async, with any Effect wrapping done in the T3
+  adapter.
+- **Few dependencies, and none that assume a host.** The daemon should be
+  installable on a small box — the kind of machine most worth reaching remotely
+  — and start with nothing configured.
+
+The natural attachment point on the T3 side already exists:
+`ConnectionsSettings.tsx` keeps saved remote environments and renders "No saved
+remote environments" when empty. A picker fed by the directory belongs there,
+and beside the pairing-token field, which is where a user currently transcribes
+an address by hand.
+
 ## Implementation options
 
 Three shapes, cheapest first. All satisfy the principles; they differ in what
