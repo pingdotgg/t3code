@@ -123,6 +123,7 @@ export interface ActivePlanState {
   turnId: TurnId | null;
   explanation?: string | null;
   steps: Array<{
+    durationMs?: number;
     step: string;
     status: "pending" | "inProgress" | "completed";
   }>;
@@ -579,6 +580,64 @@ function planStateFromActivity(activity: OrchestrationThreadActivity): ActivePla
   };
 }
 
+function addPlanStepDurations(
+  plan: ActivePlanState,
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ActivePlanState {
+  const timings = new Map<string, { completedAt?: number; startedAt?: number }>();
+  let planStartedAt: number | undefined;
+
+  const keyedSteps = (steps: ActivePlanState["steps"]) => {
+    const occurrences = new Map<string, number>();
+    return steps.map((step) => {
+      const occurrence = occurrences.get(step.step) ?? 0;
+      occurrences.set(step.step, occurrence + 1);
+      return { key: `${step.step}:${occurrence}`, step };
+    });
+  };
+
+  for (const activity of activities) {
+    const snapshot = planStateFromActivity(activity);
+    const activityAt = Date.parse(activity.createdAt);
+    if (!snapshot || Number.isNaN(activityAt)) continue;
+    planStartedAt ??= activityAt;
+
+    for (const { key, step } of keyedSteps(snapshot.steps)) {
+      const timing = timings.get(key) ?? {};
+      if (step.status === "inProgress" && timing.startedAt === undefined) {
+        timing.startedAt = activityAt;
+      }
+      if (step.status === "completed" && timing.completedAt === undefined) {
+        timing.completedAt = activityAt;
+      }
+      timings.set(key, timing);
+    }
+  }
+
+  const durationByKey = new Map<string, number>();
+  let previousCompletedAt = planStartedAt;
+  for (const [key, timing] of [...timings.entries()].toSorted(
+    (left, right) => (left[1].completedAt ?? Infinity) - (right[1].completedAt ?? Infinity),
+  )) {
+    const completedAt = timing.completedAt;
+    const startedAt = timing.startedAt ?? previousCompletedAt;
+    if (completedAt === undefined) continue;
+    if (startedAt !== undefined && completedAt > startedAt) {
+      durationByKey.set(key, completedAt - startedAt);
+    }
+    previousCompletedAt = completedAt;
+  }
+
+  return {
+    ...plan,
+    steps: keyedSteps(plan.steps).map(({ key, step }) => {
+      if (step.status !== "completed") return step;
+      const durationMs = durationByKey.get(key);
+      return durationMs === undefined ? step : { ...step, durationMs };
+    }),
+  };
+}
+
 export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
@@ -596,7 +655,15 @@ export function deriveActivePlanState(
   if (!latest) {
     return null;
   }
-  return planStateFromActivity(latest);
+  const plan = planStateFromActivity(latest);
+  if (!plan) return null;
+  const matchingActivities = allPlanActivities.filter(
+    (activity) => activity.turnId === latest.turnId,
+  );
+  const latestClearIndex = matchingActivities.findLastIndex(
+    (activity) => planStateFromActivity(activity) === null,
+  );
+  return addPlanStepDurations(plan, matchingActivities.slice(latestClearIndex + 1));
 }
 
 export interface TurnPlanEntry {
@@ -617,7 +684,10 @@ export function deriveTurnPlans(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): TurnPlanEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const byTurn = new Map<string, TurnPlanEntry>();
+  const byTurn = new Map<
+    string,
+    { activities: OrchestrationThreadActivity[]; entry: TurnPlanEntry }
+  >();
   for (const activity of ordered) {
     if (activity.kind !== "turn.plan.updated") {
       continue;
@@ -632,17 +702,24 @@ export function deriveTurnPlans(
     }
     const existing = byTurn.get(key);
     if (existing) {
-      existing.plan = plan;
+      existing.entry.plan = plan;
+      existing.activities.push(activity);
     } else {
       byTurn.set(key, {
-        id: `turn-plan:${key}`,
-        createdAt: activity.createdAt,
-        turnId: activity.turnId,
-        plan,
+        activities: [activity],
+        entry: {
+          id: `turn-plan:${key}`,
+          createdAt: activity.createdAt,
+          turnId: activity.turnId,
+          plan,
+        },
       });
     }
   }
-  return [...byTurn.values()];
+  return [...byTurn.values()].map(({ activities: planActivities, entry }) => ({
+    ...entry,
+    plan: addPlanStepDurations(entry.plan, planActivities),
+  }));
 }
 
 export function findLatestProposedPlan(
