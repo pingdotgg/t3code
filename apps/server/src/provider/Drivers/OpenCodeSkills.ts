@@ -81,14 +81,13 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
       : path.resolve(customConfigDir)
     : undefined;
 
-  const userRoots: ReadonlyArray<string> = resolvedCustomConfigDir
-    ? [path.join(resolvedCustomConfigDir, "skills")]
-    : [
-        path.join(homeDir, ".claude", "skills"),
-        path.join(homeDir, ".agents", "skills"),
-        path.join(defaultConfigDir, "skills"),
-        path.join(homeDir, ".opencode", "skills"),
-      ];
+  const userRoots: ReadonlyArray<string> = [
+    path.join(homeDir, ".claude", "skills"),
+    path.join(homeDir, ".agents", "skills"),
+    path.join(defaultConfigDir, "skills"),
+    path.join(homeDir, ".opencode", "skills"),
+    ...(resolvedCustomConfigDir ? [path.join(resolvedCustomConfigDir, "skills")] : []),
+  ];
 
   const projectDirs: ReadonlyArray<string> = cwd
     ? yield* Effect.gen(function* () {

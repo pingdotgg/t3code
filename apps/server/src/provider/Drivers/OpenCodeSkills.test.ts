@@ -48,6 +48,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
       );
 
       const skills = yield* discoverOpenCodeSkills(workspace, {
+        HOME: path.join(tempDir, "empty-home"),
         OPENCODE_CONFIG_DIR: configDir,
       });
 
@@ -68,6 +69,93 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
         },
       ]);
     }),
+  );
+
+  it.effect(
+    "preserves global and default user skills when OPENCODE_CONFIG_DIR is set with proper override precedence",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+        const homeDir = path.join(tempDir, "home");
+        const xdgDir = path.join(tempDir, "xdg");
+        const customConfigDir = path.join(tempDir, "custom-config");
+        const workspace = path.join(tempDir, "workspace");
+
+        // Global .claude skill
+        yield* writeSkill(
+          path.join(homeDir, ".claude", "skills"),
+          "claude-skill",
+          ["---", "name: claude-skill", "---"].join("\n"),
+        );
+
+        // Global .agents skill
+        yield* writeSkill(
+          path.join(homeDir, ".agents", "skills"),
+          "agents-skill",
+          ["---", "name: agents-skill", "---"].join("\n"),
+        );
+
+        // Default XDG config dir skill
+        yield* writeSkill(
+          path.join(xdgDir, "opencode", "skills"),
+          "default-xdg-skill",
+          ["---", "name: default-xdg-skill", "---"].join("\n"),
+        );
+
+        // ~/.opencode skill
+        yield* writeSkill(
+          path.join(homeDir, ".opencode", "skills"),
+          "home-opencode-skill",
+          ["---", "name: home-opencode-skill", "---"].join("\n"),
+        );
+
+        // Custom config dir skill (standalone + override)
+        yield* writeSkill(
+          path.join(customConfigDir, "skills"),
+          "custom-skill",
+          ["---", "name: custom-skill", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(homeDir, ".claude", "skills"),
+          "override-target",
+          ["---", "name: override-target", "description: Default claude version.", "---"].join(
+            "\n",
+          ),
+        );
+        yield* writeSkill(
+          path.join(customConfigDir, "skills"),
+          "override-target",
+          ["---", "name: override-target", "description: Custom config version.", "---"].join("\n"),
+        );
+
+        const skills = yield* discoverOpenCodeSkills(workspace, {
+          HOME: homeDir,
+          XDG_CONFIG_HOME: xdgDir,
+          OPENCODE_CONFIG_DIR: customConfigDir,
+        });
+
+        assert.deepEqual(
+          skills.map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            scope: skill.scope,
+          })),
+          [
+            { name: "agents-skill", description: undefined, scope: "user" },
+            { name: "claude-skill", description: undefined, scope: "user" },
+            { name: "custom-skill", description: undefined, scope: "user" },
+            { name: "default-xdg-skill", description: undefined, scope: "user" },
+            { name: "home-opencode-skill", description: undefined, scope: "user" },
+            {
+              name: "override-target",
+              description: "Custom config version.",
+              scope: "user",
+            },
+          ],
+        );
+      }),
   );
 
   it.effect(
@@ -102,6 +190,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
         );
 
         const skills = yield* discoverOpenCodeSkills(workspace, {
+          HOME: path.join(tempDir, "empty-home"),
           OPENCODE_CONFIG_DIR: configDir,
         });
 
@@ -131,6 +220,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
       yield* fs.writeFileString(path.join(skillsDir, "README.md"), "not a skill");
 
       const skills = yield* discoverOpenCodeSkills(undefined, {
+        HOME: path.join(tempDir, "empty-home"),
         OPENCODE_CONFIG_DIR: configDir,
       });
 
@@ -157,6 +247,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
       );
 
       const skills = yield* discoverOpenCodeSkills(workspace, {
+        HOME: path.join(tempDir, "empty-home"),
         OPENCODE_CONFIG_DIR: "relative-config",
       });
 
@@ -228,6 +319,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
         );
 
         const skills = yield* discoverOpenCodeSkills(nestedWorkspace, {
+          HOME: path.join(tempDir, "empty-home"),
           OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-home"),
         });
 
