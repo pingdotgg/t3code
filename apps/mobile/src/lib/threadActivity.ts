@@ -42,6 +42,7 @@ export interface ThreadFeedActivity {
   readonly icon:
     | "agent"
     | "alert"
+    | "brain"
     | "check"
     | "command"
     | "edit"
@@ -53,6 +54,8 @@ export interface ThreadFeedActivity {
     | "wrench"
     | "zap";
   readonly toolLike: boolean;
+  /** toolLike minus reasoning: gates the "N tool calls" group label. */
+  readonly toolCall: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
 }
 
@@ -71,7 +74,7 @@ interface WorkLogEntry {
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
-  itemType?: ToolLifecycleItemType;
+  itemType?: ToolLifecycleItemType | "reasoning";
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
@@ -80,6 +83,7 @@ interface WorkLogEntry {
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
+  toolCallId?: string;
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
 }
@@ -391,6 +395,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
+  const toolCallId = asTrimmedString(asRecord(payload?.data)?.toolCallId);
   if (
     !taskDetailAsLabel &&
     payload &&
@@ -423,6 +428,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (itemType) {
     entry.itemType = itemType;
   }
+  if (toolCallId) {
+    entry.toolCallId = toolCallId;
+  }
   if (requestKind) {
     entry.requestKind = requestKind;
   }
@@ -447,6 +455,14 @@ function collapseDerivedWorkLogEntries(
   // Subagent rows collapse by identity, not adjacency (quiet-timeline
   // guarantee; mirrors web's session-logic).
   const taskRowIndex = new Map<string, number>();
+  // Rows carrying a toolCallId identity also collapse by identity (mirrors
+  // web): Claude streams thinking deltas interleaved with tool_call input
+  // deltas, and adjacent-only folding split one reasoning block into a row
+  // per update whenever a tool call streamed in between. The anchor keeps
+  // the FIRST row's id/createdAt/turnId so the row grows in place with a
+  // stable key. The fuzzy collapseKey fallback (no toolCallId) stays
+  // adjacency-only.
+  const toolRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
       entry.taskId !== undefined &&
@@ -460,6 +476,32 @@ function collapseDerivedWorkLogEntries(
         continue;
       }
       taskRowIndex.set(entry.taskId, collapsed.length);
+      collapsed.push(entry);
+      continue;
+    }
+    const toolIdentityKey =
+      entry.toolCallId !== undefined &&
+      (entry.activityKind === "tool.updated" || entry.activityKind === "tool.completed")
+        ? entry.collapseKey
+        : undefined;
+    if (toolIdentityKey !== undefined) {
+      const existingIndex = toolRowIndex.get(toolIdentityKey);
+      const existing =
+        existingIndex !== undefined && existingIndex < collapsed.length
+          ? collapsed[existingIndex]
+          : undefined;
+      if (existingIndex !== undefined && existing && existing.activityKind !== "tool.completed") {
+        collapsed[existingIndex] = {
+          ...mergeDerivedWorkLogEntries(existing, entry),
+          id: existing.id,
+          createdAt: existing.createdAt,
+          turnId: existing.turnId ?? null,
+        };
+        continue;
+      }
+      // A completed anchor never absorbs later activity for the same
+      // identity, so a stale late update cannot regress the final detail.
+      toolRowIndex.set(toolIdentityKey, collapsed.length);
       collapsed.push(entry);
       continue;
     }
@@ -501,6 +543,7 @@ function mergeDerivedWorkLogEntries(
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
+  const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
   return {
@@ -514,6 +557,7 @@ function mergeDerivedWorkLogEntries(
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
+    ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
   };
@@ -533,6 +577,12 @@ function mergeChangedFiles(
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
+  }
+  // An explicit toolCallId (adapters emit one for streaming items like
+  // reasoning) is a stable identity across the whole update chain; keying on
+  // the growing detail instead would render every update as its own row.
+  if (entry.toolCallId) {
+    return `tool:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -581,6 +631,12 @@ function toolDetailTextLooksLikeFailure(text: string): boolean {
 }
 
 function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
+  // Reasoning rows carry the model's prose as detail; running the tool-output
+  // failure heuristic over it would flag any quoted error ("exit code 1") as
+  // a tool failure even though nothing failed.
+  if (entry.itemType === "reasoning") {
+    return false;
+  }
   if (entry.tone === "error") {
     return true;
   }
@@ -609,6 +665,14 @@ function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 }
 
 function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
+  // Reasoning rows have no tool outcome: no failure heuristic (above), no
+  // success affordance, and never "neutral" — the neutral filter would hide
+  // the live thinking row for the whole turn. Exception: a reasoning item
+  // with no thinking text (e.g. redacted_thinking) stays neutral so the
+  // empty-row filter still hides it instead of rendering a bare row.
+  if (entry.itemType === "reasoning") {
+    return (entry.detail?.trim().length ?? 0) === 0 ? "neutral" : null;
+  }
   if (!workLogEntryIsToolLike(entry)) {
     return null;
   }
@@ -640,6 +704,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
   if (entry.itemType === "dynamic_tool_call" || entry.itemType === "collab_agent_tool_call") {
     return "hammer";
   }
+  if (entry.itemType === "reasoning") return "brain";
   if (entry.tone === "error") return "alert";
   if (entry.tone === "thinking") return "agent";
   if (entry.tone === "info") return "check";
@@ -955,7 +1020,10 @@ function stripTrailingExitCode(value: string): {
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
-  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
+  if (
+    typeof payload?.itemType === "string" &&
+    (isToolLifecycleItemType(payload.itemType) || payload.itemType === "reasoning")
+  ) {
     return payload.itemType;
   }
   return undefined;
@@ -1337,7 +1405,7 @@ function appendPresentedFeedEntry(
     groupId,
     hiddenCount,
     expanded,
-    onlyToolActivities: activities.every((activity) => activity.toolLike),
+    onlyToolActivities: activities.every((activity) => activity.toolCall),
   });
 }
 
@@ -1565,6 +1633,7 @@ export function buildThreadFeed(
               getCopyText,
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
+              toolCall: workLogEntryIsToolLike(entry) && entry.itemType !== "reasoning",
               status: workEntryStatus(entry),
             },
           };

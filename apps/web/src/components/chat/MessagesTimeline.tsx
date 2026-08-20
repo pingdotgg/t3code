@@ -2457,6 +2457,13 @@ function buildToolCallExpandedBody(
 const toolCallExpandedBodyClassName =
   "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
 
+// Reasoning is streamed prose the user follows live: clamping it to max-h-64
+// forced scrolling a 16rem box while the thinking kept growing past it. The
+// block grows with the text instead (Claude Code behavior); tool outputs keep
+// the clamp.
+const reasoningExpandedBodyClassName =
+  "cursor-text whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
+
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
@@ -2474,6 +2481,8 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
       return "hammer";
     case "collab_agent_tool_call":
       return "bot";
+    case "reasoning":
+      return "brain";
   }
 
   // Subagent lifecycle rows (grouped by taskId) get agent identity chrome.
@@ -2657,7 +2666,12 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
-        "aria-label": accessibleDisplayText,
+        // Reasoning previews carry the full thinking text (up to 20k); the
+        // accessible name must stay a label, not a transcript.
+        "aria-label":
+          accessibleDisplayText.length > 200
+            ? `${accessibleDisplayText.slice(0, 200)}…`
+            : accessibleDisplayText,
         "aria-expanded": expanded,
         onClick: () => setExpanded((v) => !v),
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
@@ -2719,7 +2733,15 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+          <pre
+            className={
+              workEntry.itemType === "reasoning"
+                ? reasoningExpandedBodyClassName
+                : toolCallExpandedBodyClassName
+            }
+          >
+            {expandedBody}
+          </pre>
         </div>
       ) : null}
     </div>

@@ -75,7 +75,7 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
-  itemType?: ToolLifecycleItemType;
+  itemType?: ToolLifecycleItemType | "reasoning";
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -180,6 +180,15 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
 }
 
+/**
+ * Stricter than tool-like for the "N tool calls" group labels: reasoning rows
+ * are tool-like for styling, but they are not tool calls and must not inflate
+ * the count.
+ */
+export function workLogEntryIsToolCall(entry: WorkLogEntry): boolean {
+  return entry.itemType !== "reasoning" && workLogEntryIsToolLike(entry);
+}
+
 /** Heuristic: providers often emit successful lifecycle status while error text lives in `detail` / `command`. */
 function toolDetailTextLooksLikeFailure(text: string): boolean {
   const t = text.toLowerCase();
@@ -230,6 +239,12 @@ function workEntryIndicatesToolFailureFromOutput(
   entry: WorkLogEntry,
   includeCommand: boolean,
 ): boolean {
+  // Reasoning rows carry the model's prose as detail; running the tool-output
+  // failure heuristic over it would flag any quoted error ("exit code 1") as
+  // a tool failure even though nothing failed.
+  if (entry.itemType === "reasoning") {
+    return false;
+  }
   if (entry.tone === "error") {
     return true;
   }
@@ -266,6 +281,11 @@ export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boole
 
 /** Tool/command row completed without failure (blue check affordance). */
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
+  // Reasoning is not a tool call; it must never claim the tool success
+  // affordance ("Completed" check).
+  if (entry.itemType === "reasoning") {
+    return false;
+  }
   if (!workLogEntryIsToolLike(entry)) {
     return false;
   }
@@ -290,6 +310,14 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
+  // Reasoning rows have no tool outcome; the neutral filter would hide the
+  // live thinking row for the entire turn (in-progress rows classify as
+  // neutral and both timeline builders drop them). Reasoning items with no
+  // thinking text (e.g. redacted_thinking blocks) stay neutral so they are
+  // still hidden instead of rendering a bare "Reasoning" row.
+  if (entry.itemType === "reasoning") {
+    return (entry.detail?.trim().length ?? 0) === 0;
+  }
   // Spawn CTA rows are never neutral-hidden: mid-run they derive from
   // task.progress (tone "thinking") and the neutral filter was swallowing
   // them exactly while the fleet ran — the one moment they matter most.
@@ -1662,7 +1690,10 @@ function stripTrailingExitCode(value: string): {
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
-  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
+  if (
+    typeof payload?.itemType === "string" &&
+    (isToolLifecycleItemType(payload.itemType) || payload.itemType === "reasoning")
+  ) {
     return payload.itemType;
   }
   return undefined;

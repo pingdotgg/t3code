@@ -879,6 +879,58 @@ describe("workEntryIndicatesToolFailure", () => {
       }),
     ).toBe(false);
   });
+
+  it("never treats reasoning rows as failures, even when thinking quotes errors", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Reasoning",
+        tone: "tool",
+        itemType: "reasoning",
+        detail: "The previous attempt failed with exit code 1: command not found",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps reasoning rows out of the tool success and neutral affordances", () => {
+    const reasoningBase = {
+      ...base,
+      label: "Reasoning",
+      tone: "tool" as const,
+      itemType: "reasoning" as const,
+      detail: "thinking…",
+    };
+    // A completed reasoning row must not claim the tool "Completed" check.
+    expect(
+      workEntryIndicatesToolSuccess({ ...reasoningBase, toolLifecycleStatus: "completed" }),
+    ).toBe(false);
+    // An in-progress reasoning row must not classify as neutral — the neutral
+    // filter would hide the live thinking row for the whole turn.
+    expect(
+      workEntryIndicatesToolNeutralStatus({ ...reasoningBase, toolLifecycleStatus: "inProgress" }),
+    ).toBe(false);
+    expect(
+      workEntryIndicatesToolNeutralStatus({ ...reasoningBase, toolLifecycleStatus: "completed" }),
+    ).toBe(false);
+    // A reasoning row with no thinking text (e.g. redacted_thinking) stays
+    // neutral so the empty-row filter still hides it.
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        label: "Reasoning",
+        tone: "tool" as const,
+        itemType: "reasoning" as const,
+        toolLifecycleStatus: "completed",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...reasoningBase,
+        detail: "   ",
+        toolLifecycleStatus: "completed",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("deriveWorkLogEntries", () => {
@@ -900,6 +952,226 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+  });
+
+  it("collapses the reasoning update chain into one row with the final thinking text", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "reasoning-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Reasoning started",
+        tone: "tool",
+        payload: {
+          itemType: "reasoning",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "reasoning-updated-1",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Reasoning",
+        tone: "tool",
+        payload: {
+          itemType: "reasoning",
+          status: "inProgress",
+          detail: "Let me think",
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      }),
+      makeActivity({
+        id: "reasoning-updated-2",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Reasoning",
+        tone: "tool",
+        payload: {
+          itemType: "reasoning",
+          status: "inProgress",
+          detail: "Let me think step by step",
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      }),
+      makeActivity({
+        id: "reasoning-completed",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Reasoning",
+        tone: "tool",
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          detail: "Let me think step by step about the answer",
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.length).toBe(1);
+    expect(entries[0]?.itemType).toBe("reasoning");
+    expect(entries[0]?.detail).toBe("Let me think step by step about the answer");
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("collapses reasoning updates interleaved with streaming tool calls into one anchored row", () => {
+    // Claude streams thinking deltas interleaved with tool_call input deltas;
+    // adjacent-only folding used to split one block into a row per update.
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "reasoning-updated-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Reasoning",
+        payload: {
+          itemType: "reasoning",
+          status: "inProgress",
+          detail: "Let",
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      }),
+      makeActivity({
+        id: "grep-updated",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "inProgress",
+          detail: 'Grep: {"pattern":"rea',
+          data: { toolCallId: "call-grep-1" },
+        },
+      }),
+      makeActivity({
+        id: "reasoning-completed",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Reasoning",
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          detail: "Let me look at the code",
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      }),
+      makeActivity({
+        id: "grep-completed",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "completed",
+          detail: 'Grep: {"pattern":"reasoning"}',
+          data: { toolCallId: "call-grep-1" },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.itemType)).toEqual(["reasoning", "dynamic_tool_call"]);
+    // The reasoning row anchors where thinking started; the merged row keeps
+    // the latest activity's identity (upstream collapse semantics).
+    expect(entries[0]?.id).toBe(EventId.make("reasoning-completed"));
+    expect(entries[0]?.detail).toBe("Let me look at the code");
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+    expect(entries[1]?.id).toBe(EventId.make("grep-completed"));
+    expect(entries[1]?.detail).toBe('Grep: {"pattern":"reasoning"}');
+  });
+
+  it("keeps two interleaved reasoning blocks as separate anchored rows", () => {
+    const reasoningActivity = (
+      id: string,
+      createdAt: string,
+      kind: "tool.updated" | "tool.completed",
+      detail: string,
+      toolCallId: string,
+    ) =>
+      makeActivity({
+        id,
+        createdAt,
+        kind,
+        summary: "Reasoning",
+        payload: {
+          itemType: "reasoning",
+          status: kind === "tool.completed" ? "completed" : "inProgress",
+          detail,
+          data: { toolCallId },
+        },
+      });
+    const activities: OrchestrationThreadActivity[] = [
+      reasoningActivity(
+        "block-a-start",
+        "2026-02-23T00:00:01.000Z",
+        "tool.updated",
+        "First",
+        "reasoning-a",
+      ),
+      reasoningActivity(
+        "block-b-start",
+        "2026-02-23T00:00:02.000Z",
+        "tool.updated",
+        "Second",
+        "reasoning-b",
+      ),
+      reasoningActivity(
+        "block-a-end",
+        "2026-02-23T00:00:03.000Z",
+        "tool.completed",
+        "First block done",
+        "reasoning-a",
+      ),
+      reasoningActivity(
+        "block-b-end",
+        "2026-02-23T00:00:04.000Z",
+        "tool.completed",
+        "Second block done",
+        "reasoning-b",
+      ),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.detail)).toEqual(["First block done", "Second block done"]);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      EventId.make("block-a-end"),
+      EventId.make("block-b-end"),
+    ]);
+  });
+
+  it("does not let a late update regress a completed row for the same identity", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "reasoning-completed",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Reasoning",
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          detail: "Full final thinking text",
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      }),
+      makeActivity({
+        id: "reasoning-late-update",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Reasoning",
+        payload: {
+          itemType: "reasoning",
+          status: "inProgress",
+          detail: "Full",
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.length).toBe(2);
+    expect(entries[0]?.detail).toBe("Full final thinking text");
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+    expect(entries[1]?.id).toBe(EventId.make("reasoning-late-update"));
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
