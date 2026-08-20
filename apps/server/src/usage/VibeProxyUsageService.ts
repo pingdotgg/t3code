@@ -2,8 +2,9 @@
  * Server-side Vibe-Proxy quota integration.
  *
  * The management key stays in the server secret store. Upstream auth-file
- * responses are reduced to the quota and request-health fields defined by the
- * wire contract before they are cached or sent to a client.
+ * responses are reduced to the routing selection, quota, and request-health
+ * fields defined by the wire contract before they are cached or sent to a
+ * client.
  *
  * @module VibeProxyUsageService
  */
@@ -140,6 +141,7 @@ const normalizeAccount = (value: unknown, index: number): VibeProxyUsageAccount 
     name ??
     `${provider}:${account ?? email ?? label ?? String(index)}`;
   const idToken = asRecord(record.id_token);
+  const routingSelection = asRecord(record.routing_selection);
   const disabled = booleanValue(record.disabled);
   const unavailable = booleanValue(record.unavailable);
 
@@ -157,6 +159,7 @@ const normalizeAccount = (value: unknown, index: number): VibeProxyUsageAccount 
     statusMessage: boundedString(record.status_message, 1_000),
     disabled,
     unavailable,
+    selected: booleanValue(routingSelection?.selected),
     success: nonNegativeInt(record.success),
     failed: nonNegativeInt(record.failed),
     recentRequests: Array.isArray(record.recent_requests)

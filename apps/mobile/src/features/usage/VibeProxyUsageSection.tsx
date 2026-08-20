@@ -343,6 +343,9 @@ function AccountRow(props: { readonly account: VibeProxyUsageAccount; readonly d
           >
             {vibeProxyAccountName(props.account)}
           </Text>
+          {props.account.selected ? (
+            <Text className="shrink-0 text-xs font-t3-medium text-success">In use</Text>
+          ) : null}
           {plan ? <Text className="text-xs text-foreground-muted">{plan}</Text> : null}
         </View>
         {subtitle ? (

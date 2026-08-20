@@ -163,6 +163,9 @@ function AccountRow({
           <span className="truncate text-sm font-medium text-foreground">
             {vibeProxyAccountName(account)}
           </span>
+          {account.selected ? (
+            <span className="shrink-0 text-[11px] font-medium text-success-foreground">In use</span>
+          ) : null}
           {plan ? <span className="shrink-0 text-[11px] text-muted-foreground">{plan}</span> : null}
         </div>
         {subtitle ? <p className="truncate text-xs text-muted-foreground/80">{subtitle}</p> : null}

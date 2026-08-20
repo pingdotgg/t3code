@@ -18,4 +18,4 @@ The key is stored by the connected T3 Code server and is never returned to the c
 The page refreshes account limits whenever you open it. The last successful result stays available
 while a refresh runs and remains visible if Vibe-Proxy is temporarily unreachable. Each account
 shows its provider, status, quota windows, reset times, and recent request health when Vibe-Proxy
-reports those fields.
+reports those fields. The account currently selected for routing is marked **In use**.

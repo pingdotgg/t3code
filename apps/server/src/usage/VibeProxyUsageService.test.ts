@@ -12,7 +12,7 @@ import {
   normalizeVibeProxyAuthFiles,
 } from "./VibeProxyUsageService.ts";
 
-const upstreamAccount = (remainingPercent: number) => ({
+const upstreamAccount = (remainingPercent: number, selected = false) => ({
   id: "codex-person@example.com.json",
   provider: "codex",
   account: "person@example.com",
@@ -28,6 +28,16 @@ const upstreamAccount = (remainingPercent: number) => ({
   status: "active",
   disabled: false,
   unavailable: false,
+  ...(selected
+    ? {
+        routing_selection: {
+          selected: true,
+          model: "claude-opus-5",
+          selected_at: "2026-08-19T07:03:00.000Z",
+          expires_at: "2026-08-19T07:13:00.000Z",
+        },
+      }
+    : {}),
   success: 12,
   failed: 2,
   quota_capacity: {
@@ -52,7 +62,7 @@ const upstreamAccount = (remainingPercent: number) => ({
 
 it("normalizes only display-safe Vibe-Proxy auth-file fields", () => {
   const snapshot = normalizeVibeProxyAuthFiles(
-    { files: [upstreamAccount(58)] },
+    { files: [upstreamAccount(58, true)] },
     "2026-08-19T07:05:00.000Z",
   );
 
@@ -69,6 +79,7 @@ it("normalizes only display-safe Vibe-Proxy auth-file fields", () => {
     statusMessage: null,
     disabled: false,
     unavailable: false,
+    selected: true,
     success: 12,
     failed: 2,
     recentRequests: [{ time: "15:00-15:10", success: 4, failed: 1 }],
@@ -97,6 +108,18 @@ it("normalizes only display-safe Vibe-Proxy auth-file fields", () => {
   assert.notInclude(serialized, "/root/.cli-proxy-api");
   assert.notInclude(serialized, "private-routing-index");
   assert.notInclude(serialized, "private-account-id");
+  assert.notInclude(serialized, "claude-opus-5");
+  assert.notInclude(serialized, "selected_at");
+  assert.notInclude(serialized, "expires_at");
+});
+
+it("marks accounts without a routing selection as not selected", () => {
+  const snapshot = normalizeVibeProxyAuthFiles(
+    { files: [upstreamAccount(58)] },
+    "2026-08-19T07:05:00.000Z",
+  );
+
+  assert.isFalse(snapshot?.accounts[0]?.selected);
 });
 
 it.layer(NodeServices.layer)("VibeProxyUsageService", (it) => {

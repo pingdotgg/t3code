@@ -3,8 +3,8 @@
  *
  * The upstream management response contains credential file paths and token
  * metadata. Those fields deliberately never cross T3 Code's wire. The server
- * normalizes only the account identity, request health, and quota capacity the
- * client needs to render the Usages page.
+ * normalizes only the account identity, routing selection, request health, and
+ * quota capacity the client needs to render the Usages page.
  *
  * @module vibeProxy
  */
@@ -54,6 +54,8 @@ export const VibeProxyUsageAccount = Schema.Struct({
   statusMessage: Schema.NullOr(Schema.String),
   disabled: Schema.Boolean,
   unavailable: Schema.Boolean,
+  /** True when Vibe-Proxy currently routes requests through this account. */
+  selected: Schema.optional(Schema.Boolean),
   success: NonNegativeInt,
   failed: NonNegativeInt,
   recentRequests: Schema.Array(VibeProxyRecentRequestBucket),
