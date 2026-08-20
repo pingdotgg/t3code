@@ -16,14 +16,18 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  makeGitVcsDriverCore,
+  parsePorcelainWorktreePaths,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
 });
 const TestLayer = GitVcsDriver.layer.pipe(
-  Layer.provide(ServerConfigLayer),
+  Layer.provideMerge(ServerConfigLayer),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -758,6 +762,48 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(error.detail, "Git command failed in");
       }),
     );
+
+    it.effect("does not filesystem-delete a path that is not a registered worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const decoyPath = pathService.join(cwd, "not-a-worktree");
+        yield* fileSystem.makeDirectory(decoyPath, { recursive: true });
+        yield* writeTextFile(decoyPath, "keep.txt", "keep\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: decoyPath, force: true })
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitCommandError");
+        assert.equal(yield* fileSystem.exists(pathService.join(decoyPath, "keep.txt")), true);
+      }),
+    );
+  });
+
+  describe("porcelain worktree parsing", () => {
+    it.effect("preserves unusual paths from NUL-delimited porcelain output", () =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(
+          parsePorcelainWorktreePaths(
+            [
+              "worktree /repo",
+              "HEAD abc",
+              "branch refs/heads/main",
+              "",
+              "worktree /repo with spaces\nand-newline ",
+              "HEAD def",
+              "branch refs/heads/feature",
+              "",
+            ].join("\0"),
+          ),
+          ["/repo", "/repo with spaces\nand-newline "],
+        );
+      }),
+    );
   });
 
   describe("review diff previews", () => {
@@ -1396,8 +1442,66 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(created.worktree.refName, "feature/worktree");
         assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/worktree");
 
-        yield* driver.removeWorktree({ cwd, path: worktreePath });
+        yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
         const fileSystem = yield* FileSystem.FileSystem;
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+      }),
+    );
+
+    it.effect("retries transient filesystem failures while force-removing a worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "feature-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/worktree-retry",
+        });
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverConfig = yield* ServerConfig;
+        const firstRemoveAttempt = yield* Deferred.make<void>();
+        let removeAttempts = 0;
+        const transientFailure = PlatformError.systemError({
+          _tag: "Unknown",
+          module: "FileSystem",
+          method: "remove",
+          pathOrDescriptor: worktreePath,
+          description: "Directory not empty",
+        });
+        const flakyFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          remove: (target, options) =>
+            Effect.suspend(() => {
+              if (target === worktreePath && removeAttempts++ === 0) {
+                return Deferred.succeed(firstRemoveAttempt, undefined).pipe(
+                  Effect.andThen(Effect.fail(transientFailure)),
+                );
+              }
+              return fileSystem.remove(target, options);
+            }),
+        });
+        const retryingDriver = yield* GitVcsDriver.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, flakyFileSystem),
+          Effect.provideService(ServerConfig, serverConfig),
+        );
+
+        const removalFiber = yield* retryingDriver
+          .removeWorktree({ cwd, path: worktreePath, force: true })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(firstRemoveAttempt);
+        yield* TestClock.adjust("100 millis");
+        yield* Fiber.join(removalFiber);
+
+        assert.equal(removeAttempts, 2);
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
