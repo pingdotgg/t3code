@@ -124,10 +124,8 @@ export function ThemeSearchSection({
       requestRef.current?.abort();
       const controller = new AbortController();
       requestRef.current = controller;
-      setQuery(trimmed);
       setIsSearching(true);
       setError(null);
-      setResults(null);
       try {
         const nextResults = await searchOpenVsxThemes(trimmed, {
           signal: controller.signal,
@@ -150,6 +148,7 @@ export function ThemeSearchSection({
   const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
 
   useEffect(() => {
+    if (installingId !== null) return;
     if (!debouncedQuery) {
       requestRef.current?.abort();
       requestRef.current = null;
@@ -159,7 +158,7 @@ export function ThemeSearchSection({
       return;
     }
     void runSearch(debouncedQuery);
-  }, [debouncedQuery, runSearch]);
+  }, [debouncedQuery, installingId, runSearch]);
 
   const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
     const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
@@ -237,7 +236,7 @@ export function ThemeSearchSection({
         />
       </InputGroup>
 
-      {!isSearching ? (
+      {!isSearching || results !== null ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <p className="text-muted-foreground text-xs">Popular</p>
@@ -295,7 +294,7 @@ export function ThemeSearchSection({
         </div>
       ) : null}
 
-      {isSearching ? (
+      {isSearching && results === null ? (
         <div className="flex min-h-20 items-center justify-center gap-2 text-muted-foreground text-sm">
           <Spinner /> Searching themes...
         </div>
@@ -337,15 +336,14 @@ export function ThemeSearchSection({
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       {extension.sourceUrl ? (
-                        <a
+                        <Button
                           aria-label={`View source for ${extension.name}`}
-                          className="inline-flex items-center text-muted-foreground hover:text-foreground"
-                          href={extension.sourceUrl}
-                          rel="noreferrer"
-                          target="_blank"
+                          render={<a href={extension.sourceUrl} rel="noreferrer" target="_blank" />}
+                          size="icon-micro"
+                          variant="ghost-muted"
                         >
                           <SourceLinkIcon url={extension.sourceUrl} />
-                        </a>
+                        </Button>
                       ) : null}
                     </div>
                     <Button
