@@ -747,6 +747,68 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("does not let a stalled state listener withhold a timeout response", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let attached = false;
+        let evaluationStarted = false;
+        const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+          if (method === "Runtime.evaluate") {
+            evaluationStarted = true;
+            return await new Promise<never>(() => undefined);
+          }
+          return undefined;
+        });
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents({
+            id: 44,
+            debugger: {
+              isAttached: () => attached,
+              attach: vi.fn(() => {
+                attached = true;
+              }),
+              detach: vi.fn(() => {
+                attached = false;
+              }),
+              sendCommand,
+            },
+          }),
+        );
+
+        yield* manager.createTab("tab_listener_timeout");
+        yield* manager.registerWebview("tab_listener_timeout", 44);
+        let finalDeliveryStarted = false;
+        const releaseFinalDelivery = yield* Deferred.make<void>();
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          state.controller === "none"
+            ? Effect.sync(() => {
+                finalDeliveryStarted = true;
+              }).pipe(Effect.andThen(Deferred.await(releaseFinalDelivery)))
+            : Effect.void,
+        );
+
+        yield* Effect.gen(function* () {
+          const evaluation = yield* manager
+            .automationEvaluate("tab_listener_timeout", {
+              expression: "document.title",
+              timeoutMs: 1_000,
+            })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          expect(evaluationStarted).toBe(true);
+          yield* TestClock.adjust(750);
+          yield* Effect.yieldNow;
+
+          const result = evaluation.pollUnsafe();
+          yield* Deferred.succeed(releaseFinalDelivery, undefined);
+          expect(result).toMatchObject({ _tag: "Failure" });
+          yield* Effect.yieldNow;
+          expect(finalDeliveryStarted).toBe(true);
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseFinalDelivery, undefined)));
+      }),
+    ),
+  );
+
   effectIt.effect("does not let a queued timeout detach the active control session", () =>
     withManager((manager) =>
       Effect.gen(function* () {

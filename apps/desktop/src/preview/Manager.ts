@@ -728,12 +728,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
   });
 
-  const update = Effect.fn("PreviewManager.update")(function* (
+  const commitUpdate = Effect.fn("PreviewManager.commitUpdate")(function* (
     tabId: string,
     patch: Partial<PreviewTabState>,
   ) {
     const updatedAt = yield* currentIso;
-    const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+    return yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
       if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
       const state: PreviewTabState = { ...current, ...patch, updatedAt };
@@ -744,11 +744,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ] as const;
     });
+  });
+
+  const update = Effect.fn("PreviewManager.update")(function* (
+    tabId: string,
+    patch: Partial<PreviewTabState>,
+  ) {
+    const next = yield* commitUpdate(tabId, patch);
     // emitIfCurrent, not emit: an event-driven writer such as syncTabAudible
     // can commit between the modify above and here, and republishing this
     // snapshot would roll the UI back to a value that writer will not send
     // again because it suppresses unchanged audibility.
     if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
+  });
+
+  const updateWithoutWaitingForListeners = Effect.fn(
+    "PreviewManager.updateWithoutWaitingForListeners",
+  )(function* (tabId: string, patch: Partial<PreviewTabState>) {
+    const next = yield* commitUpdate(tabId, patch);
+    if (Option.isSome(next)) {
+      yield* Effect.forkIn(emitIfCurrent(tabId, next.value), parentScope);
+    }
   });
 
   /**
@@ -1323,7 +1339,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
       if (permitAcquired) {
         const tabs = yield* SynchronizedRef.get(tabsRef);
-        if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
+        // Commit the controller reset before returning, but do not let an
+        // arbitrary state listener withhold a bounded automation response.
+        if (tabs.has(tabId)) {
+          yield* updateWithoutWaitingForListeners(tabId, { controller: "none" });
+        }
       }
     });
     const boundedExecution = Effect.gen(function* () {
