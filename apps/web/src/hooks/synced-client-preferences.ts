@@ -33,8 +33,10 @@ export function resolveSyncedPlanModeCoordinatorEnvironmentIds(input: {
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly hydratedPrimaryEnvironmentId: EnvironmentId | null;
+  readonly primaryUnavailable: boolean;
 }): ReadonlyArray<EnvironmentId> {
   if (input.primaryEnvironmentId === null) return [];
+  if (input.primaryUnavailable) return input.environmentIds;
   if (input.hydratedPrimaryEnvironmentId !== input.primaryEnvironmentId) {
     return input.environmentIds.includes(input.primaryEnvironmentId)
       ? [input.primaryEnvironmentId]
@@ -356,7 +358,6 @@ export function createSyncedClientPreferenceHydrationController<
       state.retryEpochActive = false;
       state.lastCanPatch = input.canPatch;
       deactivate(environmentId, owner);
-      input.onHydrated?.();
       return;
     }
     if (!state.retryEpochActive || (!state.lastCanPatch && input.canPatch)) {

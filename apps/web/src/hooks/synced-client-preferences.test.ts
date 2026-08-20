@@ -22,6 +22,7 @@ describe("synced client preferences", () => {
         environmentIds,
         primaryEnvironmentId,
         hydratedPrimaryEnvironmentId: null,
+        primaryUnavailable: false,
       }),
     ).toEqual([primaryEnvironmentId]);
     expect(
@@ -29,6 +30,7 @@ describe("synced client preferences", () => {
         environmentIds,
         primaryEnvironmentId,
         hydratedPrimaryEnvironmentId: primaryEnvironmentId,
+        primaryUnavailable: false,
       }),
     ).toEqual(environmentIds);
 
@@ -89,7 +91,7 @@ describe("synced client preferences", () => {
     expect(persist).toHaveBeenCalledWith(false, UPDATED_AT);
   });
 
-  it("releases secondary hydration when the primary is offline", () => {
+  it("waits through transient primary shell states", () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const onHydrated = vi.fn();
 
@@ -107,7 +109,19 @@ describe("synced client preferences", () => {
       onHydrated,
     });
 
-    expect(onHydrated).toHaveBeenCalledOnce();
+    expect(onHydrated).not.toHaveBeenCalled();
+  });
+
+  it("releases secondary hydration when the primary connection is unavailable", () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    expect(
+      resolveSyncedPlanModeCoordinatorEnvironmentIds({
+        environmentIds: [primaryEnvironmentId, EnvironmentId.make("secondary")],
+        primaryEnvironmentId,
+        hydratedPrimaryEnvironmentId: null,
+        primaryUnavailable: true,
+      }),
+    ).toHaveLength(2);
   });
 
   it("creates independent theme-half writes with collision-safe command ids", () => {
