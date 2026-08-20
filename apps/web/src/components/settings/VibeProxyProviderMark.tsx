@@ -4,7 +4,7 @@ import {
   vibeProxyProviderInitials,
   vibeProxyProviderKind,
   type VibeProxyProviderKind,
-} from "./vibeProxyUsages.logic";
+} from "@t3tools/shared/vibeProxyUsage";
 
 /** Brand marks already shipped in `components/Icons`. */
 const PROVIDER_MARK: Readonly<Partial<Record<VibeProxyProviderKind, Icon>>> = {

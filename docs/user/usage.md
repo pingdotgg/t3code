@@ -11,9 +11,9 @@ headline and chart, and refreshing rescans every connected environment.
 
 ## Review subscription limits with Vibe-Proxy
 
-Open **Settings > Usages** to connect a Vibe-Proxy management API. Enable the integration, enter
-the server's base URL, and save its management key. The key is stored by the T3 Code server and is
-never returned to the browser.
+Open **Settings > Usages** on web or mobile to connect a Vibe-Proxy
+management API. Enable the integration, enter the server's base URL, and save its management key.
+The key is stored by the connected T3 Code server and is never returned to the client.
 
 The page refreshes account limits whenever you open it. The last successful result stays available
 while a refresh runs and remains visible if Vibe-Proxy is temporarily unreachable. Each account

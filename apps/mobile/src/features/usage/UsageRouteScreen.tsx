@@ -19,8 +19,10 @@ import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useVibeProxyUsage } from "../../state/vibeProxyUsage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
+import { VibeProxyUsageSection } from "./VibeProxyUsageSection";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
@@ -44,6 +46,7 @@ export function UsageRouteScreen() {
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const vibeProxyUsage = useVibeProxyUsage();
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -72,7 +75,9 @@ export function UsageRouteScreen() {
   // The pull spinner tracks re-scans of environments that have answered
   // before. The initial scan renders its own placeholder, and an unreachable
   // environment stays pending forever — neither may pin the spinner on.
-  const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const refreshing =
+    environments.some((entry) => entry.isPending && entry.summary !== null) ||
+    vibeProxyUsage.isRefreshing;
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -80,6 +85,7 @@ export function UsageRouteScreen() {
     });
   };
   const refreshWindow = () => {
+    vibeProxyUsage.refresh();
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay === window.sinceDay &&
@@ -98,7 +104,7 @@ export function UsageRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Usage" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader title="Usages" onBack={() => navigation.goBack()} />
         </>
       ) : null}
       <ScrollView
@@ -143,6 +149,8 @@ export function UsageRouteScreen() {
             <ModelsSection merged={merged} />
           </>
         )}
+
+        <VibeProxyUsageSection usage={vibeProxyUsage} />
       </ScrollView>
     </View>
   );

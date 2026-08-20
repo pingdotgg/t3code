@@ -543,7 +543,7 @@ function GeneralSettingsSection() {
         value={autoSettleOnMerge}
         onValueChange={(value) => savePreferences({ autoSettleOnMerge: value })}
       />
-      <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
+      <SettingsRow icon="chart.bar.xaxis" label="Usages" target="SettingsUsage" />
     </SettingsSection>
   );
 }
