@@ -30,4 +30,24 @@ describe("runtimeEventToActivities approval details", () => {
     expect(activity?.kind).toBe("approval.requested");
     expect((activity?.payload as Record<string, unknown> | undefined)?.detail).toBe(detail);
   });
+
+  it("stamps dynamic tool approvals as command requests", () => {
+    const event = {
+      type: "request.opened",
+      eventId: EventId.make("evt-dynamic-request-opened"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: "2026-07-18T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      requestId: RuntimeRequestId.make("approval-dynamic-1"),
+      payload: {
+        requestType: "dynamic_tool_call",
+        detail: "codegraph_codegraph_explore",
+        args: {},
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const [activity] = runtimeEventToActivities(event);
+
+    expect((activity?.payload as Record<string, unknown> | undefined)?.requestKind).toBe("command");
+  });
 });

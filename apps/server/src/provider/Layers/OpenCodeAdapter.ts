@@ -61,6 +61,8 @@ const PROVIDER = ProviderDriverKind.make("opencode");
  * rather than misread (mirrors GROK_RESUME_VERSION / CURSOR_RESUME_VERSION).
  */
 const OPENCODE_RESUME_VERSION = 1 as const;
+const OPENCODE_PERMISSION_ENRICHMENT_TIMEOUT_MS = 250;
+const OPENCODE_PERMISSION_DETAIL_MAX_LENGTH = 2_000;
 
 /**
  * Decode a persisted resume cursor into the upstream `ses_…` id. Anything
@@ -175,9 +177,56 @@ type OpenCodeSubscribedEvent =
     ? TEvent
     : never;
 
+type OpenCodeSessionMessage = NonNullable<
+  Awaited<ReturnType<OpencodeClient["session"]["message"]>>["data"]
+>;
+
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function hasOpenCodeToolInput(
+  part: Extract<Part, { type: "tool" }> | undefined,
+): part is Extract<Part, { type: "tool" }> {
+  return part !== undefined && Object.keys(part.state.input).length > 0;
+}
+
+function findOpenCodeToolPart(
+  message: OpenCodeSessionMessage | undefined,
+  sessionID: string,
+  messageID: string,
+  callID: string,
+): Extract<Part, { type: "tool" }> | undefined {
+  if (message?.info.id !== messageID) {
+    return undefined;
+  }
+  return message.parts.find(
+    (part): part is Extract<Part, { type: "tool" }> =>
+      part.type === "tool" &&
+      part.sessionID === sessionID &&
+      part.messageID === messageID &&
+      part.callID === callID,
+  );
+}
+
+function findCachedOpenCodeToolPart(
+  parts: Iterable<Part>,
+  sessionID: string,
+  messageID: string,
+  callID: string,
+): Extract<Part, { type: "tool" }> | undefined {
+  for (const part of parts) {
+    if (
+      part.type === "tool" &&
+      part.sessionID === sessionID &&
+      part.messageID === messageID &&
+      part.callID === callID
+    ) {
+      return part;
+    }
+  }
+  return undefined;
 }
 
 function openCodeEventSessionId(event: OpenCodeSubscribedEvent): string | undefined {
@@ -334,7 +383,11 @@ function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
 
 function mapPermissionToRequestType(
   permission: string,
-): "command_execution_approval" | "file_read_approval" | "file_change_approval" | "unknown" {
+):
+  | "command_execution_approval"
+  | "file_read_approval"
+  | "file_change_approval"
+  | "dynamic_tool_call" {
   switch (permission) {
     case "bash":
       return "command_execution_approval";
@@ -343,8 +396,49 @@ function mapPermissionToRequestType(
     case "edit":
       return "file_change_approval";
     default:
-      return "unknown";
+      return "dynamic_tool_call";
   }
+}
+
+function permissionDetail(permission: string, patterns: ReadonlyArray<string>): string {
+  return patterns.length > 0 ? patterns.join("\n") : permission;
+}
+
+function dynamicPermissionBaseDetail(permission: string, patterns: ReadonlyArray<string>): string {
+  const nonBlankPatterns = patterns.filter((pattern) => pattern.trim().length > 0);
+  const hasMeaningfulPattern = nonBlankPatterns.some((pattern) => pattern.trim() !== "*");
+  return hasMeaningfulPattern ? `${permission}: ${nonBlankPatterns.join("\n")}` : permission;
+}
+
+function truncatePermissionDetail(detail: string): string {
+  return detail.length <= OPENCODE_PERMISSION_DETAIL_MAX_LENGTH
+    ? detail
+    : `${detail.slice(0, OPENCODE_PERMISSION_DETAIL_MAX_LENGTH - 1)}…`;
+}
+
+function dynamicPermissionDetail(baseDetail: string, args: unknown): string {
+  if (args === undefined || args === null) {
+    return truncatePermissionDetail(baseDetail);
+  }
+
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(args, null, 2);
+  } catch {
+    return truncatePermissionDetail(baseDetail);
+  }
+
+  if (
+    serialized === undefined ||
+    serialized === "{}" ||
+    serialized === "[]" ||
+    serialized === '""'
+  ) {
+    return truncatePermissionDetail(baseDetail);
+  }
+
+  const detail = `${baseDetail}\n\nArguments:\n${serialized}`;
+  return truncatePermissionDetail(detail);
 }
 
 function mapPermissionDecision(reply: "once" | "always" | "reject"): string {
@@ -957,6 +1051,54 @@ export function makeOpenCodeAdapter(
 
         case "permission.asked": {
           context.pendingPermissions.set(event.properties.id, event.properties);
+          const requestType = mapPermissionToRequestType(event.properties.permission);
+          const toolCallId = event.properties.tool?.callID;
+          const toolMessageId = event.properties.tool?.messageID;
+          let toolPart =
+            requestType === "dynamic_tool_call" &&
+            toolCallId !== undefined &&
+            toolMessageId !== undefined
+              ? findCachedOpenCodeToolPart(
+                  context.partById.values(),
+                  context.openCodeSessionId,
+                  toolMessageId,
+                  toolCallId,
+                )
+              : undefined;
+          if (
+            requestType === "dynamic_tool_call" &&
+            toolCallId !== undefined &&
+            toolMessageId !== undefined &&
+            Object.keys(event.properties.metadata).length === 0 &&
+            !hasOpenCodeToolInput(toolPart)
+          ) {
+            const snapshotToolPart = yield* runOpenCodeSdk("session.message", (signal) =>
+              context.client.session.message(
+                {
+                  sessionID: context.openCodeSessionId,
+                  messageID: toolMessageId,
+                },
+                { signal },
+              ),
+            ).pipe(
+              Effect.timeout(`${OPENCODE_PERMISSION_ENRICHMENT_TIMEOUT_MS} millis`),
+              Effect.map(({ data }) =>
+                findOpenCodeToolPart(data, context.openCodeSessionId, toolMessageId, toolCallId),
+              ),
+              Effect.orElseSucceed(() => undefined),
+            );
+            if (hasOpenCodeToolInput(snapshotToolPart)) {
+              toolPart = snapshotToolPart;
+              context.partById.set(snapshotToolPart.id, snapshotToolPart);
+            }
+          }
+          const baseDetail =
+            requestType === "dynamic_tool_call"
+              ? dynamicPermissionBaseDetail(event.properties.permission, event.properties.patterns)
+              : permissionDetail(event.properties.permission, event.properties.patterns);
+          const args = toolPart
+            ? { ...toolPart.state.input, ...event.properties.metadata }
+            : event.properties.metadata;
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
@@ -966,12 +1108,12 @@ export function makeOpenCodeAdapter(
             })),
             type: "request.opened",
             payload: {
-              requestType: mapPermissionToRequestType(event.properties.permission),
+              requestType,
               detail:
-                event.properties.patterns.length > 0
-                  ? event.properties.patterns.join("\n")
-                  : event.properties.permission,
-              args: event.properties.metadata,
+                requestType === "dynamic_tool_call"
+                  ? dynamicPermissionDetail(baseDetail, args)
+                  : baseDetail,
+              args,
             },
           });
           break;

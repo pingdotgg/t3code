@@ -67,6 +67,11 @@ const runtimeMock = {
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
+    messageCalls: [] as Array<{ sessionID: string; messageID: string }>,
+    messagesNeverSettling: false,
+    messagesRequestStarted: Promise.resolve() as Promise<void>,
+    messagesRequestStartedResolve: undefined as (() => void) | undefined,
+    messagesAborted: false,
     subscribedEvents: [] as unknown[],
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
@@ -87,6 +92,14 @@ const runtimeMock = {
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
+    this.state.messageCalls.length = 0;
+    this.state.messagesNeverSettling = false;
+    let resolveMessagesRequestStarted!: () => void;
+    this.state.messagesRequestStarted = new Promise<void>((resolve) => {
+      resolveMessagesRequestStarted = resolve;
+    });
+    this.state.messagesRequestStartedResolve = resolveMessagesRequestStarted;
+    this.state.messagesAborted = false;
     this.state.subscribedEvents = [];
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
@@ -183,7 +196,53 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             throw runtimeMock.state.promptAsyncError;
           }
         },
-        messages: async () => ({ data: runtimeMock.state.messages }),
+        messages: async (
+          { sessionID }: { sessionID: string },
+          { signal }: { signal?: AbortSignal } = {},
+        ) => {
+          runtimeMock.state.messagesRequestStartedResolve?.();
+          runtimeMock.state.messagesRequestStartedResolve = undefined;
+          if (runtimeMock.state.messagesNeverSettling) {
+            return await new Promise<never>((_, reject) => {
+              if (!signal) return;
+              const abort = () => {
+                runtimeMock.state.messagesAborted = true;
+                reject(signal.reason);
+              };
+              if (signal.aborted) {
+                abort();
+              } else {
+                signal.addEventListener("abort", abort, { once: true });
+              }
+            });
+          }
+          return { data: runtimeMock.state.messages };
+        },
+        message: async (
+          { sessionID, messageID }: { sessionID: string; messageID: string },
+          { signal }: { signal?: AbortSignal } = {},
+        ) => {
+          runtimeMock.state.messageCalls.push({ sessionID, messageID });
+          runtimeMock.state.messagesRequestStartedResolve?.();
+          runtimeMock.state.messagesRequestStartedResolve = undefined;
+          if (runtimeMock.state.messagesNeverSettling) {
+            return await new Promise<never>((_, reject) => {
+              if (!signal) return;
+              const abort = () => {
+                runtimeMock.state.messagesAborted = true;
+                reject(signal.reason);
+              };
+              if (signal.aborted) {
+                abort();
+              } else {
+                signal.addEventListener("abort", abort, { once: true });
+              }
+            });
+          }
+          return {
+            data: runtimeMock.state.messages.find((entry) => entry.info.id === messageID) ?? null,
+          };
+        },
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
           runtimeMock.state.revertCalls.push({
             sessionID,
@@ -1146,6 +1205,446 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const completed = events.at(-1);
       if (completed?.type === "item.completed") {
         NodeAssert.equal(completed.payload.detail, "A BBonus");
+      }
+    }),
+  );
+
+  it.effect("maps wildcard OpenCode permissions to actionable dynamic approvals", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-dynamic-approval");
+      runtimeMock.state.messages = [
+        {
+          info: { id: "msg-gh-grep-unrelated", role: "assistant" },
+          parts: [
+            {
+              id: "part-gh-grep-unrelated",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-gh-grep-unrelated",
+              type: "tool",
+              callID: "call-gh-grep-unrelated",
+              tool: "gh_grep_searchGitHub",
+              state: {
+                status: "running",
+                input: {
+                  repo: "effect-ts/effect",
+                  query: "permission.asked",
+                },
+                time: { start: 2 },
+              },
+            },
+          ],
+        },
+        {
+          info: { id: "msg-gh-grep-first", role: "assistant" },
+          parts: [
+            {
+              id: "part-gh-grep-first-running",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-gh-grep-first",
+              type: "tool",
+              callID: "call-gh-grep-first",
+              tool: "gh_grep_searchGitHub",
+              state: {
+                status: "running",
+                input: {
+                  repo: "t3code/t3code",
+                  query: "OpenCodeAdapter",
+                },
+                time: { start: 3 },
+              },
+            },
+          ],
+        },
+      ];
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-gh-grep-first",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-gh-grep-first",
+              type: "tool",
+              callID: "call-gh-grep-first",
+              tool: "gh_grep_searchGitHub",
+              state: {
+                status: "pending",
+                input: {},
+                raw: "",
+              },
+            },
+            time: 1,
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-gh-grep-second",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-gh-grep-second",
+              type: "tool",
+              callID: "call-gh-grep-second",
+              tool: "gh_grep_searchGitHub",
+              state: {
+                status: "running",
+                input: {
+                  repo: "effect-ts/effect",
+                  query: "permission.asked",
+                },
+                time: { start: 2 },
+              },
+            },
+            time: 2,
+          },
+        },
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-gh-grep",
+            sessionID: "http://127.0.0.1:9999/session",
+            permission: "gh_grep_searchGitHub",
+            patterns: ["*"],
+            metadata: {},
+            always: [],
+            tool: {
+              messageID: "msg-gh-grep-first",
+              callID: "call-gh-grep-first",
+            },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const event = events[0];
+      NodeAssert.ok(event?.type === "request.opened");
+      if (event?.type === "request.opened") {
+        NodeAssert.equal(event.payload.requestType, "dynamic_tool_call");
+        NodeAssert.equal(
+          event.payload.detail,
+          `gh_grep_searchGitHub\n\nArguments:\n{
+  "repo": "t3code/t3code",
+  "query": "OpenCodeAdapter"
+}`,
+        );
+        NodeAssert.deepEqual(event.payload.args, {
+          repo: "t3code/t3code",
+          query: "OpenCodeAdapter",
+        });
+      }
+    }),
+  );
+
+  it.effect("labels skill approvals with their permission name and pattern", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-skill-approval");
+      const sessionID = "http://127.0.0.1:9999/session";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-skill",
+            sessionID,
+            permission: "skill",
+            patterns: ["fix-review"],
+            metadata: {},
+            always: [],
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const event = events[0];
+      NodeAssert.ok(event?.type === "request.opened");
+      if (event?.type === "request.opened") {
+        NodeAssert.equal(event.payload.detail, "skill: fix-review");
+        NodeAssert.deepEqual(event.payload.args, {});
+      }
+    }),
+  );
+
+  it.effect("emits standard wildcard permissions from metadata without fetching the message", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-standard-approval");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const metadata = { command: "pwd" };
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-bash",
+            sessionID,
+            permission: "bash",
+            patterns: ["*"],
+            metadata,
+            always: [],
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const event = events[0];
+      NodeAssert.ok(event?.type === "request.opened");
+      if (event?.type === "request.opened") {
+        NodeAssert.equal(event.payload.requestType, "command_execution_approval");
+        NodeAssert.equal(event.payload.detail, "*");
+        NodeAssert.deepEqual(event.payload.args, metadata);
+      }
+      NodeAssert.deepEqual(runtimeMock.state.messageCalls, []);
+    }),
+  );
+
+  it.effect("uses an exact cached dynamic tool part without fetching the message", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-cached-dynamic-approval");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "msg-cached-dynamic";
+      const callID = "call-cached-dynamic";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "part-cached-dynamic",
+              sessionID,
+              messageID,
+              type: "tool",
+              callID,
+              tool: "gh_grep_searchGitHub",
+              state: {
+                status: "running",
+                input: { repo: "t3code/t3code", query: "cached" },
+                time: { start: 1 },
+              },
+            },
+            time: 1,
+          },
+        },
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-cached-dynamic",
+            sessionID,
+            permission: "gh_grep_searchGitHub",
+            patterns: ["*"],
+            metadata: {},
+            always: [],
+            tool: { messageID, callID },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const event = events[0];
+      NodeAssert.ok(event?.type === "request.opened");
+      if (event?.type === "request.opened") {
+        NodeAssert.deepEqual(event.payload.args, {
+          repo: "t3code/t3code",
+          query: "cached",
+        });
+      }
+      NodeAssert.deepEqual(runtimeMock.state.messageCalls, []);
+    }),
+  );
+
+  it.effect("caps enriched dynamic permission details without truncating args", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-dynamic-approval-limit");
+      const oversizedPattern = "x".repeat(3_000);
+      const sessionID = "http://127.0.0.1:9999/session";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-dynamic-limit",
+            sessionID,
+            permission: "gh_grep_searchGitHub",
+            patterns: [oversizedPattern],
+            metadata: {},
+            always: [],
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const event = events[0];
+      NodeAssert.ok(event?.type === "request.opened");
+      if (event?.type === "request.opened") {
+        const detail = event.payload.detail;
+        NodeAssert.ok(detail);
+        NodeAssert.equal(detail.length, 2_000);
+        NodeAssert.equal(detail.endsWith("…"), true);
+        NodeAssert.deepEqual(event.payload.args, {});
+      }
+    }),
+  );
+
+  it.effect("falls back to metadata when dynamic permission enrichment exceeds its timeout", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-permission-enrichment-timeout");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "msg-permission-timeout";
+      const callID = "call-permission-timeout";
+      runtimeMock.state.messagesNeverSettling = true;
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "part-permission-timeout-pending",
+              sessionID,
+              messageID,
+              type: "tool",
+              callID,
+              tool: "gh_grep_searchGitHub",
+              state: { status: "pending", input: {}, raw: "" },
+            },
+            time: 1,
+          },
+        },
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-timeout",
+            sessionID,
+            permission: "gh_grep_searchGitHub",
+            patterns: ["*"],
+            metadata: {},
+            always: [],
+            tool: { messageID, callID },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "part-permission-timeout-running",
+              sessionID,
+              messageID,
+              type: "tool",
+              callID,
+              tool: "gh_grep_searchGitHub",
+              state: {
+                status: "running",
+                input: { command: "pwd" },
+                time: { start: 2 },
+              },
+            },
+            time: 2,
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "request.opened" ||
+              ((event.type === "item.started" || event.type === "item.updated") &&
+                String(event.itemId) === callID)),
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* Effect.promise(() => runtimeMock.state.messagesRequestStarted);
+
+      yield* advanceTestClock(250);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(runtimeMock.state.messagesAborted, true);
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["item.started", "request.opened", "item.updated"],
+      );
+
+      const requestEvents = events.filter((event) => event.type === "request.opened");
+      NodeAssert.equal(requestEvents.length, 1);
+      const request = requestEvents[0];
+      if (request?.type === "request.opened") {
+        NodeAssert.deepEqual(request.payload.args, {});
       }
     }),
   );

@@ -302,6 +302,7 @@ function requestKindFromCanonicalRequestType(
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
+    case "dynamic_tool_call":
       return "command";
     case "file_read_approval":
       return "file-read";

@@ -372,6 +372,7 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "command_execution_approval":
     case "exec_command_approval":
     case "dynamic_tool_call":
+    case "unknown":
       return "command";
     case "file_read_approval":
       return "file-read";
