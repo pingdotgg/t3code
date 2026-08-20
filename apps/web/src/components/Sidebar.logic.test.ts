@@ -25,6 +25,7 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldRenderCustomThreadSection,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
   pinOrderKeyBetween,
@@ -203,6 +204,38 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("shouldRenderCustomThreadSection", () => {
+  it("keeps the header when an in-scope member is on a lifecycle shelf", () => {
+    expect(
+      shouldRenderCustomThreadSection({
+        sectionThreadCount: 0,
+        hasInScopeMember: true,
+        hasAnyMember: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a stored empty section visible", () => {
+    expect(
+      shouldRenderCustomThreadSection({
+        sectionThreadCount: 0,
+        hasInScopeMember: false,
+        hasAnyMember: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides a section occupied only outside the current view", () => {
+    expect(
+      shouldRenderCustomThreadSection({
+        sectionThreadCount: 0,
+        hasInScopeMember: false,
+        hasAnyMember: true,
+      }),
+    ).toBe(false);
   });
 });
 

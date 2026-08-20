@@ -99,6 +99,14 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
+export function shouldRenderCustomThreadSection(input: {
+  sectionThreadCount: number;
+  hasInScopeMember: boolean;
+  hasAnyMember: boolean;
+}): boolean {
+  return input.sectionThreadCount > 0 || input.hasInScopeMember || !input.hasAnyMember;
+}
+
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
   actionableCount: number;

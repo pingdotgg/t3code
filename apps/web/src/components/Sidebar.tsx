@@ -140,6 +140,7 @@ import {
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
+  shouldRenderCustomThreadSection,
   resolveWorkingStartedAt,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
@@ -2087,6 +2088,7 @@ export default function Sidebar() {
     snoozedThreads,
     settledThreads,
     customSections,
+    visibleOccupiedThreadSectionNames,
     snoozeNow,
   } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
@@ -2107,6 +2109,7 @@ export default function Sidebar() {
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
     const sectioned = new Map<string, EnvironmentThreadShell[]>();
+    const visibleSectionNames = new Set<string>();
     for (const thread of visible) {
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
@@ -2116,6 +2119,11 @@ export default function Sidebar() {
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
       const supportsSnooze =
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+      const supportsThreadSections =
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSections === true;
+      if (thread.sectionName != null && supportsThreadSections) {
+        visibleSectionNames.add(thread.sectionName);
+      }
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const snapshot = changeRequestSnapshotByKey.get(threadKey);
       const changeRequest =
@@ -2146,10 +2154,7 @@ export default function Sidebar() {
         })
       ) {
         settled.push(thread);
-      } else if (
-        thread.sectionName != null &&
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSections === true
-      ) {
+      } else if (thread.sectionName != null && supportsThreadSections) {
         const members = sectioned.get(thread.sectionName) ?? [];
         members.push(thread);
         sectioned.set(thread.sectionName, members);
@@ -2185,6 +2190,7 @@ export default function Sidebar() {
         name,
         threads: sortThreadsForSidebar(sectioned.get(name) ?? []),
       })),
+      visibleOccupiedThreadSectionNames: visibleSectionNames,
       snoozeNow: preciseNow,
     };
   }, [
@@ -2331,8 +2337,12 @@ export default function Sidebar() {
   const visibleCustomSections = useMemo(
     () =>
       customSections
-        .filter(
-          (section) => section.threads.length > 0 || !occupiedThreadSectionNames.has(section.name),
+        .filter((section) =>
+          shouldRenderCustomThreadSection({
+            sectionThreadCount: section.threads.length,
+            hasInScopeMember: visibleOccupiedThreadSectionNames.has(section.name),
+            hasAnyMember: occupiedThreadSectionNames.has(section.name),
+          }),
         )
         .map((section) => {
           if (threadSectionExpandedByName[section.name] === true) {
@@ -2345,7 +2355,13 @@ export default function Sidebar() {
           );
           return { ...section, visibleThreads: routeThread ? [routeThread] : [] };
         }),
-    [customSections, occupiedThreadSectionNames, routeThreadKey, threadSectionExpandedByName],
+    [
+      customSections,
+      occupiedThreadSectionNames,
+      routeThreadKey,
+      threadSectionExpandedByName,
+      visibleOccupiedThreadSectionNames,
+    ],
   );
 
   const orderedThreads = useMemo(
