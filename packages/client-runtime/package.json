@@ -143,6 +143,10 @@
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"
     },
+    "./state/thread-inbox": {
+      "types": "./src/state/threadInbox.ts",
+      "default": "./src/state/threadInbox.ts"
+    },
     "./state/thread-search": {
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"

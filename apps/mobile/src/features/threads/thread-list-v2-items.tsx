@@ -186,6 +186,38 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
   );
 });
 
+/**
+ * Empty inbox. A list row, not the list's empty component: the snoozed and
+ * settled shelves keep rendering below it, so the list is rarely empty even
+ * when the inbox is.
+ */
+export const ThreadListV2EmptyInbox = memo(function ThreadListV2EmptyInbox(props: {
+  readonly headline: string;
+  readonly detail: string | undefined;
+  readonly actionLabel: string;
+  readonly onNewThread: () => void;
+  readonly pane?: "screen" | "sidebar";
+}) {
+  return (
+    <View className={cn("items-center py-8", props.pane === "sidebar" ? "px-3" : "px-5")}>
+      <Text className="text-center text-base font-t3-bold text-foreground">{props.headline}</Text>
+      {props.detail === undefined ? null : (
+        <Text className="mt-1 text-center font-sans text-sm text-foreground-muted">
+          {props.detail}
+        </Text>
+      )}
+      <Pressable
+        accessibilityLabel={props.actionLabel}
+        accessibilityRole="button"
+        className="mt-4 rounded-full bg-primary px-5 py-2.5 active:opacity-70"
+        onPress={props.onNewThread}
+      >
+        <Text className="text-sm font-t3-bold text-primary-foreground">{props.actionLabel}</Text>
+      </Pressable>
+    </View>
+  );
+});
+
 const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];

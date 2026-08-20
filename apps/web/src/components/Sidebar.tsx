@@ -24,6 +24,7 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { emptyInboxCopy, isInboxClear } from "@t3tools/client-runtime/state/thread-inbox";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
@@ -556,6 +557,43 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
           </div>
           <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
         </div>
+      </div>
+    </li>
+  );
+});
+
+// Sits where the inbox rows would, not at the foot of the list: the snoozed
+// and settled shelves keep rendering below it, so an anchored-to-bottom block
+// would read as a footnote under your history rather than as the state of the
+// inbox itself.
+const SidebarEmptyInboxBlock = memo(function SidebarEmptyInboxBlock(props: {
+  projectName: string | null;
+  parkedCount: number;
+  onNewThread: () => void;
+}) {
+  const copy = emptyInboxCopy({
+    projectName: props.projectName,
+    parkedCount: props.parkedCount,
+  });
+  return (
+    <li data-thread-selection-safe className="list-none">
+      <div
+        role="status"
+        data-testid="sidebar-empty-inbox"
+        className="flex flex-col items-center gap-1 px-2 py-8 text-center"
+      >
+        <span className="text-sm font-medium text-sidebar-foreground">{copy.headline}</span>
+        {copy.detail === undefined ? null : (
+          <span className="text-xs text-sidebar-muted-foreground">{copy.detail}</span>
+        )}
+        <button
+          type="button"
+          onClick={props.onNewThread}
+          className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        >
+          <PlusIcon className="-mx-0.5 size-3" />
+          {copy.actionLabel}
+        </button>
       </div>
     </li>
   );
@@ -3785,6 +3823,26 @@ export default function Sidebar() {
                       />,
                     );
                   }
+                  // Projects first: with none configured there is nothing to
+                  // create a thread in, so that case keeps its own block at
+                  // the foot of the list and this one stays out of the way.
+                  if (
+                    projects.length > 0 &&
+                    isInboxClear({
+                      active: activeThreads.length,
+                      pinned: pinnedThreads.length,
+                      drafts: visibleDraftSessionCount,
+                    })
+                  ) {
+                    items.push(
+                      <SidebarEmptyInboxBlock
+                        key="empty-inbox"
+                        projectName={scopedProjectGroup?.displayName ?? null}
+                        parkedCount={snoozedThreads.length + settledThreads.length}
+                        onNewThread={handleNewThreadClick}
+                      />,
+                    );
+                  }
                   for (const thread of activeThreads) {
                     items.push(renderThreadRow(thread, "active"));
                   }
@@ -3878,7 +3936,11 @@ export default function Sidebar() {
               </ul>
             </TooltipProvider>
           ) : null}
+          {/* Only the no-projects case is left down here. Every other empty
+              state is the inbox block above, which renders in the inbox's own
+              slot so the shelves stay below it. */}
           {!isSearchingThreads &&
+          projects.length === 0 &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +
@@ -3886,23 +3948,15 @@ export default function Sidebar() {
             settledThreads.length ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
-                <>
-                  <span>No projects yet</span>
-                  <button
-                    type="button"
-                    onClick={openAddProjectCommandPalette}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
-                    <PlusIcon className="-mx-0.5 size-3" />
-                    Add project
-                  </button>
-                </>
-              ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
-              ) : (
-                "No threads yet"
-              )}
+              <span>No projects yet</span>
+              <button
+                type="button"
+                onClick={openAddProjectCommandPalette}
+                className="inline-flex items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              >
+                <PlusIcon className="-mx-0.5 size-3" />
+                Add project
+              </button>
             </div>
           ) : null}
         </SidebarGroup>

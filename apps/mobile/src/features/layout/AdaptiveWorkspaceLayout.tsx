@@ -457,6 +457,11 @@ function AdaptiveWorkspaceLayoutContent(
     },
     [navigation],
   );
+  // Opens the flow at its project picker. The empty-inbox block needs this
+  // because an unfiltered sidebar has no project to aim a new thread at.
+  const handleStartNewTask = useCallback(() => {
+    navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+  }, [navigation]);
 
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
@@ -536,6 +541,7 @@ function AdaptiveWorkspaceLayoutContent(
                 onOpenSettings={handleOpenSettings}
                 onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                 onNewThreadInProject={handleNewThreadInProject}
+                onStartNewTask={handleStartNewTask}
                 onSelectThread={handleSelectThread}
                 onSearchQueryChange={setPrimarySidebarSearchQuery}
                 searchQuery={primarySidebarSearchQuery}

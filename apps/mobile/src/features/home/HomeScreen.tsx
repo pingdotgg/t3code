@@ -47,6 +47,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2EmptyInbox,
   ThreadListV2SnoozedShelfHeader,
 } from "../threads/thread-list-v2-items";
 import {
@@ -748,8 +749,28 @@ export function HomeScreen(props: HomeScreenProps) {
         settledShelfExpanded,
         settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${nowMinute}:00.000Z`,
+        // Same gate as the tablet sidebar, kept identical on purpose. This
+        // screen also returns a full-page empty state before the list ever
+        // renders, which already covers loading, but the block must not
+        // depend on that guard staying where it is:
+        //   - searching, where no matches is not "you are all caught up"
+        //   - loading, where an empty list means "not yet", not "all done"
+        //   - no projects, where its button would open an empty picker
+        emptyInbox:
+          hasSearchQuery || props.catalogState.isLoadingConnections || props.projects.length === 0
+            ? null
+            : { projectName: v2ScopedProjectGroup?.title ?? null },
       }),
-    [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks],
+    [
+      hasSearchQuery,
+      props.catalogState.isLoadingConnections,
+      props.projects.length,
+      settledShelfExpanded,
+      snoozedShelfExpanded,
+      threadListV2Layout,
+      v2PendingTasks,
+      v2ScopedProjectGroup,
+    ],
   );
 
   const renderV2Item = useCallback(
@@ -778,6 +799,16 @@ export function HomeScreen(props: HomeScreenProps) {
             showTrailingDivider={showTrailingDivider}
             onSelectPendingTask={props.onSelectPendingTask}
             onDeletePendingTask={props.onDeletePendingTask}
+          />
+        );
+      }
+      if (item.type === "v2-empty-inbox") {
+        return (
+          <ThreadListV2EmptyInbox
+            headline={item.headline}
+            detail={item.detail}
+            actionLabel={item.actionLabel}
+            onNewThread={props.onStartNewTask}
           />
         );
       }

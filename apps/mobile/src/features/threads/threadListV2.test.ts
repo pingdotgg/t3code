@@ -1,5 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import {
+  EMPTY_INBOX_HEADLINE,
+  EMPTY_INBOX_PARKED_DETAIL,
+  emptyInboxScopedHeadline,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
@@ -830,6 +835,133 @@ describe("buildThreadListV2ListItems", () => {
       "v2-settled-shelf",
       `v2-thread:${environmentId}:settled`,
     ]);
+  });
+
+  it("puts the empty-inbox block in the inbox slot, above the shelves", () => {
+    const settledOnly = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("settled"),
+          title: "settled",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const items = buildThreadListV2ListItems({
+      items: settledOnly.items,
+      pendingTasks: [],
+      settledCount: settledOnly.settledCount,
+      settledShelfHeaderIndex: settledOnly.settledShelfHeaderIndex,
+      emptyInbox: { projectName: null },
+    });
+
+    expect(items.map((item) => item.type)).toEqual([
+      "v2-empty-inbox",
+      "v2-settled-shelf",
+      "v2-thread",
+    ]);
+    // Asserted against the shared constants, not against literals: the
+    // wording itself is threadInbox's test to own.
+    const block = items[0];
+    expect(block?.type === "v2-empty-inbox" && block.headline).toBe(EMPTY_INBOX_HEADLINE);
+    // Something is parked, so the block earns its second line.
+    expect(block?.type === "v2-empty-inbox" && block.detail).toBe(EMPTY_INBOX_PARKED_DETAIL);
+  });
+
+  it("drops the detail line when nothing is parked either", () => {
+    const nothing = buildThreadListV2Items({
+      threads: [],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const items = buildThreadListV2ListItems({
+      items: nothing.items,
+      pendingTasks: [],
+      emptyInbox: { projectName: "t3code" },
+    });
+
+    const block = items[0];
+    expect(block?.type === "v2-empty-inbox" && block.headline).toBe(
+      emptyInboxScopedHeadline("t3code"),
+    );
+    expect(block?.type === "v2-empty-inbox" && block.detail).toBeUndefined();
+  });
+
+  it("withholds the block while the inbox still has rows", () => {
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      settledCount: layout.settledCount,
+      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
+      emptyInbox: { projectName: null },
+    });
+
+    expect(items.some((item) => item.type === "v2-empty-inbox")).toBe(false);
+  });
+
+  it("withholds the block while a queued task is waiting", () => {
+    const nothing = buildThreadListV2Items({
+      threads: [],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const items = buildThreadListV2ListItems({
+      items: nothing.items,
+      pendingTasks: [makePendingTask("queued-1")],
+      emptyInbox: { projectName: null },
+    });
+
+    expect(items.some((item) => item.type === "v2-empty-inbox")).toBe(false);
+  });
+
+  it("withholds the block while a pinned thread sits on top", () => {
+    const pinnedOnly = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("pinned"),
+          title: "pinned",
+          pinnedAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const items = buildThreadListV2ListItems({
+      items: pinnedOnly.items,
+      pendingTasks: [],
+      emptyInbox: { projectName: null },
+    });
+
+    expect(items.some((item) => item.type === "v2-empty-inbox")).toBe(false);
+  });
+
+  it("omits the block entirely when the caller suppresses it", () => {
+    const nothing = buildThreadListV2Items({
+      threads: [],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(
+      buildThreadListV2ListItems({ items: nothing.items, pendingTasks: [] }).some(
+        (item) => item.type === "v2-empty-inbox",
+      ),
+    ).toBe(false);
+    expect(
+      buildThreadListV2ListItems({
+        items: nothing.items,
+        pendingTasks: [],
+        emptyInbox: null,
+      }).some((item) => item.type === "v2-empty-inbox"),
+    ).toBe(false);
   });
 
   it("places queued tasks before a collapsed snoozed shelf", () => {

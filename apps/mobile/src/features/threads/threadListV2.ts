@@ -1,3 +1,4 @@
+import { emptyInboxCopy, isInboxClear } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   effectiveSettled,
   effectiveSnoozed,
@@ -238,11 +239,20 @@ export interface ThreadListV2SettledShelfListItem {
   readonly expanded: boolean;
 }
 
+export interface ThreadListV2EmptyInboxListItem {
+  readonly type: "v2-empty-inbox";
+  readonly key: "v2-empty-inbox";
+  readonly headline: string;
+  readonly detail: string | undefined;
+  readonly actionLabel: string;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2SnoozedShelfListItem
-  | ThreadListV2SettledShelfListItem;
+  | ThreadListV2SettledShelfListItem
+  | ThreadListV2EmptyInboxListItem;
 
 /**
  * Builds the shared mobile order: active → pending → snoozed shelf → settled.
@@ -259,6 +269,12 @@ export function buildThreadListV2ListItems(input: {
   readonly settledShelfExpanded?: boolean;
   readonly settledShelfHeaderIndex?: number | null;
   readonly snoozeLabelNow?: string;
+  /**
+   * Project scope for the empty-inbox block. Omitted or null suppresses the
+   * block entirely, which is what a running search wants: zero matches is not
+   * the same statement as "you are all caught up".
+   */
+  readonly emptyInbox?: { readonly projectName: string | null } | null;
 }): ThreadListV2ListItem[] {
   const threadItems = input.items.map(
     (item): ThreadListV2ListItem => ({
@@ -286,6 +302,31 @@ export function buildThreadListV2ListItems(input: {
   const activeEnd = snoozedShelfHeaderIndex ?? settledShelfHeaderIndex ?? threadItems.length;
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const result: ThreadListV2ListItem[] = [...threadItems.slice(0, activeEnd), ...pendingItems];
+  // The block takes the inbox's own slot, above the shelves, so the snoozed
+  // and settled rows keep rendering underneath it.
+  const emptyInbox = input.emptyInbox ?? null;
+  if (emptyInbox !== null) {
+    const pinnedCount = input.items.slice(0, activeEnd).filter((item) => item.pinned).length;
+    if (
+      isInboxClear({
+        active: activeEnd - pinnedCount,
+        pinned: pinnedCount,
+        drafts: pendingItems.length,
+      })
+    ) {
+      const copy = emptyInboxCopy({
+        projectName: emptyInbox.projectName,
+        parkedCount: snoozedCount + settledCount,
+      });
+      result.push({
+        type: "v2-empty-inbox",
+        key: "v2-empty-inbox",
+        headline: copy.headline,
+        detail: copy.detail,
+        actionLabel: copy.actionLabel,
+      });
+    }
+  }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
       type: "v2-snoozed-shelf",
