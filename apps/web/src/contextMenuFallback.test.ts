@@ -225,6 +225,8 @@ afterEach(() => {
 
 describe("showContextMenuFallback", () => {
   it("renders and dispatches the archived-thread actions", async () => {
+    expect(archivedThreadContextMenuItems.map(({ id }) => id)).toEqual(["unarchive", "delete"]);
+
     const selectionPromise = showContextMenuFallback(archivedThreadContextMenuItems);
     const unarchiveButton = findButton("Unarchive");
     const deleteButton = findButton("Delete");
