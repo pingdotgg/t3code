@@ -508,8 +508,16 @@ export function useSettingsRestore(onRestored?: () => void) {
     serverProviders,
   );
 
-  const targetEnvironmentIdRef = useRef(targetEnvironmentId);
-  targetEnvironmentIdRef.current = targetEnvironmentId;
+  const textGenerationResetStateRef = useRef({
+    targetEnvironmentId,
+    updateTextGenSettings,
+    defaultTextGenerationModelSelection,
+  });
+  textGenerationResetStateRef.current = {
+    targetEnvironmentId,
+    updateTextGenSettings,
+    defaultTextGenerationModelSelection,
+  };
 
   const isTextGenerationModelDirty =
     textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
@@ -637,10 +645,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    if (targetEnvironmentIdRef.current !== initialTargetEnvironmentId) {
-      return;
-    }
-
     // Only touch the theme keys that are actually dirty, so a theme-storage
     // failure cannot block restoring unrelated settings. Preferences are
     // re-read after the confirmation dialog: they may have changed (another
@@ -731,16 +735,22 @@ export function useSettingsRestore(onRestored?: () => void) {
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
-    if (isTextGenerationModelDirty) {
-      updateTextGenSettings({
-        textGenerationModelSelection: defaultTextGenerationModelSelection,
+    // Provider discovery can update the default while the confirmation dialog is
+    // open. Use the latest reset state, but do not reset a different environment
+    // from the one the user chose before confirming.
+    if (
+      isTextGenerationModelDirty &&
+      textGenerationResetStateRef.current.targetEnvironmentId === initialTargetEnvironmentId
+    ) {
+      textGenerationResetStateRef.current.updateTextGenSettings({
+        textGenerationModelSelection:
+          textGenerationResetStateRef.current.defaultTextGenerationModelSelection,
       });
     }
     onRestored?.();
   }, [
     changedSettingLabels,
     clearThemeHalves,
-    defaultTextGenerationModelSelection,
     isTextGenerationModelDirty,
     onRestored,
     setFollowSystem,
@@ -750,7 +760,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     theme,
     themeHalves,
     updateSettings,
-    updateTextGenSettings,
   ]);
 
   return {
