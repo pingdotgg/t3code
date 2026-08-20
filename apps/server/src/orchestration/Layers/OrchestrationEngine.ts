@@ -230,7 +230,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ),
         );
         const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
-        const committedCommand = yield* sql
+        const commitCommand = sql
           .withTransaction(
             Effect.gen(function* () {
               const committedEvents: OrchestrationEvent[] = [];
@@ -276,7 +276,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           );
 
-        restoredUnarchiveCommitted = restoredUnarchiveThreadId !== null;
+        const committedCommand = yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            // Keep the transaction interruptible, but do not allow an interrupt
+            // between its successful commit and the in-memory ownership handoff.
+            const result = yield* restore(commitCommand);
+            restoredUnarchiveCommitted = restoredUnarchiveThreadId !== null;
+            return result;
+          }),
+        );
+
         commandReadModel = committedCommand.nextCommandReadModel;
         if (restoredUnarchiveThreadId !== null) {
           yield* finishRestoredUnarchiveTree(restoredUnarchiveThreadId);
