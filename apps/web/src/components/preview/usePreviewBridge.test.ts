@@ -19,6 +19,8 @@ function state(navStatus: DesktopPreviewTabState["navStatus"]): DesktopPreviewTa
     zoomFactor: 1,
     pictureInPicture: false,
     colorScheme: "system",
+    audioMuted: false,
+    audible: false,
     controller: "none",
     favicon,
     updatedAt: "2026-08-09T00:00:00.000Z",
