@@ -117,6 +117,12 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
           ),
           Effect.tapError(() =>
             Effect.sync(() => {
+              if (normalizedPatch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+                get.set(confirmedPreferencesAtom, {
+                  ...get(confirmedPreferencesAtom),
+                  ...normalizedPatch,
+                });
+              }
               const optimistic = get(optimisticPatchAtom);
               get.set(
                 optimisticPatchAtom,

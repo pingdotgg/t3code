@@ -282,7 +282,7 @@ describe("mobile preferences state", () => {
     }),
   );
 
-  it.effect("does not retry a failed reconciliation through its optimistic null window", () =>
+  it.effect("keeps a failed reconciliation effective without retrying its optimistic window", () =>
     Effect.gen(function* () {
       const updatedAt = "2026-08-15T12:01:00.000Z";
       let saveCount = 0;
@@ -330,7 +330,7 @@ describe("mobile preferences state", () => {
           expect(
             Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))
               .planModeEnabled,
-          ).toBe(false);
+          ).toBe(true);
         }),
       );
       const afterRollback = resolvePlanModeLocalPatchPersistence({
@@ -340,6 +340,10 @@ describe("mobile preferences state", () => {
 
       expect(afterRollback.shouldPersist).toBe(false);
       expect(saveCount).toBe(1);
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))
+          .syncedClientPreferencesUpdatedAtByField?.planModeEnabled,
+      ).toBe(updatedAt);
 
       unmountUpdate();
       unmountPreferences();

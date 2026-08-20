@@ -89,6 +89,27 @@ describe("synced client preferences", () => {
     expect(persist).toHaveBeenCalledWith(false, UPDATED_AT);
   });
 
+  it("releases secondary hydration when the primary is offline", () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const onHydrated = vi.fn();
+
+    createSyncedClientPreferenceHydrationController("planModeEnabled").synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: false,
+      serverPreferences: undefined,
+      canPatch: false,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist: vi.fn(),
+      onHydrated,
+    });
+
+    expect(onHydrated).toHaveBeenCalledOnce();
+  });
+
   it("creates independent theme-half writes with collision-safe command ids", () => {
     const light = createSyncedClientPreferenceWrite({
       field: "lightThemeId",

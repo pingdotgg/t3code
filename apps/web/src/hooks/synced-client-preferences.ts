@@ -356,6 +356,7 @@ export function createSyncedClientPreferenceHydrationController<
       state.retryEpochActive = false;
       state.lastCanPatch = input.canPatch;
       deactivate(environmentId, owner);
+      input.onHydrated?.();
       return;
     }
     if (!state.retryEpochActive || (!state.lastCanPatch && input.canPatch)) {
