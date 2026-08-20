@@ -539,7 +539,7 @@ export function reconcileSyncedClientPreferences(input: {
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
   readonly fields?: ReadonlyArray<SyncedClientPreferenceField>;
-  readonly preserveLocalOnEqualStamp?: boolean;
+  readonly preservePlanModeLocalOnEqualStamp?: boolean;
 }) {
   if (input.environments.length === 0) {
     return { localPatch: null, environmentPatches: [] };
@@ -590,7 +590,8 @@ export function reconcileSyncedClientPreferences(input: {
       boundedLocalUpdatedAt !== undefined &&
       (latestEnvironment === undefined ||
         boundedLocalUpdatedAt > latestEnvironment.updatedAt ||
-        (input.preserveLocalOnEqualStamp === true &&
+        (field === "planModeEnabled" &&
+          input.preservePlanModeLocalOnEqualStamp === true &&
           boundedLocalUpdatedAt === latestEnvironment.updatedAt));
     const value = localWins ? localValue : (latestEnvironment?.value ?? localValue);
     if (value === undefined) continue;
@@ -644,7 +645,7 @@ export function reconcilePlanModePreferences(input: {
   readonly localUpdatedAt: string | undefined;
   readonly environments: ReadonlyArray<EnvironmentPreferenceState>;
   readonly now: string;
-  readonly preserveLocalOnEqualStamp?: boolean;
+  readonly preservePlanModeLocalOnEqualStamp?: boolean;
 }) {
   let local: LocalSyncedClientPreferencesState = {
     values:
@@ -663,7 +664,7 @@ export function reconcilePlanModePreferences(input: {
     environments: input.environments,
     now: input.now,
     fields: ["planModeEnabled"],
-    preserveLocalOnEqualStamp: input.preserveLocalOnEqualStamp,
+    preservePlanModeLocalOnEqualStamp: input.preservePlanModeLocalOnEqualStamp,
   });
   const planModeEnabled = reconciliation.localPatch?.values.planModeEnabled;
   return {

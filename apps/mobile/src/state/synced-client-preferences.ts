@@ -298,7 +298,7 @@ export function useSyncedClientPreferences(): void {
         preferences,
       })),
       now: new Date().toISOString(),
-      preserveLocalOnEqualStamp: shouldPreservePlanModeLocalValue({
+      preservePlanModeLocalOnEqualStamp: shouldPreservePlanModeLocalValue({
         currentKey: reconciliationKey,
         appliedKey: reconciledKey,
       }),

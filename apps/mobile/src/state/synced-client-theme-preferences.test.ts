@@ -62,4 +62,45 @@ describe("mobile synced theme preferences", () => {
     expect(result.environmentPatches).toHaveLength(1);
     expect(result.environmentPatches[0]?.input.patch).toEqual({ darkThemeId: "dracula" });
   });
+
+  it("limits regressed Plan topology preservation to Plan Mode", () => {
+    const updatedAt = "2026-08-14T12:00:00.000Z";
+    const result = reconcileSyncedClientPreferences({
+      local: {
+        values: { planModeEnabled: false, darkThemeId: "local-theme" },
+        updatedAtByField: {
+          planModeEnabled: updatedAt,
+          darkThemeId: updatedAt,
+        },
+      },
+      environments: [
+        {
+          environmentId: EnvironmentId.make("environment-a"),
+          preferences: {
+            planModeEnabled: true,
+            darkThemeId: "remote-theme",
+            updatedAtByField: {
+              planModeEnabled: updatedAt,
+              darkThemeId: updatedAt,
+            },
+            updatedAt,
+          },
+        },
+      ],
+      now: updatedAt,
+      preservePlanModeLocalOnEqualStamp: true,
+    });
+
+    expect(result.localPatch).toEqual({
+      values: { darkThemeId: "remote-theme" },
+      updatedAtByField: {
+        planModeEnabled: updatedAt,
+        darkThemeId: "2026-08-14T12:00:00.001Z",
+      },
+    });
+    expect(result.environmentPatches.map(({ input }) => input.patch)).toEqual([
+      { planModeEnabled: false },
+      { darkThemeId: "remote-theme" },
+    ]);
+  });
 });
