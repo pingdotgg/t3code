@@ -6,6 +6,7 @@
 - [Permission modes](./user/permission-modes.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Organizing threads](./user/thread-sidebar.md)
+- [Import existing chats](./user/importing-chats.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
 - [Mobile appearance](./user/mobile-appearance.md)
@@ -13,7 +14,7 @@
 - [Keeping app and server in sync](./user/updating.md)
 - [Source control integrations](./user/source-control.md)
 - [Background service (Linux)](./user/background-service.md)
-- Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md)
+- Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [Hermes](./user/providers-hermes.md)
 
 Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
 

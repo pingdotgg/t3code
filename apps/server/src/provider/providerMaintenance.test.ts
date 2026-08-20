@@ -8,10 +8,11 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
   enrichProviderSnapshotWithVersionAdvisory,
+  makeGitHubReleaseProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   makeStaticProviderMaintenanceResolver,
@@ -68,6 +69,13 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateLockKey: "static-tool",
   }),
 );
+const hermesUpdate = makeGitHubReleaseProviderMaintenanceCapabilities({
+  provider: driver("hermes"),
+  repository: "NousResearch/hermes-agent",
+  updateExecutable: "hermes",
+  updateArgs: ["update", "--yes"],
+  updateLockKey: "hermes-native",
+});
 const installedPackageToolProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("packageTool"),
   driver: driver("packageTool"),
@@ -83,6 +91,49 @@ const installedPackageToolProvider: ServerProvider = {
 };
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
+  it.effect("reads Hermes latest versions from GitHub release names", () =>
+    resolveLatestProviderVersion(hermesUpdate).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          expect(request.url).toBe(
+            "https://api.github.com/repos/NousResearch/hermes-agent/releases/latest",
+          );
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                { name: "Hermes Agent v0.20.1 (2026.8.13)" },
+                { headers: { "content-type": "application/json" } },
+              ),
+            ),
+          );
+        }),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("0.20.1");
+      }),
+    ),
+  );
+
+  it("uses Hermes' native non-interactive update command", () => {
+    expect(hermesUpdate).toEqual({
+      provider: driver("hermes"),
+      packageName: null,
+      latestVersionSource: {
+        kind: "github-release",
+        repository: "NousResearch/hermes-agent",
+      },
+      update: {
+        command: "hermes update --yes",
+        executable: "hermes",
+        args: ["update", "--yes"],
+        lockKey: "hermes-native",
+      },
+    });
+  });
+
   it.effect("reads cached versions through the injectable cache reference", () =>
     resolveLatestProviderVersion(packageToolUpdate.resolve()).pipe(
       Effect.provideService(

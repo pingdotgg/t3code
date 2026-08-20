@@ -1279,6 +1279,72 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.message.import": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+          metadata: { importedHistory: true },
+        })),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: command.role,
+          text: command.text,
+          attachments: command.role === "user" ? [] : undefined,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.history.import": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const updatedAt = [...command.messages, ...command.activities].reduce(
+        (latest, item) => (item.createdAt > latest ? item.createdAt : latest),
+        "1970-01-01T00:00:00.000Z",
+      );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: updatedAt,
+          commandId: command.commandId,
+          metadata: { importedHistory: true },
+        })),
+        type: "thread.history-imported",
+        payload: {
+          threadId: command.threadId,
+          messages: command.messages.map((message) => ({
+            id: message.messageId,
+            role: message.role,
+            text: message.text,
+            ...(message.role === "user" ? { attachments: [] } : {}),
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.createdAt,
+          })),
+          activities: command.activities,
+          updatedAt,
+        },
+      };
+    }
+
     case "thread.proposed-plan.upsert": {
       yield* requireThread({
         readModel,

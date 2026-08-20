@@ -731,6 +731,22 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    importHermesSessions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:import-hermes-sessions",
+      tag: WS_METHODS.serverImportHermesSessions,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    importLocalChats: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:import-local-chats",
+      tag: WS_METHODS.serverImportLocalChats,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.platform}`,
+      },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

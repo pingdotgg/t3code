@@ -18,6 +18,26 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
+describe("Hermes provider settings", () => {
+  it("enables the built-in Hermes CLI defaults", () => {
+    expect(decodeServerSettings({}).providers.hermes).toEqual({
+      enabled: true,
+      binaryPath: "hermes",
+      homePath: "",
+      authMethodId: "",
+      customModels: [],
+    });
+  });
+
+  it("accepts Hermes provider patches", () => {
+    expect(
+      decodeServerSettingsPatch({
+        providers: { hermes: { binaryPath: "C:/tools/hermes.exe", homePath: "C:/hermes" } },
+      }).providers?.hermes,
+    ).toEqual({ binaryPath: "C:/tools/hermes.exe", homePath: "C:/hermes" });
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

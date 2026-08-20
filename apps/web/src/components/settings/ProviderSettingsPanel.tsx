@@ -8,6 +8,7 @@ import {
 import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  type LocalChatImportPlatform,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -25,6 +26,7 @@ import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import {
   CloudIcon,
+  DownloadIcon,
   LaptopIcon,
   LoaderIcon,
   MonitorIcon,
@@ -375,10 +377,19 @@ export function EnvironmentProviderSettings({
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const importHermesSessions = useAtomCommand(serverEnvironment.importHermesSessions, {
+    reportFailure: false,
+  });
+  const importLocalChats = useAtomCommand(serverEnvironment.importLocalChats, {
+    reportFailure: false,
+  });
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [isImportingHermes, setIsImportingHermes] = useState(false);
+  const [importingLocalPlatform, setImportingLocalPlatform] =
+    useState<LocalChatImportPlatform | null>(null);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
@@ -420,6 +431,9 @@ export function EnvironmentProviderSettings({
           serverProviders[0]!.checkedAt,
         )
       : null;
+  const hermesInstance = serverProviders.find((provider) => provider.driver === "hermes");
+  const codexInstance = serverProviders.find((provider) => provider.driver === "codex");
+  const openCodeInstance = serverProviders.find((provider) => provider.driver === "opencode");
 
   const refreshProviders = useCallback(() => {
     if (refreshingRef.current) return;
@@ -441,6 +455,86 @@ export function EnvironmentProviderSettings({
       }
     })();
   }, [environmentId, refreshServerProviders]);
+
+  const importAllHermesChats = useCallback(() => {
+    if (isImportingHermes || !hermesInstance) return;
+    setIsImportingHermes(true);
+    void (async () => {
+      const result = await importHermesSessions({
+        environmentId,
+        input: { instanceId: hermesInstance.instanceId },
+      });
+      setIsImportingHermes(false);
+      if (result._tag === "Success") {
+        const { discovered, imported, removedSubagents, skipped, failed } = result.value;
+        toastManager.add(
+          stackedThreadToast({
+            type: failed > 0 ? "warning" : "success",
+            title:
+              imported > 0
+                ? `Imported ${imported} Hermes chat${imported === 1 ? "" : "s"}`
+                : "Hermes chats are up to date",
+            description: `${discovered} found, ${skipped} already imported, empty, or subagent${removedSubagents > 0 ? `; removed ${removedSubagents} previously imported subagent chat${removedSubagents === 1 ? "" : "s"}` : ""}${failed > 0 ? `, ${failed} failed` : ""}.`,
+          }),
+        );
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not import Hermes chats",
+            description:
+              error instanceof Error ? error.message : "The Hermes exporter could not be read.",
+          }),
+        );
+      }
+    })();
+  }, [environmentId, hermesInstance, importHermesSessions, isImportingHermes]);
+
+  const importAllLocalChats = useCallback(
+    (platform: LocalChatImportPlatform, instanceId: ProviderInstanceId) => {
+      if (importingLocalPlatform !== null) return;
+      setImportingLocalPlatform(platform);
+      void (async () => {
+        const result = await importLocalChats({
+          environmentId,
+          input: { platform, instanceId },
+        });
+        setImportingLocalPlatform(null);
+        const label = platform === "codex" ? "Codex" : "OpenCode";
+        if (result._tag === "Success") {
+          const { discovered, imported, skipped, failed } = result.value;
+          toastManager.add(
+            stackedThreadToast({
+              type: failed > 0 ? "warning" : "success",
+              title:
+                imported > 0
+                  ? `Imported ${imported} ${label} chat${imported === 1 ? "" : "s"}`
+                  : `${label} chats are up to date`,
+              description: `${discovered} found, ${skipped} already imported or empty${failed > 0 ? `, ${failed} failed` : ""}.`,
+            }),
+          );
+          return;
+        }
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Could not import ${label} chats`,
+              description:
+                error instanceof Error
+                  ? error.message
+                  : `The local ${label} history could not be read.`,
+            }),
+          );
+        }
+      })();
+    },
+    [environmentId, importLocalChats, importingLocalPlatform],
+  );
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {
@@ -720,6 +814,66 @@ export function EnvironmentProviderSettings({
             title="Limited permissions"
             description={`This session can view ${environmentLabel}'s providers, but its credential does not allow changing their configuration.`}
           />
+        ) : null}
+        {!readOnly && hermesInstance ? (
+          <SettingsRow
+            title="Hermes chat history"
+            description="Import every Hermes conversation into T3 Code. Re-running this skips chats that were already imported."
+          >
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={isImportingHermes}
+              onClick={() => void importAllHermesChats()}
+            >
+              {isImportingHermes ? (
+                <LoaderIcon className="size-3.5 animate-spin" />
+              ) : (
+                <DownloadIcon className="size-3.5" />
+              )}
+              {isImportingHermes ? "Importing..." : "Import all chats"}
+            </Button>
+          </SettingsRow>
+        ) : null}
+        {!readOnly && codexInstance ? (
+          <SettingsRow
+            title="Codex chat history"
+            description="Import every local Codex conversation, including archived sessions. Existing imports are skipped."
+          >
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={importingLocalPlatform !== null}
+              onClick={() => importAllLocalChats("codex", codexInstance.instanceId)}
+            >
+              {importingLocalPlatform === "codex" ? (
+                <LoaderIcon className="size-3.5 animate-spin" />
+              ) : (
+                <DownloadIcon className="size-3.5" />
+              )}
+              {importingLocalPlatform === "codex" ? "Importing..." : "Import all chats"}
+            </Button>
+          </SettingsRow>
+        ) : null}
+        {!readOnly && openCodeInstance ? (
+          <SettingsRow
+            title="OpenCode chat history"
+            description="Import every conversation from the local OpenCode database. Existing imports are skipped."
+          >
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={importingLocalPlatform !== null}
+              onClick={() => importAllLocalChats("opencode", openCodeInstance.instanceId)}
+            >
+              {importingLocalPlatform === "opencode" ? (
+                <LoaderIcon className="size-3.5 animate-spin" />
+              ) : (
+                <DownloadIcon className="size-3.5" />
+              )}
+              {importingLocalPlatform === "opencode" ? "Importing..." : "Import all chats"}
+            </Button>
+          </SettingsRow>
         ) : null}
         <div
           // `inert` blocks focus and interaction in one attribute, so the
