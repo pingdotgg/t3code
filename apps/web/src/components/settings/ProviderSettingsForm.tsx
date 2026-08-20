@@ -279,7 +279,7 @@ export function ProviderSettingsFieldRow({
                 {selectedOption?.label}
               </SelectValue>
             </SelectTrigger>
-            <SelectPopup>
+            <SelectPopup alignItemWithTrigger={false}>
               {field.options?.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
