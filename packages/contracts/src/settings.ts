@@ -154,6 +154,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // Desktop-only: require holding the quit shortcut (Cmd/Ctrl+Q) before the
   // app quits; a quick tap only shows a hint. Browser clients ignore it.
   confirmQuit: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Desktop-only: hold a native system sleep-prevention assertion while T3
+  // Code is running so a remote client can continue reaching this machine.
+  // This is opt-in because it changes the host's power behavior.
+  preventSleepForRemoteConnections: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
@@ -866,6 +872,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserDefaultAppearance: Schema.optionalKey(PreviewAppearancePreference),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   confirmQuit: Schema.optionalKey(Schema.Boolean),
+  preventSleepForRemoteConnections: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
