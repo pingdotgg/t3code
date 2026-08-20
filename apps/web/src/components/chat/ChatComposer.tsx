@@ -2321,6 +2321,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeTasksTurnId !== null && dismissedTasksTurnId === activeTasksTurnId;
   const visibleTasksProgress = tasksDismissedForActiveTurn ? null : activeTasksProgress;
   const visibleTaskSteps = tasksDismissedForActiveTurn ? null : activeTaskSteps;
+  const hasBlockingComposerTopDrawer =
+    activePendingApproval !== null || pendingUserInputs.length > 0;
   const dismissTasks = useCallback(() => {
     if (activeTasksTurnId !== null) {
       setDismissedTasksTurnId(activeTasksTurnId);
@@ -2348,7 +2350,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     visibleTasksProgress !== null &&
     visibleTaskSteps !== null &&
     !isTasksDrawerOpen &&
-    !isComposerApprovalState &&
+    !hasBlockingComposerTopDrawer &&
     (props.externalDrawerAttached || showComposerTopDrawer || isComposerCollapsedMobile);
   const inlineTasksBadge = showInlineTasksBadge ? (
     <ComposerTasksBadge
@@ -2360,9 +2362,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       steps={visibleTaskSteps}
     />
   ) : null;
-  const hasBlockingComposerTopDrawer =
-    activePendingApproval !== null || pendingUserInputs.length > 0;
-
   useEffect(() => {
     if (visibleTasksProgress === null || visibleTaskSteps === null) {
       setIsTasksDrawerOpen(false);
