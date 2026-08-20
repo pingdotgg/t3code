@@ -144,10 +144,15 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
       // node-pty only writes `name` into the child's TERM on the Unix path;
       // the ConPTY path leaves the environment untouched, so Windows children
       // inherit a missing or 16-color TERM unless it is set here.
-      const env =
+      let env =
         platform === "win32" && input.env["TERM"] === undefined
           ? { ...input.env, TERM: "xterm-256color" }
           : input.env;
+      // Ghostty VT renders 24-bit color, but TUIs that inspect COLORTERM
+      // downsample when it is missing or empty.
+      if (env["COLORTERM"] === undefined || env["COLORTERM"] === "") {
+        env = { ...env, COLORTERM: "truecolor" };
+      }
       const ptyProcess = yield* Effect.try({
         try: () =>
           nodePty.spawn(input.shell, input.args ?? [], {
