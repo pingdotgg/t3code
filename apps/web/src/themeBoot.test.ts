@@ -13,6 +13,8 @@ import {
   GROVE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
+  OMARCHY_LINKED_THEME_ID,
+  OMARCHY_LINKED_THEME_STORAGE_KEY,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   toCanonicalThemeColor,
@@ -279,6 +281,31 @@ describe("index.html boot script", () => {
     expect(aurora.backgroundColor).toBe(DEFAULT_DARK_CHROME);
     expect(aurora.bootVariables["--boot-background"]).toBe(AURORA_DUAL.variants.dark.canvas);
     expect(aurora.metaContent).toBe(DEFAULT_DARK_CHROME);
+  });
+
+  it("paints the cached Omarchy palette before the runtime mounts", () => {
+    const colors = {
+      canvas: "#111111",
+      chrome: "#151515",
+      text: "#eeeeee",
+      accent: "#7aa2f7",
+    };
+    const boot = runBootScript({
+      storage: {
+        [THEME_STORAGE_KEY]: OMARCHY_LINKED_THEME_ID,
+        [OMARCHY_LINKED_THEME_STORAGE_KEY]: JSON.stringify({ appearance: "dark", colors }),
+      },
+      prefersDark: false,
+    });
+
+    expect(boot.themeId).toBe(OMARCHY_LINKED_THEME_ID);
+    expect(boot.themeSelected).toBe("true");
+    expect(boot.isDark).toBe(true);
+    expect(boot.bootVariables["--boot-background"]).toBe(colors.canvas);
+    expect(boot.bootVariables["--boot-foreground"]).toBe(colors.text);
+    expect(boot.bootVariables["--boot-accent"]).toBe(colors.accent);
+    expect(boot.backgroundColor).toBe(colors.chrome);
+    expect(boot.metaContent).toBe(colors.chrome);
   });
 
   it("accepts exponent-form OKLCH before the runtime mounts", () => {

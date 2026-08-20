@@ -6,6 +6,7 @@ import {
   installCustomTheme,
   invalidateCustomThemes,
   OMARCHY_LINKED_THEME_ID,
+  OMARCHY_LINKED_THEME_STORAGE_KEY,
   parseThemeFile,
   setOmarchyLinkedTheme,
   THEME_FILE_VERSION,
@@ -61,6 +62,7 @@ describe("Omarchy linked theme", () => {
     vi.stubGlobal("window", {
       localStorage: {
         getItem: (key: string) => stored.get(key) ?? null,
+        removeItem: (key: string) => stored.delete(key),
         setItem: (key: string, value: string) => stored.set(key, value),
       },
     });
@@ -85,5 +87,37 @@ describe("Omarchy linked theme", () => {
     });
     expect(getThemeDefinition("omarchy-linked")).toEqual(customTheme);
     expect(getThemeDefinition(OMARCHY_LINKED_THEME_ID)?.label).toBe("Omarchy Linked");
+  });
+
+  it("caches the last valid palette and clears it only on confirmed absence", () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        removeItem: (key: string) => stored.delete(key),
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    });
+
+    const result = syncOmarchyLinkedTheme({
+      name: "vscode-theme.json",
+      size: VSCODE_THEME.length,
+      text: VSCODE_THEME,
+    });
+    expect(result.status).toBe("updated");
+    if (result.status !== "updated") expect.unreachable("expected the palette to be cached");
+    const cached = stored.get(OMARCHY_LINKED_THEME_STORAGE_KEY);
+    expect(JSON.parse(cached ?? "null")).toEqual({
+      appearance: result.theme.appearance,
+      colors: result.theme.colors,
+    });
+
+    expect(syncOmarchyLinkedTheme({ name: "vscode-theme.json", size: 1, text: "{" }).status).toBe(
+      "preserved",
+    );
+    expect(stored.get(OMARCHY_LINKED_THEME_STORAGE_KEY)).toBe(cached);
+
+    expect(syncOmarchyLinkedTheme(null)).toEqual({ status: "removed" });
+    expect(stored.has(OMARCHY_LINKED_THEME_STORAGE_KEY)).toBe(false);
   });
 });

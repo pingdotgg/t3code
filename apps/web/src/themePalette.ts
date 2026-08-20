@@ -36,6 +36,7 @@ export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
 export const OMARCHY_LINKED_THEME_ID = "__omarchy-linked";
 export const OMARCHY_LINKED_THEME_LABEL = "Omarchy Linked";
+export const OMARCHY_LINKED_THEME_STORAGE_KEY = "t3code:omarchy-linked-theme:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -203,6 +204,51 @@ function parseStoredThemes(storedThemes: ReadonlyArray<unknown>): ReadonlyArray<
   return themes;
 }
 
+function parseCachedOmarchyLinkedTheme(value: unknown): ThemeDefinition | null {
+  if (!isRecord(value) || !isThemeAppearance(value.appearance)) return null;
+  const colors = parseStoredThemeColors(value.colors, value.appearance);
+  if (!colors) return null;
+  const variants = parseStoredThemeVariants(value.variants, value.appearance);
+  if (value.variants !== undefined && variants === null) return null;
+  return {
+    id: OMARCHY_LINKED_THEME_ID,
+    label: OMARCHY_LINKED_THEME_LABEL,
+    appearance: value.appearance,
+    colors,
+    ...(variants ? { variants } : {}),
+  };
+}
+
+function readCachedOmarchyLinkedTheme(): ThemeDefinition | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(OMARCHY_LINKED_THEME_STORAGE_KEY);
+    return raw ? parseCachedOmarchyLinkedTheme(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedOmarchyLinkedTheme(theme: ThemeDefinition | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (theme === null) {
+      window.localStorage.removeItem(OMARCHY_LINKED_THEME_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      OMARCHY_LINKED_THEME_STORAGE_KEY,
+      JSON.stringify({
+        appearance: theme.appearance,
+        colors: theme.colors,
+        ...(theme.variants ? { variants: theme.variants } : {}),
+      }),
+    );
+  } catch {
+    // This cache only prevents a launch flash; the live IPC palette remains authoritative.
+  }
+}
+
 function notifyOmarchyLinkedThemeListeners(): void {
   for (const listener of omarchyLinkedThemeListeners) listener();
 }
@@ -221,6 +267,7 @@ export function setOmarchyLinkedTheme(theme: ThemeDefinition | null): void {
     throw new Error("The Omarchy linked theme is invalid.");
   }
   omarchyLinkedTheme = theme;
+  writeCachedOmarchyLinkedTheme(theme);
   notifyOmarchyLinkedThemeListeners();
 }
 
@@ -1443,6 +1490,10 @@ export function updateThemeColorFamily(
 }
 
 const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = BUILT_IN_THEMES;
+
+// Hydrate after the default palettes are initialized: cached colors are
+// normalized through the same parser as stored custom themes.
+omarchyLinkedTheme = readCachedOmarchyLinkedTheme();
 
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
   const themeId = themeIdFromPreference(theme);
