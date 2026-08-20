@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { BUILT_IN_THEMES, getThemeColorsForAppearance } from "@t3tools/shared/themePalettes";
 
 import { themeColorToNativeColor } from "../../lib/mobileTheme";
+import { parseMobileThemeFile } from "../../lib/mobileThemeFile";
 
 import {
   buildGhosttyThemeConfig,
@@ -10,21 +11,61 @@ import {
 } from "./terminalTheme";
 
 describe("getPierreTerminalTheme", () => {
-  it("returns the Pierre light terminal palette", () => {
-    expect(getPierreTerminalTheme("light")).toMatchObject({
+  it("keeps the default light terminal output byte-for-byte stable", () => {
+    expect(getPierreTerminalTheme("light")).toEqual({
       background: "#f2f2f7",
       foreground: "#6C6C71",
+      mutedForeground: "#8E8E95",
+      border: "#eeeeef",
       cursorForeground: "#009fff",
       cursorBackground: "#f2f2f7",
+      palette: [
+        "#1F1F21",
+        "#ff2e3f",
+        "#0dbe4e",
+        "#ffca00",
+        "#009fff",
+        "#c635e4",
+        "#08c0ef",
+        "#c6c6c8",
+        "#1F1F21",
+        "#ff2e3f",
+        "#0dbe4e",
+        "#ffca00",
+        "#009fff",
+        "#c635e4",
+        "#08c0ef",
+        "#c6c6c8",
+      ],
     });
   });
 
-  it("returns the Pierre dark terminal palette", () => {
-    expect(getPierreTerminalTheme("dark")).toMatchObject({
+  it("keeps the default dark terminal output byte-for-byte stable", () => {
+    expect(getPierreTerminalTheme("dark")).toEqual({
       background: "#0a0a0a",
       foreground: "#adadb1",
+      mutedForeground: "#8E8E95",
+      border: "#2e2e30",
       cursorForeground: "#009fff",
       cursorBackground: "#0a0a0a",
+      palette: [
+        "#141415",
+        "#ff2e3f",
+        "#0dbe4e",
+        "#ffca00",
+        "#009fff",
+        "#c635e4",
+        "#08c0ef",
+        "#c6c6c8",
+        "#141415",
+        "#ff2e3f",
+        "#0dbe4e",
+        "#ffca00",
+        "#009fff",
+        "#c635e4",
+        "#08c0ef",
+        "#c6c6c8",
+      ],
     });
   });
 });
@@ -53,6 +94,26 @@ describe("getMobileTerminalTheme", () => {
     expect(terminal.background).toBe(themeColorToNativeColor(colors.terminalBackground));
     expect(terminal.foreground).toBe(themeColorToNativeColor(colors.terminalForeground));
     expect(terminal.cursorForeground).toBe(themeColorToNativeColor(colors.terminalCursor));
+  });
+
+  it("uses imported terminal roles without changing the ANSI palette", () => {
+    const imported = parseMobileThemeFile({
+      version: 1,
+      id: "custom-terminal",
+      name: "Custom Terminal",
+      appearance: "dark",
+      colors: {
+        terminalBackground: "#101820",
+        terminalForeground: "#f2f3f4",
+        terminalCursor: "#ffcc00",
+      },
+    });
+    const terminal = getMobileTerminalTheme(imported.id, "dark", [imported]);
+
+    expect(terminal.background).toBe("#101820");
+    expect(terminal.foreground).toBe("#f2f3f4");
+    expect(terminal.cursorForeground).toBe("#ffcc00");
+    expect(terminal.palette).toEqual(getPierreTerminalTheme("dark").palette);
   });
 });
 

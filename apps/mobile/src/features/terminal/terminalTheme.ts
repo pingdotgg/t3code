@@ -1,10 +1,12 @@
 import { BUILT_IN_THEMES, getThemeColorsForAppearance } from "@t3tools/shared/themePalettes";
 
 import {
+  getImportedMobileThemeColors,
   getMobileThemeVariables,
   themeColorToNativeColor,
   type MobileThemeId,
 } from "../../lib/mobileTheme";
+import type { ImportedMobileTheme } from "../../lib/mobileThemeFile";
 
 export type TerminalAppearanceScheme = "light" | "dark";
 
@@ -81,13 +83,17 @@ export function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): Termin
 export function getMobileTerminalTheme(
   themeId: MobileThemeId,
   scheme: TerminalAppearanceScheme,
+  importedThemes: ReadonlyArray<ImportedMobileTheme> = [],
 ): TerminalTheme {
   const base = getPierreTerminalTheme(scheme);
   if (themeId === "t3-code") return base;
 
-  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? BUILT_IN_THEMES[0];
-  const palette = getThemeColorsForAppearance(theme, scheme) ?? theme.colors;
-  const colors = getMobileThemeVariables(themeId, scheme);
+  const importedColors = getImportedMobileThemeColors(themeId, scheme, importedThemes);
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+  const palette =
+    importedColors ?? (theme ? (getThemeColorsForAppearance(theme, scheme) ?? theme.colors) : null);
+  if (!palette) return base;
+  const colors = getMobileThemeVariables(themeId, scheme, null, importedThemes);
   const background = themeColorToNativeColor(palette.terminalBackground);
   return {
     ...base,

@@ -47,8 +47,8 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
  * on the shared card background so it reads like the other previews.
  */
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
-  const { themeAppearance: scheme, themeId } = useAppearancePreferences();
-  const theme = getMobileTerminalTheme(themeId, scheme);
+  const { importedThemes, themeAppearance: scheme, themeId } = useAppearancePreferences();
+  const theme = getMobileTerminalTheme(themeId, scheme, importedThemes);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
     fontFamily: "Menlo",

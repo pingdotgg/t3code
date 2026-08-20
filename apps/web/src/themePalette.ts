@@ -2,6 +2,15 @@ import * as Schema from "effect/Schema";
 import "culori/css";
 import { converter, parse } from "culori/fn";
 import {
+  THEME_FILE_VERSION,
+  canonicalThemeColor,
+  decodePortableThemeFileInput,
+  parsePortableThemeFile,
+  themeColorToHex as portableThemeColorToHex,
+  type PortableThemeFile,
+} from "@t3tools/shared/themeFile";
+export { THEME_FILE_VERSION } from "@t3tools/shared/themeFile";
+import {
   BUILT_IN_THEMES,
   EMBER_THEME,
   GROVE_THEME,
@@ -29,7 +38,6 @@ export const EMBER_THEME_ID = "ember" as const;
 export const EMBER_THEME_LABEL = "Ember";
 export const IRIS_THEME_ID = "iris" as const;
 export const IRIS_THEME_LABEL = "Iris";
-export const THEME_FILE_VERSION = 1 as const;
 export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
@@ -45,16 +53,9 @@ export type ThemeColorOverrides = Readonly<Partial<Record<ThemeColorRole, string
 export type ThemeVariantOverrides = Readonly<Partial<Record<ThemeAppearance, ThemeColorOverrides>>>;
 export type ThemePreferenceMode = ThemeAppearance | "system";
 export type ThemeCollection = Readonly<{ id: string; label: string }>;
-export type ThemeFile = Readonly<{
-  version: typeof THEME_FILE_VERSION;
-  id: string;
-  name: string;
-  appearance: ThemeAppearance;
-  colors: ThemeColorOverrides;
-  variants?: ThemeVariantOverrides;
-  collection?: ThemeCollection;
-  managed?: boolean;
-}>;
+export type ThemeFile = PortableThemeFile;
+
+const isString = Schema.is(Schema.String);
 
 const RESERVED_THEME_IDS = new Set([
   "system",
@@ -508,37 +509,17 @@ function formatOklchThemeColor(color: ThemeOklch, alpha = 1): string {
  * values use this path in memory without mutating localStorage.
  */
 export function toCanonicalThemeColor(value: unknown): string | null {
-  const parsed = parseThemeColor(value);
-  return parsed ? formatOklchThemeColor(parsed.color, parsed.alpha) : null;
+  return isString(value) ? canonicalThemeColor(value) : null;
 }
 
 /** Convert a runtime theme color for hex-only editor and import adapters. */
 export function themeColorToHex(value: string): string | null {
-  const color = parseThemeColor(value);
-  const parsed = color ? { rgb: themeOklchToRgb(color.color), alpha: color.alpha } : null;
-  if (!parsed) return null;
-
-  const opaque = themeRgbToHexColor(parsed.rgb);
-  if (parsed.alpha >= 1) return opaque;
-  const alpha = Math.round(parsed.alpha * 255)
-    .toString(16)
-    .padStart(2, "0");
-  return `${opaque}${alpha}`;
+  return portableThemeColorToHex(value);
 }
 
 function parseThemeRgbColor(value: string, fallback: ThemeRgbColor): ThemeRgbColor {
   const parsed = parseThemeColor(value);
   return parsed ? themeOklchToRgb(parsed.color) : fallback;
-}
-
-function themeRgbToHexColor(color: ThemeRgbColor): string {
-  return `#${[color.r, color.g, color.b]
-    .map((channel) =>
-      Math.round(Math.min(255, Math.max(0, channel)))
-        .toString(16)
-        .padStart(2, "0"),
-    )
-    .join("")}`;
 }
 
 function themeRgbToThemeColor(color: ThemeRgbColor): string {
@@ -1428,6 +1409,11 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   );
 }
 
+export function isBuiltInThemePreference(theme: ThemePreference): boolean {
+  const themeId = themeIdFromPreference(theme);
+  return BUILT_IN_THEME_DEFINITIONS.some((definition) => definition.id === themeId);
+}
+
 /** Artwork palettes are reviewed alongside built-ins; user themes always use the pill fallback. */
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);
@@ -1665,86 +1651,31 @@ export function removeCustomThemes(themeIds: ReadonlyArray<string>): void {
   );
 }
 
-function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
-  if (!isRecord(value)) throw new Error("Theme colors must be objects.");
-
-  const overrides: Partial<Record<ThemeColorRole, string>> = {};
-  for (const [role, color] of Object.entries(value)) {
-    if (!THEME_COLOR_ROLE_SET.has(role)) {
-      throw new Error(`"${role}" is not a supported theme color role.`);
-    }
-    const normalized = toCanonicalThemeColor(color);
-    if (!normalized) {
-      throw new Error(
-        `The color for "${role}" must be a literal CSS color such as oklch(0.62 0.2 280).`,
-      );
-    }
-    overrides[role as ThemeColorRole] = normalized;
-  }
-  if (Object.keys(overrides).length === 0) {
-    throw new Error("Add at least one color role to the theme file.");
-  }
-  return overrides;
-}
-
 export function parseThemeFile(value: unknown): ThemeDefinition {
-  if (!isRecord(value)) {
-    throw new Error("Theme files must contain a JSON object.");
-  }
-  if (value.version !== THEME_FILE_VERSION) {
-    throw new Error(`This theme file uses an unsupported version. Expected ${THEME_FILE_VERSION}.`);
-  }
-
-  const name = value.name;
-  const appearance = value.appearance;
-  const rawColors = value.colors;
-  if (!isThemeLabel(name)) throw new Error("Theme files need a name (48 characters or fewer).");
-  if (!isThemeAppearance(appearance)) {
-    throw new Error('Theme files need an appearance of "light" or "dark".');
-  }
-  if (!isRecord(rawColors)) throw new Error("Theme files need a colors object.");
-
-  const id = value.id === undefined ? themeIdFromName(name) : value.id;
-  if (!isThemeId(id)) {
-    throw new Error("Theme ids may only contain lowercase letters, numbers, and hyphens.");
-  }
-  if (RESERVED_THEME_IDS.has(id)) {
-    throw new Error(`The theme id "${id}" is reserved.`);
-  }
-
-  const overrides = parseThemeColorOverrides(rawColors);
-  const collection = parseThemeCollection(value.collection);
-  if (value.collection !== undefined && !collection) {
-    throw new Error("Theme collections need a valid id and label.");
-  }
-
+  const portable = parsePortableThemeFile(decodePortableThemeFileInput(value));
+  const { appearance, colors: overrides } = portable;
   const fallback = getDefaultThemeColors(appearance);
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
-  if (value.variants !== undefined) {
-    if (!isRecord(value.variants)) throw new Error("Theme variants must be an object.");
-    for (const [variantAppearance, variantColors] of Object.entries(value.variants)) {
-      if (!isThemeAppearance(variantAppearance)) {
-        throw new Error('Theme variants may only be named "light" or "dark".');
-      }
-      if (variantAppearance === appearance) {
-        throw new Error(`Theme variants must not repeat the base appearance "${appearance}".`);
-      }
+  if (portable.variants) {
+    for (const variantAppearance of ["light", "dark"] as const) {
+      const variantColors = portable.variants[variantAppearance];
+      if (!variantColors) continue;
       const variantFallback = getDefaultThemeColors(variantAppearance);
       variants[variantAppearance] = {
         ...variantFallback,
-        ...parseThemeColorOverrides(variantColors),
+        ...variantColors,
       };
     }
   }
 
   return {
-    id,
-    label: name.trim(),
+    id: portable.id,
+    label: portable.name,
     appearance,
     colors: { ...fallback, ...overrides },
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    ...(collection ? { collection } : {}),
-    ...(value.managed === true ? { managed: true } : {}),
+    ...(portable.collection ? { collection: portable.collection } : {}),
+    ...(portable.managed ? { managed: true } : {}),
   };
 }
 

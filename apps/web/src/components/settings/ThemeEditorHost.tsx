@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 
-import { useTheme } from "../../hooks/useTheme";
+import { useSyncedTheme } from "../../hooks/useSettings";
 import { getThemeDefinition, type ThemeAppearance, type ThemeDefinition } from "../../themePalette";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
@@ -14,7 +14,7 @@ import { useThemeEditorStore } from "./themeEditorStore";
 export function ThemeEditorHost() {
   const session = useThemeEditorStore((store) => store.session);
   const closeThemeEditor = useThemeEditorStore((store) => store.closeThemeEditor);
-  const { theme, setTheme, themeHalves, refreshTheme } = useTheme();
+  const { theme, setTheme, themeHalves, refreshTheme } = useSyncedTheme();
 
   // The panel reports which path it actually took: a theme removed while its
   // editor is open resolves to null there, so the save becomes a create even

@@ -3,10 +3,10 @@ import {
   getThemeColorsForAppearance,
   MOBILE_DEFAULT_THEME_ID,
   MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
-  type MobileThemeId as SharedMobileThemeId,
   type ThemeAppearance,
   type ThemeColors,
 } from "@t3tools/shared/themePalettes";
+import type { PortableThemeFile } from "@t3tools/shared/themeFile";
 import {
   STANDARD_THEME_PREVIEW_COLORS,
   type ThemePreviewColors,
@@ -15,48 +15,79 @@ import { DEFAULT_MOBILE_THEME_VARIABLES } from "./mobileDefaultTheme";
 
 export const DEFAULT_MOBILE_THEME_ID = MOBILE_DEFAULT_THEME_ID;
 export const MOBILE_THEME_IDS = SHARED_MOBILE_THEME_IDS;
-export type MobileThemeId = SharedMobileThemeId;
+export type MobileThemeId = string;
 export type MobileThemeAppearance = ThemeAppearance;
 export type MobileThemeMode = MobileThemeAppearance | "system";
-export type MobileThemeIds = Readonly<Record<MobileThemeAppearance, MobileThemeId>>;
+export type MobileThemeIds = Readonly<{
+  light: MobileThemeId;
+  dark: MobileThemeId;
+}>;
 
 export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   readonly id: MobileThemeId;
   readonly label: string;
 }> = [
   { id: DEFAULT_MOBILE_THEME_ID, label: "T3 Code" },
-  ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileThemeId, label: theme.label })),
+  ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id, label: theme.label })),
 ];
 
 type MobileThemeVariable = `--color-${string}`;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
-export function normalizeMobileThemeId(value: unknown): MobileThemeId {
-  return typeof value === "string" && (MOBILE_THEME_IDS as readonly string[]).includes(value)
-    ? (value as MobileThemeId)
-    : DEFAULT_MOBILE_THEME_ID;
+export function isMobileThemeId(
+  value: string | undefined,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
+): value is MobileThemeId {
+  return (
+    value !== undefined &&
+    (MOBILE_THEME_IDS.some((themeId) => themeId === value) ||
+      importedThemes.some((theme) => theme.id === value))
+  );
 }
 
-export function normalizeMobileThemeMode(value: unknown): MobileThemeMode {
+export function normalizeMobileThemeId(
+  value: string | undefined,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
+): MobileThemeId {
+  return isMobileThemeId(value, importedThemes) ? value : DEFAULT_MOBILE_THEME_ID;
+}
+
+export function normalizeMobileThemeMode(value: string | undefined): MobileThemeMode {
   return value === "light" || value === "dark" || value === "system" ? value : "system";
 }
 
-export function resolveMobileThemeIds(preferences: {
-  readonly themeId?: unknown;
-  readonly lightThemeId?: unknown;
-  readonly darkThemeId?: unknown;
-}): MobileThemeIds {
-  const legacyThemeId = normalizeMobileThemeId(preferences.themeId);
-  return {
-    light:
-      preferences.lightThemeId === undefined
-        ? legacyThemeId
-        : normalizeMobileThemeId(preferences.lightThemeId),
-    dark:
-      preferences.darkThemeId === undefined
-        ? legacyThemeId
-        : normalizeMobileThemeId(preferences.darkThemeId),
+export function resolveMobileThemeIds(
+  preferences: {
+    readonly themeId?: string;
+    readonly lightThemeId?: string;
+    readonly darkThemeId?: string;
+  },
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
+): MobileThemeIds {
+  const legacyThemeId = normalizeMobileThemeId(preferences.themeId, importedThemes);
+  const resolveThemeId = (appearance: MobileThemeAppearance, value: string | undefined) => {
+    const themeId = normalizeMobileThemeId(value ?? legacyThemeId, importedThemes);
+    return mobileThemeHasAppearance(themeId, appearance, importedThemes)
+      ? themeId
+      : DEFAULT_MOBILE_THEME_ID;
   };
+  return {
+    light: resolveThemeId("light", preferences.lightThemeId),
+    dark: resolveThemeId("dark", preferences.darkThemeId),
+  };
+}
+
+export function mobileThemeHasAppearance(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  importedThemes: ReadonlyArray<PortableThemeFile>,
+): boolean {
+  const imported = importedThemes.find((theme) => theme.id === themeId);
+  return (
+    imported === undefined ||
+    imported.appearance === appearance ||
+    imported.variants?.[appearance] !== undefined
+  );
 }
 
 export function createMobileThemeSelectionPatch(
@@ -261,8 +292,10 @@ export function createMobileThemeVariables(
     "--color-md-blockquote-bg": c.muted,
     "--color-md-code-bg": c.codeBackground,
     "--color-md-code-text": c.codeForeground,
+    "--color-md-inline-code-text": c.mutedForeground,
     "--color-md-user-code-bg": withAlpha(c.messageForeground, 0.18),
     "--color-md-user-code-text": c.messageForeground,
+    "--color-md-user-inline-code-text": withAlpha(c.messageForeground, 0.82),
     "--color-md-user-fence-bg": withAlpha("#000000", appearance === "dark" ? 0.28 : 0.16),
     "--color-md-user-fence-text": c.messageForeground,
     "--color-md-hr": c.border,
@@ -282,15 +315,92 @@ export function createMobileThemeVariables(
   };
 }
 
+function getDefaultMobileThemeColors(appearance: MobileThemeAppearance): ThemeColors {
+  const variables = DEFAULT_MOBILE_THEME_VARIABLES[appearance];
+  return {
+    canvas: variables["--color-screen"],
+    chrome: variables["--color-sheet-solid"],
+    toolbar: variables["--color-header"],
+    toolbarForeground: variables["--color-foreground"],
+    toolbarBorder: variables["--color-header-border"],
+    toolbarControl: variables["--color-card"],
+    toolbarControlForeground: variables["--color-foreground"],
+    toolbarControlHover: variables["--color-subtle"],
+    surface: variables["--color-card-alt"],
+    surfaceRaised: variables["--color-card"],
+    surfaceOverlay: variables["--color-glass-surface"],
+    text: variables["--color-foreground"],
+    textMuted: variables["--color-foreground-secondary"],
+    border: variables["--color-border"],
+    input: variables["--color-input-border"],
+    focus: variables["--color-primary"],
+    accent: variables["--color-primary"],
+    accentForeground: variables["--color-primary-foreground"],
+    secondary: variables["--color-secondary"],
+    secondaryForeground: variables["--color-secondary-foreground"],
+    muted: variables["--color-subtle"],
+    mutedForeground: variables["--color-foreground-muted"],
+    placeholder: variables["--color-placeholder"],
+    secondaryLabel: variables["--color-foreground-tertiary"],
+    iconMuted: variables["--color-icon-muted"],
+    error: variables["--color-danger-border"],
+    errorForeground: variables["--color-danger-foreground"],
+    errorSurface: variables["--color-danger"],
+    warning: variables["--color-primary"],
+    warningForeground: variables["--color-primary-foreground"],
+    warningSurface: variables["--color-subtle"],
+    update: variables["--color-primary"],
+    updateForeground: variables["--color-primary-foreground"],
+    updateSurface: variables["--color-subtle"],
+    accentSurface: variables["--color-inline-skill-background"],
+    accentSurfaceForeground: variables["--color-inline-skill-foreground"],
+    messageSurface: variables["--color-user-bubble"],
+    messageForeground: variables["--color-user-bubble-foreground"],
+    messageAction: variables["--color-user-bubble-skill-foreground"],
+    messageActionForeground: variables["--color-user-bubble-foreground"],
+    messageActionHover: variables["--color-user-bubble-foreground-muted"],
+    codeBackground: variables["--color-md-code-bg"],
+    codeForeground: variables["--color-md-code-text"],
+    sidebar: variables["--color-drawer"],
+    sidebarForeground: variables["--color-foreground"],
+    sidebarMutedForeground: variables["--color-foreground-secondary"],
+    sidebarControlSurface: variables["--color-sidebar-search"],
+    sidebarRowHover: variables["--color-subtle"],
+    sidebarRowActive: variables["--color-subtle-strong"],
+    sidebarRowSelected: variables["--color-secondary"],
+    sidebarBorder: variables["--color-border"],
+    terminalBackground: variables["--color-screen"],
+    terminalForeground: variables["--color-md-code-text"],
+    terminalCursor: variables["--color-primary"],
+    terminalSelection: variables["--color-subtle-strong"],
+    terminalScrollbar: variables["--color-foreground-tertiary"],
+    terminalScrollbarHover: variables["--color-foreground-muted"],
+  };
+}
+
+export function getImportedMobileThemeColors(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  importedThemes: ReadonlyArray<PortableThemeFile>,
+): ThemeColors | null {
+  const theme = importedThemes.find((candidate) => candidate.id === themeId);
+  if (!theme) return null;
+  const overrides = theme.appearance === appearance ? theme.colors : theme.variants?.[appearance];
+  return overrides ? { ...getDefaultMobileThemeColors(appearance), ...overrides } : null;
+}
+
 export function getMobileThemeVariables(
   themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
   overrides: Partial<MobileThemeVariables> | null = null,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
 ): MobileThemeVariables {
   const baseVariables = (() => {
     if (themeId === DEFAULT_MOBILE_THEME_ID) return DEFAULT_MOBILE_THEME_VARIABLES[appearance];
-    const theme =
-      BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? BUILT_IN_THEMES[0];
+    const importedColors = getImportedMobileThemeColors(themeId, appearance, importedThemes);
+    if (importedColors) return createMobileThemeVariables(importedColors, appearance);
+    const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+    if (!theme) return DEFAULT_MOBILE_THEME_VARIABLES[appearance];
     const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
     return createMobileThemeVariables(colors, appearance);
   })();
@@ -302,9 +412,19 @@ export function getMobileThemeVariables(
 export function getMobileThemePreviewColors(
   themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
+  importedThemes: ReadonlyArray<PortableThemeFile> = [],
 ): ThemePreviewColors {
   if (themeId === DEFAULT_MOBILE_THEME_ID) return STANDARD_THEME_PREVIEW_COLORS[appearance];
-  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? BUILT_IN_THEMES[0];
+  const importedColors = getImportedMobileThemeColors(themeId, appearance, importedThemes);
+  if (importedColors) {
+    return {
+      canvas: themeColorToNativeColor(importedColors.canvas),
+      accent: themeColorToNativeColor(importedColors.accent),
+      messageAction: themeColorToNativeColor(importedColors.messageAction),
+    };
+  }
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+  if (!theme) return STANDARD_THEME_PREVIEW_COLORS[appearance];
   const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
   return {
     canvas: themeColorToNativeColor(colors.canvas),

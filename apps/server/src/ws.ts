@@ -543,10 +543,12 @@ const makeWsRpcLayer = (
             });
       };
 
-      const toShellStreamEvent = (
+      const toShellStreamItem = (
         event: OrchestrationEvent,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
+      ): Effect.Effect<Option.Option<OrchestrationShellStreamItem>, never, never> => {
         switch (event.type) {
+          case "client-preferences.patched":
+            return clientPreferencesUpdated(event.sequence);
           case "project.created":
           case "project.meta-updated":
             return projectUpsertOrRemove(event.payload.projectId, event.sequence);
@@ -583,7 +585,7 @@ const makeWsRpcLayer = (
       // If both attempts fail, log and drop the stream item; treating an error as
       // a missing row would incorrectly remove a still-active aggregate.
       const retryShellProjectionRead = <A, E>(
-        aggregateKind: "project" | "thread",
+        aggregateKind: "client-preferences" | "project" | "thread",
         aggregateId: string,
         read: Effect.Effect<A, E>,
       ): Effect.Effect<Option.Option<A>, never, never> =>
@@ -598,6 +600,27 @@ const makeWsRpcLayer = (
             }),
           ),
           Effect.orElseSucceed(() => Option.none()),
+        );
+
+      const clientPreferencesUpdated = (
+        sequence: number,
+      ): Effect.Effect<Option.Option<OrchestrationShellStreamItem>, never, never> =>
+        retryShellProjectionRead(
+          "client-preferences",
+          "client-preferences",
+          projectionSnapshotQuery.getSyncedClientPreferences(),
+        ).pipe(
+          Effect.map(
+            Option.flatMap((preferences) =>
+              preferences === undefined
+                ? Option.none<OrchestrationShellStreamItem>()
+                : Option.some<OrchestrationShellStreamItem>({
+                    kind: "client-preferences-updated",
+                    sequence,
+                    preferences,
+                  }),
+            ),
+          ),
         );
 
       const projectUpsertOrRemove = (
@@ -669,7 +692,7 @@ const makeWsRpcLayer = (
         );
 
       // Turn a batch of domain events into shell stream items, coalescing by
-      // aggregate first. `toShellStreamEvent` re-reads the *current* projected
+      // aggregate first. `toShellStreamItem` re-reads the *current* projected
       // shell for an aggregate, so within a batch only the latest event per
       // aggregate matters: a burst of streaming `thread.message-sent` deltas for
       // one thread collapses into a single shell refetch, and an unrelated
@@ -683,7 +706,7 @@ const makeWsRpcLayer = (
       const SHELL_REFETCH_CONCURRENCY = 8;
       const coalesceShellEvents = (
         events: ReadonlyArray<OrchestrationEvent>,
-      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>, never, never> =>
+      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamItem>, never, never> =>
         Effect.gen(function* () {
           if (events.length === 0) {
             return [];
@@ -695,7 +718,7 @@ const makeWsRpcLayer = (
           const survivors = Array.from(latestByAggregate.values()).sort(
             (left, right) => left.sequence - right.sequence,
           );
-          const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvent, {
+          const shellEvents = yield* Effect.forEach(survivors, toShellStreamItem, {
             concurrency: SHELL_REFETCH_CONCURRENCY,
           });
           return shellEvents.flatMap((option) => (Option.isSome(option) ? [option.value] : []));
@@ -709,7 +732,7 @@ const makeWsRpcLayer = (
       const SHELL_COALESCE_MAX_CHUNK = 512;
       const coalesceShellStream = <E, R>(
         stream: Stream.Stream<OrchestrationEvent, E, R>,
-      ): Stream.Stream<OrchestrationShellStreamEvent, E, R> =>
+      ): Stream.Stream<OrchestrationShellStreamItem, E, R> =>
         stream.pipe(
           Stream.groupedWithin(SHELL_COALESCE_MAX_CHUNK, SHELL_COALESCE_WINDOW),
           Stream.mapEffect(coalesceShellEvents),
@@ -1209,6 +1232,14 @@ const makeWsRpcLayer = (
                 { startImmediately: true },
               );
               const bufferedLiveStream = coalesceShellLiveStream(Stream.fromQueue(liveBuffer));
+              const compatibleShellStream = <E, R>(
+                stream: Stream.Stream<OrchestrationShellStreamItem, E, R>,
+              ): Stream.Stream<OrchestrationShellStreamItem, E, R> =>
+                input.clientPreferencesStreamItem === true
+                  ? stream
+                  : stream.pipe(
+                      Stream.filter((item) => item.kind !== "client-preferences-updated"),
+                    );
 
               const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
@@ -1257,9 +1288,11 @@ const makeWsRpcLayer = (
                 // no-afterSequence path does.
                 if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
                   const snapshot = yield* loadSnapshot;
-                  return Stream.concat(
-                    Stream.make({ kind: "snapshot" as const, snapshot }),
-                    synchronizedThenLive,
+                  return compatibleShellStream(
+                    Stream.concat(
+                      Stream.make({ kind: "snapshot" as const, snapshot }),
+                      synchronizedThenLive,
+                    ),
                   );
                 }
                 const catchUpStream = coalesceShellStream(
@@ -1277,16 +1310,18 @@ const makeWsRpcLayer = (
                       }),
                   ),
                 );
-                return Stream.concat(catchUpStream, synchronizedThenLive);
+                return compatibleShellStream(Stream.concat(catchUpStream, synchronizedThenLive));
               }
 
               const snapshot = yield* loadSnapshot;
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshot,
-                }),
-                synchronizedThenLive,
+              return compatibleShellStream(
+                Stream.concat(
+                  Stream.make({
+                    kind: "snapshot" as const,
+                    snapshot,
+                  }),
+                  synchronizedThenLive,
+                ),
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1530,6 +1565,35 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.syncedClientPreferencesPatch]: ({ commandId, patch, updatedAt }) =>
+          observeRpcEffect(
+            WS_METHODS.syncedClientPreferencesPatch,
+            Effect.gen(function* () {
+              const normalizedCommand = yield* normalizeDispatchCommand({
+                type: "client-preferences.patch",
+                commandId,
+                patch,
+                updatedAt,
+              });
+              yield* dispatchNormalizedCommand(normalizedCommand);
+              const preferences = yield* projectionSnapshotQuery.getSyncedClientPreferences().pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: "Failed to load patched client preferences",
+                      cause,
+                    }),
+                ),
+              );
+              if (preferences === undefined) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: "Synced client preferences projection is missing after patch",
+                });
+              }
+              return preferences;
+            }),
+            { "rpc.aggregate": "client-preferences" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(

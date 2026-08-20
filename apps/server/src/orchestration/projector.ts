@@ -1,5 +1,7 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
+  ClientPreferencesPatchedPayload,
+  getSyncedClientPreferenceUpdatedAt,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -205,6 +207,58 @@ export function projectEvent(
   };
 
   switch (event.type) {
+    case "client-preferences.patched":
+      return decodeForEvent(
+        ClientPreferencesPatchedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const current = nextBase.syncedClientPreferences;
+          const appliesPlanMode =
+            payload.patch.planModeEnabled !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "planModeEnabled") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          const appliesAppearanceMode =
+            payload.patch.appearanceMode !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "appearanceMode") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          const appliesLightThemeId =
+            payload.patch.lightThemeId !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "lightThemeId") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          const appliesDarkThemeId =
+            payload.patch.darkThemeId !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "darkThemeId") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          return {
+            ...nextBase,
+            updatedAt: model.updatedAt > event.occurredAt ? model.updatedAt : event.occurredAt,
+            syncedClientPreferences: {
+              ...current,
+              ...(appliesPlanMode ? { planModeEnabled: payload.patch.planModeEnabled } : undefined),
+              ...(appliesAppearanceMode
+                ? { appearanceMode: payload.patch.appearanceMode }
+                : undefined),
+              ...(appliesLightThemeId ? { lightThemeId: payload.patch.lightThemeId } : undefined),
+              ...(appliesDarkThemeId ? { darkThemeId: payload.patch.darkThemeId } : undefined),
+              updatedAtByField: {
+                ...current?.updatedAtByField,
+                ...(appliesPlanMode ? { planModeEnabled: payload.updatedAt } : undefined),
+                ...(appliesAppearanceMode ? { appearanceMode: payload.updatedAt } : undefined),
+                ...(appliesLightThemeId ? { lightThemeId: payload.updatedAt } : undefined),
+                ...(appliesDarkThemeId ? { darkThemeId: payload.updatedAt } : undefined),
+              },
+              updatedAt:
+                current !== undefined && current.updatedAt > payload.updatedAt
+                  ? current.updatedAt
+                  : payload.updatedAt,
+            },
+          };
+        }),
+      );
+
     case "project.created":
       return decodeForEvent(ProjectCreatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {

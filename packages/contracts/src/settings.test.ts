@@ -35,6 +35,27 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings synced preference clocks", () => {
+  it("accepts canonical clocks and rejects malformed persisted values", () => {
+    const updatedAt = "2026-08-14T12:00:00.000Z";
+    expect(
+      decodeClientSettings({
+        planModeUpdatedAt: updatedAt,
+        appearanceModeUpdatedAt: updatedAt,
+        lightThemeIdUpdatedAt: updatedAt,
+        darkThemeIdUpdatedAt: updatedAt,
+      }),
+    ).toMatchObject({
+      planModeUpdatedAt: updatedAt,
+      appearanceModeUpdatedAt: updatedAt,
+      lightThemeIdUpdatedAt: updatedAt,
+      darkThemeIdUpdatedAt: updatedAt,
+    });
+    expect(() => decodeClientSettings({ planModeUpdatedAt: "not-a-date" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ darkThemeIdUpdatedAt: "not-a-date" })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

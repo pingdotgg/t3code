@@ -5,8 +5,14 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
-import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
+import {
+  type SidebarProjectGroupingMode,
+  SyncedClientPreferencesUpdatedAt,
+  SyncedClientPreferencesUpdatedAtByField,
+  type SyncedClientPreferencesUpdatedAtByField as SyncedClientPreferencesUpdatedAtByFieldValue,
+} from "@t3tools/contracts";
+import { isMobileThemeId, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
+import { sanitizeImportedMobileThemes, type ImportedMobileTheme } from "../lib/mobileThemeFile";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -14,13 +20,20 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const isSyncedClientPreferencesUpdatedAt = Schema.is(SyncedClientPreferencesUpdatedAt);
+const isSyncedClientPreferencesUpdatedAtByField = Schema.is(
+  SyncedClientPreferencesUpdatedAtByField,
+);
 
 export interface Preferences {
+  /** @deprecated Legacy sync alias; application rendering uses themeMode. */
+  readonly appearanceMode?: MobileThemeMode;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
   readonly themeMode?: MobileThemeMode;
+  readonly importedThemes?: ReadonlyArray<ImportedMobileTheme>;
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -32,6 +45,10 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly autoSettleOnMerge?: boolean;
+  readonly planModeEnabled?: boolean;
+  readonly syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
+  /** @deprecated Aggregate-clock cache retained for older persisted blobs. */
+  readonly syncedClientPreferencesUpdatedAt?: string;
   /**
    * Device-local mirror of the web `legacySidebarEnabled` setting. Mobile has
    * no client-settings sync, so the legacy grouped thread list is opted into
@@ -40,8 +57,6 @@ export interface Preferences {
    * default flat list — see `resolveThreadListV2Enabled`.
    */
   readonly legacyThreadListEnabled?: boolean;
-  /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
-  readonly planModeEnabled?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -81,47 +96,24 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
+type MutablePreferences = {
+  -readonly [Key in keyof Preferences]?: Preferences[Key];
+};
+
 function sanitizePreferences(parsed: Preferences): Preferences {
-  const preferences: {
-    liveActivitiesEnabled?: boolean;
-    themeId?: MobileThemeId;
-    lightThemeId?: MobileThemeId;
-    darkThemeId?: MobileThemeId;
-    themeMode?: MobileThemeMode;
-    baseFontSize?: number;
-    terminalFontSize?: number | null;
-    markdownFontSize?: number;
-    codeFontSize?: number | null;
-    codeWordBreak?: boolean;
-    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
-    collapsedProjectGroups?: readonly string[];
-    projectGroupingEnabled?: boolean;
-    projectGroupingMode?: SidebarProjectGroupingMode;
-    autoSettleOnMerge?: boolean;
-    legacyThreadListEnabled?: boolean;
-    planModeEnabled?: boolean;
-  } = {};
+  const preferences: MutablePreferences = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
   }
-  if (
-    typeof parsed.themeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.themeId)
-  ) {
-    preferences.themeId = parsed.themeId as MobileThemeId;
+  const importedThemes = sanitizeImportedMobileThemes(parsed.importedThemes);
+  if (importedThemes.length > 0) preferences.importedThemes = importedThemes;
+  if (isMobileThemeId(parsed.themeId, importedThemes)) preferences.themeId = parsed.themeId;
+  if (isMobileThemeId(parsed.lightThemeId, importedThemes)) {
+    preferences.lightThemeId = parsed.lightThemeId;
   }
-  if (
-    typeof parsed.lightThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.lightThemeId)
-  ) {
-    preferences.lightThemeId = parsed.lightThemeId as MobileThemeId;
-  }
-  if (
-    typeof parsed.darkThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.darkThemeId)
-  ) {
-    preferences.darkThemeId = parsed.darkThemeId as MobileThemeId;
+  if (isMobileThemeId(parsed.darkThemeId, importedThemes)) {
+    preferences.darkThemeId = parsed.darkThemeId;
   }
   if (
     parsed.themeMode === "system" ||
@@ -129,6 +121,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     parsed.themeMode === "dark"
   ) {
     preferences.themeMode = parsed.themeMode;
+  }
+  if (
+    preferences.themeMode === undefined &&
+    (parsed.appearanceMode === "system" ||
+      parsed.appearanceMode === "light" ||
+      parsed.appearanceMode === "dark")
+  ) {
+    preferences.themeMode = parsed.appearanceMode;
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
@@ -164,11 +164,21 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.autoSettleOnMerge === "boolean") {
     preferences.autoSettleOnMerge = parsed.autoSettleOnMerge;
   }
-  if (typeof parsed.legacyThreadListEnabled === "boolean") {
-    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
-  }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (
+    parsed.syncedClientPreferencesUpdatedAtByField !== undefined &&
+    isSyncedClientPreferencesUpdatedAtByField(parsed.syncedClientPreferencesUpdatedAtByField)
+  ) {
+    preferences.syncedClientPreferencesUpdatedAtByField =
+      parsed.syncedClientPreferencesUpdatedAtByField;
+  }
+  if (isSyncedClientPreferencesUpdatedAt(parsed.syncedClientPreferencesUpdatedAt)) {
+    preferences.syncedClientPreferencesUpdatedAt = parsed.syncedClientPreferencesUpdatedAt;
+  }
+  if (typeof parsed.legacyThreadListEnabled === "boolean") {
+    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
   }
   return preferences;
 }
@@ -353,7 +363,19 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
             try: () => transform(current),
             catch: (cause) => new MobilePreferencesSaveError({ cause }),
           });
-          const next: Preferences = { ...current, ...patch };
+          let next: Preferences = {
+            ...current,
+            ...patch,
+          };
+          if (patch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+            next = {
+              ...next,
+              syncedClientPreferencesUpdatedAtByField: {
+                ...current.syncedClientPreferencesUpdatedAtByField,
+                ...patch.syncedClientPreferencesUpdatedAtByField,
+              },
+            };
+          }
           const payload = yield* encode(PREFERENCES_KEY, next);
           yield* saveJson(payload);
           return next;

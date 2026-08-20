@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 
 import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 import { DEFAULT_MOBILE_THEME_VARIABLES } from "./mobileDefaultTheme";
+import { parseMobileThemeFile } from "./mobileThemeFile";
 
 import {
   createMobileThemePairPatch,
@@ -93,6 +94,39 @@ describe("mobile themes", () => {
     expect(variables["--color-screen"]).toMatch(/^#/);
   });
 
+  it("applies imported variants and falls back when an appearance is unavailable", () => {
+    const imported = parseMobileThemeFile({
+      version: 1,
+      id: "paper-and-ink",
+      name: "Paper and Ink",
+      appearance: "light",
+      colors: { canvas: "#fff8e7", accent: "#b91c1c" },
+      variants: { dark: { canvas: "#17120f", accent: "#f87171" } },
+    });
+
+    expect(getMobileThemeVariables(imported.id, "light", null, [imported])["--color-screen"]).toBe(
+      "#fff8e7",
+    );
+    expect(getMobileThemeVariables(imported.id, "dark", null, [imported])["--color-screen"]).toBe(
+      "#17120f",
+    );
+    expect(resolveMobileThemeIds({ lightThemeId: imported.id }, [imported])).toEqual({
+      light: imported.id,
+      dark: DEFAULT_MOBILE_THEME_ID,
+    });
+
+    const lightOnly = parseMobileThemeFile({
+      version: 1,
+      id: "paper-only",
+      name: "Paper Only",
+      appearance: "light",
+      colors: { canvas: "#fff8e7" },
+    });
+    expect(
+      resolveMobileThemeIds({ lightThemeId: lightOnly.id, darkThemeId: lightOnly.id }, [lightOnly]),
+    ).toEqual({ light: lightOnly.id, dark: DEFAULT_MOBILE_THEME_ID });
+  });
+
   it("uses the same preview roles and standard artwork as desktop", () => {
     expect(getMobileThemePreviewColors(DEFAULT_MOBILE_THEME_ID, "light")).toEqual({
       canvas: "#fcfcfc",
@@ -163,7 +197,9 @@ describe("mobile themes", () => {
 
   it("maps semantic palette roles onto every mobile color variable", () => {
     const variables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
-    expect(Object.keys(variables)).toHaveLength(65);
+    expect(Object.keys(variables)).toHaveLength(
+      Object.keys(DEFAULT_MOBILE_THEME_VARIABLES.light).length,
+    );
     expect(variables["--color-sheet-solid"]).toBe(
       themeColorToNativeColor(BUILT_IN_THEMES[0].colors.chrome),
     );

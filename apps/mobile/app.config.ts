@@ -2,6 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { createSchemeNeutralSplashConfig } from "./src/lib/splashConfig.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -299,19 +300,9 @@ const config: ExpoConfig = {
       },
     ],
     ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
-    [
-      "expo-splash-screen",
-      {
-        image: variant.assets.splashIcon,
-        resizeMode: "contain",
-        backgroundColor: "#ffffff",
-        imageWidth: 220,
-        dark: {
-          image: variant.assets.splashIcon,
-          backgroundColor: "#0a0a0a",
-        },
-      },
-    ],
+    // Expo's storyboard mod runs first, then this inlines its generated color.
+    "./plugins/withIosSplashScreenInlineBackground.cjs",
+    ["expo-splash-screen", createSchemeNeutralSplashConfig(variant.assets.splashIcon)],
     [
       "expo-build-properties",
       {

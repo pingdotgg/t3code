@@ -12,10 +12,14 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
+  getSyncedClientPreferenceUpdatedAt,
   type EnvironmentId,
   ServerSettings,
   type ServerSettingsPatch,
+  type SyncedClientPreferences,
+  type SyncedClientPreferencesPatch,
 } from "@t3tools/contracts";
 import {
   type ClientSettingsPatch,
@@ -27,17 +31,38 @@ import {
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { ensureLocalApi } from "~/localApi";
 import {
+  canonicalThemePreference,
+  getThemePreferenceMode,
   getThemeDefinition,
   getThemePreviewSidebarArtwork,
+  isKnownThemePreference,
   resolveThemeHalf,
   subscribeToThemePreview,
   themeAllowsSidebarArtwork,
+  type ThemeAppearance,
+  type ThemeHalves,
+  type ThemePreference,
+  type ThemePreferenceMode,
 } from "~/themePalette";
 import * as Struct from "effect/Struct";
+import { Atom } from "effect/unstable/reactivity";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
+import { environmentSession } from "~/state/session";
+import { environmentShell } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useTheme } from "./useTheme";
+import {
+  SHELL_NOT_LIVE,
+  createSyncedClientPreferenceHydrationController,
+  createSyncedClientPreferencesSliceAtom,
+  useSyncedClientPreferenceHydrationEffect,
+} from "./synced-client-preferences";
+import {
+  readAppearanceModePreference,
+  readThemeHalves,
+  readThemePreference,
+  useTheme,
+} from "./useTheme";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -49,6 +74,15 @@ let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
+let clientSettingsPersistenceQueue = Promise.resolve();
+const EMPTY_SYNCED_CLIENT_PREFERENCES_ATOM = Atom.make(SHELL_NOT_LIVE);
+const EMPTY_AUTH_SESSION_ATOM = Atom.make(null);
+
+const syncedClientPreferencesSliceAtom = Atom.family((environmentId: EnvironmentId) =>
+  createSyncedClientPreferencesSliceAtom(environmentShell.stateValueAtom(environmentId)).pipe(
+    Atom.withLabel(`web:synced-client-preferences:${environmentId}`),
+  ),
+);
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -141,8 +175,8 @@ async function hydrateClientSettings(): Promise<void> {
 
 function persistClientSettings(settings: ClientSettings): void {
   replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
+  clientSettingsPersistenceQueue = clientSettingsPersistenceQueue
+    .then(() => ensureLocalApi().persistence.setClientSettings(settings))
     .catch((error) => {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
         operation: "persist",
@@ -215,22 +249,523 @@ function useClientSettingsValue(): ClientSettings {
 export function mergeEnvironmentSettings(
   serverSettings: ServerSettings,
   clientSettings: ClientSettings,
+  syncedClientPreferences?: SyncedClientPreferences,
+  syncedPlanModeCanOverrideClient = true,
+  pendingPlanModeWrite?: { readonly value: boolean; readonly updatedAt: string },
 ): UnifiedSettings {
-  return { ...serverSettings, ...clientSettings };
+  const syncedPlanModeUpdatedAt = getSyncedClientPreferenceUpdatedAt(
+    syncedClientPreferences,
+    "planModeEnabled",
+  );
+  const pendingPlanModeIsNewer =
+    pendingPlanModeWrite !== undefined &&
+    (syncedPlanModeUpdatedAt === undefined ||
+      pendingPlanModeWrite.updatedAt > syncedPlanModeUpdatedAt);
+  let merged: UnifiedSettings = {
+    ...serverSettings,
+    ...clientSettings,
+  };
+  if (syncedPlanModeCanOverrideClient) {
+    if (pendingPlanModeIsNewer) {
+      merged = { ...merged, planModeEnabled: pendingPlanModeWrite.value };
+    } else if (syncedClientPreferences?.planModeEnabled !== undefined) {
+      merged = { ...merged, planModeEnabled: syncedClientPreferences.planModeEnabled };
+    }
+  }
+  return merged;
 }
 
 function useMergedSettings<T>(
   serverSettings: ServerSettings,
+  syncedClientPreferences: SyncedClientPreferences | undefined,
+  syncedPlanModeCanOverrideClient: boolean,
+  pendingPlanModeWrite: { readonly value: boolean; readonly updatedAt: string } | undefined,
   selector: ((settings: UnifiedSettings) => T) | undefined,
 ): T {
   const clientSettings = useClientSettingsValue();
 
   const merged = useMemo<UnifiedSettings>(
-    () => mergeEnvironmentSettings(serverSettings, clientSettings),
-    [clientSettings, serverSettings],
+    () =>
+      mergeEnvironmentSettings(
+        serverSettings,
+        clientSettings,
+        syncedClientPreferences,
+        syncedPlanModeCanOverrideClient,
+        pendingPlanModeWrite,
+      ),
+    [
+      clientSettings,
+      pendingPlanModeWrite,
+      serverSettings,
+      syncedClientPreferences,
+      syncedPlanModeCanOverrideClient,
+    ],
   );
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
+}
+
+export const DEFAULT_SYNCED_THEME_ID = "t3-code";
+
+export function syncedThemeIdFromPreference(theme: ThemePreference): string | undefined {
+  if (theme === "system" || theme === "light" || theme === "dark") {
+    return DEFAULT_SYNCED_THEME_ID;
+  }
+  return isKnownThemePreference(theme) ? canonicalThemePreference(theme) : undefined;
+}
+
+export function themePreferenceFromSyncedThemeId(themeId: string): ThemePreference {
+  if (
+    themeId === DEFAULT_SYNCED_THEME_ID ||
+    themeId === "system" ||
+    themeId === "light" ||
+    themeId === "dark"
+  ) {
+    return "system";
+  }
+  return isKnownThemePreference(themeId) ? canonicalThemePreference(themeId) : "system";
+}
+
+type SyncedThemeHalfMutation =
+  | Readonly<{ type: "none" }>
+  | Readonly<{
+      type: "set-half";
+      appearance: ThemeAppearance;
+      theme: ThemePreference | null;
+    }>
+  | Readonly<{
+      type: "reset-base";
+      baseTheme: ThemePreference;
+      preservedAppearance: ThemeAppearance;
+      preservedTheme: ThemePreference | null;
+    }>;
+
+interface SyncedThemeMutationWriter {
+  readonly setTheme: (theme: ThemePreference) => boolean;
+  readonly setThemeHalf: (appearance: ThemeAppearance, theme: ThemePreference | null) => boolean;
+}
+
+export function applySyncedThemeHalfMutation(input: {
+  readonly mutation: SyncedThemeHalfMutation;
+  readonly previousBaseTheme: ThemePreference;
+  readonly previousThemeHalves: ThemeHalves | null;
+  readonly writer: SyncedThemeMutationWriter;
+}): boolean {
+  const { mutation, writer } = input;
+  if (mutation.type === "none") return true;
+  if (mutation.type === "set-half") {
+    return writer.setThemeHalf(mutation.appearance, mutation.theme);
+  }
+  if (!writer.setTheme(mutation.baseTheme)) return false;
+  if (
+    mutation.preservedTheme === null ||
+    writer.setThemeHalf(mutation.preservedAppearance, mutation.preservedTheme)
+  ) {
+    return true;
+  }
+
+  // Resetting the base clears the mix. If restoring the opposite half fails,
+  // put the complete previous selection back before leaving hydration pending.
+  if (writer.setTheme(input.previousBaseTheme)) {
+    if (input.previousThemeHalves?.light !== undefined) {
+      writer.setThemeHalf("light", input.previousThemeHalves.light);
+    }
+    if (input.previousThemeHalves?.dark !== undefined) {
+      writer.setThemeHalf("dark", input.previousThemeHalves.dark);
+    }
+  }
+  return false;
+}
+
+export function resolveSyncedThemeHalfMutation(
+  baseTheme: ThemePreference,
+  themeHalves: ThemeHalves | null,
+  appearanceMode: ThemePreferenceMode,
+  appearance: ThemeAppearance,
+  theme: ThemePreference,
+): SyncedThemeHalfMutation {
+  if (resolveThemeHalf(baseTheme, themeHalves, appearance) === theme) return { type: "none" };
+  if (theme !== "system") return { type: "set-half", appearance, theme };
+  if (syncedThemeIdFromPreference(baseTheme) === DEFAULT_SYNCED_THEME_ID) {
+    return { type: "set-half", appearance, theme: null };
+  }
+
+  const preservedAppearance = appearance === "light" ? "dark" : "light";
+  const preservedTheme = resolveThemeHalf(baseTheme, themeHalves, preservedAppearance);
+  return {
+    type: "reset-base",
+    baseTheme: appearanceMode === "system" ? "system" : appearanceMode,
+    preservedAppearance,
+    preservedTheme:
+      syncedThemeIdFromPreference(preservedTheme) === DEFAULT_SYNCED_THEME_ID
+        ? null
+        : preservedTheme,
+  };
+}
+
+const syncedPlanModeHydrationController =
+  createSyncedClientPreferenceHydrationController("planModeEnabled");
+const syncedAppearanceModeHydrationController =
+  createSyncedClientPreferenceHydrationController("appearanceMode");
+const syncedLightThemeIdHydrationController =
+  createSyncedClientPreferenceHydrationController("lightThemeId");
+const syncedDarkThemeIdHydrationController =
+  createSyncedClientPreferenceHydrationController("darkThemeId");
+
+function useEnvironmentSyncedClientPreferences(environmentId: EnvironmentId | null) {
+  const preferences = useAtomValue(
+    environmentId === null
+      ? EMPTY_SYNCED_CLIENT_PREFERENCES_ATOM
+      : syncedClientPreferencesSliceAtom(environmentId),
+  );
+  return {
+    live: preferences !== SHELL_NOT_LIVE,
+    preferences: preferences === SHELL_NOT_LIVE ? undefined : preferences,
+  } as const;
+}
+
+function useCanPatchSyncedClientPreferences(environmentId: EnvironmentId | null): boolean {
+  const session = useAtomValue(
+    environmentId === null
+      ? EMPTY_AUTH_SESSION_ATOM
+      : environmentSession.sessionStateValueAtom(environmentId),
+  );
+  return (
+    session?.authenticated === true &&
+    session.scopes?.includes(AuthOrchestrationOperateScope) === true
+  );
+}
+
+function useSyncedClientPreferenceState() {
+  const clientSettings = useClientSettingsValue();
+  const themeState = useTheme();
+  const persistPlanMode = useCallback((value: boolean, updatedAt: string): boolean => {
+    const snapshot = getClientSettingsSnapshot();
+    if (snapshot.planModeEnabled === value && snapshot.planModeUpdatedAt === updatedAt) return true;
+    persistClientSettings({
+      ...snapshot,
+      planModeEnabled: value,
+      planModeUpdatedAt: updatedAt,
+    });
+    return true;
+  }, []);
+  const persistAppearanceMode = useCallback(
+    (value: ThemePreferenceMode, updatedAt: string): boolean => {
+      if (themeState.appearanceMode !== value && !themeState.setAppearanceMode(value)) return false;
+      const snapshot = getClientSettingsSnapshot();
+      if (snapshot.appearanceModeUpdatedAt !== updatedAt) {
+        persistClientSettings({ ...snapshot, appearanceModeUpdatedAt: updatedAt });
+      }
+      return true;
+    },
+    [themeState.appearanceMode, themeState.setAppearanceMode],
+  );
+  const persistThemeId = useCallback(
+    (appearance: "light" | "dark", value: string, updatedAt: string): boolean => {
+      const theme = themePreferenceFromSyncedThemeId(value);
+      let liveBaseTheme: ThemePreference;
+      let liveThemeHalves: ThemeHalves | null;
+      try {
+        liveBaseTheme = readThemePreference();
+        liveThemeHalves = readThemeHalves();
+      } catch {
+        return false;
+      }
+      const mutation = resolveSyncedThemeHalfMutation(
+        liveBaseTheme,
+        liveThemeHalves,
+        readAppearanceModePreference(liveBaseTheme),
+        appearance,
+        theme,
+      );
+      if (
+        !applySyncedThemeHalfMutation({
+          mutation,
+          previousBaseTheme: liveBaseTheme,
+          previousThemeHalves: liveThemeHalves,
+          writer: themeState,
+        })
+      ) {
+        return false;
+      }
+
+      const snapshot = getClientSettingsSnapshot();
+      const updatedAtKey =
+        appearance === "light" ? "lightThemeIdUpdatedAt" : "darkThemeIdUpdatedAt";
+      if (snapshot[updatedAtKey] !== updatedAt) {
+        persistClientSettings({ ...snapshot, [updatedAtKey]: updatedAt });
+      }
+      return true;
+    },
+    [themeState.setTheme, themeState.setThemeHalf],
+  );
+
+  const lightThemeId = syncedThemeIdFromPreference(
+    resolveThemeHalf(themeState.theme, themeState.themeHalves, "light"),
+  );
+  const darkThemeId = syncedThemeIdFromPreference(
+    resolveThemeHalf(themeState.theme, themeState.themeHalves, "dark"),
+  );
+  const persistLightThemeId = useCallback(
+    (value: string, updatedAt: string) => persistThemeId("light", value, updatedAt),
+    [persistThemeId],
+  );
+  const persistDarkThemeId = useCallback(
+    (value: string, updatedAt: string) => persistThemeId("dark", value, updatedAt),
+    [persistThemeId],
+  );
+
+  return {
+    appearanceMode: themeState.appearanceMode,
+    appearanceModeUpdatedAt: clientSettings.appearanceModeUpdatedAt,
+    darkThemeIdUpdatedAt: clientSettings.darkThemeIdUpdatedAt,
+    lightThemeIdUpdatedAt: clientSettings.lightThemeIdUpdatedAt,
+    planModeUpdatedAt: clientSettings.planModeUpdatedAt,
+    persistAppearanceMode,
+    persistPlanMode,
+    persistDarkThemeId,
+    persistLightThemeId,
+    planModeEnabled: clientSettings.planModeEnabled,
+    darkThemeId,
+    lightThemeId,
+    themeState,
+  } as const;
+}
+
+function useSynchronizeSyncedClientPreferences(
+  environmentId: EnvironmentId | null,
+  state: ReturnType<typeof useSyncedClientPreferenceState>,
+  onHydrated?: (() => void) | undefined,
+) {
+  const clientHydrated = useClientSettingsHydrated();
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const synced = useEnvironmentSyncedClientPreferences(environmentId);
+  const canPatch = useCanPatchSyncedClientPreferences(environmentId);
+  const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
+    label: "synced client preferences seed",
+    reportFailure: false,
+  });
+  const common = {
+    environmentId,
+    primaryEnvironmentId,
+    clientHydrated,
+    live: synced.live,
+    serverPreferences: synced.preferences,
+    canPatch,
+    now: new Date().toISOString(),
+    patch: patchPreferences,
+  } as const;
+
+  useSyncedClientPreferenceHydrationEffect(syncedPlanModeHydrationController, {
+    ...common,
+    clientValue: state.planModeEnabled,
+    ...(state.planModeUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.planModeUpdatedAt }),
+    persist: state.persistPlanMode,
+    onHydrated,
+  });
+  useSyncedClientPreferenceHydrationEffect(syncedAppearanceModeHydrationController, {
+    ...common,
+    clientValue: state.appearanceMode,
+    ...(state.appearanceModeUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.appearanceModeUpdatedAt }),
+    persist: state.persistAppearanceMode,
+  });
+  useSyncedClientPreferenceHydrationEffect(syncedLightThemeIdHydrationController, {
+    ...common,
+    clientValue: state.lightThemeId,
+    ...(state.lightThemeIdUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.lightThemeIdUpdatedAt }),
+    persist: state.persistLightThemeId,
+  });
+  useSyncedClientPreferenceHydrationEffect(syncedDarkThemeIdHydrationController, {
+    ...common,
+    clientValue: state.darkThemeId,
+    ...(state.darkThemeIdUpdatedAt === undefined
+      ? undefined
+      : { clientUpdatedAt: state.darkThemeIdUpdatedAt }),
+    persist: state.persistDarkThemeId,
+  });
+
+  return {
+    ...synced,
+    canPatch,
+    pendingWrite: syncedPlanModeHydrationController.getPendingWrite(environmentId),
+  } as const;
+}
+
+function useSyncedClientPreferencesHydration(
+  environmentId: EnvironmentId | null,
+  onHydrated?: (() => void) | undefined,
+) {
+  const state = useSyncedClientPreferenceState();
+  return useSynchronizeSyncedClientPreferences(environmentId, state, onHydrated);
+}
+
+function useSyncedClientPreferencesState(environmentId: EnvironmentId | null) {
+  const synced = useEnvironmentSyncedClientPreferences(environmentId);
+  const canPatch = useCanPatchSyncedClientPreferences(environmentId);
+  return {
+    ...synced,
+    canPatch,
+    pendingWrite: syncedPlanModeHydrationController.getPendingWrite(environmentId),
+  } as const;
+}
+
+export function SyncedPlanModeEnvironmentSync(props: {
+  readonly environmentId: EnvironmentId;
+  readonly onHydrated?: (() => void) | undefined;
+}): null {
+  useSyncedClientPreferencesHydration(props.environmentId, props.onHydrated);
+  return null;
+}
+
+function useWriteSyncedClientPreferences(
+  environmentId: EnvironmentId | null,
+  state: ReturnType<typeof useSyncedClientPreferenceState>,
+) {
+  const synced = useEnvironmentSyncedClientPreferences(environmentId);
+  const canPatch = useCanPatchSyncedClientPreferences(environmentId);
+  const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
+    label: "synced client preferences update",
+    reportFailure: false,
+  });
+  return useCallback(
+    (valuePatch: SyncedClientPreferencesPatch) => {
+      const common = {
+        environmentId,
+        serverPreferences: synced.preferences,
+        canPatch,
+        now: new Date().toISOString(),
+        patch: patchPreferences,
+      } as const;
+      if (valuePatch.planModeEnabled !== undefined) {
+        syncedPlanModeHydrationController.write({
+          ...common,
+          value: valuePatch.planModeEnabled,
+          persist: state.persistPlanMode,
+        });
+      }
+      if (valuePatch.appearanceMode !== undefined) {
+        syncedAppearanceModeHydrationController.write({
+          ...common,
+          value: valuePatch.appearanceMode,
+          persist: state.persistAppearanceMode,
+        });
+      }
+      if (valuePatch.lightThemeId !== undefined) {
+        syncedLightThemeIdHydrationController.write({
+          ...common,
+          value: valuePatch.lightThemeId,
+          persist: state.persistLightThemeId,
+        });
+      }
+      if (valuePatch.darkThemeId !== undefined) {
+        syncedDarkThemeIdHydrationController.write({
+          ...common,
+          value: valuePatch.darkThemeId,
+          persist: state.persistDarkThemeId,
+        });
+      }
+    },
+    [
+      canPatch,
+      environmentId,
+      patchPreferences,
+      state.persistAppearanceMode,
+      state.persistPlanMode,
+      state.persistDarkThemeId,
+      state.persistLightThemeId,
+      synced.preferences,
+    ],
+  );
+}
+
+export function useSyncedTheme() {
+  const state = useSyncedClientPreferenceState();
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  useSynchronizeSyncedClientPreferences(environmentId, state);
+  const write = useWriteSyncedClientPreferences(environmentId, state);
+  const setTheme = useCallback(
+    (theme: ThemePreference): boolean => {
+      if (!state.themeState.setTheme(theme)) return false;
+      const patch = syncedThemePairPatch(theme);
+      if (patch !== undefined) write(patch);
+      return true;
+    },
+    [state.themeState, write],
+  );
+  const setThemeHalf = useCallback(
+    (appearance: "light" | "dark", themeId: string | null): boolean => {
+      if (!state.themeState.setThemeHalf(appearance, themeId)) return false;
+      const syncedThemeId = syncedThemeIdFromPreference(themeId ?? state.themeState.theme);
+      if (syncedThemeId !== undefined) {
+        write(syncedThemePatchForHalf(appearance, syncedThemeId));
+      }
+      return true;
+    },
+    [state.themeState, write],
+  );
+  const setAppearanceMode = useCallback(
+    (appearanceMode: ThemePreferenceMode): boolean => {
+      if (!state.themeState.setAppearanceMode(appearanceMode)) return false;
+      write({ appearanceMode });
+      return true;
+    },
+    [state.themeState, write],
+  );
+  const setFollowSystem = useCallback(
+    (followSystem: boolean): boolean => {
+      if (!state.themeState.setFollowSystem(followSystem)) return false;
+      const appearanceMode = followSystem
+        ? "system"
+        : state.themeState.appearanceMode === "system"
+          ? (getThemePreferenceMode(state.themeState.theme) ?? "light")
+          : state.themeState.appearanceMode;
+      write({ appearanceMode });
+      return true;
+    },
+    [state.themeState, write],
+  );
+  const clearThemeHalves = useCallback((): boolean => {
+    if (!state.themeState.clearThemeHalves()) return false;
+    let liveTheme: ThemePreference;
+    try {
+      liveTheme = readThemePreference();
+    } catch {
+      return false;
+    }
+    const patch = syncedThemePairPatch(liveTheme);
+    if (patch === undefined) return false;
+    write(patch);
+    return true;
+  }, [state.themeState, write]);
+
+  return {
+    ...state.themeState,
+    clearThemeHalves,
+    setAppearanceMode,
+    setFollowSystem,
+    setTheme,
+    setThemeHalf,
+  } as const;
+}
+
+export function syncedThemePatchForHalf(
+  appearance: "light" | "dark",
+  themeId: string,
+): SyncedClientPreferencesPatch {
+  return appearance === "light" ? { lightThemeId: themeId } : { darkThemeId: themeId };
+}
+
+export function syncedThemePairPatch(
+  theme: ThemePreference,
+): SyncedClientPreferencesPatch | undefined {
+  const themeId = syncedThemeIdFromPreference(theme);
+  return themeId === undefined ? undefined : { lightThemeId: themeId, darkThemeId: themeId };
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -295,14 +830,29 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
+  const synced = useSyncedClientPreferencesState(environmentId);
+  return useMergedSettings(
+    serverSettings ?? DEFAULT_SERVER_SETTINGS,
+    synced.preferences,
+    synced.canPatch,
+    synced.pendingWrite,
+    selector,
+  );
 }
 
 /** Primary-only settings access for the settings UI and other explicitly global surfaces. */
 export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  return useMergedSettings(useAtomValue(primaryServerSettingsAtom), selector);
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const synced = useSyncedClientPreferencesState(environmentId);
+  return useMergedSettings(
+    useAtomValue(primaryServerSettingsAtom),
+    synced.preferences,
+    synced.canPatch,
+    synced.pendingWrite,
+    selector,
+  );
 }
 
 /**
@@ -316,6 +866,15 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     serverEnvironment.updateSettings,
     "server settings update",
   );
+  const synced = useEnvironmentSyncedClientPreferences(environmentId);
+  const canPatchSyncedPreferences = useCanPatchSyncedClientPreferences(environmentId);
+  const patchSyncedClientPreferences = useAtomCommand(
+    serverEnvironment.patchSyncedClientPreferences,
+    {
+      label: "synced client preferences update",
+      reportFailure: false,
+    },
+  );
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
       const { serverPatch, clientPatch } = splitPatch(patch);
@@ -328,14 +887,43 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           });
         }
       }
-      if (Object.keys(clientPatch).length > 0) {
+      const clientPatchWithoutPlanMode = Struct.omit(clientPatch, ["planModeEnabled"]);
+      if (Struct.keys(clientPatchWithoutPlanMode).length > 0) {
         persistClientSettings({
           ...getClientSettingsSnapshot(),
-          ...clientPatch,
+          ...clientPatchWithoutPlanMode,
+        });
+      }
+      if (clientPatch.planModeEnabled !== undefined) {
+        syncedPlanModeHydrationController.write({
+          environmentId,
+          value: clientPatch.planModeEnabled,
+          serverPreferences: synced.preferences,
+          canPatch: canPatchSyncedPreferences,
+          now: new Date().toISOString(),
+          patch: patchSyncedClientPreferences,
+          persist: (value, updatedAt) => {
+            const snapshot = getClientSettingsSnapshot();
+            if (snapshot.planModeEnabled === value && snapshot.planModeUpdatedAt === updatedAt) {
+              return true;
+            }
+            persistClientSettings({
+              ...snapshot,
+              planModeEnabled: value,
+              planModeUpdatedAt: updatedAt,
+            });
+            return true;
+          },
         });
       }
     },
-    [environmentId, persistServerSettings],
+    [
+      canPatchSyncedPreferences,
+      environmentId,
+      patchSyncedClientPreferences,
+      persistServerSettings,
+      synced.preferences,
+    ],
   );
 
   return updateSettings;
@@ -363,8 +951,13 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
+  clientSettingsPersistenceQueue = Promise.resolve();
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
+  syncedPlanModeHydrationController.reset();
+  syncedAppearanceModeHydrationController.reset();
+  syncedLightThemeIdHydrationController.reset();
+  syncedDarkThemeIdHydrationController.reset();
 }
 
 export function __setClientSettingsForTests(settings: ClientSettings): void {

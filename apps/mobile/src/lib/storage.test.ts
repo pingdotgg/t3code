@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { parseMobileThemeFile } from "./mobileThemeFile";
 
 const mocks = vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -172,9 +173,128 @@ describe("mobile connection storage", () => {
 
   it("loads legacy preferences when SQLite is unavailable", async () => {
     mocks.setDatabaseFailures(true, true);
-    await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));
+    await mocks.setItemAsync(
+      "t3code.preferences",
+      JSON.stringify({ baseFontSize: 17, planModeEnabled: true }),
+    );
 
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17, planModeEnabled: true });
+  });
+
+  it("drops non-canonical synced preference stamps used for lexical LWW ordering", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00Z",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({ planModeEnabled: true });
+  });
+
+  it("loads per-field synced preference stamps and legacy aggregate stamps", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:00:00.000Z",
+        },
+        syncedClientPreferencesUpdatedAt: "2026-08-14T11:00:00.000Z",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toMatchObject({
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-14T12:00:00.000Z",
+      },
+      syncedClientPreferencesUpdatedAt: "2026-08-14T11:00:00.000Z",
+    });
+  });
+
+  it("saves the Plan Mode field stamp", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        syncedClientPreferencesUpdatedAtByField: {},
+      }),
+      10,
+    );
+
+    await expect(
+      savePreferencesPatch({
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:00:00.000Z",
+        },
+      }),
+    ).resolves.toMatchObject({
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-14T12:00:00.000Z",
+      },
+    });
+  });
+
+  it("persists device-local appearance preferences", async () => {
+    await expect(savePreferencesPatch({ themeMode: "dark", themeId: "ocean" })).resolves.toEqual({
+      themeMode: "dark",
+      themeId: "ocean",
+    });
+
+    await expect(loadPreferences()).resolves.toEqual({
+      themeMode: "dark",
+      themeId: "ocean",
+    });
+
+    await expect(savePreferencesPatch({ themeMode: "system" })).resolves.toEqual({
+      themeMode: "system",
+      themeId: "ocean",
+    });
+    await expect(loadPreferences()).resolves.toEqual({
+      themeMode: "system",
+      themeId: "ocean",
+    });
+  });
+
+  it("migrates the legacy appearance key into the canonical theme mode", async () => {
+    mocks.setPreferencesJson(JSON.stringify({ appearanceMode: "dark" }), 10);
+
+    await expect(loadPreferences()).resolves.toEqual({ themeMode: "dark" });
+  });
+
+  it("drops invalid appearance preferences while loading", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({ appearanceMode: "sepia", themeId: "custom-theme" }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({});
+  });
+
+  it("round-trips validated imported themes and their selection", async () => {
+    const importedTheme = parseMobileThemeFile({
+      version: 1,
+      id: "northern-lights",
+      name: "Northern Lights",
+      appearance: "dark",
+      colors: { canvas: "#0f172a", text: "#f8fafc", accent: "#60a5fa" },
+    });
+
+    await expect(
+      savePreferencesPatch({ importedThemes: [importedTheme], themeId: importedTheme.id }),
+    ).resolves.toEqual({ importedThemes: [importedTheme], themeId: importedTheme.id });
+    await expect(loadPreferences()).resolves.toEqual({
+      importedThemes: [importedTheme],
+      themeId: importedTheme.id,
+    });
+  });
+
+  it("drops a corrupt imported-theme library and its stale selection", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({ importedThemes: { invalid: true }, themeId: "northern-lights" }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({});
   });
 
   it("persists independent light and dark theme choices", async () => {

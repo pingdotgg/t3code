@@ -40,6 +40,12 @@ export function applyShellStreamEvent(
         threads: Arr.filter(snapshot.threads, (t) => t.id !== event.threadId),
         snapshotSequence: event.sequence,
       };
+    case "client-preferences-updated":
+      return {
+        ...snapshot,
+        syncedClientPreferences: event.preferences,
+        snapshotSequence: event.sequence,
+      };
     default:
       return snapshot;
   }

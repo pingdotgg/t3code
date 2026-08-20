@@ -23,6 +23,7 @@ import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
 import { useThemeColor } from "./lib/useThemeColor";
 import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
+import { useSyncedClientPreferences } from "./state/synced-client-preferences";
 
 import "../global.css";
 
@@ -71,6 +72,7 @@ export default function App() {
 }
 
 function AppContent() {
+  useSyncedClientPreferences();
   const { themeAppearance } = useAppearancePreferences();
   const statusBarBg = useThemeColor("--color-status-bar");
   const navigationTheme = useMobileNavigationTheme(themeAppearance);

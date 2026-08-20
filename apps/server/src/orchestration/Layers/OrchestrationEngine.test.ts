@@ -21,6 +21,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
@@ -60,7 +61,7 @@ async function createOrchestrationSystem() {
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfigLayer),
@@ -69,9 +70,15 @@ async function createOrchestrationSystem() {
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
+  const commandReceipts = await runtime.runPromise(
+    Effect.service(OrchestrationCommandReceiptRepository),
+  );
   return {
     engine,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
+    shellSnapshot: () => runtime.runPromise(snapshotQuery.getShellSnapshot()),
+    commandReceipt: (commandId: CommandId) =>
+      runtime.runPromise(commandReceipts.getByCommandId({ commandId })),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -93,6 +100,114 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("receipts and projects synced client preference patches with LWW stamps", async () => {
+    const system = await createOrchestrationSystem();
+    const freshCommandId = CommandId.make("client-preferences:2026-08-14T12:00:00.000Z:1");
+    const equalStampDistinctValueCommandId = CommandId.make(
+      "client-preferences:2026-08-14T12:00:00.000Z:0",
+    );
+    const staleCommandId = CommandId.make("client-preferences-stale");
+
+    try {
+      const freshResult = await system.run(
+        system.engine.dispatch({
+          type: "client-preferences.patch",
+          commandId: freshCommandId,
+          patch: { planModeEnabled: true },
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        }),
+      );
+      const freshReceipt = Option.getOrThrow(await system.commandReceipt(freshCommandId));
+      const events = Array.from(
+        await system.run(Stream.runCollect(system.engine.readEvents(0, 10))),
+      );
+
+      expect(freshReceipt).toMatchObject({
+        commandId: freshCommandId,
+        aggregateKind: "client-preferences",
+        aggregateId: "client-preferences",
+        resultSequence: freshResult.sequence,
+        status: "accepted",
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: "client-preferences.patched",
+        sequence: freshResult.sequence,
+        payload: {
+          patch: { planModeEnabled: true },
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      });
+      await expect(system.shellSnapshot()).resolves.toMatchObject({
+        syncedClientPreferences: {
+          planModeEnabled: true,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      });
+
+      const equalStampDistinctValueCommand = {
+        type: "client-preferences.patch",
+        commandId: equalStampDistinctValueCommandId,
+        patch: { planModeEnabled: false },
+        updatedAt: "2026-08-14T12:00:00.000Z",
+      } as const;
+      const distinctValueResult = await system.run(
+        system.engine.dispatch(equalStampDistinctValueCommand),
+      );
+      const retryResult = await system.run(system.engine.dispatch(equalStampDistinctValueCommand));
+      const eventsAfterRetry = Array.from(
+        await system.run(Stream.runCollect(system.engine.readEvents(0, 10))),
+      );
+
+      expect(distinctValueResult.sequence).not.toBe(freshResult.sequence);
+      expect(retryResult.sequence).toBe(distinctValueResult.sequence);
+      expect(
+        Option.getOrThrow(await system.commandReceipt(equalStampDistinctValueCommandId)),
+      ).toMatchObject({
+        resultSequence: distinctValueResult.sequence,
+        status: "accepted",
+      });
+      expect(eventsAfterRetry).toHaveLength(2);
+      expect(eventsAfterRetry[1]).toMatchObject({
+        type: "client-preferences.patched",
+        payload: {
+          patch: { planModeEnabled: false },
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      });
+      await expect(system.shellSnapshot()).resolves.toMatchObject({
+        syncedClientPreferences: {
+          planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+        },
+      });
+
+      const staleResult = await system.run(
+        system.engine.dispatch({
+          type: "client-preferences.patch",
+          commandId: staleCommandId,
+          patch: { planModeEnabled: false },
+          updatedAt: "2026-08-14T11:59:59.000Z",
+        }),
+      );
+      expect(Option.getOrThrow(await system.commandReceipt(staleCommandId))).toMatchObject({
+        resultSequence: staleResult.sequence,
+        status: "accepted",
+      });
+      await expect(system.shellSnapshot()).resolves.toMatchObject({
+        snapshotSequence: staleResult.sequence,
+        syncedClientPreferences: {
+          planModeEnabled: false,
+          updatedAtByField: { planModeEnabled: "2026-08-14T12:00:00.000Z" },
+          updatedAt: "2026-08-14T12:00:00.000Z",
+        },
+      });
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it("bootstraps command handling from persisted projections without reading the full snapshot", async () => {
     let nextSequence = 8;
     const eventStore: OrchestrationEventStoreShape = {
@@ -189,6 +304,7 @@ describe("OrchestrationEngine", () => {
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
+          getSyncedClientPreferences: () => Effect.succeed(undefined),
           getArchivedShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,

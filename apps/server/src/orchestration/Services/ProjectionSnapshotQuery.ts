@@ -20,6 +20,7 @@ import type {
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
   ProjectId,
+  SyncedClientPreferences,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -83,6 +84,12 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getShellSnapshot: () => Effect.Effect<
     OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /** Read only the singleton cross-client preferences projection. */
+  readonly getSyncedClientPreferences: () => Effect.Effect<
+    SyncedClientPreferences | undefined,
     ProjectionRepositoryError
   >;
 

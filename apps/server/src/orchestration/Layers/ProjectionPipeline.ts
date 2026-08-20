@@ -56,6 +56,7 @@ import {
 } from "../../attachmentStore.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
+  syncedClientPreferences: "projection.synced-client-preferences",
   projects: "projection.projects",
   threads: "projection.threads",
   threadMessages: "projection.thread-messages",
@@ -1606,7 +1607,136 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applySyncedClientPreferencesProjection: ProjectorDefinition["apply"] = (event) => {
+      if (event.type !== "client-preferences.patched") {
+        return Effect.void;
+      }
+      const planModeEnabled =
+        event.payload.patch.planModeEnabled === undefined
+          ? null
+          : Number(event.payload.patch.planModeEnabled);
+      const planModeEnabledUpdatedAt =
+        event.payload.patch.planModeEnabled === undefined ? null : event.payload.updatedAt;
+      const appearanceMode = event.payload.patch.appearanceMode ?? null;
+      const appearanceModeUpdatedAt =
+        event.payload.patch.appearanceMode === undefined ? null : event.payload.updatedAt;
+      const lightThemeId = event.payload.patch.lightThemeId ?? null;
+      const lightThemeIdUpdatedAt =
+        event.payload.patch.lightThemeId === undefined ? null : event.payload.updatedAt;
+      const darkThemeId = event.payload.patch.darkThemeId ?? null;
+      const darkThemeIdUpdatedAt =
+        event.payload.patch.darkThemeId === undefined ? null : event.payload.updatedAt;
+      return sql`
+        INSERT INTO projection_synced_client_preferences (
+          singleton_id,
+          plan_mode_enabled,
+          plan_mode_enabled_updated_at,
+          appearance_mode,
+          appearance_mode_updated_at,
+          light_theme_id,
+          light_theme_id_updated_at,
+          dark_theme_id,
+          dark_theme_id_updated_at,
+          updated_at
+        )
+        VALUES (
+          1,
+          ${planModeEnabled},
+          ${planModeEnabledUpdatedAt},
+          ${appearanceMode},
+          ${appearanceModeUpdatedAt},
+          ${lightThemeId},
+          ${lightThemeIdUpdatedAt},
+          ${darkThemeId},
+          ${darkThemeIdUpdatedAt},
+          ${event.payload.updatedAt}
+        )
+        ON CONFLICT (singleton_id)
+        DO UPDATE SET
+          plan_mode_enabled = CASE
+            WHEN excluded.plan_mode_enabled_updated_at IS NOT NULL
+              AND (
+                plan_mode_enabled_updated_at IS NULL
+                OR excluded.plan_mode_enabled_updated_at >= plan_mode_enabled_updated_at
+              )
+            THEN excluded.plan_mode_enabled
+            ELSE plan_mode_enabled
+          END,
+          plan_mode_enabled_updated_at = CASE
+            WHEN excluded.plan_mode_enabled_updated_at IS NOT NULL
+              AND (
+                plan_mode_enabled_updated_at IS NULL
+                OR excluded.plan_mode_enabled_updated_at >= plan_mode_enabled_updated_at
+              )
+            THEN excluded.plan_mode_enabled_updated_at
+            ELSE plan_mode_enabled_updated_at
+          END,
+          appearance_mode = CASE
+            WHEN excluded.appearance_mode_updated_at IS NOT NULL
+              AND (
+                appearance_mode_updated_at IS NULL
+                OR excluded.appearance_mode_updated_at >= appearance_mode_updated_at
+              )
+            THEN excluded.appearance_mode
+            ELSE appearance_mode
+          END,
+          appearance_mode_updated_at = CASE
+            WHEN excluded.appearance_mode_updated_at IS NOT NULL
+              AND (
+                appearance_mode_updated_at IS NULL
+                OR excluded.appearance_mode_updated_at >= appearance_mode_updated_at
+              )
+            THEN excluded.appearance_mode_updated_at
+            ELSE appearance_mode_updated_at
+          END,
+          light_theme_id = CASE
+            WHEN excluded.light_theme_id_updated_at IS NOT NULL
+              AND (
+                light_theme_id_updated_at IS NULL
+                OR excluded.light_theme_id_updated_at >= light_theme_id_updated_at
+              )
+            THEN excluded.light_theme_id
+            ELSE light_theme_id
+          END,
+          light_theme_id_updated_at = CASE
+            WHEN excluded.light_theme_id_updated_at IS NOT NULL
+              AND (
+                light_theme_id_updated_at IS NULL
+                OR excluded.light_theme_id_updated_at >= light_theme_id_updated_at
+              )
+            THEN excluded.light_theme_id_updated_at
+            ELSE light_theme_id_updated_at
+          END,
+          dark_theme_id = CASE
+            WHEN excluded.dark_theme_id_updated_at IS NOT NULL
+              AND (
+                dark_theme_id_updated_at IS NULL
+                OR excluded.dark_theme_id_updated_at >= dark_theme_id_updated_at
+              )
+            THEN excluded.dark_theme_id
+            ELSE dark_theme_id
+          END,
+          dark_theme_id_updated_at = CASE
+            WHEN excluded.dark_theme_id_updated_at IS NOT NULL
+              AND (
+                dark_theme_id_updated_at IS NULL
+                OR excluded.dark_theme_id_updated_at >= dark_theme_id_updated_at
+              )
+            THEN excluded.dark_theme_id_updated_at
+            ELSE dark_theme_id_updated_at
+          END,
+          updated_at = MAX(updated_at, excluded.updated_at)
+      `.pipe(
+        Effect.asVoid,
+        Effect.mapError(toPersistenceSqlError("ProjectionPipeline.syncedClientPreferences:upsert")),
+      );
+    };
+
     const projectors: ReadonlyArray<ProjectorDefinition> = [
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.syncedClientPreferences,
+        apply: applySyncedClientPreferencesProjection,
+      },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
         apply: applyProjectsProjection,

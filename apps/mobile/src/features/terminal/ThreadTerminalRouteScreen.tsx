@@ -185,6 +185,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const {
     isReady: hasResolvedFontPreference,
     appearance,
+    importedThemes,
     themeAppearance: appearanceScheme,
     themeId,
     setTerminalFontSize,
@@ -467,7 +468,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [selectedEnvironmentConnection?.environmentLabel],
   );
 
-  const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme);
+  const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme, importedThemes);
   const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;

@@ -11,6 +11,10 @@
       "types": "./src/themePreview.ts",
       "import": "./src/themePreview.ts"
     },
+    "./themeFile": {
+      "types": "./src/themeFile.ts",
+      "import": "./src/themeFile.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
@@ -236,6 +240,7 @@
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "culori": "^4.0.2",
     "effect": "catalog:",
     "jose": "catalog:",
     "yaml": "catalog:"
@@ -243,6 +248,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@types/culori": "^4.0.1",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
+import { usePlanModePreferenceReconciliationReady } from "../../state/synced-client-preferences";
 import { resolveLegacyPlanModeEnabled } from "./legacy-plan-mode";
 
 /**
@@ -13,9 +14,10 @@ export function useLegacyPlanModeEnabled(): boolean {
   return useLegacyPlanModeState().enabled;
 }
 
-export function useLegacyPlanModeState(): { readonly enabled: boolean; readonly loaded: boolean } {
+export function useLegacyPlanModeState() {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const loaded = AsyncResult.isSuccess(preferences);
+  const reconciliationReady = usePlanModePreferenceReconciliationReady();
+  const loaded = AsyncResult.isSuccess(preferences) && reconciliationReady;
   return {
     enabled: resolveLegacyPlanModeEnabled({
       loaded,

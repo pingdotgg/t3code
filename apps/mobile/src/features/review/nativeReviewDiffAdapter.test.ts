@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MOBILE_THEME_IDS } from "../../lib/mobileTheme";
+import { parseMobileThemeFile } from "../../lib/mobileThemeFile";
 
 import {
   createNativeReviewDiffTheme,
@@ -77,5 +78,19 @@ describe("createNativeReviewDiffTheme", () => {
     expect(iris.hunkText).not.toBe(standard.hunkText);
     expect(iris.addBar).toBe(standard.addBar);
     expect(iris.deleteBar).toBe(standard.deleteBar);
+  });
+
+  it("applies imported code-surface roles", () => {
+    const imported = parseMobileThemeFile({
+      version: 1,
+      id: "custom-review",
+      name: "Custom Review",
+      appearance: "dark",
+      colors: { chrome: "#101820", codeForeground: "#f2f3f4" },
+    });
+    const theme = createNativeReviewDiffTheme("dark", imported.id, [imported]);
+
+    expect(theme.background).toBe("#101820");
+    expect(theme.text).toBe("#f2f3f4");
   });
 });
