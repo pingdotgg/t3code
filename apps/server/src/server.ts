@@ -20,6 +20,7 @@ import {
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
+import { explainPortInUse } from "./portInUse.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
@@ -685,5 +686,8 @@ export const makeServerLayer = Layer.unwrap(
   }),
 );
 
-// The CLI supplies configuration.
-export const runServer = Layer.launch(makeServerLayer);
+// The CLI supplies configuration. The bind happens while `HttpServerLive`
+// builds, so `Layer.launch` is the first point where that failure is an
+// ordinary Effect error again; catching on the layer itself would erase its
+// `HttpServer` output type.
+export const runServer = Layer.launch(makeServerLayer).pipe(explainPortInUse);
