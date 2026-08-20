@@ -148,6 +148,7 @@ public struct NewThreadView: View {
                     groups: creationProjectGroups,
                     environments: model.snapshot.environments,
                     recentGroupIDs: recentProjectGroupIDs,
+                    preferredEnvironmentID: selectedProject?.environmentID,
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
                         if selectProjectGroup(group) {
@@ -967,8 +968,14 @@ private struct NewTaskProjectPicker: View {
     let groups: [DailyUXProjectGroup]
     let environments: [FeatureEnvironment]
     let recentGroupIDs: [String]
+    let preferredEnvironmentID: String?
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
+
+    @State private var query = ""
+    /// Selector state lives with the sheet: reopening the picker starts from
+    /// every environment again rather than resurrecting a stale narrowing.
+    @State private var environmentID: String?
 
     var body: some View {
         NavigationStack {
@@ -980,38 +987,17 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    let sections = DailyUXProjectPickerSections(
-                        groups: groups,
-                        recentGroupIDs: recentGroupIDs
-                    )
-                    List {
-                        if sections.recents.isEmpty {
-                            ForEach(sections.others) { group in
-                                projectRow(group)
-                            }
-                        } else {
-                            Section("Recent") {
-                                ForEach(sections.recents) { group in
-                                    projectRow(group)
-                                }
-                            }
-
-                            if !sections.others.isEmpty {
-                                Section("Other projects") {
-                                    ForEach(sections.others) { group in
-                                        projectRow(group)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    projectList
                 }
             }
             .background(T3Colors.background)
             .navigationTitle("Project")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(
+                text: $query,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Filter projects"
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1022,52 +1008,210 @@ private struct NewTaskProjectPicker: View {
         .presentationBackground(T3Colors.background)
     }
 
-    private func projectRow(_ group: DailyUXProjectGroup) -> some View {
-        Button {
-            onSelect(group)
-        } label: {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(group.name)
-                        .foregroundStyle(T3Colors.textPrimary)
+    /// The picker paints its own grouped cards rather than leaning on a plain
+    /// List. A plain list row inherits the page background, which on a dark
+    /// appearance is near-black — the rows then read as loose text on a void
+    /// with full-bleed separators. Cards on `T3Colors.surface` keep the rows
+    /// anchored in both appearances, and the hairlines inset past the icon
+    /// column the way the rest of the app groups rows.
+    private enum PickerMetrics {
+        static let cardCorner: CGFloat = 14
+        static let iconTile: CGFloat = 30
+        static let rowSpacing: CGFloat = 12
+        static let hairlineInset: CGFloat = iconTile + rowSpacing
+        static let horizontalPadding: CGFloat = 16
+    }
 
-                    ForEach(group.projects.prefix(2)) { project in
-                        Text(projectLocation(project))
-                            .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+    private var hostLabels: DailyUXProjectHostLabels {
+        DailyUXProjectHostLabels(environments: environments)
+    }
+
+    private var environmentOptions: [DailyUXProjectHostOption] {
+        hostLabels.environmentOptions(in: groups)
+    }
+
+    private var selectedEnvironmentName: String {
+        environmentID.flatMap(hostLabels.name(forEnvironmentID:)) ?? "All environments"
+    }
+
+    private var environmentSelector: some View {
+        Menu {
+            Picker("Environment", selection: $environmentID) {
+                Text("All environments").tag(String?.none)
+                ForEach(environmentOptions) { option in
+                    Text(option.name).tag(String?.some(option.id))
+                }
+            }
+        } label: {
+            HStack(spacing: PickerMetrics.rowSpacing) {
+                iconTile("server.rack")
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Environment")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textTertiary)
+                    Text(selectedEnvironmentName)
+                        .font(T3Typography.control)
+                        .foregroundStyle(T3Colors.textPrimary)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(T3Colors.textTertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Environment, \(selectedEnvironmentName)")
+        .modifier(PickerCard())
+    }
+
+    private func iconTile(_ systemName: String) -> some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(T3Colors.accent.opacity(0.14))
+            .frame(width: PickerMetrics.iconTile, height: PickerMetrics.iconTile)
+            .overlay {
+                Image(systemName: systemName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(T3Colors.accent)
+            }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(T3Typography.eyebrow)
+            .kerning(0.6)
+            .foregroundStyle(T3Colors.textTertiary)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func card(_ groups: [DailyUXProjectGroup]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                projectRow(group)
+
+                if index < groups.count - 1 {
+                    Rectangle()
+                        .fill(T3Colors.separator)
+                        .frame(height: 0.5)
+                        .padding(.leading, PickerMetrics.hairlineInset + 14)
+                }
+            }
+        }
+        .modifier(PickerCard())
+    }
+
+    private var projectList: some View {
+        let sections = DailyUXProjectPickerSections(
+            groups: groups,
+            recentGroupIDs: recentGroupIDs,
+            filter: query,
+            environmentID: environmentID
+        )
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if environmentOptions.count > 1 {
+                    environmentSelector
+                }
+
+                if sections.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 24)
+                } else if sections.recents.isEmpty {
+                    card(sections.others)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionHeader("Recent")
+                        card(sections.recents)
                     }
 
-                    if group.projects.count > 2 {
-                        Text("+\(group.projects.count - 2) more locations")
-                            .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.textTertiary)
+                    if !sections.others.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            sectionHeader("Other projects")
+                            card(sections.others)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, PickerMetrics.horizontalPadding)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    private func projectRow(_ group: DailyUXProjectGroup) -> some View {
+        // A narrowed list is showing the group *because* of the selected host,
+        // so the row leads with that one rather than the composer's current
+        // environment.
+        let hostLabel = hostLabels.label(
+            for: group,
+            preferredEnvironmentID: environmentID ?? preferredEnvironmentID
+        )
+        let isSelected = group.id == selectionID
+        return Button {
+            onSelect(group)
+        } label: {
+            HStack(spacing: PickerMetrics.rowSpacing) {
+                iconTile("folder")
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.name)
+                        .font(T3Typography.control)
+                        .foregroundStyle(T3Colors.textPrimary)
+                        .multilineTextAlignment(.leading)
+
+                    if let hostLabel {
+                        HStack(spacing: 5) {
+                            Image(systemName: "server.rack")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(hostLabel)
+                                .font(T3Typography.supporting)
+                        }
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Opens on \(hostLabel)")
                     }
                 }
 
                 Spacer(minLength: 10)
 
-                if group.id == selectionID {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .semibold))
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(T3Colors.accent)
+                        .accessibilityHidden(true)
                 }
             }
-            .frame(minHeight: 46)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(minHeight: 56)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(
-            group.id == selectionID ? .isSelected : []
-        )
-        .listRowBackground(T3Colors.background)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
+}
 
-    private func projectLocation(_ project: FeatureProject) -> String {
-        let environment = environments.first { $0.id == project.environmentID }?.name
-            ?? project.environmentID
-        return "\(environment) · \(project.path)"
+/// One rounded surface with a hairline edge — the grouping the rest of the app
+/// uses, and the thing a plain List row cannot provide on a dark appearance.
+private struct PickerCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(T3Colors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(T3Colors.border, lineWidth: 0.5)
+            }
     }
 }
 
