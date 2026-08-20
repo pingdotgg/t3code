@@ -285,7 +285,7 @@ export function ThemeSearchSection({
 
       <div className="sr-only" role="status">
         {isSearching
-          ? "Finding themes..."
+          ? "Searching themes..."
           : results
             ? `${results.length} supported ${results.length === 1 ? "theme" : "themes"} found.`
             : ""}
@@ -302,7 +302,7 @@ export function ThemeSearchSection({
 
       {isSearching ? (
         <div className="flex min-h-20 items-center justify-center gap-2 text-muted-foreground text-sm">
-          <Spinner /> Finding themes...
+          <Spinner /> Searching themes...
         </div>
       ) : null}
 
