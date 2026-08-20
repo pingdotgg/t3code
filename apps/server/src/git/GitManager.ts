@@ -3599,8 +3599,8 @@ export const make = Effect.gen(function* () {
               subject: parsedMessage?.subject ?? "(no commit message)",
               body: parsedMessage?.body ?? "",
               authoredAt: Number.isFinite(timestampSeconds)
-                ? new Date(timestampSeconds * 1_000).toISOString()
-                : new Date(0).toISOString(),
+                ? DateTime.formatIso(DateTime.makeUnsafe(timestampSeconds * 1_000))
+                : DateTime.formatIso(DateTime.makeUnsafe(0)),
               files,
             };
           }),
