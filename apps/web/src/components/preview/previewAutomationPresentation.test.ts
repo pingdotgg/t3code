@@ -265,6 +265,45 @@ describe("preview automation presentation", () => {
     }
   });
 
+  it("does not reopen the inline preview while the right panel selects the tab", async () => {
+    vi.useFakeTimers();
+    const tabId = "tab-panel-open";
+    const runtimeTabId = addRuntimeTab(tabId);
+    useRightPanelStore.getState().openBrowser(threadRef, tabId);
+    const panelSurface = acquireBrowserSurface(runtimeTabId);
+    panelSurface.present({ x: 0, y: 0, width: 800, height: 600 }, false);
+    const panelOwner = useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner;
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    try {
+      const visibility = waitForBrowserSurfaceVisibility({
+        threadRef,
+        requestId: "request-panel-open",
+        tabId,
+        runtimeTabId,
+        timeoutMs: 100,
+      });
+      const rejection = expect(visibility).rejects.toMatchObject({
+        _tag: "PreviewAutomationVisibilityTimeoutError",
+        requestId: "request-panel-open",
+        tabId,
+        timeoutMs: 100,
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+      await rejection;
+      expect(
+        selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, threadRef),
+      ).toBeNull();
+      expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner).toBe(panelOwner);
+    } finally {
+      panelSurface.release();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("clamps best-effort presentation settling to the remaining operation budget", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", {

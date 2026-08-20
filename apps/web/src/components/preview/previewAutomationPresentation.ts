@@ -182,8 +182,14 @@ export async function waitForBrowserSurfaceVisibility(
     } else {
       presentedSince = null;
       // Same-server reconciliation and route hydration can race a cold open.
-      // Reassert the explicit show request only while that request is pending.
-      revealPreviewAutomationTab(input.threadRef, input.tabId);
+      // Reassert the explicit show request only when no surface already
+      // selects this tab. Reopening the mini-player would steal the shared
+      // browser-surface lease from a panel that is still becoming visible.
+      const { panel, miniPlayer } = readPreviewAutomationPresentation(input);
+      const selectedInPanel = panel.isOpen && panel.activeSurfaceId === `browser:${input.tabId}`;
+      if (!selectedInPanel && miniPlayer?.tabId !== input.tabId) {
+        revealPreviewAutomationTab(input.threadRef, input.tabId);
+      }
     }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
