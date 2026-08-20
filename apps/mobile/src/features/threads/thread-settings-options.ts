@@ -15,6 +15,11 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly description: string;
 }> = [
   {
+    mode: "read-only",
+    label: "Read only",
+    description: "Allow inspection but deny commands and file changes that need write access.",
+  },
+  {
     mode: "approval-required",
     label: "Supervised",
     description: "Ask before commands and file changes.",

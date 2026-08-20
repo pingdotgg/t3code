@@ -200,6 +200,27 @@ it.effect("replays one launch and retains one terminal result until acknowledgem
   }),
 );
 
+it.effect("retains live Program Attempts as restart interruptions before runtime recovery", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("running"));
+
+      assert.equal(yield* attempts.retainProcessInterruptions, 1);
+      yield* Ref.set(harness.projection, makeProjection("cancelled"));
+
+      const recovered = yield* attempts.observe(attemptId);
+      assert.equal(recovered.state, "terminal");
+      assert.equal(recovered.terminalResult?.status, "interrupted");
+      assert.equal(recovered.terminalResult?.failure?.code, "t3_restart_interrupted");
+      assert.isTrue(recovered.terminalResult?.failure?.retryable);
+      assert.equal(yield* attempts.retainProcessInterruptions, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("makes repeated cancellation harmless", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness();

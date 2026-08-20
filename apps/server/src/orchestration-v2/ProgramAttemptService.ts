@@ -77,6 +77,7 @@ export class ProgramAttemptService extends Context.Service<
     readonly acknowledge: (
       input: ProgramAttemptEffectInput,
     ) => Effect.Effect<ProgramAttemptSnapshot, ProgramAttemptError>;
+    readonly retainProcessInterruptions: Effect.Effect<number, ProgramAttemptError>;
   }
 >()("t3/orchestration-v2/ProgramAttemptService") {}
 
@@ -255,6 +256,51 @@ export const layer = Layer.effect(
     )(function* (attemptId) {
       return yield* snapshot(yield* load(attemptId));
     });
+
+    const retainProcessInterruptions: ProgramAttemptService["Service"]["retainProcessInterruptions"] =
+      Effect.gen(function* () {
+        const recoveryId = ProgramAttemptId.make("program-attempt:process-recovery");
+        const rows = yield* sql<ProgramAttemptRow>`
+          SELECT * FROM program_attempts
+          WHERE terminal_result_json IS NULL AND thread_id IS NOT NULL AND run_id IS NOT NULL
+        `.pipe(
+          Effect.mapError((cause) =>
+            error(recoveryId, "persistence_failed", "Could not load live Program Attempts.", cause),
+          ),
+        );
+        let retained = 0;
+        for (const row of rows) {
+          const projection = yield* threads
+            .getThreadProjection(ThreadId.make(row.thread_id!))
+            .pipe(
+              Effect.mapError((cause) =>
+                error(
+                  ProgramAttemptId.make(row.attempt_id),
+                  "projection_failed",
+                  "Could not load a live Program Attempt before process recovery.",
+                  cause,
+                ),
+              ),
+            );
+          const run = projection.runs.find((candidate) => candidate.id === row.run_id);
+          if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status))
+            continue;
+          const completedAt = yield* now;
+          yield* persistTerminal(row, {
+            status: "interrupted",
+            output: null,
+            failure: {
+              class: "transport_error",
+              message: "T3 restarted before the Program Attempt completed.",
+              code: "t3_restart_interrupted",
+              retryable: true,
+            },
+            completedAt,
+          });
+          retained += 1;
+        }
+        return retained;
+      });
 
     const launch: ProgramAttemptService["Service"]["launch"] = Effect.fn(
       "ProgramAttemptService.launch",
@@ -476,6 +522,12 @@ export const layer = Layer.effect(
       return yield* snapshot(yield* load(input.attemptId));
     });
 
-    return ProgramAttemptService.of({ launch, observe, cancel, acknowledge });
+    return ProgramAttemptService.of({
+      launch,
+      observe,
+      cancel,
+      acknowledge,
+      retainProcessInterruptions,
+    });
   }),
 );

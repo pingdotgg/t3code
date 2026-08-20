@@ -29,6 +29,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
+import * as ProgramAttempt from "./orchestration-v2/ProgramAttemptService.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
@@ -370,6 +371,7 @@ export const make = (options?: StartupOptions) =>
     const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const programAttempts = yield* ProgramAttempt.ProgramAttemptService;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -396,6 +398,7 @@ export const make = (options?: StartupOptions) =>
         if (workerFiber !== null) {
           yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
         }
+        yield* programAttempts.retainProcessInterruptions;
         yield* providerSessions.shutdown;
         const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
         yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
@@ -487,7 +490,12 @@ export const make = (options?: StartupOptions) =>
           "orchestration-v2.projections.rebuild",
           projectionMaintenance.rebuild,
         ),
-        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+        recover: runStartupPhase(
+          "orchestration-v2.recovery",
+          programAttempts.retainProcessInterruptions.pipe(
+            Effect.andThen(providerRuntimeRecovery.recover),
+          ),
+        ),
         startEffectWorker: runStartupPhase(
           "orchestration-v2.effect-worker.start",
           startEffectWorkerWithRelay({

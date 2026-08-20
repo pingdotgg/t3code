@@ -537,6 +537,14 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
 } {
   switch (runtimeMode) {
+    case "read-only":
+      return {
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "readOnly",
+        },
+      };
     case "approval-required":
       return {
         approvalPolicy: "untrusted",

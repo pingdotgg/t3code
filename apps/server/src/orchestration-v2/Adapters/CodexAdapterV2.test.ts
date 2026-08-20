@@ -266,7 +266,12 @@ describe("CodexAdapterV2 runtime policy", () => {
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
       const build = (
-        runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
+        runtimeMode:
+          | "read-only"
+          | "approval-required"
+          | "auto-accept-edits"
+          | "auto"
+          | "full-access",
       ) =>
         buildCodexTurnStartParams({
           nativeThreadId: `native-${runtimeMode}`,
@@ -282,11 +287,15 @@ describe("CodexAdapterV2 runtime policy", () => {
           },
         });
 
+      const readOnly = yield* build("read-only");
       const approvalRequired = yield* build("approval-required");
       const autoAcceptEdits = yield* build("auto-accept-edits");
       const auto = yield* build("auto");
       const fullAccess = yield* build("full-access");
 
+      assert.equal(readOnly.approvalPolicy, "never");
+      assert.equal(readOnly.approvalsReviewer, "user");
+      assert.equal(readOnly.sandboxPolicy?.type, "readOnly");
       assert.equal(approvalRequired.approvalPolicy, "untrusted");
       assert.equal(approvalRequired.approvalsReviewer, "user");
       assert.equal(approvalRequired.sandboxPolicy?.type, "readOnly");

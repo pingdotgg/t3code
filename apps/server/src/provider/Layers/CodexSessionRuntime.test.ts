@@ -222,6 +222,20 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
+  it("seals read-only turns without an approval route", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "read-only",
+        prompt: "Inspect only",
+      }),
+    );
+
+    NodeAssert.equal(params.approvalPolicy, "never");
+    NodeAssert.equal(params.approvalsReviewer, "user");
+    NodeAssert.deepStrictEqual(params.sandboxPolicy, { type: "readOnly" });
+  });
+
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({

@@ -1154,6 +1154,9 @@ const isClaudeRuntimeReadOnlyFullAccessSandboxPolicy = Schema.is(
 function sandboxPolicyKindForClaudeRuntimePolicy(
   runtimePolicy: ProviderAdapterV2RuntimePolicy,
 ): ClaudeRuntimeSandboxPolicyKindName | undefined {
+  if (runtimePolicy.sandboxPolicy === undefined && runtimePolicy.runtimeMode === "read-only") {
+    return "readOnly";
+  }
   return runtimePolicy.sandboxPolicy !== undefined &&
     isClaudeRuntimeSandboxPolicyKind(runtimePolicy.sandboxPolicy)
     ? runtimePolicy.sandboxPolicy.type
@@ -1205,6 +1208,8 @@ function permissionModeForClaudeRuntimePolicy(
   }
 
   switch (runtimePolicy.runtimeMode) {
+    case "read-only":
+      return "dontAsk";
     case "approval-required":
       return "default";
     case "auto-accept-edits":

@@ -373,6 +373,8 @@ function pageIncludesTerminalTaskResult(input: {
 
 function runtimeModeRank(mode: RuntimeMode): number {
   switch (mode) {
+    case "read-only":
+      return -1;
     case "approval-required":
       return 0;
     case "auto-accept-edits":
