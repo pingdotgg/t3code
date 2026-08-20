@@ -237,6 +237,7 @@ it.effect("keeps an inactive worktree and reports commits missing from its upstr
         statusDetailsRemote: () =>
           Effect.succeed({
             isRepo: true,
+            defaultBranch: "main",
             isDefaultBranch: false,
             branch: "feat/storage-cleanup",
             upstreamRef: "origin/feat/storage-cleanup",

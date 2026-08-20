@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ComposerPreviewAnnotationCardsProps {
   annotations: ReadonlyArray<PreviewAnnotationPayload>;
@@ -15,14 +17,19 @@ interface ComposerPreviewAnnotationCardsProps {
 }
 
 function TargetStat(props: { icon: ReactNode; count: number; label: string }) {
+  const tooltipText = `${props.count} ${props.label}${props.count === 1 ? "" : "s"}`;
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
-      title={`${props.count} ${props.label}${props.count === 1 ? "" : "s"}`}
-    >
-      {props.icon}
-      {props.count}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+            {props.icon}
+            {props.count}
+          </span>
+        }
+      />
+      <TooltipPopup side="top">{tooltipText}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -128,14 +135,15 @@ export function ComposerPreviewAnnotationCards({
                 </div>
               </div>
             </div>
-            <button
-              type="button"
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
               aria-label="Remove preview annotation"
-              className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded text-icon-muted transition hover:bg-muted hover:text-foreground"
+              className="absolute right-1.5 top-1.5 [--control-icon-color:currentColor] rounded text-icon-muted hover:bg-muted"
               onClick={() => onRemove(annotation.id)}
             >
               <X className="size-3" />
-            </button>
+            </Button>
           </section>
         );
       })}

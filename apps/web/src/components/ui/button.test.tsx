@@ -28,4 +28,27 @@ describe("button geometry tokens", () => {
     expect(html).toContain("size-7");
     expect(html).toContain("sm:size-6");
   });
+
+  it("owns shared compact and micro control geometry", () => {
+    const compact = renderToStaticMarkup(<Button size="compact">Condition</Button>);
+    const microLabel = renderToStaticMarkup(
+      <Button size="micro">
+        <FlaskConicalIcon /> Run
+      </Button>,
+    );
+    const micro = renderToStaticMarkup(
+      <Button size="icon-micro" variant="ghost-muted" aria-label="Add action">
+        <span>+</span>
+      </Button>,
+    );
+
+    expect(compact).toContain("h-7");
+    expect(compact).toContain("rounded-md");
+    expect(microLabel).toContain("text-[11px]");
+    expect(microLabel).toContain("sm:text-[11px]");
+    expect(microLabel).toContain("sm:[&amp;_svg:not([class*=&#x27;size-&#x27;])]:size-3");
+    expect(micro).toContain("size-5");
+    expect(micro).toContain("rounded-sm");
+    expect(micro).toContain("text-muted-foreground");
+  });
 });

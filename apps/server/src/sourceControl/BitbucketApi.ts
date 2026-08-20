@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -14,7 +15,10 @@ import {
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  isSshRemoteUrl,
+} from "@t3tools/shared/sourceControl";
 
 import {
   BitbucketPullRequestListSchema,
@@ -26,6 +30,7 @@ import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { retryAtFromHeader } from "./SourceControlRateLimit.ts";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 /** A response body past this is cut short, so one huge diff cannot exhaust the server. */
@@ -95,6 +100,7 @@ export class BitbucketResponseError extends Schema.TaggedErrorClass<BitbucketRes
     operation: BitbucketApiOperation,
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
+    retryAt: Schema.optional(Schema.Number),
   },
 ) {
   get detail(): string {
@@ -448,9 +454,9 @@ function requireRepositoryLocator(
 
 function parseBitbucketRemoteUrl(remoteUrl: string): BitbucketRepositoryLocator | null {
   const trimmed = remoteUrl.trim();
-  if (trimmed.startsWith("git@")) {
-    const pathStart = trimmed.indexOf(":");
-    return pathStart < 0 ? null : parseBitbucketRepositorySlug(trimmed.slice(pathStart + 1));
+  const scpMatch = /^[a-zA-Z0-9._-]+@[^:/]+:(.+)$/.exec(trimmed);
+  if (scpMatch?.[1]) {
+    return parseBitbucketRepositorySlug(scpMatch[1]);
   }
 
   try {
@@ -494,8 +500,8 @@ function defaultChangeRequestTargetBranch(input: {
 }
 
 function shouldPreferSshRemote(originRemoteUrl: string | null): boolean {
-  const trimmed = originRemoteUrl?.trim() ?? "";
-  return trimmed.startsWith("git@") || trimmed.startsWith("ssh://");
+  if (!originRemoteUrl) return false;
+  return isSshRemoteUrl(originRemoteUrl);
 }
 
 function selectCloneUrl(input: {
@@ -576,28 +582,28 @@ function responseError(
 ): Effect.Effect<never, BitbucketApiError> {
   // Bounded like any other body: an error response is no smaller than a successful one, and
   // only its length is reported anyway.
-  return collectUint8StreamText({
-    stream: response.stream,
-    maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new BitbucketResponseBodyReadError({
-          operation,
-          status: response.status,
-          cause,
-        }),
-    ),
-    Effect.flatMap((collected) =>
-      Effect.fail(
-        new BitbucketResponseError({
-          operation,
-          status: response.status,
-          responseBodyLength: collected.text.length,
-        }),
+  return Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const collected = yield* collectUint8StreamText({
+      stream: response.stream,
+      maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BitbucketResponseBodyReadError({
+            operation,
+            status: response.status,
+            cause,
+          }),
       ),
-    ),
-  );
+    );
+    return yield* new BitbucketResponseError({
+      operation,
+      status: response.status,
+      responseBodyLength: collected.text.length,
+      retryAt: retryAtFromHeader(response.headers["retry-after"], now),
+    });
+  });
 }
 
 export const make = Effect.gen(function* () {
