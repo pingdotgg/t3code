@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/preview";
 import {
   createRuntimeCommand,
+  isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -32,6 +33,10 @@ interface AcquiredRoute {
   readonly scope: Scope.Closeable;
 }
 
+export class BrowserNavigationRouteAcquireInterrupted extends Error {
+  override readonly name = "BrowserNavigationRouteAcquireInterrupted";
+}
+
 const acquireRouteCommand = createRuntimeCommand(connectionAtomRuntime, {
   label: "preview route acquisition",
   execute: ({ connection, target }: EnvironmentPortRouteRequest) =>
@@ -58,6 +63,9 @@ export async function acquireBrowserNavigationTarget(
   }
   const result = await acquireRouteCommand.run(appAtomRegistry, { connection, target });
   if (result._tag === "Failure") {
+    if (isAtomCommandInterrupted(result)) {
+      throw new BrowserNavigationRouteAcquireInterrupted();
+    }
     throw squashAtomCommandFailure(result);
   }
 

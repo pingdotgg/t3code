@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const mocks = vi.hoisted(() => ({
   acquireDiscoveredServerRoute: vi.fn(),
+  BrowserNavigationRouteAcquireInterrupted: class extends Error {},
   commit: vi.fn(async () => undefined),
   release: vi.fn(async () => undefined),
   openBrowser: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("~/browser/browserTargetResolver", () => ({
   acquireDiscoveredServerRoute: mocks.acquireDiscoveredServerRoute,
+  BrowserNavigationRouteAcquireInterrupted: mocks.BrowserNavigationRouteAcquireInterrupted,
 }));
 
 import {
@@ -154,6 +156,31 @@ describe("openTerminalLinkInPreview", () => {
     expect(reportError).not.toHaveBeenCalled();
     expect(fallbackToBrowser).not.toHaveBeenCalled();
     expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it("does not report or fall back when route acquisition is interrupted", async () => {
+    const fallbackToBrowser = vi.fn();
+    const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.acquireDiscoveredServerRoute.mockRejectedValueOnce(
+      new mocks.BrowserNavigationRouteAcquireInterrupted(),
+    );
+
+    await openTerminalLinkInPreview({
+      url: "http://localhost:5173/",
+      position: { x: 12, y: 34 },
+      threadRef,
+      openPreview: vi.fn(),
+      localApi: {
+        contextMenu: {
+          show: vi.fn(async () => "open-in-preview"),
+        },
+      } as unknown as LocalApi,
+      fallbackToBrowser,
+    });
+
+    expect(reportError).not.toHaveBeenCalled();
+    expect(fallbackToBrowser).not.toHaveBeenCalled();
+    expect(mocks.openPreviewSession).not.toHaveBeenCalled();
   });
 
   it("routes localhost links before opening the preview and retains the route for its tab", async () => {

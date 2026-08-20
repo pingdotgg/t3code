@@ -3,7 +3,10 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import { isPreviewableUrl } from "@t3tools/shared/preview";
 import * as Schema from "effect/Schema";
 
-import { acquireDiscoveredServerRoute } from "~/browser/browserTargetResolver";
+import {
+  acquireDiscoveredServerRoute,
+  BrowserNavigationRouteAcquireInterrupted,
+} from "~/browser/browserTargetResolver";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -103,6 +106,9 @@ export async function openTerminalLinkInPreview<E>(
         await route.release();
       }
     } catch (cause) {
+      if (cause instanceof BrowserNavigationRouteAcquireInterrupted) {
+        return;
+      }
       console.error(
         new TerminalLinkPreviewOpenError({
           ...errorContext,
