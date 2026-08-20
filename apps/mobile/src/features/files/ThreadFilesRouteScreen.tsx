@@ -1,6 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { RegistryContext } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -251,6 +252,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
+  const registry = useContext(RegistryContext);
   const entriesQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
@@ -259,6 +261,12 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         })
       : null,
   );
+  const refreshEntries = useCallback(() => {
+    if (environmentId === null || cwd === null) return;
+    registry.refresh(
+      projectEnvironment.listEntries({ environmentId, input: { cwd, refresh: true } }),
+    );
+  }, [cwd, environmentId, registry]);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handleReturnToThread = useCallback(() => {
     if (navigation.canGoBack()) {
@@ -408,7 +416,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
               {
                 accessibilityLabel: "Refresh files",
                 icon: "arrow.clockwise",
-                onPress: entriesQuery.refresh,
+                onPress: refreshEntries,
               },
             ]}
           />
@@ -455,7 +463,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         searchQuery={searchQuery}
         selectedPath={null}
         onPreviewFile={handlePreviewFile}
-        onRefresh={entriesQuery.refresh}
+        onRefresh={refreshEntries}
         onSelectFile={handleSelectFile}
       />
       <FilesToolbarBottomFade />

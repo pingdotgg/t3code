@@ -2,9 +2,11 @@ import { type EnvironmentId, type ProjectReadFileResult, WS_METHODS } from "@t3t
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
 
+import { request } from "../rpc/client.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
+  createEnvironmentQueryAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
@@ -54,18 +56,37 @@ export function createProjectEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { projectId: string } }) =>
       JSON.stringify([environmentId, input.projectId]),
   };
+  const pendingListEntriesRefresh = new Set<string>();
+  const listEntriesFamily = createEnvironmentQueryAtomFamily(runtime, {
+    label: "environment-data:projects:list-entries",
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+    execute: (input: { readonly cwd: string }) => {
+      const refresh = pendingListEntriesRefresh.delete(input.cwd);
+      return request(WS_METHODS.projectsListEntries, {
+        cwd: input.cwd,
+        ...(refresh ? { refresh: true } : {}),
+      });
+    },
+  });
   return {
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
     }),
-    listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:projects:list-entries",
-      tag: WS_METHODS.projectsListEntries,
-      staleTimeMs: 30_000,
-      idleTtlMs: 5 * 60_000,
-    }),
+    listEntries: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: { readonly cwd: string; readonly refresh?: boolean };
+    }) => {
+      if (target.input.refresh === true) {
+        pendingListEntriesRefresh.add(target.input.cwd);
+      }
+      return listEntriesFamily({
+        environmentId: target.environmentId,
+        input: { cwd: target.input.cwd },
+      });
+    },
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,

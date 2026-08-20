@@ -274,6 +274,9 @@ export const make = Effect.gen(function* () {
 
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
+      if (input.refresh === true) {
+        yield* refresh(input.cwd);
+      }
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;

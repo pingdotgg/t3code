@@ -127,8 +127,11 @@ export function useProjectEntriesQuery(
 ): ProjectQueryState<ProjectListEntriesResult> {
   const atom = getProjectEntriesQueryAtom(environmentId, cwd);
   const result = useAtomValue(atom);
-  const refreshAtom = useAtomRefresh(atom);
-  const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
+  const refresh = useCallback(() => {
+    appAtomRegistry.refresh(
+      projectEnvironment.listEntries({ environmentId, input: { cwd, refresh: true } }),
+    );
+  }, [cwd, environmentId]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: errorMessage(result),
