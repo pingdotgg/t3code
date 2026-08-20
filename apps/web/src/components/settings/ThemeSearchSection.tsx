@@ -225,7 +225,7 @@ export function ThemeSearchSection({
             aria-label="Search Open VSX themes"
             autoFocus
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="try dracula, nord, catppuccin..."
+            placeholder="Search themes..."
             size="lg"
             type="search"
             value={query}
