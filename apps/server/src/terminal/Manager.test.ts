@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -1484,6 +1486,21 @@ it.layer(
         yield* manager.open(openInput({ terminalId: "quoted-shell" }));
         expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("/definitely/missing shell");
       }
+    }),
+  );
+
+  it.effect("expands home-relative configured shell paths before spawning", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "~/bin/test-shell",
+      }).pipe(Effect.provide(withHostPlatform("linux")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(
+        path.join(NodeOS.homedir(), "bin", "test-shell"),
+      );
     }),
   );
 
