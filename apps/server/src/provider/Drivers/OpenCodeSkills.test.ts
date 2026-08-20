@@ -277,6 +277,40 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
     }),
   );
 
+  it.effect("does not scan parent directories for non-git workspaces", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+      const parentDir = path.join(tempDir, "non-git-parent");
+      const childDir = path.join(parentDir, "nested-workspace");
+
+      yield* fs.makeDirectory(childDir, { recursive: true });
+
+      // Parent directory has a skill, but NO .git exists anywhere in the tree
+      yield* writeSkill(
+        path.join(parentDir, ".opencode", "skills"),
+        "parent-skill",
+        ["---", "name: parent-skill", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(childDir, ".opencode", "skills"),
+        "child-skill",
+        ["---", "name: child-skill", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverOpenCodeSkills(childDir, {
+        HOME: path.join(tempDir, "empty-home"),
+        OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-config"),
+      });
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["child-skill"],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

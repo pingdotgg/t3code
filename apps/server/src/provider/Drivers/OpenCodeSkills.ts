@@ -94,11 +94,13 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
     ? yield* Effect.gen(function* () {
         const dirs: Array<string> = [];
         let current = path.resolve(cwd);
+        let foundGit = false;
         while (true) {
           dirs.push(current);
           const gitPath = path.join(current, ".git");
           const hasGit = yield* fileSystem.exists(gitPath).pipe(Effect.orElseSucceed(() => false));
           if (hasGit) {
+            foundGit = true;
             break;
           }
           const parent = path.dirname(current);
@@ -107,7 +109,7 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
           }
           current = parent;
         }
-        return dirs.toReversed();
+        return foundGit ? dirs.toReversed() : [path.resolve(cwd)];
       })
     : [];
 
