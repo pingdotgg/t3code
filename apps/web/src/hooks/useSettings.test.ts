@@ -32,6 +32,7 @@ describe("synced plan mode", () => {
         environmentIds,
         primaryEnvironmentId,
         hydratedPrimaryEnvironmentId: null,
+        primaryUnavailable: false,
       }),
     ).toEqual([primaryEnvironmentId]);
     expect(
@@ -39,6 +40,7 @@ describe("synced plan mode", () => {
         environmentIds,
         primaryEnvironmentId,
         hydratedPrimaryEnvironmentId: primaryEnvironmentId,
+        primaryUnavailable: false,
       }),
     ).toEqual(environmentIds);
 
@@ -66,7 +68,7 @@ describe("synced plan mode", () => {
     expect(events).toEqual(["persist:true:2026-08-14T12:00:00.000Z", "hydrated"]);
   });
 
-  it("releases secondary environments when the primary is offline", () => {
+  it("waits through transient primary shell states", () => {
     const primaryEnvironmentId = EnvironmentId.make("primary");
     const onHydrated = vi.fn();
 
@@ -84,12 +86,18 @@ describe("synced plan mode", () => {
       onHydrated,
     });
 
-    expect(onHydrated).toHaveBeenCalledOnce();
+    expect(onHydrated).not.toHaveBeenCalled();
+  });
+
+  it("releases secondary environments when the primary connection is unavailable", () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+
     expect(
       resolveSyncedPlanModeCoordinatorEnvironmentIds({
         environmentIds: [primaryEnvironmentId, EnvironmentId.make("secondary")],
         primaryEnvironmentId,
-        hydratedPrimaryEnvironmentId: primaryEnvironmentId,
+        hydratedPrimaryEnvironmentId: null,
+        primaryUnavailable: true,
       }),
     ).toHaveLength(2);
   });

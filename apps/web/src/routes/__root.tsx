@@ -157,6 +157,14 @@ function RootRouteView() {
 function SyncedPlanModeCoordinator() {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const primaryEnvironment = environments.find(
+    ({ environmentId }) => environmentId === primaryEnvironmentId,
+  );
+  const primaryUnavailable =
+    primaryEnvironment === undefined ||
+    primaryEnvironment.connection.phase === "available" ||
+    primaryEnvironment.connection.phase === "offline" ||
+    primaryEnvironment.connection.phase === "error";
   const [hydratedPrimaryEnvironmentId, setHydratedPrimaryEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const markPrimaryHydrated = useCallback(() => {
@@ -166,6 +174,7 @@ function SyncedPlanModeCoordinator() {
     environmentIds: environments.map(({ environmentId }) => environmentId),
     primaryEnvironmentId,
     hydratedPrimaryEnvironmentId,
+    primaryUnavailable,
   });
 
   return environmentIds.map((environmentId) => (
