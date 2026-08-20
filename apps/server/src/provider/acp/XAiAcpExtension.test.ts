@@ -395,6 +395,19 @@ describe("XAiAcpExtension", () => {
     expect(isGrokPlanMarkdownPath(sessionPlan)).toBe(true);
     expect(isGrokPlanMarkdownPath(nestedSessionPlan)).toBe(true);
     expect(isGrokPlanMarkdownPath("~/.grok/sessions/abc/plan.md")).toBe(true);
+    expect(isGrokPlanMarkdownPath("/tmp/mock-home/.grok/sessions/sess/plan.md")).toBe(true);
+    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/sess/plan.md")).toBe(true);
+    const previousGrokHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = "/opt/grok-data";
+    try {
+      expect(isGrokPlanMarkdownPath("/opt/grok-data/sessions/sess/plan.md")).toBe(true);
+    } finally {
+      if (previousGrokHome === undefined) {
+        delete process.env.GROK_HOME;
+      } else {
+        process.env.GROK_HOME = previousGrokHome;
+      }
+    }
     // Workspace plan.md must not be treated as the session plan file.
     expect(isGrokPlanMarkdownPath("plan.md")).toBe(false);
     expect(isGrokPlanMarkdownPath("/repo/docs/plan.md")).toBe(false);
@@ -423,6 +436,20 @@ describe("XAiAcpExtension", () => {
         ],
       }),
     ).toBe("# From diff\n\n- b");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData({
+        rawInput: { file_path: sessionPlan, content: "" },
+        content: [
+          {
+            type: "diff",
+            path: sessionPlan,
+            oldText: "",
+            newText: "# From diff after empty rawInput\n",
+          },
+        ],
+      }),
+    ).toBe("# From diff after empty rawInput");
 
     expect(
       extractGrokPlanMarkdownFromToolCallData({

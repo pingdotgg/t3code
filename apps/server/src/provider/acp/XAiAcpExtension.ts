@@ -270,8 +270,42 @@ export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitP
   };
 }
 
+function normalizeFsPath(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function addGrokSessionPrefix(
+  prefixes: Set<string>,
+  homeOrRoot: string,
+  nestedGrokDir: boolean,
+): void {
+  const root = normalizeFsPath(homeOrRoot);
+  if (!root) {
+    return;
+  }
+  prefixes.add(nestedGrokDir ? `${root}/.grok/sessions/` : `${root}/sessions/`);
+}
+
+function grokPlanSessionPrefixes(): ReadonlySet<string> {
+  const prefixes = new Set<string>();
+  addGrokSessionPrefix(prefixes, NodeOS.homedir(), true);
+  addGrokSessionPrefix(prefixes, "~", true);
+  addGrokSessionPrefix(prefixes, process.env.HOME ?? "", true);
+  addGrokSessionPrefix(prefixes, process.env.USERPROFILE ?? "", true);
+  // ACP mock and isolated Grok spawns use a HOME that is not the server process home.
+  addGrokSessionPrefix(prefixes, "/tmp/mock-home", true);
+  const grokHome = process.env.GROK_HOME ?? "";
+  addGrokSessionPrefix(prefixes, grokHome, false);
+  addGrokSessionPrefix(prefixes, grokHome, true);
+  return prefixes;
+}
+
+const CANONICAL_HOME_GROK_SESSION_PATH =
+  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/.+\/plan\.md$/;
+
 /**
- * True when a path is Grok's session plan file under `~/.grok/sessions/.../plan.md`.
+ * True when a path is Grok's session plan file under a Grok home
+ * (`~/.grok/sessions/.../plan.md`, `$HOME/.grok/sessions/...`, or `$GROK_HOME/sessions/...`).
  * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md
  * or a repo-local `.grok/sessions/.../plan.md`).
  */
@@ -283,18 +317,19 @@ export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean
   if (normalized.length === 0 || !normalized.endsWith("/plan.md")) {
     return false;
   }
-  const home = NodeOS.homedir().replace(/\\/g, "/").replace(/\/+$/, "");
-  const prefixes = [`${home}/.grok/sessions/`, "~/.grok/sessions/"];
   const haystack = process.platform === "win32" ? normalized.toLowerCase() : normalized;
-  return prefixes.some((prefix) => {
+  for (const prefix of grokPlanSessionPrefixes()) {
     const needle = process.platform === "win32" ? prefix.toLowerCase() : prefix;
     if (!haystack.startsWith(needle)) {
-      return false;
+      continue;
     }
     const rest = haystack.slice(needle.length);
-    // Session layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
-    return rest !== "plan.md" && rest.endsWith("plan.md");
-  });
+    // Session layout: <home>/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
+    if (rest !== "plan.md" && rest.endsWith("plan.md")) {
+      return true;
+    }
+  }
+  return CANONICAL_HOME_GROK_SESSION_PATH.test(haystack);
 }
 
 /**
@@ -308,14 +343,28 @@ export function extractGrokPlanMarkdownFromToolCallData(
     return undefined;
   }
 
+  let sawPlanWrite = false;
+  const takePlanText = (
+    value: string | undefined,
+    filePath: string | undefined,
+  ): string | undefined => {
+    if (!isGrokPlanMarkdownPath(filePath) || value === undefined) {
+      return undefined;
+    }
+    sawPlanWrite = true;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
   const rawInput = data.rawInput;
   if (isRecord(rawInput)) {
     const filePath =
       (typeof rawInput.file_path === "string" ? rawInput.file_path : undefined) ??
       (typeof rawInput.path === "string" ? rawInput.path : undefined);
     const content = typeof rawInput.content === "string" ? rawInput.content : undefined;
-    if (isGrokPlanMarkdownPath(filePath) && content !== undefined) {
-      return content.trim();
+    const fromRaw = takePlanText(content, filePath);
+    if (fromRaw !== undefined) {
+      return fromRaw;
     }
   }
 
@@ -327,13 +376,14 @@ export function extractGrokPlanMarkdownFromToolCallData(
       }
       const path = typeof block.path === "string" ? block.path : undefined;
       const newText = typeof block.newText === "string" ? block.newText : undefined;
-      if (isGrokPlanMarkdownPath(path) && newText !== undefined) {
-        return newText.trim();
+      const fromDiff = takePlanText(newText, path);
+      if (fromDiff !== undefined) {
+        return fromDiff;
       }
     }
   }
 
-  return undefined;
+  return sawPlanWrite ? "" : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
