@@ -2229,7 +2229,8 @@ code {
   background: transparent !important;
 }
 
-.chat-markdown .chat-markdown-mermaid-pending {
+/* Three classes so color wins over `html[data-theme-id] .chat-markdown pre`. */
+.chat-markdown .chat-markdown-codeblock .chat-markdown-mermaid-pending {
   margin: 0;
   border: none;
   border-radius: 0;

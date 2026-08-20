@@ -124,14 +124,16 @@ const DANGEROUS_SVG_URL = "(?:javascript|vbscript|data\\s*:\\s*text\\s*/\\s*html
  */
 export function sanitizeMermaidSvg(svg: string): string {
   const tagged = new RegExp(`<(${DANGEROUS_SVG_TAGS})\\b[^>]*>[\\s\\S]*?</\\1>`, "gi");
-  const selfClosing = new RegExp(`<(${DANGEROUS_SVG_TAGS})\\b[^>]*/>`, "gi");
+  // Unclosed / self-closing leftovers after the paired pass. `[^>]*` also
+  // matches `/>`, so a separate self-closing pattern is unnecessary.
+  const opening = new RegExp(`<(${DANGEROUS_SVG_TAGS})\\b[^>]*>`, "gi");
   const dangerousUrl = new RegExp(
     `\\s+(?:xlink:)?(?:href|src)\\s*=\\s*(?:"${DANGEROUS_SVG_URL}[^"]*"|'${DANGEROUS_SVG_URL}[^']*'|${DANGEROUS_SVG_URL}\\S+)`,
     "gi",
   );
   return svg
     .replace(tagged, "")
-    .replace(selfClosing, "")
+    .replace(opening, "")
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
     .replace(dangerousUrl, "");
 }

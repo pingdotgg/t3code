@@ -78,6 +78,7 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
   const contentSize = useMemo(() => mermaidSvgContentSize(overlaySvg), [overlaySvg]);
 
   const lastSceneSizeRef = useRef<Size | null>(null);
+  const fittedSvgRef = useRef<string | null>(null);
 
   const setSceneNode = useCallback((node: HTMLDivElement | null) => {
     sceneRef.current = node;
@@ -109,6 +110,7 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
   useLayoutEffect(() => {
     if (!open) {
       userAdjustedRef.current = false;
+      fittedSvgRef.current = null;
       pointerRef.current = null;
       fitZoomRef.current = 1;
       viewportRef.current = resetMermaidViewport();
@@ -116,7 +118,14 @@ export function MermaidOverlay({ open, svg, title, onOpenChange }: MermaidOverla
       setViewport(resetMermaidViewport());
       return;
     }
-    if (sceneEl && !userAdjustedRef.current) fitToScene(sceneEl);
+    if (!sceneEl) return;
+    const diagramChanged = fittedSvgRef.current !== overlaySvg;
+    // Pan/zoom survives a scene resize of the same diagram. A new SVG (streaming
+    // redraw) has a different canvas, so refit or the previous viewport is stale.
+    if (diagramChanged || !userAdjustedRef.current) {
+      fittedSvgRef.current = overlaySvg;
+      fitToScene(sceneEl);
+    }
   }, [open, overlaySvg, sceneEl, contentSize]);
 
   useEffect(() => {

@@ -61,6 +61,11 @@ describe("sanitizeMermaidSvg", () => {
     expect(sanitizeMermaidSvg(dirty)).toBe(`<svg><image/></svg>`);
   });
 
+  it("strips unclosed dangerous opening tags", () => {
+    const dirty = `<svg><iframe src="https://evil.example"><foreignObject><div>x</div></svg>`;
+    expect(sanitizeMermaidSvg(dirty)).toBe(`<svg><div>x</div></svg>`);
+  });
+
   it("leaves mermaid marker urls and ordinary attributes alone", () => {
     const svg = `<svg><path marker-end="url(#arrow)" class="edge" /></svg>`;
     expect(sanitizeMermaidSvg(svg)).toBe(svg);
