@@ -124,7 +124,7 @@ function ThemeJsonEditor({
       <textarea
         aria-label="Theme JSON"
         className={cn(
-          "relative z-10 block min-h-72 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-[12px] leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-accent selection:text-accent-foreground",
+          "relative z-10 block min-h-44 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-[12px] leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-accent selection:text-accent-foreground",
           isPlainText ? "text-foreground" : "text-transparent",
         )}
         id={id}
@@ -536,7 +536,7 @@ export function ThemeImportDialog({
                     because Add theme only applies to the file in this section. Pinning
                     them at the modal bottom would read as a modal-scoped action when
                     the dialog also has the search and conflict views. */}
-                <div className="flex flex-col-reverse gap-2 border-t border-border/70 pt-3 sm:flex-row sm:justify-end">
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   <Button variant="ghost" onClick={() => onOpenChange(false)}>
                     Cancel
                   </Button>
