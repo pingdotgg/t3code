@@ -124,8 +124,7 @@ function EnvironmentMirrorLinks({
       {linksQuery.error !== null ? (
         <SettingsRow
           title={`Shared folders on ${environmentLabel} are unavailable`}
-          description={linksQuery.error}
-          className="text-warning"
+          description={<span className="text-warning">{linksQuery.error}</span>}
         />
       ) : null}
       {links.map((link) => (
