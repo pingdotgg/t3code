@@ -234,6 +234,27 @@ export function isGrokEnterPlanModeToolCall(toolCall: {
   return false;
 }
 
+/** Failed enter_plan_mode must not leave planModeActive stuck on. */
+export function nextGrokPlanModeActive(
+  currentlyActive: boolean,
+  toolCall: {
+    readonly title?: string;
+    readonly status?: "pending" | "inProgress" | "completed" | "failed";
+    readonly data: Record<string, unknown>;
+  },
+): boolean {
+  if (!isGrokEnterPlanModeToolCall(toolCall)) {
+    return currentlyActive;
+  }
+  if (toolCall.status === "failed") {
+    return false;
+  }
+  if (toolCall.status === "completed" || toolCall.status === "inProgress") {
+    return true;
+  }
+  return currentlyActive;
+}
+
 const resolveSessionCallbackTurnId = (
   sessions: ReadonlyMap<ThreadId, GrokSessionContext>,
   threadId: ThreadId,
@@ -843,6 +864,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       Effect.gen(function* () {
         const trimmed = planMarkdown.trim();
         if (trimmed.length === 0) {
+          ctx.lastKnownProposedPlanMarkdown = "";
+          ctx.lastKnownProposedPlanTurnId = turnId;
           return;
         }
         // Turn-scoped dedupe: identical text on a later turn must still emit.
@@ -1065,6 +1088,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                           planMarkdown,
                           { method, payload: params },
                         );
+                        ctx.planModeActive = false;
                       } else {
                         yield* offerRuntimeEvent({
                           type: "turn.proposed.completed",
@@ -1319,9 +1343,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         rawPayload: event.rawPayload,
                       }),
                     );
-                    if (isGrokEnterPlanModeToolCall(event.toolCall)) {
-                      ctx.planModeActive = true;
-                    }
+                    ctx.planModeActive = nextGrokPlanModeActive(ctx.planModeActive, event.toolCall);
                     // Only promote session plan.md writes while plan mode is
                     // active — avoids treating unrelated plan files as proposals.
                     // Fresh stamp: must not share eventId with the tool lifecycle event.
@@ -1329,7 +1351,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       const planMarkdown = extractGrokPlanMarkdownFromToolCallData(
                         event.toolCall.data,
                       );
-                      if (planMarkdown) {
+                      if (planMarkdown !== undefined) {
                         yield* emitProposedPlanCompleted(
                           ctx,
                           notificationTurnId,

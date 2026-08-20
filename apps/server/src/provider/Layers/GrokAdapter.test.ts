@@ -30,6 +30,7 @@ import {
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
   makeGrokAdapter,
+  nextGrokPlanModeActive,
   selectGrokPermissionOptionId,
 } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -111,6 +112,25 @@ it("detects enter_plan_mode tool calls from title and rawInput", () => {
     isGrokEnterPlanModeToolCall({
       title: "write",
       data: { toolCallId: "1", rawInput: { file_path: "/tmp/x", content: "y" } },
+    }),
+  );
+});
+
+it("only sets planModeActive after a successful enter_plan_mode", () => {
+  const enter = {
+    title: "enter_plan_mode",
+    data: { toolCallId: "1" },
+  };
+  assert.isFalse(nextGrokPlanModeActive(false, { ...enter, status: "pending" }));
+  assert.isTrue(nextGrokPlanModeActive(false, { ...enter, status: "inProgress" }));
+  assert.isTrue(nextGrokPlanModeActive(false, { ...enter, status: "completed" }));
+  assert.isFalse(nextGrokPlanModeActive(false, { ...enter, status: "failed" }));
+  assert.isFalse(nextGrokPlanModeActive(true, { ...enter, status: "failed" }));
+  assert.isTrue(
+    nextGrokPlanModeActive(true, {
+      title: "write",
+      status: "completed",
+      data: { toolCallId: "2" },
     }),
   );
 });

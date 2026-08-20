@@ -11,6 +11,7 @@ import {
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
+  toolCallProgressLength,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
 
@@ -542,6 +543,48 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
+  it("keeps a retained tail on the original text entries around non-text content", () => {
+    const prefix = "a".repeat(4_000);
+    const suffix = "b".repeat(5_000);
+    const { events } = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        kind: "edit",
+        status: "in_progress",
+        content: [
+          { type: "content", content: { type: "text", text: prefix } },
+          { type: "diff", path: "/repo/file.ts", oldText: "before", newText: "after" },
+          { type: "content", content: { type: "text", text: suffix } },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const event = events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+    const content = event.toolCall.data.content as ReadonlyArray<EffectAcpSchema.ToolCallContent>;
+    expect(content).toHaveLength(3);
+    const firstText = content[0];
+    if (firstText?.type !== "content" || firstText.content.type !== "text") {
+      throw new Error("expected a bounded prefix text entry");
+    }
+    expect(firstText.content.text.startsWith("[Earlier output truncated]")).toBe(true);
+    expect(firstText.content.text.endsWith("a".repeat(100))).toBe(true);
+    expect(content[1]).toEqual({
+      type: "diff",
+      path: "/repo/file.ts",
+      oldText: "before",
+      newText: "after",
+    });
+    expect(content[2]).toEqual({
+      type: "content",
+      content: { type: "text", text: suffix },
+    });
+  });
+
   it("bounds oversized whitespace-only tool call content that has no trimmed text", () => {
     // Whitespace-only entries are skipped when extracting display text (`chunks.length === 0`)
     // and used to be returned unchanged, which let a redrawing terminal persist unbounded
@@ -634,6 +677,17 @@ describe("AcpRuntimeModel", () => {
         data: {},
       }) satisfies AcpToolCallState;
 
+    it("emits the first in-progress tool_call even when it has no detail", () => {
+      expect(
+        decideToolCallUpdateEmission({
+          previous: undefined,
+          next: { toolCallId: "tool-1", title: "Grok Tool", status: "pending", data: {} },
+          lastEmittedDetailLength: undefined,
+          skippedSinceEmit: 0,
+        }),
+      ).toEqual({ emit: true, skippedSinceEmit: 0 });
+    });
+
     it("always emits terminal (completed/failed) status updates regardless of growth", () => {
       expect(
         decideToolCallUpdateEmission({
@@ -655,14 +709,53 @@ describe("AcpRuntimeModel", () => {
     });
 
     it("skips updates whose bounded detail did not change", () => {
+      const previous = toolCall("frame 1", "inProgress");
       expect(
         decideToolCallUpdateEmission({
-          previous: toolCall("frame 1", "inProgress"),
-          next: toolCall("frame 1", "inProgress"),
+          previous,
+          next: previous,
           lastEmittedDetailLength: 7,
           skippedSinceEmit: 0,
         }),
       ).toEqual({ emit: false, skippedSinceEmit: 0 });
+    });
+
+    it("coalesces command-tool updates whose content grew while detail stayed the command", () => {
+      const commandCall = (stdout: string): AcpToolCallState => ({
+        toolCallId: "tool-1",
+        title: "Ran command",
+        status: "inProgress",
+        command: "ls",
+        detail: "ls",
+        data: {
+          command: "ls",
+          content: [{ type: "content", content: { type: "text", text: stdout } }],
+        },
+      });
+
+      let previous: AcpToolCallState | undefined;
+      let lastEmittedDetailLength: number | undefined;
+      let skippedSinceEmit = 0;
+      const emissions: Array<boolean> = [];
+
+      for (let i = 1; i <= 12; i += 1) {
+        const next = commandCall("x".repeat(i));
+        const decision = decideToolCallUpdateEmission({
+          previous,
+          next,
+          lastEmittedDetailLength,
+          skippedSinceEmit,
+        });
+        emissions.push(decision.emit);
+        skippedSinceEmit = decision.skippedSinceEmit;
+        if (decision.emit) {
+          lastEmittedDetailLength = toolCallProgressLength(next);
+        }
+        previous = next;
+      }
+
+      const emittedIndices = emissions.flatMap((emitted, index) => (emitted ? [index + 1] : []));
+      expect(emittedIndices).toEqual([1, 11]);
     });
 
     it("emits immediately when the title changes, even with no growth", () => {

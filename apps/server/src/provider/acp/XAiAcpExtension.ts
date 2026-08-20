@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -270,7 +272,8 @@ export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitP
 
 /**
  * True when a path is Grok's session plan file under `~/.grok/sessions/.../plan.md`.
- * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md).
+ * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md
+ * or a repo-local `.grok/sessions/.../plan.md`).
  */
 export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean {
   if (typeof path !== "string") {
@@ -280,8 +283,18 @@ export function isGrokPlanMarkdownPath(path: string | undefined | null): boolean
   if (normalized.length === 0 || !normalized.endsWith("/plan.md")) {
     return false;
   }
-  // Session layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
-  return normalized.includes("/.grok/sessions/");
+  const home = NodeOS.homedir().replace(/\\/g, "/").replace(/\/+$/, "");
+  const prefixes = [`${home}/.grok/sessions/`, "~/.grok/sessions/"];
+  const haystack = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  return prefixes.some((prefix) => {
+    const needle = process.platform === "win32" ? prefix.toLowerCase() : prefix;
+    if (!haystack.startsWith(needle)) {
+      return false;
+    }
+    const rest = haystack.slice(needle.length);
+    // Session layout: ~/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
+    return rest !== "plan.md" && rest.endsWith("plan.md");
+  });
 }
 
 /**
@@ -301,7 +314,7 @@ export function extractGrokPlanMarkdownFromToolCallData(
       (typeof rawInput.file_path === "string" ? rawInput.file_path : undefined) ??
       (typeof rawInput.path === "string" ? rawInput.path : undefined);
     const content = typeof rawInput.content === "string" ? rawInput.content : undefined;
-    if (isGrokPlanMarkdownPath(filePath) && content && content.trim().length > 0) {
+    if (isGrokPlanMarkdownPath(filePath) && content !== undefined) {
       return content.trim();
     }
   }
@@ -314,7 +327,7 @@ export function extractGrokPlanMarkdownFromToolCallData(
       }
       const path = typeof block.path === "string" ? block.path : undefined;
       const newText = typeof block.newText === "string" ? block.newText : undefined;
-      if (isGrokPlanMarkdownPath(path) && newText && newText.trim().length > 0) {
+      if (isGrokPlanMarkdownPath(path) && newText !== undefined) {
         return newText.trim();
       }
     }

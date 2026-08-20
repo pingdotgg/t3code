@@ -363,24 +363,63 @@ function extractTextContentFromToolCallContent(
     return { text: joined, content: boundToolCallContentEntries(content) };
   }
   const bounded = boundToolCallOutputText(joined);
-  // Collapse the text entries into a single bounded one at the final contributing text entry,
-  // and leave every other entry kind (diffs, images, resource links) in its original relative
-  // order. The retained tail came from that text entry, so placing it there also preserves its
-  // ordering relative to interleaved non-text content and ignores later blank text entries.
-  const lastContributingTextIndex = content.reduce(
-    (lastIndex, entry, index) => (toolCallContentText(entry)?.trim() ? index : lastIndex),
-    -1,
-  );
-  const boundedContent = content.flatMap((entry, index) => {
+  const tail = joined.slice(joined.length - TOOL_CALL_CONTENT_MAX_CHARS);
+  return {
+    text: bounded,
+    content: distributeRetainedTailAcrossContent(content, tail),
+  };
+}
+
+// Walk the original text entries from the joined tail window so a retained slice that
+// spans entries around an image/diff stays on those entries. Non-text kinds keep their
+// relative order; blank text entries are dropped; the truncation marker is prepended to
+// the first remaining text entry.
+function distributeRetainedTailAcrossContent(
+  content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
+  tail: string,
+): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
+  const textRanges: Array<{
+    readonly index: number;
+    readonly start: number;
+    readonly end: number;
+    readonly text: string;
+  }> = [];
+  let offset = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    const text = toolCallContentText(content[index])?.trim();
+    if (!text) {
+      continue;
+    }
+    if (textRanges.length > 0) {
+      offset += 1;
+    }
+    const start = offset;
+    const end = offset + text.length;
+    textRanges.push({ index, start, end, text });
+    offset = end;
+  }
+  const tailStart = Math.max(0, offset - tail.length);
+  let markerPending = true;
+  return content.flatMap((entry, index) => {
     if (toolCallContentText(entry) === undefined) {
       return [entry];
     }
-    if (index !== lastContributingTextIndex) {
+    const range = textRanges.find((item) => item.index === index);
+    if (range === undefined) {
       return [];
     }
-    return [{ type: "content", content: { type: "text", text: bounded } } as const];
+    const overlapStart = Math.max(range.start, tailStart);
+    const overlapEnd = Math.min(range.end, offset);
+    if (overlapEnd <= overlapStart) {
+      return [];
+    }
+    let piece = range.text.slice(overlapStart - range.start, overlapEnd - range.start);
+    if (markerPending) {
+      piece = `${TOOL_CALL_CONTENT_TRUNCATION_MARKER}${piece}`;
+      markerPending = false;
+    }
+    return [{ type: "content", content: { type: "text", text: piece } } as const];
   });
-  return { text: bounded, content: boundedContent };
 }
 
 function normalizeToolKind(kind: unknown): string | undefined {
@@ -544,6 +583,42 @@ export interface AcpToolCallEmitDecision {
   readonly skippedSinceEmit: number;
 }
 
+function toolCallOutputUnchanged(previous: AcpToolCallState, next: AcpToolCallState): boolean {
+  return (
+    previous.data.content === next.data.content && previous.data.rawOutput === next.data.rawOutput
+  );
+}
+
+// Command tools keep `detail` equal to the command, so live stdout lives on
+// `data.content` / `data.rawOutput`. Measure that too, otherwise coalescing never
+// sees growth and in-progress output is held until completed/failed.
+export function toolCallProgressLength(state: AcpToolCallState): number {
+  let contentChars = 0;
+  const content = state.data.content;
+  if (Array.isArray(content)) {
+    for (const entry of content) {
+      if (!isRecord(entry)) {
+        continue;
+      }
+      const text = toolCallContentText(entry as EffectAcpSchema.ToolCallContent);
+      if (text) {
+        contentChars += text.length;
+      }
+    }
+  }
+  let rawOutputChars = 0;
+  const rawOutput = state.data.rawOutput;
+  if (isRecord(rawOutput)) {
+    for (const field of RAW_OUTPUT_TEXT_FIELDS) {
+      const value = rawOutput[field];
+      if (typeof value === "string") {
+        rawOutputChars += value.length;
+      }
+    }
+  }
+  return Math.max(state.detail?.length ?? 0, contentChars, rawOutputChars);
+}
+
 export function decideToolCallUpdateEmission(
   input: AcpToolCallEmitDecisionInput,
 ): AcpToolCallEmitDecision {
@@ -551,19 +626,16 @@ export function decideToolCallUpdateEmission(
   if (next.status === "completed" || next.status === "failed") {
     return { emit: true, skippedSinceEmit: 0 };
   }
-  if (!next.detail) {
-    return { emit: false, skippedSinceEmit };
-  }
   if (previous === undefined || previous.title !== next.title) {
     return { emit: true, skippedSinceEmit: 0 };
   }
-  if (previous.detail === next.detail) {
+  if (previous.detail === next.detail && toolCallOutputUnchanged(previous, next)) {
     return { emit: false, skippedSinceEmit };
   }
+  const progressLength = toolCallProgressLength(next);
   const grewMeaningfully =
     lastEmittedDetailLength === undefined ||
-    Math.abs(next.detail.length - lastEmittedDetailLength) >=
-      TOOL_CALL_UPDATE_MIN_DETAIL_GROWTH_CHARS;
+    Math.abs(progressLength - lastEmittedDetailLength) >= TOOL_CALL_UPDATE_MIN_DETAIL_GROWTH_CHARS;
   if (grewMeaningfully || skippedSinceEmit + 1 >= TOOL_CALL_UPDATE_COALESCE_LIMIT) {
     return { emit: true, skippedSinceEmit: 0 };
   }
