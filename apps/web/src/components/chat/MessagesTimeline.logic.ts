@@ -706,8 +706,9 @@ export function deriveMessagesTimelineRows(input: {
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
   const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
     input.isWorking &&
-    (entry.toolLifecycleStatus === "inProgress" || entry.sourceActivityKind === "task.progress") &&
-    (unsettledTurnId === null || entry.turnId === unsettledTurnId);
+    unsettledTurnId !== null &&
+    entry.toolLifecycleStatus === "inProgress" &&
+    entry.turnId === unsettledTurnId;
   const isVisibleActiveToolEntry = (entry: WorkLogEntry) =>
     workLogEntryIsToolLike(entry) && workEntryIsVisibleInGroup(entry, true);
   const activeEntries = input.isWorking
