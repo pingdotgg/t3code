@@ -73,6 +73,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
+import { useSyncedClientPreferences } from "./state/synced-client-preferences";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -358,6 +359,11 @@ function ThreadOutboxDrainWorker() {
   return null;
 }
 
+function SyncedClientPreferencesWorker() {
+  useSyncedClientPreferences();
+  return null;
+}
+
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
@@ -394,6 +400,7 @@ function RootStackLayout(props: {
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
+      <SyncedClientPreferencesWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
         <AdaptiveWorkspaceLayout pathname={workspacePathname}>

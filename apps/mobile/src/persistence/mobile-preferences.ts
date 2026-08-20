@@ -5,7 +5,12 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  type SidebarProjectGroupingMode,
+  SyncedClientPreferencesUpdatedAt,
+  SyncedClientPreferencesUpdatedAtByField,
+  type SyncedClientPreferencesUpdatedAtByField as SyncedClientPreferencesUpdatedAtByFieldValue,
+} from "@t3tools/contracts";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 
 import * as MobileDatabase from "./mobile-database";
@@ -14,6 +19,10 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const isSyncedClientPreferencesUpdatedAt = Schema.is(SyncedClientPreferencesUpdatedAt);
+const isSyncedClientPreferencesUpdatedAtByField = Schema.is(
+  SyncedClientPreferencesUpdatedAtByField,
+);
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -32,6 +41,10 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly autoSettleOnMerge?: boolean;
+  readonly planModeEnabled?: boolean;
+  readonly syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
+  /** @deprecated Aggregate-clock cache retained for older persisted blobs. */
+  readonly syncedClientPreferencesUpdatedAt?: string;
   /**
    * Device-local mirror of the web `legacySidebarEnabled` setting. Mobile has
    * no client-settings sync, so the legacy grouped thread list is opted into
@@ -40,8 +53,6 @@ export interface Preferences {
    * default flat list — see `resolveThreadListV2Enabled`.
    */
   readonly legacyThreadListEnabled?: boolean;
-  /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
-  readonly planModeEnabled?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -98,8 +109,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     autoSettleOnMerge?: boolean;
-    legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
+    syncedClientPreferencesUpdatedAtByField?: SyncedClientPreferencesUpdatedAtByFieldValue;
+    syncedClientPreferencesUpdatedAt?: string;
+    legacyThreadListEnabled?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -164,11 +177,21 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.autoSettleOnMerge === "boolean") {
     preferences.autoSettleOnMerge = parsed.autoSettleOnMerge;
   }
-  if (typeof parsed.legacyThreadListEnabled === "boolean") {
-    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
-  }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (
+    parsed.syncedClientPreferencesUpdatedAtByField !== undefined &&
+    isSyncedClientPreferencesUpdatedAtByField(parsed.syncedClientPreferencesUpdatedAtByField)
+  ) {
+    preferences.syncedClientPreferencesUpdatedAtByField =
+      parsed.syncedClientPreferencesUpdatedAtByField;
+  }
+  if (isSyncedClientPreferencesUpdatedAt(parsed.syncedClientPreferencesUpdatedAt)) {
+    preferences.syncedClientPreferencesUpdatedAt = parsed.syncedClientPreferencesUpdatedAt;
+  }
+  if (typeof parsed.legacyThreadListEnabled === "boolean") {
+    preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
   }
   return preferences;
 }
@@ -353,7 +376,19 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
             try: () => transform(current),
             catch: (cause) => new MobilePreferencesSaveError({ cause }),
           });
-          const next: Preferences = { ...current, ...patch };
+          let next: Preferences = {
+            ...current,
+            ...patch,
+          };
+          if (patch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+            next = {
+              ...next,
+              syncedClientPreferencesUpdatedAtByField: {
+                ...current.syncedClientPreferencesUpdatedAtByField,
+                ...patch.syncedClientPreferencesUpdatedAtByField,
+              },
+            };
+          }
           const payload = yield* encode(PREFERENCES_KEY, next);
           yield* saveJson(payload);
           return next;

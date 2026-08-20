@@ -25,10 +25,12 @@ vi.mock("../lib/runtime", async () => {
 import type { Preferences } from "../persistence/mobile-preferences";
 import {
   createMobilePreferencesState,
+  mergeConfirmedPreferences,
   MobilePreferencesLoadError,
   MobilePreferencesSaveError,
   MobilePreferencesStore,
 } from "./preferences";
+import { resolvePlanModeLocalPatchPersistence } from "./synced-client-preferences-model";
 
 function deferred<A>() {
   let resolve!: (value: A) => void;
@@ -118,6 +120,67 @@ describe("mobile preferences state", () => {
       });
       expect(AsyncResult.isFailure(registry.get(state.updatePreferencesAtom))).toBe(false);
 
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("discards a reconciliation response after a newer local preference write", () =>
+    Effect.gen(function* () {
+      const savePatch = vi.fn((patch: Partial<Preferences>) => Effect.succeed(patch));
+      const state = makePreferencesState({
+        load: Effect.succeed({
+          planModeEnabled: false,
+          syncedClientPreferencesUpdatedAt: "2026-08-14T12:00:00.000Z",
+        }),
+        savePatch,
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      const unmountReconciliation = registry.mount(state.persistReconciledPreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:01:00.000Z",
+        },
+      });
+      registry.set(state.updatePreferencesAtom, {
+        planModeEnabled: false,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:02:00.000Z",
+        },
+      });
+      registry.set(state.persistReconciledPreferencesAtom, {
+        expectedUpdatedAtByField: { planModeEnabled: "2026-08-14T12:01:00.000Z" },
+        patch: {
+          planModeEnabled: true,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-14T12:01:00.000Z",
+          },
+        },
+      });
+
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom))),
+      ).toMatchObject({
+        planModeEnabled: false,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-14T12:02:00.000Z",
+        },
+      });
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(savePatch).toHaveBeenCalledTimes(2);
+        }),
+      );
+
+      unmountReconciliation();
       unmountUpdate();
       unmountPreferences();
       registry.dispose();
@@ -220,6 +283,119 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("keeps a failed reconciliation effective without retrying its optimistic window", () =>
+    Effect.gen(function* () {
+      const updatedAt = "2026-08-15T12:01:00.000Z";
+      let saveCount = 0;
+      const releaseSave = deferred<void>();
+      const state = makePreferencesState({
+        load: Effect.succeed({
+          planModeEnabled: false,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:00:00.000Z",
+          },
+        }),
+        savePatch: () => {
+          saveCount += 1;
+          return Effect.promise(() => releaseSave.promise).pipe(
+            Effect.andThen(
+              Effect.fail(new MobilePreferencesSaveError({ cause: new Error("write failed") })),
+            ),
+          );
+        },
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      const localPatch = {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: { planModeEnabled: updatedAt },
+      } as const;
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+      const first = resolvePlanModeLocalPatchPersistence({
+        attemptedKey: null,
+        localPatch,
+      });
+      registry.set(state.updatePreferencesAtom, localPatch);
+      const optimistic = Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)));
+      expect(optimistic.planModeEnabled).toBe(true);
+      const optimisticWindow = resolvePlanModeLocalPatchPersistence({
+        attemptedKey: first.nextAttemptedKey,
+        localPatch: null,
+      });
+      releaseSave.resolve();
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(
+            Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))
+              .planModeEnabled,
+          ).toBe(true);
+        }),
+      );
+      const afterRollback = resolvePlanModeLocalPatchPersistence({
+        attemptedKey: optimisticWindow.nextAttemptedKey,
+        localPatch,
+      });
+
+      expect(afterRollback.shouldPersist).toBe(false);
+      expect(saveCount).toBe(1);
+      expect(
+        Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))
+          .syncedClientPreferencesUpdatedAtByField?.planModeEnabled,
+      ).toBe(updatedAt);
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
+  it("keeps a newer in-memory reconciliation over an unrelated saved preference", () => {
+    expect(
+      mergeConfirmedPreferences(
+        {
+          baseFontSize: 18,
+          planModeEnabled: false,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:00:00.000Z",
+          },
+        },
+        {
+          planModeEnabled: true,
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:01:00.000Z",
+          },
+        },
+      ),
+    ).toEqual({
+      baseFontSize: 18,
+      planModeEnabled: true,
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-15T12:01:00.000Z",
+      },
+    });
+  });
+
+  it("accepts a successfully saved Plan Mode value at a newer stamp", () => {
+    const saved = {
+      planModeEnabled: false,
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-15T12:02:00.000Z",
+      },
+    } as const;
+
+    expect(
+      mergeConfirmedPreferences(saved, {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-15T12:01:00.000Z",
+        },
+      }),
+    ).toBe(saved);
+  });
+
   it.effect("rolls back to the last confirmed value after a later save fails", () =>
     Effect.gen(function* () {
       let saveCount = 0;
@@ -261,6 +437,84 @@ describe("mobile preferences state", () => {
               baseFontSize: 14,
             },
           );
+        }),
+      );
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("does not persist a failed preference stamp through a concurrent write", () =>
+    Effect.gen(function* () {
+      const failedStamp = "2026-08-15T12:01:00.000Z";
+      const firstSaveStarted = deferred<void>();
+      const releaseFirstSave = deferred<void>();
+      let saveCount = 0;
+      let persisted: Preferences = {
+        baseFontSize: 16,
+        planModeEnabled: false,
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-15T12:00:00.000Z",
+        },
+      };
+      const state = makePreferencesState({
+        load: Effect.succeed(persisted),
+        savePatch: (patch) =>
+          Effect.gen(function* () {
+            saveCount += 1;
+            if (saveCount === 1) {
+              yield* Effect.sync(firstSaveStarted.resolve);
+              yield* Effect.promise(() => releaseFirstSave.promise);
+              return yield* Effect.fail(
+                new MobilePreferencesSaveError({ cause: new Error("write failed") }),
+              );
+            }
+            let next = {
+              ...persisted,
+              ...patch,
+            };
+            if (patch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+              next = {
+                ...next,
+                syncedClientPreferencesUpdatedAtByField: {
+                  ...persisted.syncedClientPreferencesUpdatedAtByField,
+                  ...patch.syncedClientPreferencesUpdatedAtByField,
+                },
+              };
+            }
+            persisted = next;
+            return persisted;
+          }),
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, {
+        planModeEnabled: true,
+        syncedClientPreferencesUpdatedAtByField: { planModeEnabled: failedStamp },
+      });
+      yield* Effect.promise(() => firstSaveStarted.promise);
+      registry.set(state.updatePreferencesAtom, {
+        baseFontSize: 18,
+      });
+      releaseFirstSave.resolve();
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(saveCount).toBe(2);
+          expect(persisted).toEqual({
+            baseFontSize: 18,
+            planModeEnabled: false,
+            syncedClientPreferencesUpdatedAtByField: {
+              planModeEnabled: "2026-08-15T12:00:00.000Z",
+            },
+          });
         }),
       );
 

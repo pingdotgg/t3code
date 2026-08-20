@@ -1,5 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as Struct from "effect/Struct";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import {
+  SYNCED_CLIENT_PREFERENCE_FIELDS,
+  type SyncedClientPreferencesUpdatedAtByField,
+} from "@t3tools/contracts";
 
 import { MobilePreferencesStore, type Preferences } from "../persistence/mobile-preferences";
 import * as Runtime from "../lib/runtime";
@@ -13,6 +18,47 @@ export {
 interface OptimisticPreferences {
   readonly values: Partial<Preferences>;
   readonly versions: Partial<Record<keyof Preferences, number>>;
+}
+
+function clearSettledOptimisticPreferences(
+  optimistic: OptimisticPreferences,
+  patch: Partial<Preferences>,
+  version: number,
+): OptimisticPreferences {
+  const keys = Struct.keys(patch).filter((key) => optimistic.versions[key] === version);
+  return {
+    values: Struct.omit(optimistic.values, keys),
+    versions: Struct.omit(optimistic.versions, keys),
+  };
+}
+
+export interface ReconciledPreferencesPatch {
+  readonly expectedUpdatedAtByField: SyncedClientPreferencesUpdatedAtByField;
+  readonly patch: Partial<Preferences>;
+}
+
+export function mergeConfirmedPreferences(saved: Preferences, current: Preferences): Preferences {
+  const currentUpdatedAt =
+    current.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
+    current.syncedClientPreferencesUpdatedAt;
+  const savedUpdatedAt =
+    saved.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
+    saved.syncedClientPreferencesUpdatedAt;
+  if (
+    current.planModeEnabled === undefined ||
+    currentUpdatedAt === undefined ||
+    (savedUpdatedAt !== undefined && savedUpdatedAt >= currentUpdatedAt)
+  ) {
+    return saved;
+  }
+  return {
+    ...saved,
+    planModeEnabled: current.planModeEnabled,
+    syncedClientPreferencesUpdatedAtByField: {
+      ...saved.syncedClientPreferencesUpdatedAtByField,
+      planModeEnabled: currentUpdatedAt,
+    },
+  };
 }
 
 /**
@@ -58,51 +104,57 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
   const updatePreferencesAtom = runtime
     .fn(
       (patch: Partial<Preferences>, get) => {
+        const preferences = get(preferencesAtom);
+        const normalizedPatch: Partial<Preferences> =
+          patch.syncedClientPreferencesUpdatedAtByField === undefined
+            ? patch
+            : {
+                ...patch,
+                syncedClientPreferencesUpdatedAtByField: {
+                  ...(AsyncResult.isSuccess(preferences)
+                    ? preferences.value.syncedClientPreferencesUpdatedAtByField
+                    : undefined),
+                  ...patch.syncedClientPreferencesUpdatedAtByField,
+                },
+              };
         const version = ++nextPatchVersion;
         const current = get(optimisticPatchAtom);
         const versions = { ...current.versions };
-        for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+        for (const key of Object.keys(normalizedPatch) as Array<keyof Preferences>) {
           versions[key] = version;
         }
         get.set(optimisticPatchAtom, {
-          values: { ...current.values, ...patch },
+          values: { ...current.values, ...normalizedPatch },
           versions,
         });
         return MobilePreferencesStore.pipe(
           Effect.flatMap((store) => store.savePatch(patch)),
           Effect.tap((saved) =>
             Effect.sync(() => {
-              get.set(confirmedPreferencesAtom, saved);
+              get.set(
+                confirmedPreferencesAtom,
+                mergeConfirmedPreferences(saved, get(confirmedPreferencesAtom)),
+              );
               const optimistic = get(optimisticPatchAtom);
-              const values = { ...optimistic.values } as Record<string, unknown>;
-              const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(patch) as Array<keyof Preferences>) {
-                if (optimistic.versions[key] === version) {
-                  delete values[key];
-                  delete currentVersions[key];
-                }
-              }
-              get.set(optimisticPatchAtom, {
-                values: values as Partial<Preferences>,
-                versions: currentVersions as Partial<Record<keyof Preferences, number>>,
-              });
+              get.set(
+                optimisticPatchAtom,
+                clearSettledOptimisticPreferences(optimistic, normalizedPatch, version),
+              );
             }),
           ),
           Effect.tapError(() =>
             Effect.sync(() => {
-              const optimistic = get(optimisticPatchAtom);
-              const values = { ...optimistic.values } as Record<string, unknown>;
-              const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(patch) as Array<keyof Preferences>) {
-                if (optimistic.versions[key] === version) {
-                  delete values[key];
-                  delete currentVersions[key];
-                }
+              if (normalizedPatch.syncedClientPreferencesUpdatedAtByField !== undefined) {
+                get.set(confirmedPreferencesAtom, {
+                  ...get(confirmedPreferencesAtom),
+                  ...normalizedPatch,
+                });
               }
-              get.set(optimisticPatchAtom, {
-                values: values as Partial<Preferences>,
-                versions: currentVersions as Partial<Record<keyof Preferences, number>>,
-              });
+              const optimistic = get(optimisticPatchAtom);
+              get.set(
+                optimisticPatchAtom,
+                clearSettledOptimisticPreferences(optimistic, normalizedPatch, version),
+              );
             }),
           ),
         );
@@ -114,7 +166,28 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
     )
     .pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:update"));
 
-  return { preferencesAtom, updatePreferencesAtom } as const;
+  const persistReconciledPreferencesAtom = runtime
+    .fn((input: ReconciledPreferencesPatch, get) => {
+      const current = get(preferencesAtom);
+      if (
+        !AsyncResult.isSuccess(current) ||
+        SYNCED_CLIENT_PREFERENCE_FIELDS.some((field) => {
+          const expectedUpdatedAt = input.expectedUpdatedAtByField[field];
+          return (
+            expectedUpdatedAt !== undefined &&
+            (current.value.syncedClientPreferencesUpdatedAtByField?.[field] ??
+              current.value.syncedClientPreferencesUpdatedAt) !== expectedUpdatedAt
+          );
+        })
+      ) {
+        return Effect.void;
+      }
+      get.set(updatePreferencesAtom, input.patch);
+      return Effect.void;
+    })
+    .pipe(Atom.withLabel("mobile:preferences:persist-reconciled"));
+
+  return { preferencesAtom, updatePreferencesAtom, persistReconciledPreferencesAtom } as const;
 }
 
 const mobilePreferencesRuntime = Atom.runtime(Runtime.runtimeContextLayer);
@@ -122,3 +195,5 @@ export const mobilePreferencesState = createMobilePreferencesState(mobilePrefere
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;
+export const persistReconciledMobilePreferencesAtom =
+  mobilePreferencesState.persistReconciledPreferencesAtom;

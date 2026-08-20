@@ -77,11 +77,12 @@ import {
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { resolvePendingTaskInteractionMode } from "./legacy-plan-mode";
-import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
+import { resolveComposerInteractionMode } from "./legacy-plan-mode";
+import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -144,6 +145,7 @@ type NewTaskFlowContextValue = {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly planModeEnabled: boolean;
+  readonly planModePreferenceLoaded: boolean;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -401,9 +403,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode = planModeEnabled
-    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
-    : DEFAULT_PROVIDER_INTERACTION_MODE;
+  const interactionMode = resolveComposerInteractionMode({
+    interactionMode: selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+    planModeEnabled,
+  });
 
   // Stored selections only count while their provider is usable on the
   // server; otherwise the server's default model wins instead of silently
@@ -896,11 +899,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       editingPendingProject,
       editingPendingTask,
+      planModeEnabled,
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
       selectedProjectDraftKey,
-      planModeEnabled,
       planModePreferenceLoaded,
       startFromOrigin,
       workspaceMode,
@@ -1022,6 +1025,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       runtimeMode,
       interactionMode,
       planModeEnabled,
+      planModePreferenceLoaded,
       expandedProvider,
       environments,
       selectedProject,
@@ -1074,6 +1078,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       finishEditingPendingTask,
       interactionMode,
       planModeEnabled,
+      planModePreferenceLoaded,
       loadBranches,
       loadMoreBranches,
       projectScopes,

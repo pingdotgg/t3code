@@ -756,6 +756,10 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    patchSyncedClientPreferences: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:patch-synced-client-preferences",
+      tag: WS_METHODS.syncedClientPreferencesPatch,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

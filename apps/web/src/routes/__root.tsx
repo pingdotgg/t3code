@@ -1,4 +1,4 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { type EnvironmentId, type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -8,7 +8,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -30,7 +30,8 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
-import { useClientSettings } from "../hooks/useSettings";
+import { SyncedPlanModeEnvironmentSync, useClientSettings } from "../hooks/useSettings";
+import { resolveSyncedPlanModeCoordinatorEnvironmentIds } from "../hooks/synced-plan-mode";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -140,6 +141,7 @@ function RootRouteView() {
         <ConfirmDialogHost />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <SyncedPlanModeCoordinator />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
@@ -150,6 +152,38 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function SyncedPlanModeCoordinator() {
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const primaryEnvironment = environments.find(
+    ({ environmentId }) => environmentId === primaryEnvironmentId,
+  );
+  const primaryUnavailable =
+    primaryEnvironment === undefined ||
+    primaryEnvironment.connection.phase === "available" ||
+    primaryEnvironment.connection.phase === "offline" ||
+    primaryEnvironment.connection.phase === "error";
+  const [hydratedPrimaryEnvironmentId, setHydratedPrimaryEnvironmentId] =
+    useState<EnvironmentId | null>(null);
+  const markPrimaryHydrated = useCallback(() => {
+    setHydratedPrimaryEnvironmentId(primaryEnvironmentId);
+  }, [primaryEnvironmentId]);
+  const environmentIds = resolveSyncedPlanModeCoordinatorEnvironmentIds({
+    environmentIds: environments.map(({ environmentId }) => environmentId),
+    primaryEnvironmentId,
+    hydratedPrimaryEnvironmentId,
+    primaryUnavailable,
+  });
+
+  return environmentIds.map((environmentId) => (
+    <SyncedPlanModeEnvironmentSync
+      key={environmentId}
+      environmentId={environmentId}
+      onHydrated={environmentId === primaryEnvironmentId ? markPrimaryHydrated : undefined}
+    />
+  ));
 }
 
 function GlassAppearanceSync() {

@@ -41,6 +41,11 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import {
+  resolveComposerEnqueueInteractionMode,
+  resolveComposerInteractionMode,
+} from "../features/threads/legacy-plan-mode";
+import { useLegacyPlanModeState } from "../features/threads/use-legacy-plan-mode-enabled";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -78,6 +83,7 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -102,7 +108,10 @@ export function useThreadComposerState() {
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
-  const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
+  const interactionMode = resolveComposerInteractionMode({
+    interactionMode: selectedDraft?.interactionMode ?? selectedThread?.interactionMode,
+    planModeEnabled,
+  });
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -142,6 +151,12 @@ export function useThreadComposerState() {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
+    const enqueueInteractionMode = resolveComposerEnqueueInteractionMode({
+      interactionMode: draft.interactionMode ?? thread.interactionMode,
+      planModeEnabled,
+      preferenceLoaded: planModePreferenceLoaded,
+    });
+    if (enqueueInteractionMode === null) return null;
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
@@ -159,7 +174,7 @@ export function useThreadComposerState() {
       attachments,
       modelSelection: draft.modelSelection ?? thread.modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: draft.interactionMode ?? thread.interactionMode,
+      interactionMode: enqueueInteractionMode,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -175,7 +190,7 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [planModeEnabled, planModePreferenceLoaded, selectedThreadDetail, selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {

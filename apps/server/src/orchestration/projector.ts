@@ -1,5 +1,7 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
+  ClientPreferencesPatchedPayload,
+  getSyncedClientPreferenceUpdatedAt,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -205,6 +207,38 @@ export function projectEvent(
   };
 
   switch (event.type) {
+    case "client-preferences.patched":
+      return decodeForEvent(
+        ClientPreferencesPatchedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const current = nextBase.syncedClientPreferences;
+          const appliesPlanMode =
+            payload.patch.planModeEnabled !== undefined &&
+            (getSyncedClientPreferenceUpdatedAt(current, "planModeEnabled") ?? payload.updatedAt) <=
+              payload.updatedAt;
+          return {
+            ...nextBase,
+            updatedAt: model.updatedAt > event.occurredAt ? model.updatedAt : event.occurredAt,
+            syncedClientPreferences: {
+              ...current,
+              ...(appliesPlanMode ? { planModeEnabled: payload.patch.planModeEnabled } : undefined),
+              updatedAtByField: {
+                ...current?.updatedAtByField,
+                ...(appliesPlanMode ? { planModeEnabled: payload.updatedAt } : undefined),
+              },
+              updatedAt:
+                current !== undefined && current.updatedAt > payload.updatedAt
+                  ? current.updatedAt
+                  : payload.updatedAt,
+            },
+          };
+        }),
+      );
+
     case "project.created":
       return decodeForEvent(ProjectCreatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {
