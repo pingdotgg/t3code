@@ -80,6 +80,39 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
+function desktopEditMenu(platform: NodeJS.Platform): Electron.MenuItemConstructorOptions {
+  // Native Edit accelerators copy the focused DOM selection. The terminal is a
+  // canvas plus an empty IME textarea, so those chords must reach the renderer:
+  // Ctrl+C is SIGINT (or copy of the Ghostty selection), Ctrl+A is
+  // beginning-of-line, and Cmd/Ctrl+C must not write an empty clipboard. Menu
+  // clicks still run the roles.
+  const submenu: Electron.MenuItemConstructorOptions[] = [
+    { role: "undo", registerAccelerator: false },
+    { role: "redo", registerAccelerator: false },
+    { type: "separator" },
+    { role: "cut", registerAccelerator: false },
+    { role: "copy", registerAccelerator: false },
+    { role: "paste", registerAccelerator: false },
+  ];
+  if (platform === "darwin") {
+    submenu.push({ role: "pasteAndMatchStyle", registerAccelerator: false });
+  }
+  submenu.push(
+    { role: "delete", registerAccelerator: false },
+    { role: "selectAll", registerAccelerator: false },
+  );
+  if (platform === "darwin") {
+    submenu.push(
+      { type: "separator" },
+      {
+        label: "Speech",
+        submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }],
+      },
+    );
+  }
+  return { label: "Edit", submenu };
+}
+
 const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -183,7 +216,7 @@ export const make = Effect.gen(function* () {
           { role: environment.platform === "darwin" ? "close" : "quit" },
         ],
       },
-      { role: "editMenu" },
+      desktopEditMenu(environment.platform),
       {
         label: "View",
         submenu: [

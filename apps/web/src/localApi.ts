@@ -3,6 +3,7 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { openUrlInHostBrowser } from "./lib/openUrlInHostBrowser";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
 let cachedApi: LocalApi | undefined;
@@ -28,7 +29,9 @@ function createBrowserLocalApi(): LocalApi {
           return;
         }
 
-        window.open(url, "_blank", "noopener,noreferrer");
+        if (!openUrlInHostBrowser(url)) {
+          throw new Error("Unable to open link.");
+        }
       },
     },
     contextMenu: {

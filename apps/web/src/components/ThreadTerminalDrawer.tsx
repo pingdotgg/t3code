@@ -34,8 +34,9 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { openUrlInHostBrowser } from "~/lib/openUrlInHostBrowser";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
+import { cn } from "~/lib/utils";
 import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
@@ -64,9 +65,7 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
-import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
-import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
@@ -360,9 +359,6 @@ export function TerminalViewport({
     serverConfig?.availableEditors ?? [],
   );
   const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
-  const openPreview = useAtomCommand(previewEnvironment.open, {
-    reportFailure: false,
-  });
   const runTerminalWrite = useAtomCommand(terminalEnvironment.write, {
     reportFailure: false,
   });
@@ -750,26 +746,12 @@ export function TerminalViewport({
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (/^https?:\/\//u.test(text)) {
-          if (!localApi) {
-            writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
-            return;
+          // Open in this same tick so the click stays a user gesture: a later
+          // window.open after a preview/browser menu is popup-blocked, and
+          // openExternal would leave the current browser for the OS default.
+          if (!openUrlInHostBrowser(text)) {
+            writeSystemMessage(latestTerminal, "Unable to open link");
           }
-          const fallbackToBrowser = () => {
-            void localApi.shell.openExternal(text).catch((error: unknown) => {
-              writeSystemMessage(
-                latestTerminal,
-                error instanceof Error ? error.message : "Unable to open link",
-              );
-            });
-          };
-          void openTerminalLinkInPreview({
-            url: text,
-            position: { x: event.clientX, y: event.clientY },
-            threadRef,
-            openPreview,
-            localApi,
-            fallbackToBrowser,
-          });
           return;
         }
         const target = resolvePathLinkTarget(text, cwd);
