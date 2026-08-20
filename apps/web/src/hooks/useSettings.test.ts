@@ -66,6 +66,34 @@ describe("synced plan mode", () => {
     expect(events).toEqual(["persist:true:2026-08-14T12:00:00.000Z", "hydrated"]);
   });
 
+  it("releases secondary environments when the primary is offline", () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const onHydrated = vi.fn();
+
+    createSyncedPlanModeHydrationController().synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: false,
+      serverPreferences: undefined,
+      canPatch: false,
+      now: "2026-08-14T12:01:00.000Z",
+      patch: vi.fn(),
+      persist: vi.fn(),
+      onHydrated,
+    });
+
+    expect(onHydrated).toHaveBeenCalledOnce();
+    expect(
+      resolveSyncedPlanModeCoordinatorEnvironmentIds({
+        environmentIds: [primaryEnvironmentId, EnvironmentId.make("secondary")],
+        primaryEnvironmentId,
+        hydratedPrimaryEnvironmentId: primaryEnvironmentId,
+      }),
+    ).toHaveLength(2);
+  });
+
   it("ignores a malformed durable Plan Mode watermark", () => {
     const serverPreferences = {
       planModeEnabled: false,
