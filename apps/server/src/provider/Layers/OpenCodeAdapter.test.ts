@@ -1507,8 +1507,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         NodeAssert.ok(usageEvent);
         if (usageEvent.type === "thread.token-usage.updated") {
           NodeAssert.deepEqual(usageEvent.payload.usage, {
-            usedTokens: 10950,
-            lastUsedTokens: 10950,
+            usedTokens: 10900,
+            lastUsedTokens: 10900,
             maxTokens: 200000,
             inputTokens: 1200,
             lastInputTokens: 1200,
@@ -1673,6 +1673,21 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           lastInputTokens: 250000,
           compactsAutomatically: true,
         },
+      );
+      // A reported `total` wins over the component sum, matching
+      // OpenCode's own overflow check.
+      NodeAssert.equal(
+        normalizeOpenCodeTokenUsage(
+          {
+            total: 5000,
+            input: 100,
+            output: 100,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          200000,
+        )?.usedTokens,
+        5000,
       );
     }),
   );

@@ -492,17 +492,23 @@ const isoFromEpochMs = (value: number) =>
   );
 
 // Wire-shape tolerant: events from older OpenCode versions may omit the
-// token fields entirely, and the event pump must not die on them.
+// token fields entirely, and the event pump must not die on them. The count
+// mirrors OpenCode's own overflow check (session/overflow.ts `isOverflow`):
+// the reported `total` when present, otherwise input + output + cached
+// input/write. Keeping the same formula means the meter agrees with when
+// OpenCode itself decides the context is full and compacts.
 function openCodeMessageTokensTotal(value: unknown): number {
   if (!value || typeof value !== "object") {
     return 0;
   }
   const tokens = value as AssistantMessage["tokens"];
+  if (typeof tokens.total === "number" && tokens.total > 0) {
+    return tokens.total;
+  }
   const cache = tokens.cache;
   return (
     (typeof tokens.input === "number" ? tokens.input : 0) +
     (typeof tokens.output === "number" ? tokens.output : 0) +
-    (typeof tokens.reasoning === "number" ? tokens.reasoning : 0) +
     (cache && typeof cache.read === "number" ? cache.read : 0) +
     (cache && typeof cache.write === "number" ? cache.write : 0)
   );
@@ -510,11 +516,9 @@ function openCodeMessageTokensTotal(value: unknown): number {
 
 /**
  * Map a completed OpenCode assistant message's token usage into the adapter's
- * thread token-usage snapshot. "Used" is the last request's full token
- * footprint (input, cached input, output, reasoning) — the closest signal of
- * how full the model's context window is, matching the semantics the Claude
- * and Codex adapters report. Capped at the model's context window when known.
- * Exported for unit testing.
+ * thread token-usage snapshot. "Used" is the last request's token footprint,
+ * counted the same way OpenCode's own compaction check counts it, capped at
+ * the model's context window when known. Exported for unit testing.
  */
 export function normalizeOpenCodeTokenUsage(
   tokens: AssistantMessage["tokens"],
