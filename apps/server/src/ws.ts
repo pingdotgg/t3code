@@ -501,16 +501,20 @@ const makeWsRpcLayer = (
           ),
         );
 
-      const appendSetupScriptActivity = (input: {
+      const appendThreadActivity = (input: {
         readonly threadId: ThreadId;
-        readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
+        readonly kind:
+          | "setup-script.requested"
+          | "setup-script.started"
+          | "setup-script.failed"
+          | "worktree.origin-fallback";
         readonly summary: string;
         readonly createdAt: string;
         readonly payload: Record<string, unknown>;
         readonly tone: "info" | "error";
       }) =>
         Effect.all({
-          commandId: serverCommandId("setup-script-activity"),
+          commandId: serverCommandId("thread-activity"),
           activityId: serverEventId,
         }).pipe(
           Effect.flatMap(({ commandId, activityId }) =>
@@ -775,9 +779,15 @@ const makeWsRpcLayer = (
                       threadId: command.threadId,
                     }),
                   ),
-                  Effect.ignoreCause({ log: true }),
+                  Effect.as(true),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("failed to roll back provisional bootstrap thread", {
+                      threadId: command.threadId,
+                      cause: Cause.pretty(cause),
+                    }).pipe(Effect.as(false)),
+                  ),
                 )
-              : Effect.void;
+              : Effect.succeed(false);
 
           const recordSetupScriptLaunchFailure = (input: {
             readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
@@ -785,7 +795,7 @@ const makeWsRpcLayer = (
             readonly worktreePath: string;
           }) => {
             const detail = projectSetupScriptCompatibilityDetail(input.error);
-            return appendSetupScriptActivity({
+            return appendThreadActivity({
               threadId: command.threadId,
               kind: "setup-script.failed",
               summary: "Setup script failed to start",
@@ -823,7 +833,7 @@ const makeWsRpcLayer = (
                 worktreePath: input.worktreePath,
               };
               yield* Effect.all([
-                appendSetupScriptActivity({
+                appendThreadActivity({
                   threadId: command.threadId,
                   kind: "setup-script.requested",
                   summary: "Starting setup script",
@@ -831,7 +841,7 @@ const makeWsRpcLayer = (
                   payload,
                   tone: "info",
                 }),
-                appendSetupScriptActivity({
+                appendThreadActivity({
                   threadId: command.threadId,
                   kind: "setup-script.started",
                   summary: "Setup script started",
@@ -913,33 +923,92 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
+              const prepareWorktree = bootstrap.prepareWorktree;
+              let worktreeBaseRef = prepareWorktree.baseBranch;
+              let originFallback: {
+                readonly reason:
+                  | "origin-unavailable"
+                  | "origin-check-failed"
+                  | "origin-fetch-failed"
+                  | "origin-ref-unavailable";
+                readonly detail: string;
+              } | null = null;
+              if (prepareWorktree.startFromOrigin === true) {
+                const fallbackFromError = (
+                  reason: NonNullable<typeof originFallback>["reason"],
+                  error: { readonly message: string },
+                ) =>
+                  Effect.logWarning("could not prepare worktree base from origin", {
+                    baseBranch: prepareWorktree.baseBranch,
+                    remoteName: "origin",
+                    reason,
+                    detail: error.message,
+                  }).pipe(
+                    Effect.as({
+                      _tag: "Fallback" as const,
+                      reason,
+                      detail: error.message,
+                    }),
+                  );
+                const originBase = yield* Effect.gen(function* () {
+                  const originAvailability = yield* gitWorkflow
+                    .remoteExists({
+                      cwd: prepareWorktree.projectCwd,
+                      remoteName: "origin",
+                    })
+                    .pipe(
+                      Effect.map((exists) =>
+                        exists
+                          ? ({ _tag: "Available" } as const)
+                          : ({
+                              _tag: "Fallback",
+                              reason: "origin-unavailable",
+                              detail: "No origin remote is configured.",
+                            } as const),
+                      ),
+                      Effect.catch((error) => fallbackFromError("origin-check-failed", error)),
+                    );
+                  if (originAvailability._tag === "Fallback") {
+                    return originAvailability;
+                  }
+                  const fetchResult = yield* gitWorkflow
+                    .fetchRemote({
+                      cwd: prepareWorktree.projectCwd,
+                      remoteName: "origin",
+                    })
+                    .pipe(
+                      Effect.as({ _tag: "Fetched" } as const),
+                      Effect.catch((error) => fallbackFromError("origin-fetch-failed", error)),
+                    );
+                  if (fetchResult._tag === "Fallback") {
+                    return fetchResult;
+                  }
+                  const resolvedRemoteBase = yield* gitWorkflow
+                    .resolveRemoteTrackingCommit({
+                      cwd: prepareWorktree.projectCwd,
+                      refName: prepareWorktree.baseBranch,
+                      fallbackRemoteName: "origin",
+                    })
+                    .pipe(
+                      Effect.map((resolved) => ({ _tag: "ResolvedRemote" as const, ...resolved })),
+                      Effect.catch((error) => fallbackFromError("origin-ref-unavailable", error)),
+                    );
+                  if (resolvedRemoteBase._tag === "Fallback") {
+                    return resolvedRemoteBase;
+                  }
+                  return { _tag: "Resolved", commitSha: resolvedRemoteBase.commitSha } as const;
                 });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
+                if (originBase._tag === "Resolved") {
+                  worktreeBaseRef = originBase.commitSha;
+                } else {
+                  originFallback = originBase;
+                }
               }
               const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
+                cwd: prepareWorktree.projectCwd,
                 refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
+                newRefName: prepareWorktree.branch,
+                baseRefName: prepareWorktree.baseBranch,
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
@@ -950,6 +1019,30 @@ const makeWsRpcLayer = (
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
               });
+              if (originFallback) {
+                const fallbackCreatedAt = yield* nowIso;
+                yield* appendThreadActivity({
+                  threadId: command.threadId,
+                  kind: "worktree.origin-fallback",
+                  summary: "Started worktree from local branch",
+                  createdAt: fallbackCreatedAt,
+                  payload: {
+                    baseBranch: prepareWorktree.baseBranch,
+                    remoteName: "origin",
+                    reason: originFallback.reason,
+                    detail: originFallback.detail,
+                  },
+                  tone: "info",
+                }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("failed to record worktree origin fallback activity", {
+                      threadId: command.threadId,
+                      baseBranch: prepareWorktree.baseBranch,
+                      detail: error.message,
+                    }),
+                  ),
+                );
+              }
               yield* refreshGitStatus(targetWorktreePath);
             }
 
@@ -964,7 +1057,21 @@ const makeWsRpcLayer = (
               if (Cause.hasInterruptsOnly(cause)) {
                 return Effect.fail(dispatchError);
               }
-              return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
+              return cleanupCreatedThread().pipe(
+                Effect.flatMap((provisionalThreadRolledBack) =>
+                  Effect.fail(
+                    provisionalThreadRolledBack
+                      ? new OrchestrationDispatchCommandError({
+                          message: dispatchError.message,
+                          ...(dispatchError.cause === undefined
+                            ? {}
+                            : { cause: dispatchError.cause }),
+                          provisionalThreadRolledBack: true,
+                        })
+                      : dispatchError,
+                  ),
+                ),
+              );
             }),
           );
         });

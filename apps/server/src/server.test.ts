@@ -7544,7 +7544,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
         const createdAt = "2026-01-01T00:00:00.000Z";
         const wsUrl = yield* getWsServerUrl("/ws");
-        yield* Effect.scoped(
+        const response = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
             client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
               type: "thread.turn.start",
@@ -7582,6 +7582,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
 
+        assert.equal(response.sequence, 4);
         assert.deepEqual(remoteExists.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           remoteName: "origin",
@@ -7595,6 +7596,169 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           baseRefName: "main",
           path: null,
         });
+        const originFallbackActivity = dispatchedCommands.find(
+          (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
+            command.type === "thread.activity.append",
+        );
+        assert.equal(originFallbackActivity?.activity.kind, "worktree.origin-fallback");
+        assert.deepEqual(originFallbackActivity?.activity.payload, {
+          baseBranch: "main",
+          remoteName: "origin",
+          reason: "origin-unavailable",
+          detail: "No origin remote is configured.",
+        });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect.each([
+    { failureStage: "check", expectedReason: "origin-check-failed" },
+    { failureStage: "fetch", expectedReason: "origin-fetch-failed" },
+    { failureStage: "resolve", expectedReason: "origin-ref-unavailable" },
+  ] as const)(
+    "falls back to the local base branch when origin $failureStage fails",
+    ({ failureStage, expectedReason }) =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const remoteExists = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteExists"]>[0]) =>
+            failureStage === "check"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.remoteExists",
+                    command: "git remote get-url origin",
+                    cwd: "/tmp/project",
+                    detail: "origin check failed",
+                  }),
+                )
+              : Effect.succeed(true),
+        );
+        const fetchRemote = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
+            failureStage === "fetch"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.fetchRemote",
+                    command: "git fetch --quiet origin",
+                    cwd: "/tmp/project",
+                    detail: "origin fetch failed",
+                  }),
+                )
+              : Effect.void,
+        );
+        const resolveRemoteTrackingCommit = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+            failureStage === "resolve"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.resolveRemoteTrackingCommit",
+                    command: "git rev-parse --verify refs/remotes/origin/personal/test^{commit}",
+                    cwd: "/tmp/project",
+                    detail: "remote tracking ref does not exist",
+                  }),
+                )
+              : Effect.succeed({
+                  commitSha: "0123456789abcdef0123456789abcdef01234567",
+                  remoteRefName: "origin/personal/test",
+                }),
+        );
+        const createWorktree = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.succeed({
+              worktree: {
+                refName: "t3code/bootstrap-refName",
+                path: "/tmp/bootstrap-worktree",
+              },
+            }),
+        );
+
+        yield* buildAppUnderTest({
+          layers: {
+            gitVcsDriver: {
+              remoteExists,
+              fetchRemote,
+              resolveRemoteTrackingCommit,
+              createWorktree,
+            },
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatchedCommands.push(command);
+                  return { sequence: dispatchedCommands.length };
+                }),
+              readEvents: () => Stream.empty,
+            },
+          },
+        });
+
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-bootstrap-turn-start-missing-origin-ref"),
+              threadId: ThreadId.make("thread-bootstrap-missing-origin-ref"),
+              message: {
+                messageId: MessageId.make("msg-bootstrap-missing-origin-ref"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                createThread: {
+                  projectId: defaultProjectId,
+                  title: "Bootstrap Thread",
+                  modelSelection: defaultModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: "personal/test",
+                  worktreePath: null,
+                  createdAt,
+                },
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch: "personal/test",
+                  branch: "t3code/bootstrap-refName",
+                  startFromOrigin: true,
+                },
+              },
+              createdAt,
+            }),
+          ),
+        );
+
+        assert.equal(response.sequence, 4);
+        assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          refName: "personal/test",
+          newRefName: "t3code/bootstrap-refName",
+          baseRefName: "personal/test",
+          path: null,
+        });
+        const originFallbackActivity = dispatchedCommands.find(
+          (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
+            command.type === "thread.activity.append",
+        );
+        assert.equal(originFallbackActivity?.activity.kind, "worktree.origin-fallback");
+        assert.equal(
+          originFallbackActivity?.activity.summary,
+          "Started worktree from local branch",
+        );
+        assert.deepEqual(originFallbackActivity?.activity.payload, {
+          baseBranch: "personal/test",
+          remoteName: "origin",
+          reason: expectedReason,
+          detail:
+            failureStage === "check"
+              ? "Git command failed in GitVcsDriver.remoteExists (/tmp/project): origin check failed"
+              : failureStage === "fetch"
+                ? "Git command failed in GitVcsDriver.fetchRemote (/tmp/project): origin fetch failed"
+                : "Git command failed in GitVcsDriver.resolveRemoteTrackingCommit (/tmp/project): remote tracking ref does not exist",
+        });
+        assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -7826,78 +7990,93 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("cleans up created bootstrap threads when worktree creation defects", () =>
-    Effect.gen(function* () {
-      const dispatchedCommands: Array<OrchestrationCommand> = [];
-      const createWorktree = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
-          Effect.die(new Error("worktree exploded")),
-      );
+  it.effect.each([
+    { deleteSucceeds: true, expectedRollbackMarker: true },
+    { deleteSucceeds: false, expectedRollbackMarker: undefined },
+  ] as const)(
+    "reports provisional rollback only when cleanup succeeds ($deleteSucceeds)",
+    ({ deleteSucceeds, expectedRollbackMarker }) =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const createWorktree = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.die(new Error("worktree exploded")),
+        );
 
-      yield* buildAppUnderTest({
-        layers: {
-          gitVcsDriver: {
-            createWorktree,
-          },
-          orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
-            readEvents: () => Stream.empty,
-          },
-        },
-      });
-
-      const createdAt = "2026-01-01T00:00:00.000Z";
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-            type: "thread.turn.start",
-            commandId: CommandId.make("cmd-bootstrap-turn-start-defect"),
-            threadId: ThreadId.make("thread-bootstrap-defect"),
-            message: {
-              messageId: MessageId.make("msg-bootstrap-defect"),
-              role: "user",
-              text: "hello",
-              attachments: [],
+        yield* buildAppUnderTest({
+          layers: {
+            gitVcsDriver: {
+              createWorktree,
             },
-            modelSelection: defaultModelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            bootstrap: {
-              createThread: {
-                projectId: defaultProjectId,
-                title: "Bootstrap Thread",
-                modelSelection: defaultModelSelection,
-                runtimeMode: "full-access",
-                interactionMode: "default",
-                branch: "main",
-                worktreePath: null,
-                createdAt,
+            orchestrationEngine: {
+              dispatch: (command) => {
+                if (command.type === "thread.delete" && !deleteSucceeds) {
+                  return Effect.fail(
+                    new OrchestrationListenerCallbackError({
+                      listener: "domain-event",
+                      detail: "rollback delete failed",
+                    }),
+                  );
+                }
+                return Effect.sync(() => {
+                  dispatchedCommands.push(command);
+                  return { sequence: dispatchedCommands.length };
+                });
               },
-              prepareWorktree: {
-                projectCwd: "/tmp/project",
-                baseBranch: "main",
-                branch: "t3code/bootstrap-refName",
-              },
-              runSetupScript: false,
+              readEvents: () => Stream.empty,
             },
-            createdAt,
-          }),
-        ).pipe(Effect.result),
-      );
+          },
+        });
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
-      assert.include(result.failure.message, "worktree exploded");
-      assert.deepEqual(
-        dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.delete"],
-      );
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-bootstrap-turn-start-defect"),
+              threadId: ThreadId.make("thread-bootstrap-defect"),
+              message: {
+                messageId: MessageId.make("msg-bootstrap-defect"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                createThread: {
+                  projectId: defaultProjectId,
+                  title: "Bootstrap Thread",
+                  modelSelection: defaultModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: "main",
+                  worktreePath: null,
+                  createdAt,
+                },
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch: "main",
+                  branch: "t3code/bootstrap-refName",
+                },
+                runSetupScript: false,
+              },
+              createdAt,
+            }),
+          ).pipe(Effect.result),
+        );
+
+        assertTrue(result._tag === "Failure");
+        assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+        assert.include(result.failure.message, "worktree exploded");
+        assert.equal(result.failure.provisionalThreadRolledBack, expectedRollbackMarker);
+        assert.deepEqual(
+          dispatchedCommands.map((command) => command.type),
+          deleteSucceeds ? ["thread.create", "thread.delete"] : ["thread.create"],
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc terminal methods", () =>
