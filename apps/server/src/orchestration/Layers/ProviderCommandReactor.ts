@@ -28,7 +28,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
-import { ProviderAdapterRequestError, ProviderTurnChangedError } from "../../provider/Errors.ts";
+import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -52,7 +52,6 @@ import {
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
-const isProviderTurnChangedError = Schema.is(ProviderTurnChangedError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 type ProviderIntentEvent = Extract<
@@ -1437,17 +1436,15 @@ const make = Effect.gen(function* () {
         expectedSessionUpdatedAt,
       })
       .pipe(
+        Effect.catchTags({
+          ProviderTurnChangedError: (error) =>
+            publishWorkChanged(
+              error.actualTurnId === null ? null : TurnId.make(error.actualTurnId),
+            ),
+        }),
         Effect.matchCauseEffect({
-          onFailure: (cause) => {
-            const failureReason = cause.reasons.find(Cause.isFailReason);
-            if (isProviderTurnChangedError(failureReason?.error)) {
-              return publishWorkChanged(
-                failureReason.error.actualTurnId === null
-                  ? null
-                  : TurnId.make(failureReason.error.actualTurnId),
-              );
-            }
-            return Effect.gen(function* () {
+          onFailure: (cause) =>
+            Effect.gen(function* () {
               const resolvedAt = yield* nowIso;
               const failure: ProviderFailureActivityInput = {
                 threadId: event.payload.threadId,
@@ -1463,8 +1460,7 @@ const make = Effect.gen(function* () {
               return yield* appendProviderFailureActivity(failure).pipe(
                 Effect.flatMap(() => publishOutcome("interrupt-failed", actualTurnId, resolvedAt)),
               );
-            });
-          },
+            }),
           onSuccess: () => publishOutcome("interrupted"),
         }),
       );
