@@ -150,6 +150,56 @@ function makeThread(
   };
 }
 
+function makeToolLifecycleActivity(
+  id: string,
+  sequence: number,
+  turnId: ReturnType<typeof TurnId.make>,
+  kind: "tool.updated" | "tool.completed",
+  toolCallId?: string,
+) {
+  const title = "Run tests";
+  return makeActivity({
+    id: EventId.make(id),
+    kind,
+    tone: "tool",
+    summary: title,
+    createdAt: `2026-04-01T00:00:0${sequence}.000Z`,
+    turnId,
+    payload: {
+      title,
+      itemType: "command_execution",
+      ...(toolCallId ? { toolCallId } : {}),
+    },
+  });
+}
+
+function makeToolLifecycleThread(
+  id: string,
+  activities: ReadonlyArray<
+    readonly [
+      id: string,
+      turnId: ReturnType<typeof TurnId.make>,
+      kind: "tool.updated" | "tool.completed",
+      toolCallId?: string,
+    ]
+  >,
+) {
+  return makeThread({
+    id: ThreadId.make(`thread-${id}`),
+    projectId: ProjectId.make("project-1"),
+    title: id,
+    activities: activities.map(([activityId, turnId, kind, toolCallId], index) =>
+      makeToolLifecycleActivity(activityId, index + 1, turnId, kind, toolCallId),
+    ),
+  });
+}
+
+function threadActivities(thread: OrchestrationThread): ThreadFeedActivity[] {
+  return buildThreadFeed(thread).flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+}
+
 describe("buildThreadFeed", () => {
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
@@ -227,6 +277,7 @@ describe("buildThreadFeed", () => {
           payload: {
             title: "Run tests",
             itemType: "command_execution",
+            toolCallId: "call-1",
             detail: "/bin/zsh -lc 'bun run test'",
           },
         }),
@@ -272,6 +323,157 @@ describe("buildThreadFeed", () => {
     expect(group.activities[0]?.getCopyText()).toBe(
       "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
     );
+  });
+
+  it("keeps ambiguous id-less mobile completions separate", () => {
+    const turnId = TurnId.make("turn-ambiguous-tools");
+    const thread = makeToolLifecycleThread("ambiguous-tools", [
+      ["tool-a-updated", turnId, "tool.updated", "call-a"],
+      ["tool-b-updated", turnId, "tool.updated", "call-b"],
+      ["tool-completed", turnId, "tool.completed"],
+    ]);
+
+    expect(threadActivities(thread).map((entry) => entry.id)).toEqual([
+      "tool-a-updated",
+      "tool-b-updated",
+      "tool-completed",
+    ]);
+  });
+
+  it("ignores prior turns when matching an id-less mobile completion", () => {
+    const previousTurnId = TurnId.make("turn-previous-tool");
+    const currentTurnId = TurnId.make("turn-current-tool");
+    const thread = makeToolLifecycleThread("prior-turn-tool", [
+      ["prior-tool-updated", previousTurnId, "tool.updated", "prior-call"],
+      ["current-tool-updated", currentTurnId, "tool.updated", "current-call"],
+      ["current-tool-completed", currentTurnId, "tool.completed"],
+    ]);
+
+    expect(threadActivities(thread).map((entry) => entry.id)).toEqual([
+      "prior-tool-updated",
+      "current-tool-completed",
+    ]);
+  });
+
+  it("keeps an id-less mobile completion terminal after a late keyed update", () => {
+    const turnId = TurnId.make("turn-late-tool-update");
+    const thread = makeToolLifecycleThread("late-tool-update", [
+      ["tool-updated", turnId, "tool.updated", "call-1"],
+      ["tool-completed", turnId, "tool.completed"],
+      ["tool-late-update", turnId, "tool.updated", "call-1"],
+    ]);
+
+    expect(threadActivities(thread)).toMatchObject([{ id: "tool-completed", status: "success" }]);
+  });
+
+  it("collapses interleaved and late lifecycle rows by top-level tool identity", () => {
+    const turnId = TurnId.make("turn-interleaved-tools");
+    const lifecycleActivity = (
+      id: string,
+      createdAt: string,
+      kind: "tool.updated" | "tool.completed",
+      toolCallId: string,
+      title: string,
+      status?: "inProgress" | "completed" | "failed" | "declined" | "stopped",
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        tone: "tool",
+        summary: title,
+        createdAt,
+        turnId,
+        payload: {
+          itemType: "command_execution",
+          toolCallId,
+          title,
+          detail: title,
+          ...(status ? { status } : {}),
+        },
+      });
+    const thread = makeThread({
+      id: ThreadId.make("thread-interleaved-tools"),
+      projectId: ProjectId.make("project-1"),
+      title: "Interleaved tools",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:05.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        lifecycleActivity(
+          "tool-a-updated",
+          "2026-04-01T00:00:01.000Z",
+          "tool.updated",
+          "call-a",
+          "Preparing first call",
+        ),
+        lifecycleActivity(
+          "tool-b-updated",
+          "2026-04-01T00:00:02.000Z",
+          "tool.updated",
+          "call-b",
+          "Preparing second call",
+        ),
+        lifecycleActivity(
+          "tool-a-completed",
+          "2026-04-01T00:00:03.000Z",
+          "tool.completed",
+          "call-a",
+          "First call complete",
+        ),
+        lifecycleActivity(
+          "tool-a-late-updated",
+          "2026-04-01T00:00:03.500Z",
+          "tool.updated",
+          "call-a",
+          "Late first update",
+        ),
+        lifecycleActivity(
+          "tool-a-completed-duplicate",
+          "2026-04-01T00:00:03.750Z",
+          "tool.completed",
+          "call-a",
+          "First call complete",
+        ),
+        lifecycleActivity(
+          "tool-c-failed",
+          "2026-04-01T00:00:03.875Z",
+          "tool.updated",
+          "call-c",
+          "Third call failed",
+          "failed",
+        ),
+        lifecycleActivity(
+          "tool-c-late-updated",
+          "2026-04-01T00:00:03.900Z",
+          "tool.updated",
+          "call-c",
+          "Late third update",
+          "inProgress",
+        ),
+        lifecycleActivity(
+          "tool-b-completed",
+          "2026-04-01T00:00:04.000Z",
+          "tool.completed",
+          "call-b",
+          "Second call complete",
+        ),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group?.type).toBe("activity-group");
+    if (!group || group.type !== "activity-group") return;
+    expect(group.activities.map((activity) => activity.id)).toEqual([
+      "tool-a-completed-duplicate",
+      "tool-c-failed",
+      "tool-b-completed",
+    ]);
+    expect(group.activities[1]?.status).toBe("failure");
   });
 
   it("keeps MCP inputs available to expanded mobile work rows", () => {

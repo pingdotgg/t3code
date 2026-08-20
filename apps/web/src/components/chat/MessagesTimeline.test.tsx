@@ -1,4 +1,14 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  TurnId,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
+import {
+  deriveAgentPanelModel,
+  foldSubagentActivities,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -176,7 +186,6 @@ const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
 function buildProps() {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
@@ -237,6 +246,110 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("keeps subagent status visible while sizing details from its container", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "agent-spawn-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "agent-spawn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Spawned agent",
+              tone: "info",
+              agentSpawn: { workflowId: null, agentTaskIds: ["agent-1"] },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("@container/agent-group");
+    expect(markup).toContain("@[24rem]/agent-group:inline");
+    expect(markup).toContain("ml-auto flex shrink-0");
+    expect(markup).toContain(">Completed</span>");
+    expect(markup).not.toContain("sr-only @[32rem]/agent-group:hidden");
+  });
+
+  it.each([
+    ["failed", "Failed"],
+    ["cancelled", "Cancelled"],
+    ["interrupted", "Interrupted"],
+  ] as const)("shows a %s workflow as an error", (status, label) => {
+    const activities = [
+      {
+        id: "workflow-start",
+        tone: "info",
+        kind: "task.started",
+        summary: "Started workflow",
+        payload: {
+          taskId: "workflow-1",
+          taskType: "local_workflow",
+          agentKind: "agent",
+        },
+        turnId: null,
+        createdAt: MESSAGE_CREATED_AT,
+      },
+      {
+        id: "workflow-terminal",
+        tone: "info",
+        kind: "task.updated",
+        summary: `${label} workflow`,
+        payload: { taskId: "workflow-1", status },
+        turnId: null,
+        createdAt: MESSAGE_CREATED_AT,
+      },
+    ] as unknown as ReadonlyArray<OrchestrationThreadActivity>;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={deriveAgentPanelModel({ agents: foldSubagentActivities(activities) })}
+        timelineEntries={[
+          {
+            id: "agent-spawn-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "agent-spawn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Spawned agent",
+              tone: "info",
+              agentSpawn: {
+                workflowId: "workflow-1",
+                agentTaskIds: ["workflow-1", "member-1"],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("bg-destructive");
+    expect(markup).toContain(`>${label}</span>`);
+    expect(markup).not.toContain(">Completed</span>");
+  });
+
+  it("keeps the compact working and thinking rows aligned", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} isWorking timelineEntries={[]} />,
+    );
+
+    expect(markup).toContain("Thinking");
+    expect(markup).not.toContain("Thinking ·");
+    expect(markup).not.toContain('aria-hidden="true" class="size-6 shrink-0"');
+    expect(markup).toContain("gap-1.5 px-0.5 py-0.5");
+    expect(markup).toContain(
+      'class="pb-1.5" data-timeline-row-id="working-indicator-row" data-timeline-row-kind="working"',
+    );
+    expect(markup).toContain("border-b border-border/60 pb-2 pt-1");
+    expect(markup).toContain('class="mt-1"');
+    expect(markup).not.toContain('class="mt-2"');
+    expect(markup).toContain("text-muted-foreground tabular-nums");
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
@@ -700,7 +813,313 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
-  it("summarizes changed files in one line", () => {
+  it("shows a disclosure chevron on expandable settled work rows", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-expandable-work",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-expandable",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Expandable work",
+              detail: "Full work detail",
+              tone: "info",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("lucide-chevron-down");
+    expect(markup).toContain("size-3 shrink-0 text-icon-muted");
+  });
+
+  it("keeps a completed live tool row expandable with its running label", () => {
+    const turnId = TurnId.make("turn-live-tools");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:28.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-live-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-live-tool",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              toolCallId: "call-live-tool",
+              label: "Running tests",
+              command: 'FOO="hello world" /usr/bin/env -C /tmp /usr/bin/sudo -iu postgres psql',
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Expand current tool calls"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("Running psql");
+    expect(markup).not.toContain("lucide-chevron-right");
+    expect(markup).not.toContain("lucide-chevron-down");
+    expect(markup).not.toContain("hover:bg-accent/20");
+    expect(markup).not.toContain("Tool call failed");
+  });
+
+  it.each<[string, string]>([
+    ['"C:\\Program Files\\nodejs\\node.exe" script.js', "Running node.exe"],
+    ["C:\\Python311\\python.exe script.py", "Running python.exe"],
+    ["FOO=$(printf '%s' value) npm test", "Running npm"],
+    ["/tmp/my\\ tool --version", "Running my tool"],
+    ["FOO=$(printf value npm test", "Running command"],
+    ["env -S 'python -O'", "Running python"],
+    ["env --split-string='python -O'", "Running python"],
+    ["env -v npm test", "Running npm"],
+    ["sudo FOO=bar npm test", "Running npm"],
+    ["sudo --user=root npm test", "Running npm"],
+    ["sudo --bogus=value npm test", "Running command"],
+    [
+      Array.from({ length: 12 }).reduce<string>(
+        (wrapped) => `env --split-string=${JSON.stringify(wrapped)}`,
+        "python -O",
+      ),
+      "Running command",
+    ],
+  ])("labels wrapped live command %s as %s", (command, expectedLabel) => {
+    const turnId = TurnId.make("turn-live-command-label");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:28.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-live-command-label",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-live-command-label",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              toolCallId: "call-live-command-label",
+              label: "Command",
+              command,
+              tone: "tool",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain(expectedLabel);
+  });
+
+  it("uses the read icon for a live dynamic Read File call", () => {
+    const turnId = TurnId.make("turn-live-read-file");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:28.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-live-read-file",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-live-read-file",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              toolCallId: "call-live-read-file",
+              label: "Read File",
+              toolTitle: "Read File",
+              command: "cat README.md",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("lucide-eye");
+    expect(markup).not.toContain("lucide-hammer");
+  });
+
+  it("marks a failed tool that remains in the live row", () => {
+    const turnId = TurnId.make("turn-failed-live-tool");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:28.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-pending-live-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.500Z",
+            entry: {
+              id: "work-pending-live-tool",
+              createdAt: "2026-03-17T19:12:28.500Z",
+              turnId,
+              toolCallId: "call-pending-live-tool",
+              label: "Read",
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-failed-live-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-failed-live-tool",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              toolCallId: "call-failed-live-tool",
+              label: "Glob",
+              tone: "tool",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Glob, tool call failed"');
+    expect(markup).toContain('aria-label="Tool call failed"');
+    expect(markup).toContain("lucide-x");
+    expect(markup).toContain("text-destructive");
+  });
+
+  it("keeps an earlier live-batch failure visible", () => {
+    const turnId = TurnId.make("turn-live-batch-failure");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:28.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-failed-live-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.500Z",
+            entry: {
+              id: "work-failed-live-tool",
+              createdAt: "2026-03-17T19:12:28.500Z",
+              turnId,
+              toolCallId: "call-failed-live-tool",
+              label: "Search",
+              tone: "tool",
+              toolLifecycleStatus: "failed",
+            },
+          },
+          {
+            id: "entry-running-live-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-running-live-tool",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              toolCallId: "call-running-live-tool",
+              label: "Command",
+              command: "vp test run",
+              tone: "tool",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Running vp, tool call failed"');
+  });
+
+  it("does not infer failure from a running command invocation", () => {
+    const turnId = TurnId.make("turn-running-error-phrase");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:28.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-running-error-phrase",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-running-error-phrase",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              toolCallId: "call-running-error-phrase",
+              label: "Command",
+              command: "rg 'command not found' src",
+              tone: "tool",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Running rg");
+    expect(markup).not.toContain("Tool call failed");
+  });
+
+  it("summarizes completed changed-file activity", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -714,6 +1133,8 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
+              itemType: "command_execution",
+              command: "apply_patch",
               changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
             },
           },
@@ -723,48 +1144,62 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Changed 1 file");
+    expect(markup).toContain("lucide-square-pen");
+    expect(markup).not.toContain("lucide-terminal");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
 
-  it("shows the animated one-line label for a live tool group", () => {
-    const turnId = TurnId.make("turn-live");
+  it("keeps a dynamic tool's hammer icon when it becomes a summary", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        isWorking
-        activeTurnInProgress
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
-        latestTurn={{
-          turnId,
-          state: "running",
-          startedAt: MESSAGE_CREATED_AT,
-          completedAt: null,
-        }}
-        runningTurnId={turnId}
         timelineEntries={[
           {
-            id: "entry-live",
+            id: "entry-dynamic-tool",
             kind: "work",
-            createdAt: MESSAGE_CREATED_AT,
+            createdAt: "2026-03-17T19:12:28.000Z",
             entry: {
-              id: "work-live",
-              createdAt: MESSAGE_CREATED_AT,
-              turnId,
-              toolCallId: "call-live",
-              label: "Run tests",
+              id: "work-dynamic-tool",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Tool",
               tone: "tool",
-              itemType: "command_execution",
-              command: "pnpm test",
-              toolLifecycleStatus: "inProgress",
+              itemType: "dynamic_tool_call",
+              toolLifecycleStatus: "completed",
             },
           },
         ]}
       />,
     );
 
-    expect(markup).toContain("Working for");
-    expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("live-activity-focus");
+    expect(markup).toContain("Used 1 tool");
+    expect(markup).toContain("lucide-hammer");
+    expect(markup).not.toContain("lucide-wrench");
+  });
+
+  it("keeps a tone-only tool's icon when it becomes a summary", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-tone-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-tone-tool",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Tool",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Used 1 tool");
+    expect(markup).toContain("lucide-zap");
+    expect(markup).not.toContain("lucide-wrench");
   });
 
   it("aligns the iconless Thinking row with the working timer", () => {
@@ -883,6 +1318,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("lucide-x");
+    expect(markup).toContain('aria-label="Used 1 tool, tool call failed"');
+    expect(markup).toContain('role="img"');
     expect(markup).toContain('aria-label="Tool call failed"');
   });
 });

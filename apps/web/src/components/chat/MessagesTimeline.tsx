@@ -151,8 +151,6 @@ interface TimelineRowActivityState {
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
-  /** Current plan step label for the working row, when the turn has a plan. */
-  workingStepLabel: string | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -205,8 +203,6 @@ interface MessagesTimelineProps {
   agentPanelModel?: AgentPanelModel;
   onOpenAgents?: () => void;
   isWorking: boolean;
-  workingStepLabel?: string | null;
-  activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
@@ -249,7 +245,6 @@ interface MessagesTimelineProps {
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
-  workingStepLabel = null,
   activeTurnStartedAt,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
   onOpenAgents = NOOP_OPEN_AGENTS,
@@ -539,9 +534,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
-      workingStepLabel,
     }),
-    [isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
+    [isRevertingCheckpoint, isWorking, latestTurn?.turnId],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -1113,7 +1107,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
         onClick={() => ctx.onToggleTurnFold(row.turnId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span>{row.label}</span>
         <Icon className="size-3.5" />
@@ -1300,7 +1294,6 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
 });
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { workingStepLabel } = use(TimelineRowActivityCtx);
   return (
     <div>
       <div className="border-b border-border/60 pb-2 pt-1">
@@ -1312,9 +1305,6 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
           ) : (
             "Working..."
           )}
-          {workingStepLabel ? (
-            <span className="ml-2 text-muted-foreground/55">· {workingStepLabel}</span>
-          ) : null}
         </div>
       </div>
       {row.showThinking ? (
@@ -2544,7 +2534,16 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
   // One steady in-flight presentation (monitoring-pill rule): waiting and
   // stalled agents read as working; only settled states differentiate.
   const working = running + waiting;
-  const dotClass = live ? "bg-info" : failed > 0 ? "bg-destructive" : "bg-success";
+  const coordinatorFailureLabel =
+    coordinatorStatus === "failed"
+      ? "Failed"
+      : coordinatorStatus === "cancelled"
+        ? "Cancelled"
+        : coordinatorStatus === "interrupted"
+          ? "Interrupted"
+          : null;
+  const hasFailure = failed > 0 || coordinatorFailureLabel !== null;
+  const dotClass = live ? "bg-info" : hasFailure ? "bg-destructive" : "bg-success";
   const lead = live
     ? `Kicked off ${agentCount} subagent${agentCount === 1 ? "" : "s"}`
     : `Ran ${agentCount} subagent${agentCount === 1 ? "" : "s"}`;
@@ -2554,30 +2553,50 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
       : working > 0
         ? `${working} working`
         : "working"
-    : failed > 0
-      ? `${failed} failed`
-      : "✓ completed";
+    : (coordinatorFailureLabel ?? (failed > 0 ? `${failed} failed` : "Completed"));
 
   return (
-    <button
-      type="button"
-      onClick={onOpenAgents}
-      className="-mx-1 flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px] transition hover:bg-accent/50"
-    >
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
-      <WorkEntryIconSvg name="bot" className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 truncate">
-        <span className="font-medium">{lead}</span>
-        {workflowName ? <span className="text-muted-foreground"> · {workflowName}</span> : null}
-      </span>
-      <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[.7rem] text-muted-foreground">
-        <span>{status}</span>
-        {totalTokens > 0 ? (
-          <span className="tabular-nums">Σ {formatSubagentTokenCount(totalTokens)}</span>
-        ) : null}
-        <span className="text-info-foreground">{live ? "Open Agents ▸" : "View ▸"}</span>
-      </span>
-    </button>
+    <div className="@container/agent-group -mx-1 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1 text-left text-xs leading-4">
+          <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
+          <WorkEntryIconSvg name="bot" className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate font-medium text-foreground">{lead}</span>
+          {workflowName ? (
+            <span className="hidden min-w-0 truncate text-[11px] text-muted-foreground @[40rem]/agent-group:inline">
+              {workflowName}
+            </span>
+          ) : null}
+          <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+            <span>{status}</span>
+            {totalTokens > 0 ? (
+              <span className="hidden font-mono tabular-nums @[32rem]/agent-group:inline">
+                Σ {formatSubagentTokenCount(totalTokens)}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                aria-label={live ? "Open agents" : "View agents"}
+                onClick={onOpenAgents}
+              />
+            }
+          >
+            <EyeIcon className="size-3" />
+            <span className="hidden @[24rem]/agent-group:inline">
+              {live ? "Open agents" : "View agents"}
+            </span>
+          </TooltipTrigger>
+          <TooltipPopup side="top">{live ? "Open agents" : "View agents"}</TooltipPopup>
+        </Tooltip>
+      </div>
+    </div>
   );
 });
 

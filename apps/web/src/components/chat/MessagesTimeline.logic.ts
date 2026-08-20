@@ -367,6 +367,27 @@ function omitSupersededLifecycleMarkers<T>(
   entries: readonly T[],
   workEntryFor: (entry: T) => WorkLogEntry,
 ): T[] {
+  const statuslessIdlessMarkerCounts = new Map<string, number>();
+  for (const entry of entries) {
+    const workEntry = workEntryFor(entry);
+    if (
+      workEntry.toolCallId === undefined &&
+      workEntry.toolLifecycleStatus === undefined &&
+      (workEntry.sourceActivityKind === "tool.started" ||
+        workEntry.sourceActivityKind === "tool.updated")
+    ) {
+      const identity = [
+        workEntry.turnId ?? "no-turn",
+        workEntry.itemType ?? "",
+        normalizeCompactToolLabel(workEntry.toolTitle ?? workEntry.label),
+      ].join("\u001f");
+      statuslessIdlessMarkerCounts.set(
+        identity,
+        (statuslessIdlessMarkerCounts.get(identity) ?? 0) + 1,
+      );
+    }
+  }
+
   const laterTerminalIdentities = new Set<string>();
   const reversedEntries: T[] = [];
 
@@ -384,13 +405,20 @@ function omitSupersededLifecycleMarkers<T>(
       workEntry.toolLifecycleStatus === undefined &&
       (workEntry.sourceActivityKind === "tool.started" ||
         workEntry.sourceActivityKind === "tool.updated");
-    if (isStatuslessIdlessMarker && laterTerminalIdentities.has(identity)) continue;
+    if (
+      isStatuslessIdlessMarker &&
+      statuslessIdlessMarkerCounts.get(identity) === 1 &&
+      laterTerminalIdentities.has(identity)
+    ) {
+      continue;
+    }
 
     reversedEntries.push(entry);
     if (
-      workEntry.sourceActivityKind === "tool.completed" ||
-      (workEntry.toolLifecycleStatus !== undefined &&
-        workEntry.toolLifecycleStatus !== "inProgress")
+      workEntry.toolCallId === undefined &&
+      (workEntry.sourceActivityKind === "tool.completed" ||
+        (workEntry.toolLifecycleStatus !== undefined &&
+          workEntry.toolLifecycleStatus !== "inProgress"))
     ) {
       laterTerminalIdentities.add(identity);
     }
@@ -522,15 +550,18 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
 
 /**
  * Settled turns fold their commentary and tool activity behind a
- * "Worked for ..." row anchored at the turn's first foldable entry; the
- * terminal assistant message stays visible below the fold.
+ * "Worked for ..." row. While collapsed, the row stays immediately before the
+ * next terminal assistant response so a steer cannot strand it above the
+ * visible response. While expanded, it moves before the first hidden entry so
+ * the revealed activity follows the disclosure in chronological order.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unsettledTurnId: TurnId | null;
-}): ReadonlyMap<string, TurnFold> {
+  expandedTurnIds: ReadonlySet<TurnId> | undefined;
+}): ReadonlyMap<string, ReadonlyArray<TurnFold>> {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
@@ -585,7 +616,7 @@ function deriveTurnFolds(input: {
     }
   }
 
-  const foldsByAnchorEntryId = new Map<string, TurnFold>();
+  const foldsByAnchorEntryId = new Map<string, TurnFold[]>();
   for (const [turnId, group] of groupsByTurnId) {
     if (turnId === input.unsettledTurnId) {
       continue;
@@ -611,8 +642,31 @@ function deriveTurnFolds(input: {
     }
 
     const firstEntry = group.entries[0];
+    const firstHiddenEntry = group.entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = group.entries.at(-1);
-    if (!firstEntry || !lastEntry) {
+    if (!firstEntry || !firstHiddenEntry || !lastEntry) {
+      continue;
+    }
+    const lastHiddenEntryIndex = input.timelineEntries.findLastIndex((entry) =>
+      hiddenEntryIds.has(entry.id),
+    );
+    if (lastHiddenEntryIndex < 0) {
+      continue;
+    }
+    const nextTerminalAssistantEntry = input.timelineEntries
+      .slice(lastHiddenEntryIndex + 1)
+      .find(
+        (entry) =>
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          input.terminalAssistantMessageIds.has(entry.message.id),
+      );
+    const collapsedAnchorEntry =
+      nextTerminalAssistantEntry ?? input.timelineEntries[lastHiddenEntryIndex];
+    const anchorEntry = input.expandedTurnIds?.has(turnId)
+      ? firstHiddenEntry
+      : collapsedAnchorEntry;
+    if (!anchorEntry) {
       continue;
     }
 
@@ -641,13 +695,16 @@ function deriveTurnFolds(input: {
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorEntryId.set(firstEntry.id, {
+    const fold = {
       turnId,
-      anchorEntryId: firstEntry.id,
-      createdAt: firstEntry.createdAt,
+      anchorEntryId: anchorEntry.id,
+      createdAt: anchorEntry.createdAt,
       hiddenEntryIds,
       label,
-    });
+    };
+    const anchoredFolds = foldsByAnchorEntryId.get(anchorEntry.id);
+    if (anchoredFolds) anchoredFolds.push(fold);
+    else foldsByAnchorEntryId.set(anchorEntry.id, [fold]);
   }
   return foldsByAnchorEntryId;
 }
@@ -677,12 +734,15 @@ export function deriveMessagesTimelineRows(input: {
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unsettledTurnId,
+    expandedTurnIds: input.expandedTurnIds,
   });
   const collapsedEntryIds = new Set<string>();
-  for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedTurnIds?.has(fold.turnId)) {
-      for (const entryId of fold.hiddenEntryIds) {
-        collapsedEntryIds.add(entryId);
+  for (const folds of foldsByAnchorEntryId.values()) {
+    for (const fold of folds) {
+      if (!input.expandedTurnIds?.has(fold.turnId)) {
+        for (const entryId of fold.hiddenEntryIds) {
+          collapsedEntryIds.add(entryId);
+        }
       }
     }
   }
@@ -793,16 +853,18 @@ export function deriveMessagesTimelineRows(input: {
       appendActiveWorkRows();
     }
 
-    const anchoredTurnFold = foldsByAnchorEntryId.get(timelineEntry.id);
-    if (anchoredTurnFold) {
-      nextRows.push({
-        kind: "turn-fold",
-        id: `turn-fold:${anchoredTurnFold.turnId}`,
-        createdAt: anchoredTurnFold.createdAt,
-        turnId: anchoredTurnFold.turnId,
-        label: anchoredTurnFold.label,
-        expanded: input.expandedTurnIds?.has(anchoredTurnFold.turnId) ?? false,
-      });
+    const anchoredTurnFolds = foldsByAnchorEntryId.get(timelineEntry.id);
+    if (anchoredTurnFolds) {
+      for (const turnFold of anchoredTurnFolds) {
+        nextRows.push({
+          kind: "turn-fold",
+          id: `turn-fold:${turnFold.turnId}`,
+          createdAt: turnFold.createdAt,
+          turnId: turnFold.turnId,
+          label: turnFold.label,
+          expanded: input.expandedTurnIds?.has(turnFold.turnId) ?? false,
+        });
+      }
     }
 
     if (collapsedEntryIds.has(timelineEntry.id)) {

@@ -1,5 +1,3 @@
-import * as Option from "effect/Option";
-import * as Arr from "effect/Array";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   ApprovalRequestId,
@@ -653,34 +651,6 @@ function addPlanStepDurations(
   };
 }
 
-export function deriveActivePlanState(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-  latestTurnId: TurnId | undefined,
-): ActivePlanState | null {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
-  // Prefer plan from the current turn; fall back to the most recent plan from any turn
-  // so that TodoWrite tasks persist across follow-up messages.
-  const latest = Option.firstSomeOf([
-    ...(latestTurnId
-      ? Arr.findLast(allPlanActivities, (activity) => activity.turnId === latestTurnId)
-      : Option.none()),
-    Arr.last(allPlanActivities),
-  ]).pipe(Option.getOrNull);
-  if (!latest) {
-    return null;
-  }
-  const plan = planStateFromActivity(latest);
-  if (!plan) return null;
-  const matchingActivities = allPlanActivities.filter(
-    (activity) => activity.turnId === latest.turnId,
-  );
-  const latestClearIndex = matchingActivities.findLastIndex(
-    (activity) => planStateFromActivity(activity) === null,
-  );
-  return addPlanStepDurations(plan, matchingActivities.slice(latestClearIndex + 1));
-}
-
 export interface TurnPlanEntry {
   /** Stable per-turn row id (plans rewrite constantly; the row must not churn). */
   id: string;
@@ -840,7 +810,6 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
-    if (activity.kind === "tool.started") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
     // under later synthetic turns and must not start new batches). They
@@ -849,8 +818,14 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
+    // Plan updates have a dedicated task row. Keeping the raw activity here
+    // duplicates it as a legacy "Work Log / Plan updated" row when history
+    // is expanded.
+    if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
+    if (isCodexTerminalInteractionActivity(activity)) continue;
+    if (isUnkeyedStatuslessToolStart(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
@@ -861,7 +836,11 @@ export function deriveWorkLogEntries(
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
-  if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") {
+  if (
+    activity.kind !== "tool.started" &&
+    activity.kind !== "tool.updated" &&
+    activity.kind !== "tool.completed"
+  ) {
     return false;
   }
 
@@ -870,6 +849,28 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
       ? (activity.payload as Record<string, unknown>)
       : null;
   return typeof payload?.detail === "string" && payload.detail.startsWith("ExitPlanMode:");
+}
+
+/**
+ * Codex terminal interactions report bytes written to an already-running PTY.
+ * Some thread histories contain them as generic tool.updated rows, so filter
+ * their exact wire shape from the presentation model. This repairs existing
+ * history without deleting or rewriting persisted activities.
+ */
+function isCodexTerminalInteractionActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.updated") {
+    return false;
+  }
+  const payload = asRecord(activity.payload);
+  const data = asRecord(payload?.data);
+  return (
+    payload?.itemType === "command_execution" &&
+    typeof data?.itemId === "string" &&
+    typeof data.processId === "string" &&
+    typeof data.stdin === "string" &&
+    typeof data.threadId === "string" &&
+    typeof data.turnId === "string"
+  );
 }
 
 function extractWorkLogToolLifecycleStatus(
@@ -889,6 +890,17 @@ function extractWorkLogToolLifecycleStatus(
     return s;
   }
   return undefined;
+}
+
+function isUnkeyedStatuslessToolStart(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.started") {
+    return false;
+  }
+  const payload = asRecord(activity.payload);
+  if (extractToolCallId(payload)) {
+    return false;
+  }
+  return extractWorkLogToolLifecycleStatus(payload) === undefined;
 }
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
@@ -970,6 +982,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.toolCallId = toolCallId;
   }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
+  if (!toolLifecycleStatus && toolCallId && activity.kind === "tool.started") {
+    toolLifecycleStatus = "inProgress";
+  }
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
     toolLifecycleStatus = "completed";
   }
@@ -1025,6 +1040,17 @@ function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
   return entry.turnId ? `direct:${entry.turnId}` : `direct:task:${taskId}`;
 }
 
+function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undefined {
+  if (
+    entry.activityKind !== "tool.started" &&
+    entry.activityKind !== "tool.updated" &&
+    entry.activityKind !== "tool.completed"
+  ) {
+    return undefined;
+  }
+  return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
+}
+
 function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
@@ -1041,6 +1067,7 @@ function collapseDerivedWorkLogEntries(
   // own turn splintered one batch into a stream of "Kicked off N subagents"
   // rows (live-test finding, thread 7ac7ef05).
   const groupKeyByTaskId = new Map<string, string>();
+  const toolLifecycleRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
       entry.taskId !== undefined &&
@@ -1085,12 +1112,65 @@ function collapseDerivedWorkLogEntries(
       });
       continue;
     }
+    const lifecycleKey = toolLifecycleCollapseMapKey(entry);
+    if (lifecycleKey !== undefined) {
+      const matchingLifecycleIndex = toolLifecycleRowIndex.get(lifecycleKey);
+      if (matchingLifecycleIndex !== undefined) {
+        const matchingEntry = collapsed[matchingLifecycleIndex];
+        if (matchingEntry && workLogEntryHasTerminalToolLifecycle(matchingEntry)) {
+          collapsed[matchingLifecycleIndex] = workLogEntryHasTerminalToolLifecycle(entry)
+            ? mergeDerivedWorkLogEntries(matchingEntry, entry)
+            : mergeDerivedWorkLogEntries(entry, matchingEntry);
+          continue;
+        }
+        if (matchingEntry && shouldCollapseToolLifecycleEntries(matchingEntry, entry)) {
+          const merged = mergeDerivedWorkLogEntries(matchingEntry, entry);
+          collapsed[matchingLifecycleIndex] = merged;
+          toolLifecycleRowIndex.set(lifecycleKey, matchingLifecycleIndex);
+          continue;
+        }
+        toolLifecycleRowIndex.delete(lifecycleKey);
+      }
+    }
     const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+    const hasCompetingIdlessCompletionTarget =
+      (previous?.activityKind === "tool.started" || previous?.activityKind === "tool.updated") &&
+      entry.activityKind === "tool.completed" &&
+      entry.toolCallId === undefined &&
+      collapsed
+        .slice(0, -1)
+        .some(
+          (candidate) =>
+            candidate.activityKind !== "tool.completed" &&
+            candidate.turnId === previous.turnId &&
+            candidate.itemType === previous.itemType &&
+            normalizeCompactToolLabel(candidate.toolTitle ?? candidate.label) ===
+              normalizeCompactToolLabel(previous.toolTitle ?? previous.label),
+        );
+    if (
+      previous &&
+      !hasCompetingIdlessCompletionTarget &&
+      shouldCollapseToolLifecycleEntries(previous, entry)
+    ) {
+      const previousIndex = collapsed.length - 1;
+      const previousKey = toolLifecycleCollapseMapKey(previous);
+      if (previousKey !== undefined) toolLifecycleRowIndex.delete(previousKey);
+      const merged =
+        workLogEntryHasTerminalToolLifecycle(previous) &&
+        !workLogEntryHasTerminalToolLifecycle(entry)
+          ? mergeDerivedWorkLogEntries(entry, previous)
+          : mergeDerivedWorkLogEntries(previous, entry);
+      collapsed[previousIndex] = merged;
+      const mergedKey = toolLifecycleCollapseMapKey(merged);
+      if (mergedKey !== undefined) {
+        toolLifecycleRowIndex.set(mergedKey, previousIndex);
+      }
       continue;
     }
     collapsed.push(entry);
+    if (lifecycleKey !== undefined) {
+      toolLifecycleRowIndex.set(lifecycleKey, collapsed.length - 1);
+    }
   }
   return collapsed;
 }
@@ -1099,24 +1179,49 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (
+    previous.activityKind !== "tool.started" &&
+    previous.activityKind !== "tool.updated" &&
+    previous.activityKind !== "tool.completed"
+  ) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+  if (
+    next.activityKind !== "tool.started" &&
+    next.activityKind !== "tool.updated" &&
+    next.activityKind !== "tool.completed"
+  ) {
+    return false;
+  }
+  if (previous.turnId !== next.turnId) {
     return false;
   }
   if (previous.activityKind === "tool.completed") {
+    return false;
+  }
+  if (next.activityKind === "tool.started") {
     return false;
   }
   if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
     return true;
   }
   return (
+    (previous.activityKind !== "tool.started" || next.activityKind === "tool.completed") &&
     previous.toolCallId !== undefined &&
     next.toolCallId === undefined &&
     previous.itemType === next.itemType &&
     normalizeCompactToolLabel(previous.toolTitle ?? previous.label) ===
       normalizeCompactToolLabel(next.toolTitle ?? next.label)
+  );
+}
+
+function workLogEntryHasTerminalToolLifecycle(entry: DerivedWorkLogEntry): boolean {
+  return (
+    entry.activityKind === "tool.completed" ||
+    entry.toolLifecycleStatus === "completed" ||
+    entry.toolLifecycleStatus === "failed" ||
+    entry.toolLifecycleStatus === "declined" ||
+    entry.toolLifecycleStatus === "stopped"
   );
 }
 
@@ -1172,11 +1277,15 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   ) {
     return `task${entry.taskId}`;
   }
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (
+    entry.activityKind !== "tool.started" &&
+    entry.activityKind !== "tool.updated" &&
+    entry.activityKind !== "tool.completed"
+  ) {
     return undefined;
   }
   if (entry.toolCallId) {
-    return `tool:${entry.toolCallId}`;
+    return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -1375,6 +1484,8 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
+  const dataInput = asRecord(data?.input);
+  const stateInput = asRecord(asRecord(data?.state)?.input);
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
   const candidates: unknown[] = [
@@ -1382,6 +1493,8 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     itemInput?.command,
     itemResult?.command,
     data?.command,
+    dataInput?.command,
+    stateInput?.command,
     itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
 
