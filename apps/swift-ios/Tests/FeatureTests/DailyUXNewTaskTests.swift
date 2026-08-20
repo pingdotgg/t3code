@@ -970,6 +970,83 @@ struct DailyUXNewTaskTests {
         )
     }
 
+    @Test(
+        "Project picker selection follows the narrowed environment",
+        .bug("https://github.com/pingdotgg/t3code/pull/7634#discussion_r3818560252")
+    )
+    func projectPickerSelectionFollowsTheNarrowedEnvironment() throws {
+        let studio = rankedEnvironment("studio", name: "Studio")
+        let nightly = rankedEnvironment("nightly", name: "Nightly")
+        let onStudio = rankedProject(
+            "shared-studio",
+            name: "Shared",
+            environmentID: studio.id,
+            repositoryKey: "example.com/acme/shared-repo"
+        )
+        let onNightly = rankedProject(
+            "shared-nightly",
+            name: "Shared",
+            environmentID: nightly.id,
+            repositoryKey: "example.com/acme/shared-repo"
+        )
+        let value = rankedSnapshot(
+            environments: [studio, nightly],
+            projects: [onStudio, onNightly],
+            threads: []
+        )
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+        let group = try #require(groups.first)
+
+        let narrowedTarget = DailyUXProjectPickerSelection.target(
+            groupID: group.id,
+            selectedEnvironmentID: nightly.id,
+            fallbackEnvironmentID: studio.id,
+            in: groups
+        )
+        let allEnvironmentsTarget = DailyUXProjectPickerSelection.target(
+            groupID: group.id,
+            selectedEnvironmentID: nil,
+            fallbackEnvironmentID: studio.id,
+            in: groups
+        )
+
+        #expect(narrowedTarget?.id == onNightly.id)
+        #expect(allEnvironmentsTarget?.id == onStudio.id)
+    }
+
+    @Test(
+        "Project picker host count keeps same-named environments distinct",
+        .bug("https://github.com/pingdotgg/t3code/pull/7634#discussion_r3818560254")
+    )
+    func projectPickerHostCountKeepsSameNamedEnvironmentsDistinct() throws {
+        let primary = rankedEnvironment("primary", name: "Studio")
+        let secondary = rankedEnvironment("secondary", name: "Studio")
+        let onPrimary = rankedProject(
+            "shared-primary",
+            name: "Shared",
+            environmentID: primary.id,
+            repositoryKey: "example.com/acme/shared-repo"
+        )
+        let onSecondary = rankedProject(
+            "shared-secondary",
+            name: "Shared",
+            environmentID: secondary.id,
+            repositoryKey: "example.com/acme/shared-repo"
+        )
+        let value = rankedSnapshot(
+            environments: [primary, secondary],
+            projects: [onPrimary, onSecondary],
+            threads: []
+        )
+        let group = try #require(DailyUXCreationContext.projectGroups(in: value).first)
+        let hostLabels = DailyUXProjectHostLabels(environments: value.environments)
+
+        #expect(hostLabels.hostNames(for: group).count == 2)
+        #expect(
+            hostLabels.label(for: group, preferredEnvironmentID: primary.id) == "Studio +1"
+        )
+    }
+
     @Test
     func projectPickerHostLabelFallsBackToTheEndpointHostAndSkipsUnknownEnvironments() throws {
         let unnamed = FeatureEnvironment(id: "unnamed", name: "  ", endpoint: "https://box.tail.ts.net:3117")

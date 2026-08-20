@@ -338,6 +338,23 @@ struct DailyUXProjectHostOption: Identifiable, Equatable {
     let name: String
 }
 
+enum DailyUXProjectPickerSelection {
+    /// An explicit picker environment wins over the composer's current host;
+    /// "All environments" keeps the composer's host as the fallback.
+    static func target(
+        groupID: String,
+        selectedEnvironmentID: String?,
+        fallbackEnvironmentID: String?,
+        in groups: [DailyUXProjectGroup]
+    ) -> FeatureProject? {
+        DailyUXProjectGrouping.selectionTarget(
+            groupID: groupID,
+            preferredEnvironmentID: selectedEnvironmentID ?? fallbackEnvironmentID,
+            in: groups
+        )
+    }
+}
+
 /// A logical project group can exist on more than one environment, so the
 /// picker names the host each row would actually open on instead of leaving the
 /// destination implicit. The label leads with the environment the composer is
@@ -381,10 +398,10 @@ struct DailyUXProjectHostLabels: Equatable {
 
     /// Every host the group has a project on, in the group's own project order.
     func hostNames(for group: DailyUXProjectGroup) -> [String] {
-        var seenNames = Set<String>()
+        var seenEnvironmentIDs = Set<String>()
         return group.projects
+            .filter { seenEnvironmentIDs.insert($0.environmentID).inserted }
             .compactMap { namesByEnvironmentID[$0.environmentID] }
-            .filter { seenNames.insert($0).inserted }
     }
 
     func label(
@@ -395,7 +412,7 @@ struct DailyUXProjectHostLabels: Equatable {
         let opensOn = group.preferredProject(environmentID: preferredEnvironmentID)
             .flatMap { namesByEnvironmentID[$0.environmentID] }
         guard let host = opensOn ?? names.first else { return nil }
-        let elsewhere = names.filter { $0 != host }.count
+        let elsewhere = max(0, names.count - 1)
         return elsewhere > 0 ? "\(host) +\(elsewhere)" : host
     }
 

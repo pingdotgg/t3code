@@ -150,8 +150,8 @@ public struct NewThreadView: View {
                     recentGroupIDs: recentProjectGroupIDs,
                     preferredEnvironmentID: selectedProject?.environmentID,
                     selectionID: selectedProjectGroup?.id,
-                    onSelect: { group in
-                        if selectProjectGroup(group) {
+                    onSelect: { group, environmentID in
+                        if selectProjectGroup(group, environmentID: environmentID) {
                             activePicker = nil
                         }
                     }
@@ -592,14 +592,18 @@ public struct NewThreadView: View {
     }
 
     @discardableResult
-    private func selectProjectGroup(_ group: DailyUXProjectGroup) -> Bool {
-        guard let target = DailyUXProjectGrouping.selectionTarget(
+    private func selectProjectGroup(
+        _ group: DailyUXProjectGroup,
+        environmentID: String?
+    ) -> Bool {
+        guard let target = DailyUXProjectPickerSelection.target(
             groupID: group.id,
-            preferredEnvironmentID: selectedProject?.environmentID,
+            selectedEnvironmentID: environmentID,
+            fallbackEnvironmentID: selectedProject?.environmentID,
             in: creationProjectGroups
         ) else { return false }
         projectSelectionIsExplicit = true
-        guard group.id != selectedProjectGroup?.id else { return true }
+        guard target.id != selectedProject?.id else { return true }
         return selectProject(target.id)
     }
 
@@ -970,7 +974,7 @@ private struct NewTaskProjectPicker: View {
     let recentGroupIDs: [String]
     let preferredEnvironmentID: String?
     let selectionID: String?
-    let onSelect: (DailyUXProjectGroup) -> Void
+    let onSelect: (DailyUXProjectGroup, String?) -> Void
 
     @State private var query = ""
     /// Selector state lives with the sheet: reopening the picker starts from
@@ -1158,7 +1162,7 @@ private struct NewTaskProjectPicker: View {
         )
         let isSelected = group.id == selectionID
         return Button {
-            onSelect(group)
+            onSelect(group, environmentID)
         } label: {
             HStack(spacing: PickerMetrics.rowSpacing) {
                 iconTile("folder")
