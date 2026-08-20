@@ -1461,8 +1461,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         ) : null}
                         {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
-                            screen readers announce every second. */}
-                        <span role="status">{topStatus.label}</span>
+                            screen readers announce every second. The working
+                            icon already conveys the visible state, so keep its
+                            redundant label for assistive technology only. */}
+                        <span
+                          role="status"
+                          className={status === "working" ? "sr-only" : undefined}
+                        >
+                          {topStatus.label}
+                        </span>
                         {status === "working" ? (
                           <span aria-hidden>
                             <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
