@@ -536,6 +536,7 @@ const make = Effect.gen(function* () {
             userId: input.userId,
             environmentId: input.environmentId,
             label: decoded.descriptor.label,
+            checkedAt: decoded.checkedAt,
           })
           .pipe(
             Effect.tapError((error) =>

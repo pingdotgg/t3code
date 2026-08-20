@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -150,6 +150,7 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
       readonly label: string;
+      readonly checkedAt: string;
     }) => Effect.Effect<void, EnvironmentLinkLabelUpdatePersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
@@ -419,18 +420,18 @@ const make = Effect.gen(function* () {
         yield* Effect.annotateCurrentSpan({
           "relay.environment_id": input.environmentId,
         });
-        const updatedAt = DateTime.formatIso(yield* DateTime.now);
         yield* db
           .update(relayEnvironmentLinks)
           .set({
             environmentLabel: input.label,
-            updatedAt,
+            updatedAt: input.checkedAt,
           })
           .where(
             and(
               eq(relayEnvironmentLinks.userId, input.userId),
               eq(relayEnvironmentLinks.environmentId, input.environmentId),
               isNull(relayEnvironmentLinks.revokedAt),
+              lte(relayEnvironmentLinks.updatedAt, input.checkedAt),
             ),
           )
           .pipe(

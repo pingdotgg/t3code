@@ -68,18 +68,20 @@ describe("EnvironmentLinks", () => {
         userId: "user-1",
         environmentId: "env-1",
         label: "Studio Mac",
+        checkedAt: "2026-08-20T12:00:00.000Z",
       });
 
       expect(updateValues).toHaveLength(1);
       expect(updateValues[0]?.environmentLabel).toBe("Studio Mac");
-      expect(typeof updateValues[0]?.updatedAt).toBe("string");
+      expect(updateValues[0]?.updatedAt).toBe("2026-08-20T12:00:00.000Z");
       expect(whereConditions).toHaveLength(1);
 
       const query = new PgDialect().sqlToQuery(whereConditions[0] as never);
       expect(query.sql).toContain('"relay_environment_links"."user_id" = $1');
       expect(query.sql).toContain('"relay_environment_links"."environment_id" = $2');
       expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
-      expect(query.params).toEqual(["user-1", "env-1"]);
+      expect(query.sql).toContain('"relay_environment_links"."updated_at" <= $3');
+      expect(query.params).toEqual(["user-1", "env-1", "2026-08-20T12:00:00.000Z"]);
     }).pipe(
       Effect.provide(
         EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
