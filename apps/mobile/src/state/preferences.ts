@@ -37,27 +37,85 @@ export interface ReconciledPreferencesPatch {
   readonly patch: Partial<Preferences>;
 }
 
+function shouldRetainSyncedPreference(
+  currentUpdatedAt: string | undefined,
+  savedUpdatedAt: string | undefined,
+): currentUpdatedAt is string {
+  return (
+    currentUpdatedAt !== undefined &&
+    (savedUpdatedAt === undefined || savedUpdatedAt < currentUpdatedAt)
+  );
+}
+
 export function mergeConfirmedPreferences(saved: Preferences, current: Preferences): Preferences {
-  const currentUpdatedAt =
+  const merged = { ...saved };
+  const mergedUpdatedAtByField = { ...saved.syncedClientPreferencesUpdatedAtByField };
+  let retained = false;
+
+  const currentPlanModeUpdatedAt =
     current.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
     current.syncedClientPreferencesUpdatedAt;
-  const savedUpdatedAt =
+  const savedPlanModeUpdatedAt =
     saved.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
     saved.syncedClientPreferencesUpdatedAt;
   if (
-    current.planModeEnabled === undefined ||
-    currentUpdatedAt === undefined ||
-    (savedUpdatedAt !== undefined && savedUpdatedAt >= currentUpdatedAt)
+    current.planModeEnabled !== undefined &&
+    shouldRetainSyncedPreference(currentPlanModeUpdatedAt, savedPlanModeUpdatedAt)
   ) {
-    return saved;
+    merged.planModeEnabled = current.planModeEnabled;
+    mergedUpdatedAtByField.planModeEnabled = currentPlanModeUpdatedAt;
+    retained = true;
   }
+
+  const currentAppearanceModeUpdatedAt =
+    current.syncedClientPreferencesUpdatedAtByField?.appearanceMode ??
+    current.syncedClientPreferencesUpdatedAt;
+  const savedAppearanceModeUpdatedAt =
+    saved.syncedClientPreferencesUpdatedAtByField?.appearanceMode ??
+    saved.syncedClientPreferencesUpdatedAt;
+  if (
+    current.themeMode !== undefined &&
+    shouldRetainSyncedPreference(currentAppearanceModeUpdatedAt, savedAppearanceModeUpdatedAt)
+  ) {
+    merged.themeMode = current.themeMode;
+    mergedUpdatedAtByField.appearanceMode = currentAppearanceModeUpdatedAt;
+    retained = true;
+  }
+
+  const currentLightThemeIdUpdatedAt =
+    current.syncedClientPreferencesUpdatedAtByField?.lightThemeId ??
+    current.syncedClientPreferencesUpdatedAt;
+  const savedLightThemeIdUpdatedAt =
+    saved.syncedClientPreferencesUpdatedAtByField?.lightThemeId ??
+    saved.syncedClientPreferencesUpdatedAt;
+  if (
+    current.lightThemeId !== undefined &&
+    shouldRetainSyncedPreference(currentLightThemeIdUpdatedAt, savedLightThemeIdUpdatedAt)
+  ) {
+    merged.lightThemeId = current.lightThemeId;
+    mergedUpdatedAtByField.lightThemeId = currentLightThemeIdUpdatedAt;
+    retained = true;
+  }
+
+  const currentDarkThemeIdUpdatedAt =
+    current.syncedClientPreferencesUpdatedAtByField?.darkThemeId ??
+    current.syncedClientPreferencesUpdatedAt;
+  const savedDarkThemeIdUpdatedAt =
+    saved.syncedClientPreferencesUpdatedAtByField?.darkThemeId ??
+    saved.syncedClientPreferencesUpdatedAt;
+  if (
+    current.darkThemeId !== undefined &&
+    shouldRetainSyncedPreference(currentDarkThemeIdUpdatedAt, savedDarkThemeIdUpdatedAt)
+  ) {
+    merged.darkThemeId = current.darkThemeId;
+    mergedUpdatedAtByField.darkThemeId = currentDarkThemeIdUpdatedAt;
+    retained = true;
+  }
+
+  if (!retained) return saved;
   return {
-    ...saved,
-    planModeEnabled: current.planModeEnabled,
-    syncedClientPreferencesUpdatedAtByField: {
-      ...saved.syncedClientPreferencesUpdatedAtByField,
-      planModeEnabled: currentUpdatedAt,
-    },
+    ...merged,
+    syncedClientPreferencesUpdatedAtByField: mergedUpdatedAtByField,
   };
 }
 

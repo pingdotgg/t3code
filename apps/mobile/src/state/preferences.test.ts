@@ -352,28 +352,106 @@ describe("mobile preferences state", () => {
     }),
   );
 
-  it("keeps a newer in-memory reconciliation over an unrelated saved preference", () => {
+  it("keeps newer in-memory reconciliations for every synced field", () => {
     expect(
       mergeConfirmedPreferences(
         {
           baseFontSize: 18,
           planModeEnabled: false,
+          themeMode: "light",
+          lightThemeId: "t3-code",
+          darkThemeId: "dracula",
           syncedClientPreferencesUpdatedAtByField: {
             planModeEnabled: "2026-08-15T12:00:00.000Z",
+            appearanceMode: "2026-08-15T12:00:00.000Z",
+            lightThemeId: "2026-08-15T12:00:00.000Z",
+            darkThemeId: "2026-08-15T12:00:00.000Z",
           },
         },
         {
           planModeEnabled: true,
+          themeMode: "system",
+          lightThemeId: "catppuccin-latte",
+          darkThemeId: "tokyo-night",
           syncedClientPreferencesUpdatedAtByField: {
             planModeEnabled: "2026-08-15T12:01:00.000Z",
+            appearanceMode: "2026-08-15T12:01:00.000Z",
+            lightThemeId: "2026-08-15T12:01:00.000Z",
+            darkThemeId: "2026-08-15T12:01:00.000Z",
           },
         },
       ),
     ).toEqual({
       baseFontSize: 18,
       planModeEnabled: true,
+      themeMode: "system",
+      lightThemeId: "catppuccin-latte",
+      darkThemeId: "tokyo-night",
       syncedClientPreferencesUpdatedAtByField: {
         planModeEnabled: "2026-08-15T12:01:00.000Z",
+        appearanceMode: "2026-08-15T12:01:00.000Z",
+        lightThemeId: "2026-08-15T12:01:00.000Z",
+        darkThemeId: "2026-08-15T12:01:00.000Z",
+      },
+    });
+  });
+
+  it("accepts successfully saved synced values at equal or newer stamps", () => {
+    const saved = {
+      planModeEnabled: false,
+      themeMode: "dark",
+      lightThemeId: "t3-code",
+      darkThemeId: "dracula",
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-15T12:02:00.000Z",
+        appearanceMode: "2026-08-15T12:01:00.000Z",
+        lightThemeId: "2026-08-15T12:02:00.000Z",
+        darkThemeId: "2026-08-15T12:01:00.000Z",
+      },
+    } satisfies Preferences;
+
+    expect(
+      mergeConfirmedPreferences(saved, {
+        planModeEnabled: true,
+        themeMode: "system",
+        lightThemeId: "catppuccin-latte",
+        darkThemeId: "tokyo-night",
+        syncedClientPreferencesUpdatedAtByField: {
+          planModeEnabled: "2026-08-15T12:01:00.000Z",
+          appearanceMode: "2026-08-15T12:01:00.000Z",
+          lightThemeId: "2026-08-15T12:01:00.000Z",
+          darkThemeId: "2026-08-15T12:01:00.000Z",
+        },
+      }),
+    ).toBe(saved);
+  });
+
+  it("merges retained and superseding fields independently", () => {
+    expect(
+      mergeConfirmedPreferences(
+        {
+          planModeEnabled: false,
+          themeMode: "light",
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:02:00.000Z",
+            appearanceMode: "2026-08-15T12:00:00.000Z",
+          },
+        },
+        {
+          planModeEnabled: true,
+          themeMode: "dark",
+          syncedClientPreferencesUpdatedAtByField: {
+            planModeEnabled: "2026-08-15T12:01:00.000Z",
+            appearanceMode: "2026-08-15T12:01:00.000Z",
+          },
+        },
+      ),
+    ).toEqual({
+      planModeEnabled: false,
+      themeMode: "dark",
+      syncedClientPreferencesUpdatedAtByField: {
+        planModeEnabled: "2026-08-15T12:02:00.000Z",
+        appearanceMode: "2026-08-15T12:01:00.000Z",
       },
     });
   });

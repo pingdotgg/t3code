@@ -90,23 +90,6 @@ export function mobileThemeHasAppearance(
   );
 }
 
-export function removeImportedMobileTheme(
-  importedThemes: ReadonlyArray<PortableThemeFile>,
-  removedThemeId: string,
-  selectedThemeId: MobileThemeId,
-) {
-  if (!importedThemes.some((theme) => theme.id === removedThemeId)) return null;
-  if (selectedThemeId === removedThemeId) {
-    return {
-      importedThemes: importedThemes.filter((theme) => theme.id !== removedThemeId),
-      themeId: DEFAULT_MOBILE_THEME_ID,
-    };
-  }
-  return {
-    importedThemes: importedThemes.filter((theme) => theme.id !== removedThemeId),
-  };
-}
-
 export function createMobileThemeSelectionPatch(
   themeIds: MobileThemeIds,
   activeAppearance: MobileThemeAppearance,

@@ -1,4 +1,12 @@
-import { createContext, use, useCallback, useLayoutEffect, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -65,6 +73,27 @@ interface AppearancePreferencesContextValue {
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
 
+interface ImportedThemeRemovalConfirmationState {
+  readonly importedThemes: ReadonlyArray<ImportedMobileTheme>;
+  readonly themeIds: MobileThemeIds;
+  readonly saveImportedThemes: (themes: ReadonlyArray<ImportedMobileTheme>) => void;
+  readonly publishThemeId: (appearance: MobileThemeAppearance, themeId: MobileThemeId) => void;
+}
+
+export function applyImportedThemeRemovalAtConfirmation(
+  removedThemeId: string,
+  current: ImportedThemeRemovalConfirmationState,
+): void {
+  if (!current.importedThemes.some((theme) => theme.id === removedThemeId)) return;
+  current.saveImportedThemes(current.importedThemes.filter((theme) => theme.id !== removedThemeId));
+  if (current.themeIds.light === removedThemeId) {
+    current.publishThemeId("light", DEFAULT_MOBILE_THEME_ID);
+  }
+  if (current.themeIds.dark === removedThemeId) {
+    current.publishThemeId("dark", DEFAULT_MOBILE_THEME_ID);
+  }
+}
+
 /**
  * Injects palette and text-scale variables into both adaptive stylesheets.
  * Updating the active sheet last lets the visible app settle in one pass.
@@ -126,6 +155,18 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
   const themeId = themeIds[themeAppearance];
   const isReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const importedThemeRemovalState = useRef<ImportedThemeRemovalConfirmationState>({
+    importedThemes,
+    themeIds,
+    saveImportedThemes: (themes) => savePreferences({ importedThemes: themes }),
+    publishThemeId,
+  });
+  importedThemeRemovalState.current = {
+    importedThemes,
+    themeIds,
+    saveImportedThemes: (themes) => savePreferences({ importedThemes: themes }),
+    publishThemeId,
+  };
 
   useLayoutEffect(() => {
     applyAppearanceVariables(preferences.baseFontSize, themeIds, importedThemes);
@@ -175,17 +216,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [importedThemes, publishThemeId, savePreferences],
   );
 
-  const removeImportedTheme = useCallback(
-    (removedThemeId: string) => {
-      if (!importedThemes.some((theme) => theme.id === removedThemeId)) return;
-      savePreferences({
-        importedThemes: importedThemes.filter((theme) => theme.id !== removedThemeId),
-      });
-      if (themeIds.light === removedThemeId) publishThemeId("light", DEFAULT_MOBILE_THEME_ID);
-      if (themeIds.dark === removedThemeId) publishThemeId("dark", DEFAULT_MOBILE_THEME_ID);
-    },
-    [importedThemes, publishThemeId, savePreferences, themeIds],
-  );
+  const removeImportedTheme = useCallback((removedThemeId: string) => {
+    applyImportedThemeRemovalAtConfirmation(removedThemeId, importedThemeRemovalState.current);
+  }, []);
 
   const setBaseFontSize = useCallback(
     (value: number) => {

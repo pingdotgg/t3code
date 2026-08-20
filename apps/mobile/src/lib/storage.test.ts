@@ -1,6 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { removeImportedMobileTheme } from "./mobileTheme";
 import { parseMobileThemeFile } from "./mobileThemeFile";
 
 const mocks = vi.hoisted(() => {
@@ -286,50 +285,6 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({
       importedThemes: [importedTheme],
       themeId: importedTheme.id,
-    });
-  });
-
-  it("persists the default fallback when removing a selected imported theme", async () => {
-    const importedTheme = parseMobileThemeFile({
-      version: 1,
-      id: "northern-lights",
-      name: "Northern Lights",
-      appearance: "dark",
-      colors: { canvas: "#0f172a" },
-    });
-    await savePreferencesPatch({ importedThemes: [importedTheme], themeId: importedTheme.id });
-    const patch = removeImportedMobileTheme([importedTheme], importedTheme.id, importedTheme.id);
-    if (!patch) throw new Error("Expected the imported theme to be removed");
-
-    await savePreferencesPatch(patch);
-
-    await expect(loadPreferences()).resolves.toEqual({ themeId: "t3-code" });
-  });
-
-  it("preserves the selection when removing a different imported theme", async () => {
-    const first = parseMobileThemeFile({
-      version: 1,
-      id: "first-theme",
-      name: "First Theme",
-      appearance: "light",
-      colors: { canvas: "#ffffff" },
-    });
-    const second = parseMobileThemeFile({
-      version: 1,
-      id: "second-theme",
-      name: "Second Theme",
-      appearance: "dark",
-      colors: { canvas: "#000000" },
-    });
-    await savePreferencesPatch({ importedThemes: [first, second], themeId: second.id });
-    const patch = removeImportedMobileTheme([first, second], first.id, second.id);
-    if (!patch) throw new Error("Expected the imported theme to be removed");
-
-    await savePreferencesPatch(patch);
-
-    await expect(loadPreferences()).resolves.toEqual({
-      importedThemes: [second],
-      themeId: second.id,
     });
   });
 
