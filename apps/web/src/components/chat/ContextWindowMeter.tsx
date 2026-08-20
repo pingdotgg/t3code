@@ -44,7 +44,7 @@ export function ContextWindowMeter(props: {
             className={cn(
               "rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground",
               usedPercentage
-                ? "h-auto min-h-7 w-7 flex-col gap-px py-px sm:h-auto sm:min-h-7 sm:w-7"
+                ? "h-7 w-auto gap-1 px-1.5 sm:h-7 sm:w-auto"
                 : "size-7",
             )}
             aria-label={
