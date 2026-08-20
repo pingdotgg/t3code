@@ -1007,6 +1007,20 @@ export default function GitActionsControl({
   });
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+  // Mirrors isCommitDialogOpen so a commit that resolves after the user reopened the dialog can
+  // tell "nothing to preserve" from "the user is already typing a new draft".
+  const commitDialogOpenRef = useRef(false);
+  const [hasFailedCommitDraft, setHasFailedCommitDraft] = useState(false);
+  const setCommitDialogOpen = (open: boolean) => {
+    commitDialogOpenRef.current = open;
+    setIsCommitDialogOpen(open);
+  };
+  const discardCommitDraft = () => {
+    setDialogCommitMessage("");
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
+    setHasFailedCommitDraft(false);
+  };
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -1527,7 +1541,7 @@ export default function GitActionsControl({
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
 
-    setIsCommitDialogOpen(false);
+    setCommitDialogOpen(false);
 
     const committed = await runGitActionWithToast({
       action: "commit",
@@ -1536,10 +1550,13 @@ export default function GitActionsControl({
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
-    if (committed) {
-      setDialogCommitMessage("");
-      setExcludedFiles(new Set());
-      setIsEditingFiles(false);
+    if (!committed) {
+      setHasFailedCommitDraft(true);
+      return;
+    }
+    setHasFailedCommitDraft(false);
+    if (!commitDialogOpenRef.current) {
+      discardCommitDraft();
     }
   };
 
@@ -1620,24 +1637,29 @@ export default function GitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    setIsCommitDialogOpen(true);
+    if (!hasFailedCommitDraft) {
+      setExcludedFiles(new Set());
+      setIsEditingFiles(false);
+    }
+    setCommitDialogOpen(true);
   };
 
   const runDialogAction = async () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
-    setIsCommitDialogOpen(false);
+    setCommitDialogOpen(false);
     const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });
-    if (committed) {
-      setDialogCommitMessage("");
-      setExcludedFiles(new Set());
-      setIsEditingFiles(false);
+    if (!committed) {
+      setHasFailedCommitDraft(true);
+      return;
+    }
+    setHasFailedCommitDraft(false);
+    if (!commitDialogOpenRef.current) {
+      discardCommitDraft();
     }
   };
 
@@ -1842,10 +1864,8 @@ export default function GitActionsControl({
         open={isCommitDialogOpen}
         onOpenChange={(open) => {
           if (!open) {
-            setIsCommitDialogOpen(false);
-            setDialogCommitMessage("");
-            setExcludedFiles(new Set());
-            setIsEditingFiles(false);
+            setCommitDialogOpen(false);
+            discardCommitDraft();
           }
         }}
       >
@@ -1981,10 +2001,8 @@ export default function GitActionsControl({
               variant="outline"
               size="sm"
               onClick={() => {
-                setIsCommitDialogOpen(false);
-                setDialogCommitMessage("");
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
+                setCommitDialogOpen(false);
+                discardCommitDraft();
               }}
             >
               Cancel

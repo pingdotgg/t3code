@@ -16,11 +16,16 @@ import { SheetActionButton } from "./gitSheetComponents";
 
 // The sheet is a screen and unmounts the moment the action starts, so a draft has to outlive the
 // component to survive a commit the server refuses, typically a rejected commit-msg hook.
+// Keyed by environment as well as path, since two environments can mount the same cwd.
 let pendingCommitDraft: {
-  readonly cwd: string;
+  readonly key: string;
   readonly message: string;
   readonly excludedFiles: ReadonlySet<string>;
 } | null = null;
+
+function commitDraftKey(environmentId: string | null, cwd: string | null): string | null {
+  return environmentId === null || cwd === null ? null : `${environmentId}\n${cwd}`;
+}
 
 type GitCommitSheetProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -48,7 +53,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
-  const draft = pendingCommitDraft?.cwd === selectedThreadCwd ? pendingCommitDraft : null;
+  const draftKey = commitDraftKey(selectedThread?.environmentId ?? null, selectedThreadCwd);
+  const draft =
+    draftKey !== null && pendingCommitDraft?.key === draftKey ? pendingCommitDraft : null;
   const [dialogCommitMessage, setDialogCommitMessage] = useState(draft?.message ?? "");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
     draft?.excludedFiles ?? new Set(),
@@ -65,8 +72,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
       const commitMessage = dialogCommitMessage.trim();
-      if (selectedThreadCwd !== null) {
-        pendingCommitDraft = { cwd: selectedThreadCwd, message: commitMessage, excludedFiles };
+      const submitted =
+        draftKey === null ? null : { key: draftKey, message: commitMessage, excludedFiles };
+      if (submitted) {
+        pendingCommitDraft = submitted;
       }
       navigation.goBack();
       const result = await gitActions.onRunSelectedThreadGitAction({
@@ -75,18 +84,19 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         ...(commitMessage ? { commitMessage } : {}),
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
-      if (result !== null) {
+      // Identity check: a concurrent commit elsewhere may already own the stored draft.
+      if (result !== null && pendingCommitDraft === submitted) {
         pendingCommitDraft = null;
       }
     },
     [
       allSelected,
       dialogCommitMessage,
+      draftKey,
       excludedFiles,
       gitActions,
       navigation,
       selectedFiles,
-      selectedThreadCwd,
     ],
   );
 

@@ -4711,6 +4711,30 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("names the rejecting hook without a progress reporter", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "hook-failure.txt"), "broken\n");
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
+        "#!/bin/sh\nexit 3\n",
+        { mode: 0o755 },
+      );
+
+      const { manager } = yield* makeManager();
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+      expect(errorMessage).toContain("The pre-commit hook rejected the commit (exit code 3).");
+    }),
+  );
+
   it.effect("create_pr emits only the PR phase when the branch is already pushed", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
