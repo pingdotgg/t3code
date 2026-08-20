@@ -103,7 +103,6 @@ function ThemeLibraryCard({
   onDuplicate,
   onDownload,
   onRemove,
-  tooltip,
   variantNavigation,
 }: {
   theme: ThemeCardDefinition;
@@ -115,7 +114,6 @@ function ThemeLibraryCard({
   onDuplicate?: () => void;
   onDownload?: () => void;
   onRemove?: () => void;
-  tooltip?: string;
   variantNavigation?: {
     collectionLabel: string;
     options: ReadonlyArray<{
@@ -408,12 +406,11 @@ function ThemeLibraryCard({
         }
       />
       <TooltipPopup>
-        {tooltip ??
-          (variantNavigation
-            ? "Use the first variants for light and dark"
-            : cardModes.length > 1
-              ? "Use for both light and dark"
-              : `Use for ${cardModes[0]} mode only`)}
+        {variantNavigation
+          ? "Use the first variants for light and dark"
+          : cardModes.length > 1
+            ? "Use for both light and dark"
+            : `Use for ${cardModes[0]} mode only`}
       </TooltipPopup>
     </Tooltip>
   );
@@ -822,7 +819,6 @@ export function ThemeLibrary({
             onUse={() => persistTheme(omarchyLinkedTheme.id)}
             onUseMode={handlePairPick(omarchyLinkedTheme.id)}
             theme={getThemeCardDefinition(omarchyLinkedTheme)}
-            tooltip="Follow your current Omarchy theme"
           />
         ) : null}
         {customThemeCollections.map(([collectionId, themes]) => (

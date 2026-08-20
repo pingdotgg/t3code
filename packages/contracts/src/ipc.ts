@@ -445,17 +445,18 @@ export const PickFolderOptionsSchema = Schema.Struct({
   targetEnvironmentId: Schema.optionalKey(Schema.String),
 });
 
-/**
- * A file returned by the desktop theme-file picker. Oversized files carry an
- * empty text so the renderer can reject them by size without the main
- * process ever holding their contents.
- */
+/** A theme file transferred from the desktop main process to the renderer. */
 export interface PickedThemeFile {
   name: string;
   size: number;
   text: string;
 }
 
+/**
+ * Keeps theme-file reads and Electron IPC payloads bounded. Oversized files
+ * carry empty text so the renderer can reject them without transferring their
+ * contents.
+ */
 export const THEME_FILE_MAX_BYTES = 256 * 1024;
 
 export const PickedThemeFileSchema = Schema.Struct({
