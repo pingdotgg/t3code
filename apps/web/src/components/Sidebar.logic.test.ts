@@ -16,6 +16,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveResponsiveShortcutLabel,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
@@ -52,6 +53,20 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveResponsiveShortcutLabel", () => {
+  it("hides keyboard shortcut hints in the mobile sidebar", () => {
+    expect(resolveResponsiveShortcutLabel("⌘K", true)).toBeNull();
+  });
+
+  it("preserves keyboard shortcut hints in the desktop sidebar", () => {
+    expect(resolveResponsiveShortcutLabel("⌘K", false)).toBe("⌘K");
+  });
+
+  it("preserves an unavailable shortcut", () => {
+    expect(resolveResponsiveShortcutLabel(null, false)).toBeNull();
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
