@@ -395,7 +395,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  const toolCallId = asTrimmedString(asRecord(payload?.data)?.toolCallId);
+  // Ingestion stamps the stable id at payload level; adapters (Claude
+  // reasoning) carry it in data.toolCallId. Read both, like the web client.
+  const toolCallId =
+    asTrimmedString(payload?.toolCallId) ?? asTrimmedString(asRecord(payload?.data)?.toolCallId);
   if (
     !taskDetailAsLabel &&
     payload &&
@@ -525,6 +528,11 @@ function shouldCollapseToolLifecycleEntries(
   if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
     return false;
   }
+  // Tool identities are only unique within a turn: a later turn reusing an
+  // in-progress id must stay a separate row (mirrors the web client).
+  if (previous.turnId !== next.turnId) {
+    return false;
+  }
   if (previous.activityKind === "tool.completed") {
     return false;
   }
@@ -582,7 +590,7 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   // reasoning) is a stable identity across the whole update chain; keying on
   // the growing detail instead would render every update as its own row.
   if (entry.toolCallId) {
-    return `tool:${entry.toolCallId}`;
+    return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";

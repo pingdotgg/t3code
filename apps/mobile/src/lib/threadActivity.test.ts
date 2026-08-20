@@ -203,6 +203,132 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("collapses tool lifecycle rows keyed by payload-level toolCallId", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-tcid"),
+      projectId: ProjectId.make("project-1"),
+      title: "Payload identity",
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("t-updated"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "bun test",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("other-tool"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read file",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Read file",
+            itemType: "file_read",
+            toolCallId: "call-2",
+            detail: "index.ts",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("t-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "bun test — 3 passed",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    // The interleaved completion folds into its first row even though the
+    // identity arrived at payload level, not inside data.
+    expect(activities).toHaveLength(2);
+    expect(activities[0]?.summary).toContain("Run tests");
+    expect(activities[0]?.getFullDetail()).toContain("3 passed");
+  });
+
+  it("does not collapse a reused toolCallId across turns", () => {
+    const turn1 = TurnId.make("turn-1");
+    const turn2 = TurnId.make("turn-2");
+    const thread = makeThread({
+      id: ThreadId.make("thread-cross-turn"),
+      projectId: ProjectId.make("project-1"),
+      title: "Cross turn",
+      latestTurn: {
+        turnId: turn2,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:05.000Z",
+        startedAt: "2026-04-01T00:00:06.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("turn1-updated"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: turn1,
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "first run",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("turn2-updated"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:06.000Z",
+          turnId: turn2,
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "second run",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities).toHaveLength(2);
+    expect(activities[0]?.getFullDetail()).toContain("first run");
+    expect(activities[1]?.getFullDetail()).toContain("second run");
+  });
+
   it("collapses matching tool lifecycle rows like desktop", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-2"),

@@ -2667,19 +2667,20 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         ? "text-secondary-label"
         : "text-foreground/80";
   const showEntryIcon = !isExpandedToolGroupEntry || showWarningIndicator || showFailedIndicator;
+  // Reasoning previews carry the full thinking text (up to 20k) and command
+  // rows put the verbatim command here: clamp BEFORE composing the failure
+  // suffix, so the announcement is never sliced off, and the accessible name
+  // stays a label, not a transcript.
+  const clampedDisplayText =
+    displayText.length > 200 ? `${displayText.slice(0, 200)}…` : displayText;
   const accessibleDisplayText = showFailedIndicator
-    ? `${displayText}, tool call failed`
-    : displayText;
+    ? `${clampedDisplayText}, tool call failed`
+    : clampedDisplayText;
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
-        // Reasoning previews carry the full thinking text (up to 20k); the
-        // accessible name must stay a label, not a transcript.
-        "aria-label":
-          accessibleDisplayText.length > 200
-            ? `${accessibleDisplayText.slice(0, 200)}…`
-            : accessibleDisplayText,
+        "aria-label": accessibleDisplayText,
         "aria-expanded": expanded,
         onClick: () => setExpanded((v) => !v),
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
