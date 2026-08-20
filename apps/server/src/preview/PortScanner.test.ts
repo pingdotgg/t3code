@@ -730,7 +730,8 @@ effectIt("does not swallow terminal-triggered scan interruption", () => {
       .pipe(Effect.forkScoped);
     yield* Deferred.await(terminalScanStarted);
 
-    const exit = yield* Fiber.interrupt(registration);
+    yield* Fiber.interrupt(registration);
+    const exit = yield* Fiber.await(registration);
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
