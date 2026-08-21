@@ -38,7 +38,7 @@ function NavigationButton(props: {
             aria-label={props.label}
             className={cn(
               WORKSPACE_TITLEBAR_CONTROL_CLASS,
-              "aria-disabled:cursor-default aria-disabled:opacity-64 aria-disabled:hover:bg-transparent",
+              "aria-disabled:cursor-not-allowed aria-disabled:opacity-64 aria-disabled:hover:bg-transparent",
               props.className,
             )}
             onClick={() => {

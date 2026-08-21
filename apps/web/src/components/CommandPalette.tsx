@@ -1491,33 +1491,6 @@ function OpenCommandPaletteDialog(props: {
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
-  actionItems.push(
-    {
-      kind: "action",
-      value: "action:navigation-back",
-      searchTerms: ["back", "previous", "history", "navigation"],
-      title: "Go back",
-      disabled: !navigationHistory.canGoBack,
-      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
-      shortcutCommand: "navigation.back",
-      run: async () => {
-        navigationHistory.back();
-      },
-    },
-    {
-      kind: "action",
-      value: "action:navigation-forward",
-      searchTerms: ["forward", "next", "history", "navigation"],
-      title: "Go forward",
-      disabled: !navigationHistory.canGoForward,
-      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
-      shortcutCommand: "navigation.forward",
-      run: async () => {
-        navigationHistory.forward();
-      },
-    },
-  );
-
   if (projects.length > 0) {
     const activeProjectTitle =
       projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
@@ -1643,6 +1616,33 @@ function OpenCommandPaletteDialog(props: {
       });
     },
   });
+
+  actionItems.push(
+    {
+      kind: "action",
+      value: "action:navigation-back",
+      searchTerms: ["back", "previous", "history", "navigation"],
+      title: "Go back",
+      disabled: !navigationHistory.canGoBack,
+      icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "navigation.back",
+      run: async () => {
+        navigationHistory.back();
+      },
+    },
+    {
+      kind: "action",
+      value: "action:navigation-forward",
+      searchTerms: ["forward", "next", "history", "navigation"],
+      title: "Go forward",
+      disabled: !navigationHistory.canGoForward,
+      icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "navigation.forward",
+      run: async () => {
+        navigationHistory.forward();
+      },
+    },
+  );
 
   actionItems.push({
     kind: "action",

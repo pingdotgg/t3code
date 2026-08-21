@@ -77,7 +77,7 @@ function WorkspaceChromeControls() {
   const backdropControlClass =
     isSidebarVisible && stageBackdropVariant
       ? cn(
-          "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
+          "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! not-aria-disabled:[&_svg]:hover:stroke-white! not-aria-disabled:[:hover,[data-pressed]]:bg-white/15",
           resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
         )
       : undefined;
