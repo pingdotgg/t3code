@@ -73,9 +73,15 @@ struct FeatureComposerCommandPopover: View {
     }
 
     private var menuHeight: CGFloat {
-        guard !items.isEmpty else { return 48 }
+        Self.height(forItemCount: items.count)
+    }
+
+    /// The menu's height is deterministic so the composer can position the
+    /// menu fully above its own surface without measuring it.
+    static func height(forItemCount count: Int) -> CGFloat {
+        guard count > 0 else { return 48 }
         let rowHeight: CGFloat = 47
-        return min(CGFloat(items.count) * rowHeight, 188)
+        return min(CGFloat(count) * rowHeight, 188)
     }
 }
 

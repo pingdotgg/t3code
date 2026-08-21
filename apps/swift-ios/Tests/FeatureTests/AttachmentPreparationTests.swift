@@ -1,9 +1,42 @@
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import T3Code
 
 @Suite("Attachment preparation")
 struct AttachmentPreparationTests {
+    @Test
+    func providerLoaderReadsImageDataRepresentation() async throws {
+        let expected = Data([0x01, 0x02, 0x03])
+        let provider = NSItemProvider(
+            item: expected as NSData,
+            typeIdentifier: UTType.jpeg.identifier
+        )
+
+        #expect(try await FeatureImageItemProviderLoader.data(from: provider) == expected)
+    }
+
+    @Test
+    @MainActor
+    func providerLoadCanStartBeforeItsDataIsAwaited() async throws {
+        let expected = Data([0x01, 0x02, 0x03])
+        let provider = NSItemProvider(
+            item: expected as NSData,
+            typeIdentifier: UTType.jpeg.identifier
+        )
+
+        let load = try FeatureImageItemProviderLoader.start(from: provider)
+
+        #expect(try await load.data() == expected)
+    }
+
+    @Test
+    func providerLoaderRejectsProvidersWithoutImageRepresentations() async {
+        await #expect(throws: FeatureImageAttachmentError.self) {
+            try await FeatureImageItemProviderLoader.data(from: NSItemProvider())
+        }
+    }
+
     @Test
     func overlappingPreparationOnlyFinishesAfterEveryOperation() {
         var state = FeatureAttachmentPreparationState()

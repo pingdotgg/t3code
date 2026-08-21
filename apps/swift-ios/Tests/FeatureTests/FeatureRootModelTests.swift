@@ -1,5 +1,7 @@
 import Foundation
+import SwiftUI
 import Testing
+import UIKit
 @testable import T3Code
 
 @MainActor
@@ -641,6 +643,85 @@ struct FeatureRootModelTests {
         #expect(model.snapshot.threads == [created])
     }
 
+    @Test(
+        "New-task composer grows beyond two lines with a software-keyboard viewport",
+        .bug("https://github.com/saphid/t3code-personal/issues/105")
+    )
+    func newTaskComposerGrowsWithSoftwareKeyboardViewport() async throws {
+        let project = FeatureProject(
+            id: "project-1",
+            environmentID: "environment-1",
+            name: "Native",
+            path: "/native"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            projects: [project],
+            providersByEnvironment: [
+                "environment-1": [
+                    .init(
+                        id: "codex",
+                        name: "Codex",
+                        models: [.init(id: "gpt-5.6-sol", name: "Sol")]
+                    ),
+                ],
+            ]
+        )
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let draftURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-new-task-keyboard-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: draftURL) }
+        let draftStore = FeatureComposerDraftStore(fileURL: draftURL)
+        let longDraft = (1...20).map { "Composer keyboard proof line \($0)" }
+            .joined(separator: "\n")
+        try await draftStore.setDraft(
+            FeatureComposerDraft(text: longDraft),
+            for: FeatureComposerDraftStore.newTaskKey(project: project)
+        )
+
+        let controller = UIHostingController(
+            rootView: NewThreadView(
+                model: model,
+                submit: { _ in nil },
+                onCreated: { _ in },
+                initialProjectID: project.id,
+                draftStore: draftStore
+            )
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 540))
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        var textInput: UIView?
+        for _ in 0..<30 {
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            textInput = firstMultilineTextInput(in: controller.view)
+            if textInputText(textInput) == longDraft { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let input = try #require(textInput)
+        #expect(textInputText(input) == longDraft)
+        #expect(
+            input.bounds.height >= 100,
+            "Expected room for more than two visible lines; got \(input.bounds.height) points"
+        )
+    }
+
     @Test
     func testArchiveAndDeleteKeepLocalListsConsistent() async {
         let client = FeatureClientStub()
@@ -1142,6 +1223,30 @@ struct FeatureRootModelTests {
         #expect(reduction.result == .refresh)
         #expect(reduction.renderMutation == .full)
     }
+}
+
+@MainActor
+private func firstMultilineTextInput(in view: UIView) -> UIView? {
+    if view is UITextView || view is UITextField {
+        return view
+    }
+    for subview in view.subviews {
+        if let input = firstMultilineTextInput(in: subview) {
+            return input
+        }
+    }
+    return nil
+}
+
+@MainActor
+private func textInputText(_ view: UIView?) -> String? {
+    if let textView = view as? UITextView {
+        return textView.text
+    }
+    if let textField = view as? UITextField {
+        return textField.text
+    }
+    return nil
 }
 
 @MainActor

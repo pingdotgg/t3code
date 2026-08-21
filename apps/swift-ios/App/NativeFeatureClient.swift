@@ -458,6 +458,182 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
+    func pullRequestLists(_ input: PullRequestListInput) async throws
+        -> [FeaturePullRequestEnvironmentList]
+    {
+        let environments = try await runtime.environments().filter(\.isEnabled)
+        let runtime = runtime
+        return await withTaskGroup(of: FeaturePullRequestEnvironmentList.self) { group in
+            for environment in environments {
+                group.addTask {
+                    let probe = await runtime.ephemeralClient(for: environment)
+                    do {
+                        let result = try await probe.pullRequests(input)
+                        await probe.disconnect()
+                        return FeaturePullRequestEnvironmentList(
+                            environmentID: environment.id,
+                            environmentName: environment.label,
+                            result: result,
+                            errorMessage: nil
+                        )
+                    } catch {
+                        await probe.disconnect()
+                        return FeaturePullRequestEnvironmentList(
+                            environmentID: environment.id,
+                            environmentName: environment.label,
+                            result: nil,
+                            errorMessage: error.localizedDescription
+                        )
+                    }
+                }
+            }
+            var results: [FeaturePullRequestEnvironmentList] = []
+            for await result in group { results.append(result) }
+            return results.sorted { $0.environmentName < $1.environmentName }
+        }
+    }
+
+    func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .pullRequestDetail(target.reference)
+    }
+
+    func pullRequestActivity(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestActivity
+    {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .pullRequestActivity(target.reference)
+    }
+
+    func pullRequestDiff(_ target: FeaturePullRequestTarget, cursor: String?) async throws
+        -> PullRequestDiffResult
+    {
+        try await projectCreationClient(environmentID: target.environmentID).pullRequestDiff(
+            PullRequestDiffInput(
+                projectId: target.reference.projectId,
+                repository: target.reference.repository,
+                number: target.reference.number,
+                cursor: cursor,
+                commit: nil
+            )
+        )
+    }
+
+    func runPullRequestAction(
+        _ target: FeaturePullRequestTarget,
+        action: PullRequestAction,
+        mergeMethod: PullRequestMergeMethod?,
+        updateMethod: PullRequestUpdateMethod?
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID).runPullRequestAction(
+            target.reference,
+            action: action,
+            mergeMethod: mergeMethod,
+            updateMethod: updateMethod
+        )
+    }
+
+    func updatePullRequest(
+        _ target: FeaturePullRequestTarget,
+        title: String?,
+        body: String?
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID).updatePullRequest(
+            target.reference,
+            title: title,
+            body: body
+        )
+    }
+
+    func commentOnPullRequest(_ target: FeaturePullRequestTarget, body: String) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .commentOnPullRequest(target.reference, body: body)
+    }
+
+    func submitPullRequestReview(
+        _ target: FeaturePullRequestTarget,
+        verdict: PullRequestReviewVerdict,
+        body: String,
+        comments: [PullRequestReviewCommentDraft]
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .submitPullRequestReview(
+                target.reference,
+                verdict: verdict,
+                body: body,
+                comments: comments
+            )
+    }
+
+    func replyToPullRequestThread(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        body: String
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .replyToPullRequestThread(target.reference, threadID: threadID, body: body)
+    }
+
+    func setPullRequestThreadResolved(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        resolved: Bool
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .setPullRequestThreadResolved(
+                target.reference,
+                threadID: threadID,
+                resolved: resolved
+            )
+    }
+
+    func setPullRequestReaction(
+        _ target: FeaturePullRequestTarget,
+        subjectID: String?,
+        content: PullRequestReactionContent,
+        reacted: Bool
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .setPullRequestReaction(
+                target.reference,
+                subjectID: subjectID,
+                content: content,
+                reacted: reacted
+            )
+    }
+
+    func pullRequestReviewerCandidates(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestReviewerCandidateList
+    {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .pullRequestReviewerCandidates(target.reference)
+    }
+
+    func requestPullRequestReviewers(
+        _ target: FeaturePullRequestTarget,
+        reviewers: [PullRequestReviewerCandidate],
+        requested: Bool
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .requestPullRequestReviewers(
+                target.reference,
+                reviewers: reviewers,
+                requested: requested
+            )
+    }
+
+    func invalidatePullRequests(_ target: FeaturePullRequestTarget?) async throws {
+        if let target {
+            try await projectCreationClient(environmentID: target.environmentID)
+                .invalidatePullRequests(target.reference)
+            return
+        }
+        let environments = try await runtime.environments().filter(\.isEnabled)
+        for environment in environments {
+            try? await projectCreationClient(environmentID: environment.id).invalidatePullRequests()
+        }
+    }
+
     private func adoptEnvironment(
         _ environment: Environment,
         client newClient: T3Client

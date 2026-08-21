@@ -26,6 +26,16 @@ struct PlatformRootView: View {
                 navigationRequest = nil
             }
         )
+        .environment(\.openURL, OpenURLAction { url in
+            // Links tapped inside the app (message Markdown above all) would
+            // otherwise leave for Safari or be rejected by an unregistered
+            // scheme, so keep the ones this device can already show.
+            guard let route = PlatformInAppLinkRouter.route(for: url, in: model.snapshot) else {
+                return .systemAction
+            }
+            handle(route)
+            return .handled
+        })
         .onOpenURL { url in
             handle(url: url, letOnboardingConfirmConnection: true)
         }

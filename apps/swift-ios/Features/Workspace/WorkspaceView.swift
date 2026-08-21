@@ -771,6 +771,13 @@ struct HomeThreadRowContext: Equatable {
         let projectByID = snapshot.projects.reduce(into: [String: FeatureProject]()) {
             $0[$1.id] = $1
         }
+        let projectGroupNameByID = DailyUXCreationContext.projectGroups(in: snapshot).reduce(
+            into: [String: String]()
+        ) { result, group in
+            for projectID in group.memberProjectIDs {
+                result[projectID] = group.name
+            }
+        }
         let environmentByID = snapshot.environments.reduce(into: [String: FeatureEnvironment]()) {
             $0[$1.id] = $1
         }
@@ -799,7 +806,7 @@ struct HomeThreadRowContext: Equatable {
                 : environment?.connectionState
 
             result[thread.id] = HomeThreadRowContext(
-                projectName: project?.name ?? "Project",
+                projectName: projectGroupNameByID[thread.projectID] ?? project?.name ?? "Project",
                 projectEnvironmentID: project?.environmentID,
                 projectWorkspaceRoot: project?.path,
                 environmentLabel: environmentLabel?.isEmpty == false ? environmentLabel : nil,

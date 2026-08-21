@@ -107,15 +107,27 @@ public struct SettingsView: View {
 
     private var generalSection: some View {
         SettingsSection(title: "General") {
-            NavigationLink {
-                UsageView(client: model.client)
-            } label: {
-                SettingsNavigationRow(
-                    title: "Usage",
-                    systemImage: "chart.bar.xaxis"
-                )
+            VStack(spacing: 0) {
+                NavigationLink {
+                    PullRequestsView(model: model)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Pull Requests",
+                        systemImage: "arrow.triangle.pull"
+                    )
+                }
+                .buttonStyle(.plain)
+                settingsDivider
+                NavigationLink {
+                    UsageView(client: model.client)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Usage",
+                        systemImage: "chart.bar.xaxis"
+                    )
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -169,6 +181,12 @@ public struct SettingsView: View {
                 settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
                 settingsDivider
+                SettingsValueRow(title: "Version", value: appVersionLabel)
+                if let appCommit {
+                    settingsDivider
+                    SettingsValueRow(title: "Commit", value: appCommit)
+                }
+                settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
                     SettingsNavigationRow(
                         title: "Open source",
@@ -191,6 +209,21 @@ public struct SettingsView: View {
     private var appDisplayName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? "T3 Code SwiftUI"
+    }
+
+    private var appVersionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            ?? "?"
+        return "\(version) (\(build))"
+    }
+
+    private var appCommit: String? {
+        guard let commit = Bundle.main.object(forInfoDictionaryKey: "T3GitCommit") as? String,
+              commit.isEmpty == false,
+              commit.hasPrefix("$(") == false else { return nil }
+        return String(commit.prefix(8))
     }
 
     private var canSave: Bool {
