@@ -536,7 +536,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [composerTrigger, pathSearch.entries, props.providerSkills, selectedProviderStatus]);
   const isComposerMenuLoading =
     composerTrigger?.kind === "path"
-      ? pathSearch.isPending
+      ? composerTrigger.query.trim().length > 0 && pathSearch.isPending
       : composerTrigger?.kind === "skill" &&
         props.providerSkills.length === 0 &&
         props.providerSkillInventoryPending;
