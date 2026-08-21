@@ -779,7 +779,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   );
   const threadKey = scopedThreadKey(threadRef);
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  // Local visit stamps win (they carry this device's latest intent, incl.
+  // mark-unread); the shell's server-synced lastVisitedAt fills the gap so a
+  // visit on another device still clears the unread cue here.
+  const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const lastVisitedAt = localLastVisitedAt ?? thread.lastVisitedAt ?? undefined;
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
   const runningTerminalIds = useThreadRunningTerminalIds({

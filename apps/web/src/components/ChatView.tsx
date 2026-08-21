@@ -4244,6 +4244,24 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const supportsThreadVisits = serverConfig?.environment.capabilities.threadVisits === true;
+  // Server-side twin of the markThreadVisited stamp above: reading a finished
+  // thread here must clear the unread cue on every device, so sync the same
+  // completedAt acknowledgement to the server. Guarded on the shell's current
+  // value so re-renders and the echo of our own visit don't re-dispatch; the
+  // decider is monotonic, so a raced older visit is a server-side no-op.
+  const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  useEffect(() => {
+    if (!supportsThreadVisits || activeThreadShell === null) return;
+    const completedAt = activeThreadShell.latestTurn?.completedAt;
+    if (!completedAt) return;
+    const syncedVisitedAt = activeThreadShell.lastVisitedAt;
+    if (syncedVisitedAt != null && Date.parse(syncedVisitedAt) >= Date.parse(completedAt)) return;
+    void visitThreadMutation({
+      environmentId: activeThreadShell.environmentId,
+      input: { threadId: activeThreadShell.id, visitedAt: completedAt },
+    });
+  }, [activeThreadShell, supportsThreadVisits, visitThreadMutation]);
   const nowMinute = useNowMinute();
   const snoozeNow = new Date().toISOString();
   const activeThreadSnoozed =

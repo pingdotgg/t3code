@@ -433,7 +433,9 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
-      lastVisitedAt,
+      // Local stamp wins; the shell's server-synced visit fills the gap so a
+      // visit on another device clears the unread cue here too.
+      lastVisitedAt: lastVisitedAt ?? thread.lastVisitedAt ?? undefined,
     },
   });
 

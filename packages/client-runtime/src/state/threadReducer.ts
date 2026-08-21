@@ -167,6 +167,16 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.visited":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          lastVisitedAt: event.payload.lastVisitedAt,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     case "thread.pinned":
       return {
         kind: "updated",

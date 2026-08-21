@@ -670,6 +670,43 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.visit": {
+      // requireThread, not requireThreadNotArchived: archived threads stay
+      // openable, and acknowledging one must not fail.
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Monotonic: a visit never moves the acknowledgement backwards, so a
+      // raced or replayed older visit re-emits the existing value (the
+      // engine rejects zero-event commands) and projects as a no-op. NaN
+      // from an unparseable stored value fails the comparison and lets the
+      // fresh visit through.
+      const existingVisitedAt = thread.lastVisitedAt ?? null;
+      const lastVisitedAt =
+        existingVisitedAt !== null && Date.parse(existingVisitedAt) >= Date.parse(command.visitedAt)
+          ? existingVisitedAt
+          : command.visitedAt;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.visited",
+        payload: {
+          threadId: command.threadId,
+          lastVisitedAt,
+          // A visit is passive acknowledgement: always keep the thread's
+          // existing updatedAt so reading never churns ordering.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.pin": {
       const thread = yield* requireThreadNotArchived({
         readModel,

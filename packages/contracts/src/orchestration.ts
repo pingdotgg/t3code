@@ -400,6 +400,11 @@ export const OrchestrationThread = Schema.Struct({
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // When the user last opened this thread (stamped with the acknowledged
+  // turn's completedAt — see ThreadVisitCommand). Server-synced so "seen on
+  // one device" clears the unread cue on every device. Optional so payloads
+  // from pre-visit servers still decode.
+  lastVisitedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // A pin overrides the settled/snoozed lifecycle: while pinnedAt is set the
   // thread renders in the pinned block and never classifies into a shelf.
   // Optional so payloads from pre-pinning servers still decode.
@@ -466,6 +471,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Same contract as OrchestrationThread.lastVisitedAt: server-synced
+  // last-opened acknowledgement, optional for pre-visit servers.
+  lastVisitedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
@@ -735,6 +743,17 @@ const ThreadUnsnoozeCommand = Schema.Struct({
   reason: Schema.Literal("user"),
 });
 
+const ThreadVisitCommand = Schema.Struct({
+  type: Schema.Literal("thread.visit"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // The completion being acknowledged, not "now": clients stamp the
+  // latestTurn.completedAt they are looking at, so a completion that lands
+  // while the thread is open still reads as unseen. Server-side timestamps
+  // on both ends of the unread comparison also dodge client clock skew.
+  visitedAt: IsoDateTime,
+});
+
 const ThreadPinCommand = Schema.Struct({
   type: Schema.Literal("thread.pin"),
   commandId: CommandId,
@@ -921,6 +940,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
+  ThreadVisitCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
@@ -949,6 +969,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
+  ThreadVisitCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
@@ -1067,6 +1088,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unsettled",
   "thread.snoozed",
   "thread.unsnoozed",
+  "thread.visited",
   "thread.pinned",
   "thread.unpinned",
   "thread.pin-reordered",
@@ -1179,6 +1201,14 @@ export const ThreadUnsnoozedPayload = Schema.Struct({
   // thread.unsettled's activity resets. Timer wakes emit no event: clients
   // derive them from snoozedUntil passing.
   reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadVisitedPayload = Schema.Struct({
+  threadId: ThreadId,
+  lastVisitedAt: IsoDateTime,
+  // Deliberately the thread's EXISTING updatedAt: a visit is passive
+  // acknowledgement, so it must never churn updatedAt-based ordering.
   updatedAt: IsoDateTime,
 });
 
@@ -1395,6 +1425,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unsnoozed"),
     payload: ThreadUnsnoozedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.visited"),
+    payload: ThreadVisitedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

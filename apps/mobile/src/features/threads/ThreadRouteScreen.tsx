@@ -56,6 +56,8 @@ import {
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
@@ -214,6 +216,28 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  // Server-synced "seen it" acknowledgement, mirroring web's ChatView: having
+  // the finished thread open stamps a visit at the turn's completedAt so the
+  // unread cue clears on every device, not just this one. Guarded on the
+  // shell's synced value so the echo of our own visit does not re-dispatch;
+  // the decider is monotonic, so a raced older visit is a server-side no-op.
+  // Version skew: never send thread.visit to a server that predates it.
+  useEffect(() => {
+    if (selectedThread === null) return;
+    const supportsThreadVisits =
+      appAtomRegistry.get(environmentServerConfigsAtom).get(selectedThread.environmentId)
+        ?.environment.capabilities.threadVisits === true;
+    if (!supportsThreadVisits) return;
+    const completedAt = selectedThread.latestTurn?.completedAt;
+    if (!completedAt) return;
+    const syncedVisitedAt = selectedThread.lastVisitedAt;
+    if (syncedVisitedAt != null && Date.parse(syncedVisitedAt) >= Date.parse(completedAt)) return;
+    void visitThreadMutation({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id, visitedAt: completedAt },
+    });
+  }, [selectedThread, visitThreadMutation]);
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);

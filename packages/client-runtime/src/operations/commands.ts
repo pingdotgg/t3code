@@ -39,6 +39,7 @@ export type SettleThreadInput = CommandInput<"thread.settle">;
 export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
 export type SnoozeThreadInput = CommandInput<"thread.snooze">;
 export type UnsnoozeThreadInput = CommandInput<"thread.unsnooze">;
+export type VisitThreadInput = CommandInput<"thread.visit">;
 export type PinThreadInput = CommandInput<"thread.pin">;
 export type UnpinThreadInput = CommandInput<"thread.unpin">;
 export type ReorderPinnedThreadInput = CommandInput<"thread.pin.reorder">;
@@ -196,6 +197,16 @@ export const unsnoozeThread: (input: UnsnoozeThreadInput) => CommandEffect = Eff
   return yield* dispatch({
     ...input,
     type: "thread.unsnooze",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const visitThread: (input: VisitThreadInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.visitThread",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.visit",
     commandId: yield* commandId(input),
   });
 });

@@ -161,7 +161,8 @@ type ThreadStatusInput = Pick<
   | "session"
   | "backgroundLiveness"
 > & {
-  lastVisitedAt?: string | undefined;
+  // Nullable to accept the shell's server-synced lastVisitedAt directly.
+  lastVisitedAt?: string | null | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {

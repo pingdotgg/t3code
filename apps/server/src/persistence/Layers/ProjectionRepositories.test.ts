@@ -96,6 +96,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        lastVisitedAt: null,
         pinnedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -159,6 +160,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: "2026-03-25T00:00:00.000Z",
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
+        lastVisitedAt: "2026-03-25T00:00:00.000Z",
         pinnedAt: "2026-03-25T00:00:00.000Z",
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -178,6 +180,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(row.settledAt, "2026-03-25T00:00:00.000Z");
       assert.strictEqual(row.snoozedUntil, "2026-03-26T09:00:00.000Z");
       assert.strictEqual(row.snoozedAt, "2026-03-25T00:00:00.000Z");
+      assert.strictEqual(row.lastVisitedAt, "2026-03-25T00:00:00.000Z");
       assert.strictEqual(row.pinnedAt, "2026-03-25T00:00:00.000Z");
 
       // Un-settle to the keep-active pin and wake the snooze; confirm the
@@ -188,6 +191,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        lastVisitedAt: null,
         pinnedAt: null,
       });
       const repersisted = yield* threads.getById({
