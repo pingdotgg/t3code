@@ -1586,22 +1586,18 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
 }
 
 // Some providers bake a "<ToolName>: " heading onto payload.detail while the
-// command preview stays bare, e.g. detail "Bash: ls" vs command "ls". That
-// prefix doesn't survive as its own field through server-side payload
-// projection, so match it structurally against the already-projected detail
-// and command strings instead of trusting a toolName field.
-function isToolNamePrefixedDuplicate(
-  normalizedDetail: string | null,
-  normalizedTarget: string | null,
-): boolean {
-  if (!normalizedDetail || !normalizedTarget || normalizedDetail === normalizedTarget) {
-    return false;
+// command preview stays bare, e.g. detail "Bash: ls" vs command "ls".
+// payload.data.toolName carries that same name (preserved through server-side
+// payload projection), so strip exactly that prefix before comparing, rather
+// than guessing at an arbitrary "word:" heading — a detail like "warning:
+// true" must stay visible even when the command happens to be "true".
+function stripToolNamePrefix(value: string, payload: Record<string, unknown> | null): string {
+  const toolName = asTrimmedString(asRecord(payload?.data)?.toolName);
+  if (!toolName) {
+    return value;
   }
-  if (!normalizedDetail.endsWith(normalizedTarget)) {
-    return false;
-  }
-  const prefix = normalizedDetail.slice(0, normalizedDetail.length - normalizedTarget.length);
-  return /^[a-z0-9][a-z0-9 _-]*:\s+$/.test(prefix);
+  const prefix = `${toolName}: `;
+  return value.toLowerCase().startsWith(prefix.toLowerCase()) ? value.slice(prefix.length) : value;
 }
 
 function extractToolDetail(
@@ -1611,7 +1607,9 @@ function extractToolDetail(
   const rawDetail = asTrimmedString(payload?.detail);
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
-  const normalizedDetail = normalizePreviewForComparison(detail);
+  const normalizedDetail = normalizePreviewForComparison(
+    detail ? stripToolNamePrefix(detail, payload) : detail,
+  );
   const commandTool = isCommandToolDetail(payload, heading);
   const commandPreview = commandTool
     ? extractToolCommand(payload)
@@ -1624,10 +1622,7 @@ function extractToolDetail(
     detail &&
     normalizedHeading !== normalizedDetail &&
     (!commandTool ||
-      (normalizedCommand !== normalizedDetail &&
-        normalizedRawCommand !== normalizedDetail &&
-        !isToolNamePrefixedDuplicate(normalizedDetail, normalizedCommand) &&
-        !isToolNamePrefixedDuplicate(normalizedDetail, normalizedRawCommand)))
+      (normalizedCommand !== normalizedDetail && normalizedRawCommand !== normalizedDetail))
   ) {
     return detail;
   }

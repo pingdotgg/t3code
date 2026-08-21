@@ -126,7 +126,7 @@ describe("projectActivityPayload", () => {
 
     expect(claude.payload).toMatchObject({
       toolCallId: "claude-call-1",
-      data: { command: "vp test run" },
+      data: { toolName: "Bash", command: "vp test run" },
     });
     expect(openCode.payload).toMatchObject({
       toolCallId: "opencode-call-1",
@@ -134,6 +134,23 @@ describe("projectActivityPayload", () => {
     });
     expect(JSON.stringify(claude.payload).length).toBeLessThan(200);
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
+  });
+
+  it("preserves toolName for command activities so the web client can recognize a redundant heading in detail", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        detail: 'Bash: cd project && grep -n "TODO" file.md',
+        data: {
+          toolName: "Bash",
+          command: 'cd project && grep -n "TODO" file.md',
+        },
+      }),
+    );
+
+    expect(projected.payload).toMatchObject({
+      data: { toolName: "Bash" },
+    });
   });
 
   it("slims Codex-shaped mcp_tool_call items to rendered fields plus a result summary", () => {
