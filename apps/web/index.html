@@ -453,7 +453,17 @@
         object-fit: contain;
       }
     </style>
-    <title>T3 Code (Alpha)</title>
+    <title>T3 Code</title>
+    <script>
+      (() => {
+        // The desktop preload injects branding before page scripts run, so the
+        // native window title carries the stage label from first paint.
+        const branding = window.desktopBridge?.getAppBranding?.();
+        if (branding?.displayName) {
+          document.title = branding.displayName;
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root">
