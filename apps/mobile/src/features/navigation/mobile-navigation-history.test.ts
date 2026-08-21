@@ -79,6 +79,7 @@ describe("createMobileNavigationHistory", () => {
     history.visit(history.requestBack()!.location);
     const forward = history.requestForward();
     expect(forward).toEqual({
+      direction: "forward",
       index: 2,
       location: location("/threads/env/thread-a", "a-2"),
     });
