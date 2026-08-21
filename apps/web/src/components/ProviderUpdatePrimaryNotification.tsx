@@ -16,7 +16,6 @@ import {
   getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateRejectedToastView,
-  getProviderUpdateRunningToastView,
   providerUpdateNotificationKey,
   shouldShowPrimaryProviderUpdateToast,
   type ProviderUpdateToastView,
@@ -220,10 +219,7 @@ export function ProviderUpdatePrimaryNotification() {
       };
       activeToastRef.current = activeUpdate;
 
-      const runningView = getProviderUpdateRunningToastView(providerCount);
-      if (!shouldShowPrimaryProviderUpdateToast(runningView)) {
-        toastManager.close(toastId);
-      }
+      toastManager.close(toastId);
 
       void (async () => {
         const results = [];
