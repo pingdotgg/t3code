@@ -27,6 +27,7 @@ import {
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useThemeColor } from "../../lib/useThemeColor";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 
@@ -49,6 +50,10 @@ import {
   stagePendingTerminalLaunch,
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
+import {
+  countRunningTerminalSessions,
+  terminalRunningSessionLabel,
+} from "../terminal/terminalRunningStatus";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
 import {
   ThreadGitControls,
@@ -325,6 +330,8 @@ function ThreadRouteContent(
       }),
     [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
   );
+  const runningTerminalCount = countRunningTerminalSessions(terminalMenuSessions);
+  const terminalRunningLabel = terminalRunningSessionLabel(runningTerminalCount);
   const selectedThreadDetailWorktreePath = selectedThreadDetail?.worktreePath ?? null;
   const handleReconnectEnvironment = useCallback(() => {
     if (!environmentId) {
@@ -422,6 +429,7 @@ function ThreadRouteContent(
   // panes bring their own nested native headers (which underlap the status
   // bar); elsewhere the pane content pads itself below the top inset.
   const safeAreaInsets = useSafeAreaInsets();
+  const terminalActiveColor = useThemeColor("--color-terminal-active");
   const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const GitInspector = useCallback(
     () => (
@@ -698,9 +706,14 @@ function ThreadRouteContent(
     }
     if (selectedThreadProject?.workspaceRoot) {
       actions.push({
-        accessibilityLabel: "Open terminal",
+        accessibilityLabel:
+          terminalRunningLabel === null
+            ? "Open terminal"
+            : `Open terminal, ${terminalRunningLabel}`,
         icon: "terminal",
         onPress: () => handleOpenTerminal(null),
+        pulse: terminalRunningLabel !== null,
+        tintColor: terminalRunningLabel === null ? undefined : terminalActiveColor,
       });
     }
     actions.push({
@@ -725,6 +738,8 @@ function ThreadRouteContent(
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
+    terminalActiveColor,
+    terminalRunningLabel,
   ]);
 
   // Deep links / cold starts land with Thread as the ONLY route, where the
