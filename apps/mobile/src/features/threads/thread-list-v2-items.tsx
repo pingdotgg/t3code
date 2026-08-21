@@ -77,7 +77,7 @@ const SLIM_MENU_ACTIONS: MenuAction[] = [
 ];
 
 const SNOOZED_MENU_ACTIONS: MenuAction[] = [
-  { id: "unsnooze", title: "Wake thread", image: "clock" },
+  { id: "unsnooze", title: "Wake", image: "clock" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
@@ -451,8 +451,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
   // row can un-settle — explicit settles clear the override, auto-settled
-  // rows get pinned active until real activity clears the pin.
-  const canUnsettle = variant === "slim";
+  // rows stay explicitly active until real activity clears the override.
+  // The row's rendered category is authoritative for its lifecycle menu.
+  // Snoozed rows are slim too, but their only transition is Wake.
+  const canUnsettle = variant === "slim" && !snoozedRow;
   const [snoozeGateTick, bumpSnoozeGateTick] = useState(0);
   const snoozeGateExpiryMs = props.snoozeSupported
     ? resolveThreadListV2SnoozeGateExpiryMs(thread, { now: new Date().toISOString() })
@@ -483,9 +485,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       })),
     [snoozePresets],
   );
+  const snoozeMenuItem = useMemo<MenuAction[]>(
+    () =>
+      swipeActions.secondary === "snooze"
+        ? [
+            {
+              id: "snooze",
+              title: "Snooze",
+              image: "clock",
+              subactions: snoozePresetActions,
+            },
+          ]
+        : [],
+    [snoozePresetActions, swipeActions.secondary],
+  );
   // Pinned cards keep the full lifecycle menu; only the pin item flips to
-  // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
-  // hides the card until wake with the pin intact.)
+  // Unpin. Settling or snoozing a pinned thread moves it out of Pinned;
+  // Wake returns a snoozed thread to Regular.
   const pinMenuItem = useMemo<MenuAction[]>(
     () =>
       props.pinningSupported
@@ -531,17 +547,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
       { id: "settle", title: "Settle", image: "checkmark" },
-      {
-        id: "snooze",
-        title: "Snooze",
-        image: "clock",
-        subactions: snoozePresetActions,
-      },
+      ...snoozeMenuItem,
       ...pinMenuItem,
       ...titleRegenerationMenuItems,
       { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
     ],
-    [pinMenuItem, snoozePresetActions, titleRegenerationMenuItems],
+    [pinMenuItem, snoozeMenuItem, titleRegenerationMenuItems],
   );
   const cardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -552,14 +563,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [pinMenuItem, titleRegenerationMenuItems],
   );
-  const slimMenuActions = useMemo<MenuAction[]>(
+  const settledMenuActions = useMemo<MenuAction[]>(
     () => [
       SLIM_MENU_ACTIONS[0]!,
-      ...(thread.pinnedAt != null ? pinMenuItem : []),
+      ...snoozeMenuItem,
+      ...pinMenuItem,
       ...titleRegenerationMenuItems,
       SLIM_MENU_ACTIONS[1]!,
     ],
-    [pinMenuItem, thread.pinnedAt, titleRegenerationMenuItems],
+    [pinMenuItem, snoozeMenuItem, titleRegenerationMenuItems],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [SNOOZED_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SNOOZED_MENU_ACTIONS[1]!],
@@ -943,7 +955,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 : !props.settlementSupported
                   ? legacyMenuActions
                   : canUnsettle
-                    ? slimMenuActions
+                    ? settledMenuActions
                     : swipeActions.secondary === "snooze"
                       ? snoozableCardMenuActions
                       : cardMenuActions

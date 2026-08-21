@@ -164,7 +164,7 @@ export function useThreadActionMenu(input: {
               title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
               timeout: 5_000,
               actionProps: {
-                children: "Undo",
+                children: "Wake",
                 onClick: () => {
                   void unsnoozeThread(threadRef).then((undone) => {
                     if (undone._tag === "Failure" && !isAtomCommandInterrupted(undone)) {

@@ -25,6 +25,7 @@ function makeReadModel(input: {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
   readonly archivedAt?: string | null;
+  readonly settledOverride?: "settled" | "active" | null;
   readonly activities?: OrchestrationThread["activities"];
   readonly messages?: OrchestrationThread["messages"];
 }): OrchestrationReadModel {
@@ -45,7 +46,7 @@ function makeReadModel(input: {
         createdAt: NOW,
         updatedAt: NOW,
         archivedAt: input.archivedAt ?? null,
-        settledOverride: null,
+        settledOverride: input.settledOverride ?? null,
         settledAt: null,
         snoozedUntil: input.snoozedUntil ?? null,
         snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
@@ -74,7 +75,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
         readModel: makeReadModel({}),
       });
       const events = Array.isArray(event) ? event : [event];
-      expect(events).toHaveLength(1);
+      expect(events.map((entry) => entry.type)).toEqual(["thread.snoozed", "thread.unsettled"]);
       expect(events[0]?.type).toBe("thread.snoozed");
       if (events[0]?.type === "thread.snoozed") {
         expect(events[0].payload.snoozedUntil).toBe(FUTURE_WAKE);
@@ -148,7 +149,10 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
           threadId: ThreadId.make("thread-1"),
           snoozedUntil: FUTURE_WAKE,
         },
-        readModel: makeReadModel({ snoozedUntil: FUTURE_WAKE }),
+        readModel: makeReadModel({
+          snoozedUntil: FUTURE_WAKE,
+          settledOverride: "active",
+        }),
       });
       const events = Array.isArray(reEmit) ? reEmit : [reEmit];
       expect(events).toHaveLength(1);
@@ -169,7 +173,10 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
           threadId: ThreadId.make("thread-1"),
           snoozedUntil: "1970-01-03T09:00:00.000Z",
         },
-        readModel: makeReadModel({ snoozedUntil: FUTURE_WAKE }),
+        readModel: makeReadModel({
+          snoozedUntil: FUTURE_WAKE,
+          settledOverride: "active",
+        }),
       });
       const events = Array.isArray(event) ? event : [event];
       if (events[0]?.type === "thread.snoozed") {
@@ -188,7 +195,10 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
           threadId: ThreadId.make("thread-1"),
           reason: "user",
         },
-        readModel: makeReadModel({ snoozedUntil: FUTURE_WAKE }),
+        readModel: makeReadModel({
+          snoozedUntil: FUTURE_WAKE,
+          settledOverride: "active",
+        }),
       });
       const events = Array.isArray(event) ? event : [event];
       expect(events[0]?.type).toBe("thread.unsnoozed");
@@ -204,7 +214,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
           threadId: ThreadId.make("thread-1"),
           reason: "user",
         },
-        readModel: makeReadModel({}),
+        readModel: makeReadModel({ settledOverride: "active" }),
       });
       const awakeEvents = Array.isArray(awake) ? awake : [awake];
       expect(awakeEvents[0]?.type).toBe("thread.unsnoozed");

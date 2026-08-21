@@ -395,9 +395,8 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  // Snooze is an overlay on the active lifecycle, not a fourth destination:
-  // a snoozed thread stays "active" in the model and is only suppressed from
-  // the inbox until snoozedUntil passes (or the thread raises its hand).
+  // Snooze parks a thread until snoozedUntil passes or the thread raises its
+  // hand. User lifecycle commands clear the other sidebar category fields.
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),

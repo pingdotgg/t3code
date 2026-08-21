@@ -70,7 +70,7 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
         readModel: makeReadModel({}),
       });
       const events = Array.isArray(event) ? event : [event];
-      expect(events).toHaveLength(1);
+      expect(events.map((entry) => entry.type)).toEqual(["thread.pinned", "thread.unsettled"]);
       expect(events[0]?.type).toBe("thread.pinned");
       if (events[0]?.type === "thread.pinned") {
         expect(events[0].payload.pinnedAt).toBe(events[0].payload.updatedAt);
@@ -86,7 +86,7 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
           commandId: CommandId.make("cmd-pin-again"),
           threadId: ThreadId.make("thread-1"),
         },
-        readModel: makeReadModel({ pinnedAt: PINNED_AT }),
+        readModel: makeReadModel({ pinnedAt: PINNED_AT, settledOverride: "active" }),
       });
       const events = Array.isArray(event) ? event : [event];
       expect(events[0]?.type).toBe("thread.pinned");
@@ -105,7 +105,7 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
           commandId: CommandId.make("cmd-unpin"),
           threadId: ThreadId.make("thread-1"),
         },
-        readModel: makeReadModel({ pinnedAt: PINNED_AT }),
+        readModel: makeReadModel({ pinnedAt: PINNED_AT, settledOverride: "active" }),
       });
       const events = Array.isArray(event) ? event : [event];
       expect(events[0]?.type).toBe("thread.unpinned");
@@ -160,14 +160,17 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
           commandId: CommandId.make("cmd-pin-snoozed"),
           threadId: ThreadId.make("thread-1"),
         },
-        readModel: makeReadModel({ snoozedUntil: "1970-01-02T09:00:00.000Z" }),
+        readModel: makeReadModel({
+          settledOverride: "active",
+          snoozedUntil: "1970-01-02T09:00:00.000Z",
+        }),
       });
       const events = Array.isArray(event) ? event : [event];
       expect(events.map((entry) => entry.type)).toEqual(["thread.pinned", "thread.unsnoozed"]);
     }),
   );
 
-  it.effect("pinning an unparked thread emits only thread.pinned", () =>
+  it.effect("pinning a neutral thread explicitly keeps it active", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({
         command: {
@@ -178,7 +181,7 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
         readModel: makeReadModel({}),
       });
       const events = Array.isArray(event) ? event : [event];
-      expect(events.map((entry) => entry.type)).toEqual(["thread.pinned"]);
+      expect(events.map((entry) => entry.type)).toEqual(["thread.pinned", "thread.unsettled"]);
     }),
   );
 
@@ -190,7 +193,7 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
           commandId: CommandId.make("cmd-settle-pinned"),
           threadId: ThreadId.make("thread-1"),
         },
-        readModel: makeReadModel({ pinnedAt: PINNED_AT }),
+        readModel: makeReadModel({ pinnedAt: PINNED_AT, settledOverride: "active" }),
       });
       const events = Array.isArray(event) ? event : [event];
       expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unpinned"]);
@@ -256,7 +259,11 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
             threadId: ThreadId.make("thread-1"),
             orderKey: "t",
           },
-          readModel: makeReadModel({ pinnedAt: PINNED_AT, pinOrderKey: "g" }),
+          readModel: makeReadModel({
+            pinnedAt: PINNED_AT,
+            pinOrderKey: "g",
+            settledOverride: "active",
+          }),
         });
         const events = Array.isArray(event) ? event : [event];
         expect(events[0]?.type).toBe("thread.pinned");

@@ -1,8 +1,18 @@
 "use client";
 
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
+import type { Ref } from "react";
 
 import { cn } from "~/lib/utils";
+
+interface ScrollAreaProps extends ScrollAreaPrimitive.Root.Props {
+  readonly scrollFade?: boolean;
+  readonly scrollbarGutter?: boolean;
+  readonly hideScrollbars?: boolean;
+  readonly chainVerticalScroll?: boolean;
+  readonly viewportRef?: Ref<HTMLDivElement> | undefined;
+  readonly viewportOverlayRef?: Ref<HTMLDivElement> | undefined;
+}
 
 function getVirtualizedScrollFadeClassName({ top, bottom }: { top: boolean; bottom: boolean }) {
   if (!top && !bottom) return undefined;
@@ -28,19 +38,17 @@ function ScrollArea({
   scrollbarGutter = false,
   hideScrollbars = false,
   chainVerticalScroll = false,
+  viewportRef,
+  viewportOverlayRef,
   ...props
-}: ScrollAreaPrimitive.Root.Props & {
-  scrollFade?: boolean;
-  scrollbarGutter?: boolean;
-  hideScrollbars?: boolean;
-  chainVerticalScroll?: boolean;
-}) {
+}: ScrollAreaProps) {
   return (
     <ScrollAreaPrimitive.Root
       className={cn("relative size-full min-h-0 overflow-hidden rounded-[inherit]", className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        ref={viewportRef}
         className={cn(
           "h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadows focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain",
           chainVerticalScroll && "overscroll-y-auto",
@@ -54,6 +62,14 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
+      {viewportOverlayRef !== undefined ? (
+        <div
+          ref={viewportOverlayRef}
+          aria-hidden
+          data-slot="scroll-area-viewport-overlay"
+          className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-[inherit]"
+        />
+      ) : null}
       {!hideScrollbars && (
         <>
           <ScrollBar orientation="vertical" />

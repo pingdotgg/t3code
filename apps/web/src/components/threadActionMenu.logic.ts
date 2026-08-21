@@ -68,9 +68,8 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
         ]
       : []),
-    // Both lifecycle actions stay available on pinned threads: settling
-    // clears the pin ("done" beats "keep on top"), and snoozing hides the
-    // card until wake with the pin intact.
+    // Both lifecycle actions stay available on pinned threads. Settling and
+    // snoozing each move the thread out of Pinned.
     ...(state.supports.settlement
       ? [
           state.isSettled
