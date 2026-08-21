@@ -91,8 +91,12 @@ export function resolveRenameCommit(input: {
 }
 
 // How long a click on the thread title waits before opening the action menu,
-// so a double-click-to-rename can cancel it first.
-const TITLE_MENU_OPEN_DELAY_MS = 250;
+// so a double-click-to-rename can cancel it first. Only the native desktop
+// menu needs this: it swallows input while open, so the wait must cover the
+// OS double-click interval. The browser fallback menu keeps seeing DOM
+// events (the second click dismisses it and dblclick still fires), so it
+// opens immediately.
+const TITLE_MENU_OPEN_DELAY_MS = 500;
 
 export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
@@ -194,7 +198,7 @@ export const ChatHeader = memo(function ChatHeader({
     },
     [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, updateThreadMetadata],
   );
-  const { openMenu } = useThreadActionMenu({
+  const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
     projectCwd: activeProjectCwd,
     changeRequest,
@@ -202,22 +206,25 @@ export const ChatHeader = memo(function ChatHeader({
   });
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const titleMenuTimerRef = useRef<number | null>(null);
+  const cancelPendingTitleMenu = useCallback(() => {
+    if (titleMenuTimerRef.current === null) return;
+    clearTimeout(titleMenuTimerRef.current);
+    titleMenuTimerRef.current = null;
+  }, []);
   // Drop a pending menu-open when the thread changes or the header unmounts,
   // so it can never fire for a thread the user already left.
   useEffect(
     () => () => {
-      if (titleMenuTimerRef.current !== null) {
-        clearTimeout(titleMenuTimerRef.current);
-        titleMenuTimerRef.current = null;
-      }
+      cancelPendingTitleMenu();
     },
-    [activeThreadId],
+    [activeThreadId, cancelPendingTitleMenu],
   );
   const openTitleMenuNow = useCallback(() => {
+    cancelPendingTitleMenu();
     const rect = titleButtonRef.current?.getBoundingClientRect();
     if (!rect) return;
     openMenu({ x: rect.left, y: rect.bottom + 4 });
-  }, [openMenu]);
+  }, [cancelPendingTitleMenu, openMenu]);
   const openMenuFromTitle = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>) => {
       // The trailing click of a double-click belongs to rename, not the menu.
@@ -226,30 +233,30 @@ export const ChatHeader = memo(function ChatHeader({
       // the first half of a double-click, so they open without waiting.
       const clickedChevron =
         (event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null;
-      if (event.detail === 0 || clickedChevron) {
+      if (event.detail === 0 || clickedChevron || window.desktopBridge === undefined) {
         openTitleMenuNow();
         return;
       }
-      // A native desktop menu swallows the second click of a double-click, so
-      // the open must stay pending long enough for dblclick to cancel it.
-      if (titleMenuTimerRef.current !== null) clearTimeout(titleMenuTimerRef.current);
+      // Stay pending long enough for dblclick to cancel the open before the
+      // native menu appears and swallows the second click.
+      cancelPendingTitleMenu();
       titleMenuTimerRef.current = window.setTimeout(() => {
         titleMenuTimerRef.current = null;
         openTitleMenuNow();
       }, TITLE_MENU_OPEN_DELAY_MS);
     },
-    [openTitleMenuNow],
+    [cancelPendingTitleMenu, openTitleMenuNow],
   );
   const handleTitleDoubleClick = useCallback(
     (event: ReactMouseEvent) => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      if (titleMenuTimerRef.current !== null) {
-        clearTimeout(titleMenuTimerRef.current);
-        titleMenuTimerRef.current = null;
-      }
+      // The chevron is the explicit menu affordance; only the title text renames.
+      if ((event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null) return;
+      cancelPendingTitleMenu();
+      closeMenu();
       startRename();
     },
-    [startRename],
+    [cancelPendingTitleMenu, closeMenu, startRename],
   );
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
@@ -257,10 +264,11 @@ export const ChatHeader = memo(function ChatHeader({
       // The right-side controls (git, scripts, open-in) keep their own
       // behavior; only the breadcrumb area opens the thread menu.
       if ((event.target as HTMLElement).closest("[data-chat-header-actions]")) return;
+      cancelPendingTitleMenu();
       event.preventDefault();
       openMenu({ x: event.clientX, y: event.clientY });
     },
-    [isServerThread, openMenu, renamingTitle],
+    [cancelPendingTitleMenu, isServerThread, openMenu, renamingTitle],
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
