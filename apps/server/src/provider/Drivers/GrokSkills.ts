@@ -245,6 +245,7 @@ export function parseGrokInspectReport(report: unknown, sourceCwd?: string): Gro
     slashCommandsByName.set(slashKey, {
       name: slashName,
       ...(description ? { description } : {}),
+      ...(skillSourceCwd ? { sourceCwd: skillSourceCwd } : {}),
     });
     if (explicitSlashName) {
       explicitSlashCommandNames.add(slashKey);
@@ -344,7 +345,10 @@ export function mergeGrokHarnessCatalogs(
       skillsByKey.set(skillInventoryKey(skill.name, skill.sourceCwd), skill);
     }
     for (const command of catalog.slashCommands) {
-      slashCommandsByName.set(command.name.toLowerCase(), command);
+      slashCommandsByName.set(
+        skillInventoryKey(command.name.toLowerCase(), command.sourceCwd),
+        command,
+      );
     }
   }
 

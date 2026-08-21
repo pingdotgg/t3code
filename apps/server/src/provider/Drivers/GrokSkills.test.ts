@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 
 import {
   discoverGrokSkills,
+  mergeGrokHarnessCatalogs,
   parseGrokAvailableCommands,
   parseGrokInspectReport,
   queryGrokInspectCatalog,
@@ -66,6 +67,10 @@ it("parseGrokInspectReport includes bundled skills and invocable slash names", (
   assert.ok(catalog.skills.some((skill) => skill.name === "docx"));
   assert.ok(catalog.slashCommands.some((command) => command.name === "create-skill"));
   assert.ok(catalog.slashCommands.some((command) => command.name === "bundled:imagine"));
+  assert.equal(
+    catalog.slashCommands.find((command) => command.name === "local-review")?.sourceCwd,
+    "/repo",
+  );
   assert.ok(!catalog.slashCommands.some((command) => command.name === "docx"));
 });
 
@@ -262,6 +267,18 @@ it("resolveGrokPickerCatalog treats an empty ACP menu as authoritative", () => {
   assert.deepEqual(catalog.slashCommands, []);
 });
 
+it("mergeGrokHarnessCatalogs keeps same-named workspace commands separate", () => {
+  const catalog = mergeGrokHarnessCatalogs([
+    { skills: [], slashCommands: [{ name: "review", sourceCwd: "/repo-a" }] },
+    { skills: [], slashCommands: [{ name: "review", sourceCwd: "/repo-b" }] },
+  ]);
+
+  assert.deepEqual(
+    catalog.slashCommands.map((command) => command.sourceCwd),
+    ["/repo-a", "/repo-b"],
+  );
+});
+
 it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
   it.effect("discovers Claude-compatible and native skills at the project root", () =>
     Effect.gen(function* () {
@@ -432,6 +449,10 @@ it.layer(NodeServices.layer)("queryGrokInspectCatalog", (it) => {
           workspace,
         );
         assert.ok(catalog?.slashCommands.some((command) => command.name === "create-skill"));
+        assert.equal(
+          catalog?.slashCommands.find((command) => command.name === "project-review")?.sourceCwd,
+          workspace,
+        );
       }),
     ),
   );
