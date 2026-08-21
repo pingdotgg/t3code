@@ -4,6 +4,7 @@ import UIKit
 
 public struct ThreadDetailView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.t3CodeSizeSteps) private var codeSizeSteps
     @SwiftUI.Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Bindable var model: FeatureRootModel
@@ -103,6 +104,10 @@ public struct ThreadDetailView: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+            // Files, diffs and terminal output are code surfaces, and a sheet
+            // is hosted outside this view's environment, so the code size has
+            // to be republished here to reach them.
+            .t3CodeSizing(steps: codeSizeSteps)
         }
         .alert("Message not sent", isPresented: $sendFailed) {
             // Refocusing happens here rather than when the send fails: the
@@ -334,6 +339,7 @@ public struct ThreadDetailView: View {
                     messages: detail.messages,
                     renderUpdate: model.detailRenderUpdates[thread.id],
                     dynamicTypeSize: dynamicTypeSize,
+                    codeSizeSteps: codeSizeSteps,
                     isWorking: isWorking,
                     activeSubagentCount: detail.activeSubagentCount,
                     backgroundWorkIsActive: detail.backgroundWorkIsActive,
@@ -633,6 +639,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let messages: [FeatureMessage]
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
+    /// The app text size reaches hosted cells through the window trait
+    /// override; the code preference is an environment value with no trait to
+    /// ride on, so it is handed to each cell's hosting configuration instead.
+    let codeSizeSteps: Int
     let isWorking: Bool
     let activeSubagentCount: Int
     let backgroundWorkIsActive: Bool
@@ -668,6 +678,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             messages: messages,
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
+            codeSizeSteps: codeSizeSteps,
             isWorking: isWorking,
             activeSubagentCount: activeSubagentCount,
             backgroundWorkIsActive: backgroundWorkIsActive,
@@ -718,6 +729,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentThreadID: String?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
+        private var currentCodeSizeSteps = 0
         private var currentIsWorking = false
         private var currentActiveSubagentCount = 0
         private var currentBackgroundWorkIsActive = false
@@ -768,6 +780,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 cell.contentConfiguration = UIHostingConfiguration {
                     FeatureMessageView(message: message)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .environment(\.t3CodeSizeSteps, self?.currentCodeSizeSteps ?? 0)
                 }
                 .margins(.all, 0)
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
@@ -792,6 +805,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             messages: [FeatureMessage],
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
+            codeSizeSteps: Int,
             isWorking: Bool,
             activeSubagentCount: Int,
             backgroundWorkIsActive: Bool,
@@ -807,7 +821,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
+            // Both sizes are baked into every rendered cell, so a change to
+            // either one has to rebuild all of them.
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
+                || currentCodeSizeSteps != codeSizeSteps
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
             let workingDetailChanged = currentActiveSubagentCount != activeSubagentCount
@@ -830,6 +847,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
+            currentCodeSizeSteps = codeSizeSteps
             currentIsWorking = isWorking
             currentActiveSubagentCount = activeSubagentCount
             currentBackgroundWorkIsActive = backgroundWorkIsActive
@@ -1794,6 +1812,7 @@ struct FeatureMessageView: View {
                     .lineSpacing(3)
                     .textSelection(.enabled)
                     .padding(.top, 8)
+                    .t3CodeTextSize()
             } label: {
                 Label(message.toolName ?? "Tool output", systemImage: "terminal")
                     .font(T3Typography.tool.weight(.medium))

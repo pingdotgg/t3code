@@ -49,6 +49,9 @@ struct FeatureComposerApprovalPanel: View {
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
+                        // A command about to run is code; a plain-prose request
+                        // is not, so only the former takes the code size.
+                        .t3CodeTextSize(approval.kind == .command)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)

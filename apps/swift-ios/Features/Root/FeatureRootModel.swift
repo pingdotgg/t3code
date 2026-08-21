@@ -49,6 +49,8 @@ public final class FeatureRootModel {
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
+    private var settingsWriteTask: Task<Void, Error>?
+    private var settingsWriteGeneration: UInt64 = 0
 
     public init(
         client: any FeatureClient,
@@ -565,10 +567,15 @@ public final class FeatureRootModel {
 
     @discardableResult
     public func saveSettings(_ settings: FeatureSettings) async -> Bool {
-        await perform {
-            try await client.saveSettings(settings)
-            snapshot.settings = settings
+        let previous = snapshot.settings
+        snapshot.settings = settings
+        let saved = await perform {
+            try await enqueueSettingsWrite(settings)
         }
+        if !saved, snapshot.settings == settings {
+            snapshot.settings = previous
+        }
+        return saved
     }
 
     /// Applies appearance optimistically so selecting a theme updates every
@@ -576,15 +583,37 @@ public final class FeatureRootModel {
     /// settings snapshot. Other unsaved Settings edits remain drafts.
     @discardableResult
     public func saveAppearance(_ appearance: FeatureAppearance) async -> Bool {
-        let previous = snapshot.settings
-        guard previous.appearance != appearance else { return true }
+        await savePresentationPreference { $0.appearance = appearance }
+    }
 
+    /// Applies the text and code size preferences optimistically so dragging a
+    /// size control rescales every surface — including the Settings sheet doing
+    /// the dragging — before the write completes.
+    @discardableResult
+    public func saveTextSizes(
+        textSize: FeatureTextSizeAdjustment,
+        codeSize: FeatureTextSizeAdjustment
+    ) async -> Bool {
+        await savePresentationPreference {
+            $0.textSize = textSize
+            $0.codeSize = codeSize
+        }
+    }
+
+    /// Persists one presentation preference against the current settings
+    /// snapshot, leaving other unsaved Settings edits as drafts, and rolls the
+    /// optimistic change back if the write fails.
+    private func savePresentationPreference(
+        _ change: (inout FeatureSettings) -> Void
+    ) async -> Bool {
+        let previous = snapshot.settings
         var updated = previous
-        updated.appearance = appearance
+        change(&updated)
+        guard updated != previous else { return true }
         snapshot.settings = updated
 
         do {
-            try await client.saveSettings(updated)
+            try await enqueueSettingsWrite(updated)
             return true
         } catch {
             if snapshot.settings == updated {
@@ -595,6 +624,27 @@ public final class FeatureRootModel {
             }
             return false
         }
+    }
+
+    /// Preserves settings write order across main-actor reentrancy so an older
+    /// full-settings snapshot cannot finish after and replace a newer one.
+    private func enqueueSettingsWrite(_ settings: FeatureSettings) async throws {
+        let predecessor = settingsWriteTask
+        let write = Task { @MainActor [client] in
+            if let predecessor {
+                _ = await predecessor.result
+            }
+            try await client.saveSettings(settings)
+        }
+        settingsWriteGeneration &+= 1
+        let generation = settingsWriteGeneration
+        settingsWriteTask = write
+        defer {
+            if settingsWriteGeneration == generation {
+                settingsWriteTask = nil
+            }
+        }
+        try await write.value
     }
 
     @discardableResult

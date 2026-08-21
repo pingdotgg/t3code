@@ -21,6 +21,75 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func textSizesApplyImmediatelyAndPersistWithoutSavingTheDraft() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+
+        let save = Task {
+            await model.saveTextSizes(
+                textSize: FeatureTextSizeAdjustment(steps: 2),
+                codeSize: FeatureTextSizeAdjustment(steps: -1)
+            )
+        }
+        await Task.yield()
+
+        #expect(model.snapshot.settings.textSize.steps == 2)
+        #expect(model.snapshot.settings.codeSize.steps == -1)
+        #expect(await save.value)
+        #expect(client.savedSettings.last?.textSize.steps == 2)
+        #expect(client.savedSettings.last?.codeSize.steps == -1)
+    }
+
+    @Test
+    func unchangedTextSizesSkipTheWriteSoSliderResendsCostNothing() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+
+        let saved = await model.saveTextSizes(textSize: .standard, codeSize: .standard)
+
+        #expect(saved)
+        #expect(client.savedSettings.isEmpty)
+    }
+
+    @Test
+    func settingsWritesKeepCallOrderAndPreserveNewerValues() async {
+        let gate = FeatureSettingsSaveGate()
+        let client = FeatureClientStub()
+        client.beforeSaveSettings = {
+            await gate.enter()
+        }
+        let model = testRootModel(client: client)
+        var draft = model.snapshot.settings
+        draft.hapticsEnabled = false
+
+        let draftSave = Task { await model.saveSettings(draft) }
+        await gate.waitUntilCallCount(1)
+
+        let sizeSave = Task {
+            await model.saveTextSizes(
+                textSize: FeatureTextSizeAdjustment(steps: 2),
+                codeSize: FeatureTextSizeAdjustment(steps: -1)
+            )
+        }
+        await Task.yield()
+
+        #expect(model.snapshot.settings.hapticsEnabled == false)
+        #expect(model.snapshot.settings.textSize.steps == 2)
+        #expect(model.snapshot.settings.codeSize.steps == -1)
+        #expect(gate.callCount == 1)
+
+        await gate.releaseFirst()
+        await gate.waitUntilCallCount(2)
+
+        #expect(await draftSave.value)
+        #expect(await sizeSave.value)
+        #expect(client.savedSettings.count == 2)
+        #expect(client.savedSettings[1].hapticsEnabled == false)
+        #expect(client.savedSettings[1].textSize.steps == 2)
+        #expect(client.savedSettings[1].codeSize.steps == -1)
+    }
+
+    @Test
     func backgroundRefreshUsesTheBoundedClientPath() async {
         let client = FeatureClientStub()
         client.backgroundSnapshotValue = FeatureSnapshot(
@@ -1335,6 +1404,7 @@ private final class FeatureClientStub: FeatureClient {
     var environmentEnabledValue: Bool?
     var removedEnvironmentID: String?
     var beforeSendMessage: (() throws -> Void)?
+    var beforeSaveSettings: (@MainActor () async throws -> Void)?
     var loadThreadError: (any Error)?
     var loadEarlierCallCount = 0
     var resolvedInputID: String?
@@ -1473,6 +1543,43 @@ private final class FeatureClientStub: FeatureClient {
         resolvedInputAnswers = answers
     }
     func saveSettings(_ settings: FeatureSettings) async throws {
+        try await beforeSaveSettings?()
         savedSettings.append(settings)
+    }
+}
+
+@MainActor
+private final class FeatureSettingsSaveGate {
+    private var calls = 0
+    private var firstRelease: CheckedContinuation<Void, Never>?
+    private var callWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    var callCount: Int { calls }
+
+    func enter() async {
+        calls += 1
+        resumeSatisfiedCallWaiters()
+        guard calls == 1 else { return }
+        await withCheckedContinuation { continuation in
+            firstRelease = continuation
+        }
+    }
+
+    func waitUntilCallCount(_ count: Int) async {
+        guard calls < count else { return }
+        await withCheckedContinuation { continuation in
+            callWaiters.append((count, continuation))
+        }
+    }
+
+    func releaseFirst() {
+        firstRelease?.resume()
+        firstRelease = nil
+    }
+
+    private func resumeSatisfiedCallWaiters() {
+        let ready = callWaiters.filter { calls >= $0.0 }
+        callWaiters.removeAll { calls >= $0.0 }
+        ready.forEach { $0.1.resume() }
     }
 }
