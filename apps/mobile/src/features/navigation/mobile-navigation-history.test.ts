@@ -65,9 +65,9 @@ describe("createMobileNavigationHistory", () => {
     history.visit(location("/threads/env/thread/terminal?terminalId=a", "thread"));
     expect(
       normalizeMobileNavigationPath(
-        "/settings?params=%5Bobject%20Object%5D&state=%5Bobject%20Object%5D&terminalId=a",
+        "/settings?params=%5Bobject%20Object%5D&params=keep&state=%5Bobject%20Object%5D&terminalId=a",
       ),
-    ).toBe("/settings?terminalId=a");
+    ).toBe("/settings?params=keep&terminalId=a");
     expect(history.requestBack()?.location.pathname).toContain("terminalId=c");
     expect(history.requestForward()).toBeNull();
   });

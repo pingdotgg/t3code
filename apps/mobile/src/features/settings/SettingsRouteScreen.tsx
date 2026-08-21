@@ -78,6 +78,7 @@ export function SettingsRouteScreen() {
           <AndroidScreenHeader
             title="Settings"
             trailing={<MobileNavigationHistoryButtons grouped />}
+            onBack={() => navigation.goBack()}
           />
         </>
       ) : (
