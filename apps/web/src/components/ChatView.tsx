@@ -331,6 +331,8 @@ import {
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
+  shouldPrepareWorktreeForSend,
+  threadHasStarted,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
@@ -5187,17 +5189,20 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
+    // Imported provider threads can have no locally projected messages while
+    // still carrying a durable stopped session. Treat those as established
+    // conversations so a follow-up resumes them instead of re-bootstraping or
+    // replacing their imported title.
+    const isFirstMessage = !isServerThread || !threadHasStarted(activeThread);
+    const shouldPrepareWorktree = shouldPrepareWorktreeForSend({
+      sendEnvMode,
+      worktreePath: activeThread.worktreePath,
+    });
+    const baseBranchForWorktree = shouldPrepareWorktree ? activeThreadBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
+    if (shouldPrepareWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }

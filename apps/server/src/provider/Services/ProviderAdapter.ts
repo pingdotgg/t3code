@@ -42,6 +42,20 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+/**
+ * Lightweight provider-native thread metadata used to discover conversations
+ * that were created outside T3 Code.
+ */
+export interface ProviderThreadSummary {
+  readonly providerThreadId: string;
+  readonly cwd: string;
+  readonly title: string | undefined;
+  readonly preview: string | undefined;
+  readonly branch: string | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -95,6 +109,14 @@ export interface ProviderAdapterShape<TError> {
    * List currently active provider sessions for this adapter.
    */
   readonly listSessions: () => Effect.Effect<ReadonlyArray<ProviderSession>>;
+
+  /**
+   * List persisted provider threads, when the provider supports discovery.
+   *
+   * This is optional because not every provider exposes a durable global
+   * thread catalog. Callers must treat absence as an unsupported capability.
+   */
+  readonly listThreads?: () => Effect.Effect<ReadonlyArray<ProviderThreadSummary>, TError>;
 
   /**
    * Check whether this adapter owns an active session id.

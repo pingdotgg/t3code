@@ -28,11 +28,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -52,6 +54,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import type { ProviderThreadSummary } from "../Services/ProviderAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -62,6 +65,8 @@ import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
+import { listAllCodexThreads, makeCodexAppServerConnection } from "./CodexAppServerConnection.ts";
+import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
@@ -147,6 +152,27 @@ function readPayload<A>(
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function codexTimestampToIso(seconds: number): string {
+  return DateTime.make(seconds * 1_000).pipe(
+    Option.map(DateTime.formatIso),
+    Option.getOrElse(() => DateTime.formatIso(DateTime.makeUnsafe(0))),
+  );
+}
+
+function toProviderThreadSummary(
+  thread: EffectCodexSchema.V2ThreadListResponse["data"][number],
+): ProviderThreadSummary {
+  return {
+    providerThreadId: thread.id,
+    cwd: thread.cwd,
+    title: trimText(thread.name),
+    preview: trimText(thread.preview),
+    branch: trimText(thread.gitInfo?.branch),
+    createdAt: codexTimestampToIso(thread.createdAt),
+    updatedAt: codexTimestampToIso(thread.updatedAt),
+  };
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -1954,6 +1980,34 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       { concurrency: 1 },
     );
 
+  const listThreads: NonNullable<CodexAdapterShape["listThreads"]> = () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { client } = yield* makeCodexAppServerConnection({
+          binaryPath: codexConfig.binaryPath,
+          cwd: process.cwd(),
+          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
+          ...(options?.environment ? { environment: options.environment } : {}),
+          ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
+        });
+        yield* client.request("initialize", buildCodexInitializeParams());
+        yield* client.notify("initialized", undefined);
+        const threads = yield* listAllCodexThreads(client);
+        return threads.filter((thread) => !thread.ephemeral).map(toProviderThreadSummary);
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "thread/list",
+              detail: "Failed to list persisted Codex threads.",
+              cause,
+            }),
+        ),
+      ),
+    );
+
   const hasSession: CodexAdapterShape["hasSession"] = (threadId) =>
     Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
 
@@ -1985,6 +2039,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     respondToUserInput,
     stopSession,
     listSessions,
+    listThreads,
     hasSession,
     stopAll,
     get streamEvents() {

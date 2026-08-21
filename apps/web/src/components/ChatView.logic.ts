@@ -257,6 +257,13 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
+export function shouldPrepareWorktreeForSend(input: {
+  sendEnvMode: DraftThreadEnvMode;
+  worktreePath: string | null;
+}): boolean {
+  return input.sendEnvMode === "worktree" && input.worktreePath === null;
+}
+
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {
