@@ -101,7 +101,7 @@ describe("versionSkew", () => {
       "Update the Remote server so they stay in sync.",
     );
     expect(serverUpdateGuidance("desktop-managed", "Desktop server")).toBe(
-      "The Desktop server is run by the 2code desktop app on its machine — update the desktop app there to sync them.",
+      "Update the 2code desktop app that runs the Desktop server.",
     );
     expect(serverUpdateGuidance(null, "Local server")).toBe(
       "Relaunch the Local server with the copied command to sync them.",

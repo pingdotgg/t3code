@@ -76,6 +76,14 @@ export function useNewThreadHandler() {
         replace?: boolean;
         /** Create or reuse the draft without leaving the current workspace surface. */
         navigate?: boolean;
+        /**
+         * Move the viewed draft's typed content (prompt + images) into the
+         * draft this request lands on. Set by the draft repo picker: the
+         * user started writing in the wrong project and the text should
+         * follow them. Explicit new-thread surfaces leave this unset and
+         * keep mint-fresh semantics.
+         */
+        carryComposerContent?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -87,6 +95,7 @@ export function useNewThreadHandler() {
         getDraftSession,
         getDraftThread,
         applyStickyState,
+        moveComposerPromptAndImages,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
@@ -128,6 +137,27 @@ export function useNewThreadHandler() {
         carrySourceShell?.interactionMode ??
         carrySourceDraft?.interactionMode ??
         null;
+      // Content only moves when the caller opted in and the user is looking
+      // at a draft. The content check happens at move time, not here: the
+      // paths below await, and text typed during those awaits must still
+      // come along.
+      const carryContentSourceDraftId =
+        options?.carryComposerContent === true && currentRouteTarget?.kind === "draft"
+          ? currentRouteTarget.draftId
+          : null;
+      const carryComposerContentTo = (destinationDraftId: DraftId) => {
+        if (
+          carryContentSourceDraftId &&
+          carryContentSourceDraftId !== destinationDraftId &&
+          // Never clobber a destination the user already invested in — the
+          // move overwrites the destination prompt, so a concurrent repo
+          // change that carried content first must win.
+          !composerDraftHasUserContent(getComposerDraft(destinationDraftId)) &&
+          composerDraftHasUserContent(getComposerDraft(carryContentSourceDraftId))
+        ) {
+          moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
+        }
+      };
       const project = projects.find(
         (candidate) =>
           candidate.id === projectRef.projectId &&
@@ -269,6 +299,7 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
+          carryComposerContentTo(emptyStoredDraftThread.draftId);
           const opened = {
             draftId: emptyStoredDraftThread.draftId,
             threadId: emptyStoredDraftThread.threadId,
@@ -359,6 +390,7 @@ export function useNewThreadHandler() {
             interactionMode: racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
           });
+          carryComposerContentTo(racedDraft.draftId);
           const opened = { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
           if (options?.navigate === false) {
             return opened;
@@ -394,6 +426,7 @@ export function useNewThreadHandler() {
           // whatever sticky state just wrote".
           setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
         }
+        carryComposerContentTo(draftId);
 
         if (options?.navigate === false) {
           return { draftId, threadId };

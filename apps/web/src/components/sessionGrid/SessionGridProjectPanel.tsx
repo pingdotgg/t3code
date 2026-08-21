@@ -178,10 +178,7 @@ const SortableGridProject = memo(function SortableGridProject(props: SortableGri
                 {openCount} open {openCount === 1 ? "session" : "sessions"}
               </span>
               {props.entry.attentionCount > 0 ? (
-                <span
-                  className="flex min-w-0 items-center gap-1 truncate font-medium text-amber-600 dark:text-amber-300/90"
-                  title={`${props.entry.attentionCount} ${props.entry.attentionCount === 1 ? "session needs" : "sessions need"} attention`}
-                >
+                <span className="flex min-w-0 items-center gap-1 truncate font-medium text-amber-600 dark:text-amber-300/90">
                   <CircleAlertIcon className="size-3 shrink-0" />
                   <span className="truncate tabular-nums">
                     {props.entry.attentionCount} attention
@@ -202,7 +199,6 @@ const SortableGridProject = memo(function SortableGridProject(props: SortableGri
             )}
             onClick={() => props.onToggleSettled(project.projectKey)}
             onPointerDown={(event) => event.stopPropagation()}
-            title={`${props.expanded ? "Hide" : "Show"} settled sessions`}
             type="button"
           >
             <ArchiveRestoreIcon className="size-3.5" />
@@ -218,7 +214,6 @@ const SortableGridProject = memo(function SortableGridProject(props: SortableGri
           )}
           onClick={openActionsFromButton}
           onPointerDown={(event) => event.stopPropagation()}
-          title="Project actions"
           type="button"
         >
           <EllipsisIcon className="size-3.5" />
@@ -237,10 +232,7 @@ const SortableGridProject = memo(function SortableGridProject(props: SortableGri
               const restoring = props.restoringThreadKeys.has(threadKey);
               return (
                 <li className="flex min-w-0 items-center gap-1 px-1" key={threadKey}>
-                  <span
-                    className="min-w-0 flex-1 truncate rounded px-1.5 py-1.5 text-xs text-sidebar-muted-foreground"
-                    title={thread.title}
-                  >
+                  <span className="min-w-0 flex-1 truncate rounded px-1.5 py-1.5 text-xs text-sidebar-muted-foreground">
                     {thread.title}
                   </span>
                   <Button
@@ -249,7 +241,6 @@ const SortableGridProject = memo(function SortableGridProject(props: SortableGri
                     disabled={restoring}
                     onClick={() => props.onRestore(thread, project.projectKey)}
                     size="icon-xs"
-                    title={`Restore ${thread.title}`}
                     variant="ghost"
                   >
                     <RotateCcwIcon className={cn("size-3", restoring && "opacity-40")} />
@@ -293,6 +284,7 @@ export function SessionGridProjectPanel() {
   const { environments } = useEnvironments();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
   const projectOrder = useUiStateStore((state) => state.projectOrder);
   const reorderProjects = useUiStateStore((state) => state.reorderProjects);
   const lastVisitedAtByThreadKey = useUiStateStore((state) => state.threadLastVisitedAtById);
@@ -392,6 +384,7 @@ export function SessionGridProjectPanel() {
           preciseNow,
           settledNow,
           autoSettleAfterDays,
+          autoSettleOnMerge,
           supportsSettlement: capabilities?.threadSettlement === true,
           supportsSnooze: capabilities?.threadSnooze === true,
           changeRequestState,
@@ -401,6 +394,7 @@ export function SessionGridProjectPanel() {
     );
   }, [
     autoSettleAfterDays,
+    autoSettleOnMerge,
     changeRequestStateByKey,
     environmentConnectionPhaseById,
     nowMinute,

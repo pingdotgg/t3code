@@ -5,13 +5,17 @@ import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   advanceTerminalSelectionClickSequence,
+  applyTerminalCopyEvent,
+  clearPrimedTerminalCopyInput,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
+  isTerminalCompositionKey,
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
+  primeTerminalCopyInput,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
@@ -219,16 +223,90 @@ describe("isTerminalCopyShortcut", () => {
     expect(isTerminalCopyShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
   });
 
-  it("uses the conventional Ctrl+Shift+C shortcut elsewhere", () => {
-    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
+  it("copies with Ctrl+C and Ctrl+Shift+C elsewhere", () => {
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(true);
     expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
     );
+    expect(isTerminalCopyShortcut(event({}), "Linux x86_64")).toBe(false);
   });
 
   it("uses the produced character instead of the physical key position", () => {
     expect(isTerminalCopyShortcut(event({ key: "C", metaKey: true }), "MacIntel")).toBe(true);
     expect(isTerminalCopyShortcut(event({ key: "j", metaKey: true }), "MacIntel")).toBe(false);
+  });
+});
+
+describe("applyTerminalCopyEvent", () => {
+  it("writes the selection and claims the fallback when clipboardData is present", () => {
+    const setData = vi.fn();
+    expect(applyTerminalCopyEvent("ls -la", { setData })).toEqual({
+      preventDefault: true,
+      claimWriteFallback: true,
+    });
+    expect(setData).toHaveBeenCalledWith("text/plain", "ls -la");
+  });
+
+  it("leaves the writeText fallback alive when clipboardData is missing", () => {
+    // Electron's edit-menu Copy often delivers a copy event with no
+    // clipboardData. Claiming that event used to skip writeText and copy the
+    // empty IME textarea, which is the blank clipboard users paste.
+    expect(applyTerminalCopyEvent("ls -la", null)).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+    expect(applyTerminalCopyEvent("", { setData: vi.fn() })).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+  });
+
+  it("primes the current selection before a copy event with no clipboardData", () => {
+    const input = {
+      value: "stale",
+      selectionStart: 0,
+      selectionEnd: 0,
+      select() {
+        this.selectionStart = 0;
+        this.selectionEnd = this.value.length;
+      },
+    };
+    primeTerminalCopyInput(input, "git status");
+    expect(applyTerminalCopyEvent("git status", null)).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+    expect(input.value).toBe("git status");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(10);
+  });
+});
+
+describe("primeTerminalCopyInput", () => {
+  it("selects the Ghostty selection in the hidden textarea so native copy has text", () => {
+    const input = {
+      value: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+      select() {
+        this.selectionStart = 0;
+        this.selectionEnd = this.value.length;
+      },
+    };
+    primeTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("git status");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(10);
+    clearPrimedTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("");
+  });
+
+  it("does not wipe an IME candidate that replaced the primed copy", () => {
+    const input = { value: "", select() {} };
+    primeTerminalCopyInput(input, "git status");
+    input.value = "あ";
+    clearPrimedTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("あ");
   });
 });
 
@@ -252,6 +330,22 @@ describe("isTerminalPasteShortcut", () => {
       true,
     );
   });
+
+  it("supports the conventional Shift+Insert paste shortcut", () => {
+    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "Linux x86_64")).toBe(
+      true,
+    );
+    expect(isTerminalPasteShortcut(event({ key: "Insert" }), "Linux x86_64")).toBe(false);
+    expect(
+      isTerminalPasteShortcut(
+        event({ key: "Insert", ctrlKey: true, shiftKey: true }),
+        "Linux x86_64",
+      ),
+    ).toBe(false);
+    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "MacIntel")).toBe(
+      false,
+    );
+  });
 });
 
 describe("isTerminalCompositionCommitInput", () => {
@@ -263,6 +357,28 @@ describe("isTerminalCompositionCommitInput", () => {
 
   it("keeps a fast repeated input as legitimate text", () => {
     expect(isTerminalCompositionCommitInput({ inputType: "insertText" })).toBe(false);
+  });
+});
+
+describe("isTerminalCompositionKey", () => {
+  const event = (
+    overrides: Partial<Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">> = {},
+  ) => ({
+    isComposing: false,
+    key: "a",
+    keyCode: 65,
+    ...overrides,
+  });
+
+  it("treats in-progress IME keydowns as composition so the copy primer cannot wipe them", () => {
+    expect(isTerminalCompositionKey(event({ isComposing: true }), false)).toBe(true);
+    expect(isTerminalCompositionKey(event(), true)).toBe(true);
+    expect(isTerminalCompositionKey(event({ key: "Process" }), false)).toBe(true);
+    expect(isTerminalCompositionKey(event({ keyCode: 229 }), false)).toBe(true);
+  });
+
+  it("lets ordinary keydowns clear a primed copy", () => {
+    expect(isTerminalCompositionKey(event(), false)).toBe(false);
   });
 });
 

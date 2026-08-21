@@ -289,6 +289,62 @@ describe("composerDraftStore clearComposerContent", () => {
   });
 });
 
+describe("composerDraftStore moveComposerPromptAndImages", () => {
+  const sourceDraftId = DraftId.make("draft-move-source");
+  const destinationDraftId = DraftId.make("draft-move-destination");
+  let originalRevokeObjectUrl: typeof URL.revokeObjectURL;
+  let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+    originalRevokeObjectUrl = URL.revokeObjectURL;
+    revokeSpy = vi.fn();
+    URL.revokeObjectURL = revokeSpy;
+  });
+
+  afterEach(() => {
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+  });
+
+  it("moves prompt and images to the destination without revoking preview URLs", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(sourceDraftId, "fix the login redirect");
+    store.addImages(sourceDraftId, [makeImage({ id: "img-move", previewUrl: "blob:move" })]);
+
+    store.moveComposerPromptAndImages(sourceDraftId, destinationDraftId);
+
+    expect(draftByKey(sourceDraftId)).toBeUndefined();
+    const destination = draftByKey(destinationDraftId);
+    expect(destination?.prompt).toBe("fix the login redirect");
+    expect(destination?.images.map((image) => image.id)).toEqual(["img-move"]);
+    expect(revokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps session-bound contexts on the source and strips their placeholders from the moved prompt", () => {
+    const sourceThreadId = ThreadId.make("thread-move-source");
+    const sourceThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, sourceThreadId);
+    const store = useComposerDraftStore.getState();
+    store.addTerminalContext(sourceThreadRef, makeTerminalContext({ id: "ctx-stay" }));
+    store.setPrompt(sourceThreadRef, `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} explain this error`);
+
+    store.moveComposerPromptAndImages(sourceThreadRef, destinationDraftId);
+
+    const source = draftFor(sourceThreadId, TEST_ENVIRONMENT_ID);
+    expect(source?.terminalContexts.map((context) => context.id)).toEqual(["ctx-stay"]);
+    expect(source?.prompt).toBe(INLINE_TERMINAL_CONTEXT_PLACEHOLDER);
+    expect(draftByKey(destinationDraftId)?.prompt).toBe(" explain this error");
+  });
+
+  it("is a no-op when source and destination are the same target", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(sourceDraftId, "keep me");
+
+    store.moveComposerPromptAndImages(sourceDraftId, sourceDraftId);
+
+    expect(draftByKey(sourceDraftId)?.prompt).toBe("keep me");
+  });
+});
+
 describe("composerDraftStore syncPersistedAttachments", () => {
   const threadId = ThreadId.make("thread-sync-persisted");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
@@ -765,6 +821,43 @@ describe("composerDraftStore project draft thread mapping", () => {
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
+  });
+
+  it("rotates a failed bootstrap thread id without losing its draft", () => {
+    const store = useComposerDraftStore.getState();
+    const retryThreadId = ThreadId.make("thread-retry");
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "feature/test",
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      envMode: "worktree",
+      startFromOrigin: true,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    store.setPrompt(draftId, "keep this prompt");
+    markPromotedDraftThread(threadId);
+
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+      threadId: retryThreadId,
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      threadId: retryThreadId,
+      branch: "feature/test",
+      worktreePath: null,
+      createdAt: "2026-01-01T00:01:00.000Z",
+      envMode: "worktree",
+      startFromOrigin: true,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      promotedTo: null,
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+      "keep this prompt",
+    );
   });
 
   it("clears only matching project draft mapping entries", () => {

@@ -282,6 +282,7 @@ export function resolveSessionGridLifecycle(
     readonly preciseNow: string;
     readonly settledNow: string;
     readonly autoSettleAfterDays: number | null;
+    readonly autoSettleOnMerge: boolean;
     readonly supportsSettlement: boolean;
     readonly supportsSnooze: boolean;
     readonly changeRequestState: SessionGridChangeRequestState;
@@ -303,7 +304,11 @@ export function resolveSessionGridLifecycle(
     // open PR, which blocks inactivity settlement. Explicit overrides remain
     // authoritative because effectiveSettled checks them before this window.
     autoSettleAfterDays: changeRequestStateUnknown ? null : options.autoSettleAfterDays,
-    changeRequestState: changeRequestStateUnknown ? null : options.changeRequestState,
+    autoSettleOnMerge: options.autoSettleOnMerge,
+    changeRequest:
+      changeRequestStateUnknown || options.changeRequestState === null
+        ? null
+        : { state: options.changeRequestState },
   })
     ? "settled"
     : "active";

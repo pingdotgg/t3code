@@ -77,6 +77,7 @@ function classify(
     preciseNow: NOW,
     settledNow: NOW,
     autoSettleAfterDays: 3,
+    autoSettleOnMerge: true,
     supportsSettlement: true,
     supportsSnooze: true,
     changeRequestState: null,

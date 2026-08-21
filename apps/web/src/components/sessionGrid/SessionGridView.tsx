@@ -133,6 +133,7 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
   );
   const setSessionGridThreadOrder = useUiStateStore((state) => state.setSessionGridThreadOrder);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const nowMinute = useNowMinute();
   const wideGrid = useMediaQuery("md");
@@ -253,6 +254,7 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
         preciseNow,
         settledNow,
         autoSettleAfterDays,
+        autoSettleOnMerge,
         supportsSettlement: capabilities?.threadSettlement === true,
         supportsSnooze: capabilities?.threadSnooze === true,
         changeRequestState,
@@ -266,6 +268,7 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
           preciseNow,
           settledNow,
           autoSettleAfterDays,
+          autoSettleOnMerge,
           supportsSettlement: capabilities?.threadSettlement === true,
           supportsSnooze: capabilities?.threadSnooze === true,
           changeRequestState: null,
@@ -280,6 +283,7 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
     return { active, snoozed, pendingChangeRequest };
   }, [
     autoSettleAfterDays,
+    autoSettleOnMerge,
     changeRequestSnapshot.stateByKey,
     environmentConnectionPhaseById,
     nowMinute,

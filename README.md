@@ -51,9 +51,19 @@ brew install --cask t3-code
 
 #### Arch Linux (AUR)
 
+Stable:
+
 ```bash
 yay -S t3code-bin
 ```
+
+Nightly:
+
+```bash
+yay -S t3code-nightly-bin
+```
+
+The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
 
 ## Some notes
 
@@ -104,6 +114,8 @@ Checkout their getting started guide for more information: https://viteplus.dev/
 vp i
 ```
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
+
+Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
 
 Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).

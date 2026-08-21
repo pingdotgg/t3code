@@ -18,7 +18,7 @@ function ReleaseNotesLink({
 }) {
   return (
     <button
-      className="ml-2 inline-flex cursor-pointer items-center gap-1 align-baseline text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+      className="ml-2 inline cursor-pointer text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
       onClick={() => {
         void (async () => {
           try {
@@ -32,7 +32,11 @@ function ReleaseNotesLink({
       type="button"
     >
       Read more
-      <ArrowRightIcon aria-hidden className="size-3 -rotate-45" strokeWidth={2.25} />
+      <ArrowRightIcon
+        aria-hidden
+        className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"
+        strokeWidth={2.25}
+      />
     </button>
   );
 }

@@ -16,9 +16,9 @@ it("uses the legacy 2code icon assets only for the production distribution", () 
     windowsIconIco: "distributions/2code/assets/icon.ico",
   });
   assert.deepStrictEqual(resolveDesktopBuildIconAssets("1.0.109"), {
-    macIconPng: "apps/desktop/resources/icon.png",
-    linuxIconPng: "apps/desktop/resources/icon.png",
-    windowsIconIco: "apps/desktop/resources/icon.ico",
+    macIconPng: "assets/prod/black-macos-1024.png",
+    linuxIconPng: "assets/prod/black-universal-1024.png",
+    windowsIconIco: "assets/prod/t3-black-windows.ico",
   });
 });
 
@@ -62,6 +62,15 @@ it.effect("builds a legacy-compatible 2code updater configuration", () =>
     assert.deepStrictEqual(config.dmg, {
       artifactName: "2code-${version}-${arch}.${ext}",
       sign: true,
+      title: "2code 1.0.108 Installer",
+      background: "dmg/dmg-background-latest.png",
+      window: { width: 540, height: 412 },
+      contents: [
+        { x: 130, y: 220, type: "file" },
+        { x: 410, y: 220, type: "link", path: "/Applications" },
+      ],
+      iconSize: 80,
+      iconTextSize: 12,
     });
     assert.deepStrictEqual(mac.protocols, [
       {

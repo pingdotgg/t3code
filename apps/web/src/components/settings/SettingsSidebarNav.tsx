@@ -9,7 +9,7 @@ import {
 } from "react";
 import {
   ArchiveIcon,
-  ArrowLeftIcon,
+  BlocksIcon,
   BotIcon,
   GitBranchIcon,
   KeyboardIcon,
@@ -21,7 +21,7 @@ import {
   Settings2Icon,
   XIcon,
 } from "lucide-react";
-import { useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -36,6 +36,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
@@ -53,6 +54,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/providers": BotIcon,
   "/settings/model-routing": RouteIcon, // fork: f5
   "/settings/prompt": ScrollTextIcon, // fork: f2 system prompt injection
+  "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
   "/settings/archived": ArchiveIcon,
@@ -76,7 +78,6 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
-  const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -180,17 +181,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     },
     [activeResultIndex, clearSearch, handleSearchResultClick, isSearching, results],
   );
-  const handleBackClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    if (canGoBack) {
-      window.history.back();
-      return;
-    }
-    void navigate({ to: "/" });
-  }, [canGoBack, isMobile, navigate, setOpenMobile]);
-
   return (
     <>
       <SidebarContent className="overflow-x-hidden">
@@ -224,9 +214,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             {isSearching ? (
               <Button
                 type="button"
-                size="icon-xs"
+                size="icon-micro"
                 variant="ghost"
-                className="size-5 shrink-0 rounded-sm text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
+                className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
                 aria-label="Clear settings search"
                 onClick={() => {
                   clearSearch();
@@ -300,14 +290,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       <SidebarFooter className="p-[var(--sidebar-content-inset)]">
         <T3ConnectSidebarSignIn />
         <div className="flex items-center gap-1">
-          <SidebarMenu className="min-w-0 flex-1">
-            <SidebarMenuItem>
-              <SidebarMenuButton onClick={handleBackClick}>
-                <ArrowLeftIcon />
-                <span>Back</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          <div className="min-w-0 flex-1">
+            <SidebarUtilityMenu />
+          </div>
           <T3ConnectSidebarAvatar />
         </div>
       </SidebarFooter>

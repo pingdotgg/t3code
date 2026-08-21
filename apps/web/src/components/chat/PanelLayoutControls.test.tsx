@@ -59,4 +59,30 @@ describe("PanelLayoutControls", () => {
       markup.indexOf('aria-label="Toggle source control"'),
     );
   });
+
+  it("keeps unavailable terminal and right-panel tooltip triggers interactive", () => {
+    const markup = renderToStaticMarkup(
+      <PanelLayoutControls
+        showTerminalControl
+        terminalAvailable={false}
+        terminalOpen={false}
+        terminalShortcutLabel={null}
+        sourceControlAvailable
+        sourceControlOpen={false}
+        sourceControlShortcutLabel="Ctrl+Shift+G"
+        rightPanelAvailable={false}
+        rightPanelOpen={false}
+        rightPanelShortcutLabel={null}
+        liveAgentCount={0}
+        onToggleTerminal={() => {}}
+        onToggleSourceControl={() => {}}
+        onToggleRightPanel={() => {}}
+      />,
+    );
+
+    expect(markup.match(/data-slot="tooltip-trigger"/g)).toHaveLength(3);
+    expect(markup.match(/data-slot="tooltip-trigger"[^>]*><button[^>]*disabled=""/g)).toHaveLength(
+      2,
+    );
+  });
 });

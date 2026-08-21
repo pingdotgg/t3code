@@ -159,6 +159,14 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly mergeMethod?: PullRequestMergeMethod;
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
+    /** Rewrites the pull request's own words, through the same command that moves it. */
+    readonly updatePullRequest: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly title?: string | undefined;
+      readonly body?: string | undefined;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+
     /**
      * Adds reviewers to a pull request, or takes them off it. `az repos pr reviewer` is the whole
      * of what Azure offers here: it adds and removes named identities, and has no counterpart that
@@ -212,12 +220,21 @@ function actionArgs(
   switch (action) {
     case "merge":
       return ["--status", "completed", "--squash", mergeMethod === "squash" ? "true" : "false"];
+    // Auto-complete is Azure's own name for it: the pull request stays active and Azure completes
+    // it once its policies pass. The squash choice is stored with it, as it is for a merge now.
+    case "enable-auto-merge":
+      return ["--auto-complete", "true", "--squash", mergeMethod === "squash" ? "true" : "false"];
+    case "disable-auto-merge":
+      return ["--auto-complete", "false"];
     case "ready":
       return ["--draft", "false"];
     case "draft":
       return ["--draft", "true"];
     case "close":
       return ["--status", "abandoned"];
+    // Never reached: this host does not declare the action, so nothing offers it.
+    case "update-branch":
+      return [];
     case "reopen":
       return ["--status", "active"];
   }
@@ -475,6 +492,29 @@ export const make = Effect.gen(function* () {
             "--id",
             String(input.number),
             ...actionArgs(input.action, input.mergeMethod),
+            "--only-show-errors",
+            "--output",
+            "json",
+          ],
+        })
+        .pipe(Effect.asVoid),
+
+    updatePullRequest: (input) =>
+      azure
+        .execute({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "update",
+            ...detectArgs,
+            "--id",
+            String(input.number),
+            // One argument rather than a flag and a value beside it: a description usually opens
+            // with a bullet, and az reads a dash in the next argv slot as a flag of its own.
+            // `--description` also takes several strings, and this keeps the whole text as one.
+            ...(input.title === undefined ? [] : [`--title=${input.title}`]),
+            ...(input.body === undefined ? [] : [`--description=${input.body}`]),
             "--only-show-errors",
             "--output",
             "json",

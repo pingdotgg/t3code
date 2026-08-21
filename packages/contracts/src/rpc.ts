@@ -84,6 +84,7 @@ import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
+  PullRequestCommentUpdateInput,
   PullRequestDetail,
   PullRequestDiffFileContentsInput,
   PullRequestDiffFileContentsResult,
@@ -93,13 +94,17 @@ import {
   PullRequestListStatsInput,
   PullRequestListStatsResult,
   PullRequestOperationError,
+  PullRequestReactionInput,
   PullRequestRef,
   PullRequestReviewerCandidateList,
   PullRequestReviewerRequestInput,
   PullRequestSubmitReviewInput,
+  PullRequestThreadCommentsInput,
+  PullRequestThreadCommentsResult,
   PullRequestThreadReplyInput,
   PullRequestThreadResolutionInput,
   PullRequestUnavailableError,
+  PullRequestUpdateInput,
 } from "./pullRequest.ts";
 import {
   RelayClientInstallFailedError,
@@ -139,6 +144,7 @@ import {
 } from "./terminal.ts";
 import {
   DiscoveredLocalServerList,
+  ConfiguredLocalServerUrls,
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
@@ -338,12 +344,16 @@ export const WS_METHODS = {
   pullRequestsListStats: "pullRequests.listStats",
   pullRequestsDetail: "pullRequests.detail",
   pullRequestsActivity: "pullRequests.activity",
+  pullRequestsThreadComments: "pullRequests.threadComments",
   pullRequestsDiffFileContents: "pullRequests.diffFileContents",
   pullRequestsRunAction: "pullRequests.runAction",
+  pullRequestsUpdate: "pullRequests.update",
   pullRequestsComment: "pullRequests.comment",
+  pullRequestsUpdateComment: "pullRequests.updateComment",
   pullRequestsSubmitReview: "pullRequests.submitReview",
   pullRequestsReplyToThread: "pullRequests.replyToThread",
   pullRequestsSetThreadResolution: "pullRequests.setThreadResolution",
+  pullRequestsSetReaction: "pullRequests.setReaction",
   pullRequestsInvalidate: "pullRequests.invalidate",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
@@ -636,6 +646,12 @@ export const WsPullRequestsActivityRpc = Rpc.make(WS_METHODS.pullRequestsActivit
   error: PullRequestRpcError,
 });
 
+export const WsPullRequestsThreadCommentsRpc = Rpc.make(WS_METHODS.pullRequestsThreadComments, {
+  payload: PullRequestThreadCommentsInput,
+  success: PullRequestThreadCommentsResult,
+  error: PullRequestRpcError,
+});
+
 export const WsPullRequestsDiffFileContentsRpc = Rpc.make(WS_METHODS.pullRequestsDiffFileContents, {
   payload: PullRequestDiffFileContentsInput,
   success: PullRequestDiffFileContentsResult,
@@ -648,8 +664,20 @@ export const WsPullRequestsRunActionRpc = Rpc.make(WS_METHODS.pullRequestsRunAct
   error: PullRequestRpcError,
 });
 
+export const WsPullRequestsUpdateRpc = Rpc.make(WS_METHODS.pullRequestsUpdate, {
+  payload: PullRequestUpdateInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
 export const WsPullRequestsCommentRpc = Rpc.make(WS_METHODS.pullRequestsComment, {
   payload: PullRequestCommentInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsUpdateCommentRpc = Rpc.make(WS_METHODS.pullRequestsUpdateComment, {
+  payload: PullRequestCommentUpdateInput,
   success: Schema.Void,
   error: PullRequestRpcError,
 });
@@ -674,6 +702,12 @@ export const WsPullRequestsSetThreadResolutionRpc = Rpc.make(
     error: PullRequestRpcError,
   },
 );
+
+export const WsPullRequestsSetReactionRpc = Rpc.make(WS_METHODS.pullRequestsSetReaction, {
+  payload: PullRequestReactionInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
 
 export const WsPullRequestsInvalidateRpc = Rpc.make(WS_METHODS.pullRequestsInvalidate, {
   payload: PullRequestInvalidateInput,
@@ -966,7 +1000,9 @@ export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewE
 export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
   WS_METHODS.subscribeDiscoveredLocalServers,
   {
-    payload: Schema.Struct({}),
+    payload: Schema.Struct({
+      configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
+    }),
     success: DiscoveredLocalServerList,
     error: EnvironmentAuthorizationError,
     stream: true,
@@ -1305,12 +1341,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsListStatsRpc,
   WsPullRequestsDetailRpc,
   WsPullRequestsActivityRpc,
+  WsPullRequestsThreadCommentsRpc,
   WsPullRequestsDiffFileContentsRpc,
   WsPullRequestsRunActionRpc,
+  WsPullRequestsUpdateRpc,
   WsPullRequestsCommentRpc,
+  WsPullRequestsUpdateCommentRpc,
   WsPullRequestsSubmitReviewRpc,
   WsPullRequestsReplyToThreadRpc,
   WsPullRequestsSetThreadResolutionRpc,
+  WsPullRequestsSetReactionRpc,
   WsPullRequestsInvalidateRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
