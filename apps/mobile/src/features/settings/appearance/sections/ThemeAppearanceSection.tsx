@@ -1,5 +1,5 @@
 import { memo, useId } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
 
 import { mixThemePreviewBase, THEME_PREVIEW_RENDER_SPECS } from "@t3tools/shared/themePreview";
@@ -17,6 +17,8 @@ import {
   type MobileThemeVariables,
 } from "../../../../lib/mobileTheme";
 import { useThemeColor } from "../../../../lib/useThemeColor";
+import { SettingsSection } from "../../components/SettingsSection";
+import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
 const APPEARANCE_MODES: ReadonlyArray<{
@@ -320,6 +322,9 @@ export function ThemeAppearanceSection() {
     setThemeIdForAppearance,
     setThemeIdForBothAppearances,
     setThemeMode,
+    setSystemColorsEnabled,
+    systemColorsAvailable,
+    systemColorsEnabled,
     themeIds,
     themeMode,
   } = useAppearancePreferences();
@@ -360,6 +365,23 @@ export function ThemeAppearanceSection() {
           ))}
         </View>
       </View>
+
+      {Platform.OS === "android" ? (
+        <SettingsSection card title="Android">
+          <SettingsSwitchRow
+            disabled={!isReady || !systemColorsAvailable}
+            icon="paintbrush"
+            label="System Colors"
+            onValueChange={setSystemColorsEnabled}
+            subtitle={
+              systemColorsAvailable
+                ? "Use colors generated from your wallpaper."
+                : "Requires Android 12 or newer."
+            }
+            value={systemColorsAvailable && systemColorsEnabled}
+          />
+        </SettingsSection>
+      ) : null}
     </View>
   );
 }
