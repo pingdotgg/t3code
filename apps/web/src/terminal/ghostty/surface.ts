@@ -1,4 +1,4 @@
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "../../lib/utils";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -345,7 +345,9 @@ export function isTerminalPasteShortcut(
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
   if (key !== "v") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  if (isMacPlatform(platform)) return event.metaKey;
+  if (isWindowsPlatform(platform)) return event.ctrlKey;
+  return event.ctrlKey && event.shiftKey;
 }
 
 export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
