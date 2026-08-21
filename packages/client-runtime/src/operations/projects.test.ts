@@ -16,6 +16,8 @@ import {
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
+  getDefaultCloneUrl,
+  normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
 } from "./projects.ts";
@@ -44,6 +46,46 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("owner/repo/")).toBe("repo");
     expect(getCloneDirectoryName("")).toBe("");
     expect(getCloneDirectoryName(null)).toBe("");
+  });
+
+  it("routes owner/repository shorthand to GitHub over HTTPS", () => {
+    expect(normalizePastedCloneUrl("imputnet/helium")).toBe(
+      "https://github.com/imputnet/helium.git",
+    );
+    expect(normalizePastedCloneUrl("  pingdotgg/t3code  ")).toBe(
+      "https://github.com/pingdotgg/t3code.git",
+    );
+  });
+
+  it("keeps explicit clone URLs and local paths unchanged", () => {
+    expect(normalizePastedCloneUrl("https://gitlab.com/group/project.git")).toBe(
+      "https://gitlab.com/group/project.git",
+    );
+    expect(normalizePastedCloneUrl("git@github.com:owner/repo.git")).toBe(
+      "git@github.com:owner/repo.git",
+    );
+    expect(normalizePastedCloneUrl("group/subgroup/project")).toBe("group/subgroup/project");
+    expect(normalizePastedCloneUrl("/srv/git/repo.git")).toBe("/srv/git/repo.git");
+  });
+
+  it("uses HTTPS for repositories selected through a provider", () => {
+    expect(
+      getDefaultCloneUrl({
+        provider: "github",
+        url: "https://github.com/imputnet/helium",
+        sshUrl: "git@github.com:imputnet/helium.git",
+      }),
+    ).toBe("https://github.com/imputnet/helium");
+  });
+
+  it("preserves existing clone transport behavior for other providers", () => {
+    expect(
+      getDefaultCloneUrl({
+        provider: "gitlab",
+        url: "https://gitlab.com/group/project.git",
+        sshUrl: "git@gitlab.com:group/project.git",
+      }),
+    ).toBe("git@gitlab.com:group/project.git");
   });
 
   it("derives the clone folder name from any pasted clone URL", () => {
