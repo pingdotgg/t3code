@@ -249,6 +249,7 @@ export function createMobileThemeVariables(
     "--color-icon": c.text,
     "--color-icon-muted": c.iconMuted,
     "--color-icon-subtle": c.secondaryLabel,
+    "--color-terminal-active": appearance === "dark" ? "rgba(94, 234, 212, 0.9)" : "#0d9488",
     "--color-header": withAlpha(c.toolbar, 0.97),
     "--color-header-border": c.toolbarBorder,
     "--color-glass-surface": withAlpha(c.surfaceOverlay, 0.74),
