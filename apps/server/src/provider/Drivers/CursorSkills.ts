@@ -118,6 +118,14 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
 });
 
 /**
+ * Cheap pre-check so sendTurn only pays for skill rediscovery when the input
+ * actually carries a `$token` worth translating.
+ */
+export function mayContainSkillToken(input: string): boolean {
+  return /\$[a-z0-9-]/.test(input);
+}
+
+/**
  * T3 uses `$skill` for its shared picker. Cursor invokes selected skills with
  * `/skill`, so translate only known skill tokens before the ACP prompt runs.
  */
