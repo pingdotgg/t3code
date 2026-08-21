@@ -847,22 +847,11 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("desktop.window.showConnectingSplash"),
   );
 
-  // Shared by dispatchDeepLink and by the replay in handleBackendReady, so a
-  // link that launched the app takes exactly the same delivery path as one that
-  // arrived while the app was already running.
-  const deliverDeepLink = Effect.fn("desktop.window.deliverDeepLink")(function* (
+  const sendDeepLink = Effect.fn("desktop.window.sendDeepLink")(function* (
+    targetWindow: Electron.BrowserWindow,
     target: DeepLinkTarget,
   ) {
     yield* Effect.annotateCurrentSpan({ environmentId: target.environmentId });
-    const existingWindow = yield* focusedMainWindow;
-    if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
-      yield* Ref.set(pendingDeepLinkRef, Option.some(target));
-      yield* logWindowInfo("deep link held until backend is ready", { kind: target.kind });
-      return;
-    }
-
-    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-
     const send = () => {
       if (targetWindow.isDestroyed()) return;
       targetWindow.webContents.send(DEEP_LINK_CHANNEL, target);
@@ -877,6 +866,33 @@ export const make = Effect.gen(function* () {
     }
 
     send();
+  });
+
+  const flushPendingDeepLink = Effect.fn("desktop.window.flushPendingDeepLink")(function* () {
+    const pending = yield* Ref.getAndSet(pendingDeepLinkRef, Option.none());
+    if (Option.isNone(pending)) return;
+    const existingWindow = yield* focusedMainWindow;
+    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+    yield* sendDeepLink(targetWindow, pending.value);
+  });
+
+  const deliverDeepLink = Effect.fn("desktop.window.deliverDeepLink")(function* (
+    target: DeepLinkTarget,
+  ) {
+    const existingWindow = yield* focusedMainWindow;
+    if (Option.isSome(existingWindow)) {
+      yield* sendDeepLink(existingWindow.value, target);
+      return;
+    }
+
+    // Store first, then re-check readiness. If backend readiness races this
+    // write, either handleBackendReady or this flush wins the atomic take.
+    yield* Ref.set(pendingDeepLinkRef, Option.some(target));
+    if (yield* Ref.get(backendReadyRef)) {
+      yield* flushPendingDeepLink();
+      return;
+    }
+    yield* logWindowInfo("deep link held until backend is ready", { kind: target.kind });
   });
 
   return DesktopWindow.of({
@@ -913,10 +929,7 @@ export const make = Effect.gen(function* () {
 
       // Replay a link that arrived before the backend came up. Taken (not read)
       // so a later backend restart cannot deliver the same link a second time.
-      const pending = yield* Ref.getAndSet(pendingDeepLinkRef, Option.none());
-      if (Option.isSome(pending)) {
-        yield* deliverDeepLink(pending.value);
-      }
+      yield* flushPendingDeepLink();
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),

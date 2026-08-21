@@ -273,6 +273,9 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* lifecycle.register;
   yield* clerk.configure;
+  // macOS can emit open-url before ready, and does not preserve that URL in
+  // argv. Register now; DesktopWindow holds it until the backend can open.
+  yield* deepLinkRouter.register;
 
   yield* electronApp.whenReady.pipe(
     Effect.withSpan("desktop.electron.whenReady"),
@@ -289,9 +292,6 @@ const startup = Effect.gen(function* () {
   yield* applicationMenu.configure;
   yield* updates.configure;
   yield* linuxUrlHandler.register;
-  // Registered before bootstrap so a link that launched the app is picked up
-  // and held, rather than being missed while the backend starts.
-  yield* deepLinkRouter.register;
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
 

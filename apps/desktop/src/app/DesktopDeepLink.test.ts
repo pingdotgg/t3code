@@ -97,9 +97,9 @@ describe("findDeepLinkInArgv", () => {
   });
 
   it("returns the first match when several links are present", () => {
-    expect(
-      findDeepLinkInArgv(["t3code://threads/a/b", "t3code://threads/c/d"], SCHEMES),
-    ).toBe("t3code://threads/a/b");
+    expect(findDeepLinkInArgv(["t3code://threads/a/b", "t3code://threads/c/d"], SCHEMES)).toBe(
+      "t3code://threads/a/b",
+    );
   });
 
   it("returns null when no argument uses a registered scheme", () => {

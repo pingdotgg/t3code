@@ -62,13 +62,10 @@ export const make = Effect.gen(function* () {
   const register = Effect.gen(function* () {
     // Typed structurally so this module keeps talking to Electron only through
     // the ElectronApp service, as the rest of the app does.
-    yield* electronApp.on<[{ preventDefault: () => void }, string]>(
-      "open-url",
-      (event, url) => {
-        event.preventDefault();
-        handle(url, "open-url");
-      },
-    );
+    yield* electronApp.on<[{ preventDefault: () => void }, string]>("open-url", (event, url) => {
+      event.preventDefault();
+      handle(url, "open-url");
+    });
 
     // A second `second-instance` listener alongside the one that reveals the
     // window: Electron invokes every registered listener, so window reveal and

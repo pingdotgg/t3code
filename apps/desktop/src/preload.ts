@@ -7,9 +7,19 @@ import type {
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
 
+import {
+  decodeDesktopDeepLinkTarget,
+  makeDesktopDeepLinkBuffer,
+} from "./app/DesktopDeepLinkBuffer.ts";
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+const deepLinkBuffer = makeDesktopDeepLinkBuffer();
+ipcRenderer.on(IpcChannels.DEEP_LINK_CHANNEL, (_event, value: unknown) => {
+  const target = decodeDesktopDeepLinkTarget(value);
+  if (target !== null) deepLinkBuffer.push(target);
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -132,28 +142,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
-  onDeepLink: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, target: unknown) => {
-      // The main process already validated the URL, but this is the trust
-      // boundary into the renderer — re-check the shape rather than casting.
-      if (typeof target !== "object" || target === null) return;
-      const candidate = target as Record<string, unknown>;
-      if (candidate.kind !== "thread") return;
-      if (typeof candidate.environmentId !== "string" || typeof candidate.threadId !== "string") {
-        return;
-      }
-      listener({
-        kind: "thread",
-        environmentId: candidate.environmentId,
-        threadId: candidate.threadId,
-      });
-    };
-
-    ipcRenderer.on(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
-    };
-  },
+  onDeepLink: (listener) => deepLinkBuffer.subscribe(listener),
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   onWindowFullscreenStateChange: (listener) => {
