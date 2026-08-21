@@ -889,13 +889,6 @@ export function makeAntigravityAdapter(
               const requestedTurnModelId = turnModelSelection?.model
                 ? resolveAntigravityAcpBaseModelId(turnModelSelection.model)
                 : undefined;
-              const currentModelId = yield* applyAntigravityAcpModelSelection({
-                runtime: ctx.acp,
-                currentModelId: ctx.currentModelId,
-                requestedModelId: requestedTurnModelId,
-                mapError: (cause) =>
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
-              });
 
               const text = input.input?.trim();
               const imagePromptParts = yield* Effect.forEach(
@@ -944,6 +937,16 @@ export function makeAntigravityAdapter(
                 });
               }
 
+              // Switch the live session's model only after prompt preparation
+              // has validated, so a failed preparation never leaves the ACP
+              // session on a model the adapter did not record.
+              const currentModelId = yield* applyAntigravityAcpModelSelection({
+                runtime: ctx.acp,
+                currentModelId: ctx.currentModelId,
+                requestedModelId: requestedTurnModelId,
+                mapError: (cause) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+              });
               ctx.currentModelId = currentModelId;
               const displayModel = currentModelId
                 ? resolveAntigravityAcpBaseModelId(currentModelId)

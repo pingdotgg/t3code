@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
 import { type AntigravitySettings, type ModelSelection } from "@t3tools/contracts";
@@ -38,6 +39,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const crypto = yield* Crypto.Crypto;
+  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const runAntigravityJson = <S extends Schema.Top>({
     operation,
@@ -64,7 +66,10 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         environment,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-      }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      }).pipe(
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
+      );
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
