@@ -968,6 +968,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
+  // Pending-question answers submit plain strings, so while a question is
+  // active the editor renders raw text (no inline tokens) and the trigger
+  // menus stay closed. Mobile answers questions with a plain input for the
+  // same reason.
+  const plainAnswerMode = activePendingProgress !== null;
   const [composerCursor, setComposerCursor] = useState(() =>
     collapseExpandedComposerCursor(prompt, prompt.length),
   );
@@ -1161,7 +1166,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     workspaceEntries.entries,
   ]);
 
-  const composerMenuOpen = Boolean(composerTrigger);
+  const composerMenuOpen = Boolean(composerTrigger) && !plainAnswerMode;
   const composerMenuSearchKey = composerTrigger
     ? `${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
@@ -1434,7 +1439,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
+      const pendingInputEnded = lastSyncedPendingInputRef.current !== null;
       lastSyncedPendingInputRef.current = null;
+      if (pendingInputEnded) {
+        // The question is gone; hand the composer back to the regular draft
+        // with token-aware cursor state.
+        promptRef.current = prompt;
+        setComposerCursor(collapseExpandedComposerCursor(prompt, prompt.length));
+        setComposerTrigger(detectComposerTrigger(prompt, prompt.length));
+        setComposerHighlightedItemId(null);
+      }
       return;
     }
 
@@ -1455,19 +1469,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const nextCursor = collapseExpandedComposerCursor(nextCustomAnswer, nextCustomAnswer.length);
-    setComposerCursor(nextCursor);
-    setComposerTrigger(
-      detectComposerTrigger(
-        nextCustomAnswer,
-        expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
-      ),
-    );
+    // Plain answer mode: cursor offsets are raw because the editor renders no
+    // inline tokens, and trigger menus never open.
+    setComposerCursor(nextCustomAnswer.length);
+    setComposerTrigger(null);
     setComposerHighlightedItemId(null);
   }, [
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
+    prompt,
     promptRef,
   ]);
 
@@ -1478,10 +1489,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedItemId(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
-    setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    setComposerCursor(
+      plainAnswerMode
+        ? promptRef.current.length
+        : collapseExpandedComposerCursor(promptRef.current, promptRef.current.length),
+    );
+    setComposerTrigger(
+      plainAnswerMode ? null : detectComposerTrigger(promptRef.current, promptRef.current.length),
+    );
     setIsDragOverComposer(false);
-  }, [draftId, activeThreadId, promptRef]);
+  }, [draftId, activeThreadId, plainAnswerMode, promptRef]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -1610,9 +1627,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) => {
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
-        setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-        );
+        // Plain answer mode: no trigger menus over question answers.
+        setComposerTrigger(null);
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
@@ -1725,9 +1741,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger: plainAnswerMode
+        ? null
+        : detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
     };
-  }, [readComposerSnapshot]);
+  }, [plainAnswerMode, readComposerSnapshot]);
 
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -3220,7 +3238,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? composerTerminalContexts
                       : []
                   }
-                  skills={selectedProviderStatus?.skills ?? []}
+                  skills={plainAnswerMode ? [] : (selectedProviderStatus?.skills ?? [])}
+                  plainText={plainAnswerMode}
                   {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}
