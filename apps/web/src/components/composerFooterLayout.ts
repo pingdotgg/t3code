@@ -16,9 +16,14 @@ export function shouldUseRestingComposerLayout(input: {
   isFocused: boolean;
   hasAttachments: boolean;
   hasExpandedChrome: boolean;
+  hasInlineAccessories: boolean;
 }): boolean {
   return (
-    !input.isMobileViewport && !input.isFocused && !input.hasAttachments && !input.hasExpandedChrome
+    !input.isMobileViewport &&
+    !input.isFocused &&
+    !input.hasAttachments &&
+    !input.hasExpandedChrome &&
+    !input.hasInlineAccessories
   );
 }
 

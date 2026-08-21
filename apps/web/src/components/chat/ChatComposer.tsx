@@ -1206,24 +1206,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerElementContexts.length > 0 ||
     composerPreviewAnnotations.length > 0 ||
     composerReviewComments.length > 0;
-  const isComposerResting = shouldUseRestingComposerLayout({
-    isMobileViewport,
-    isFocused: isComposerFocused,
-    hasAttachments: composerHasAttachments,
-    hasExpandedChrome:
-      showComposerTopDrawer ||
-      isTasksDrawerOpen ||
-      composerMenuOpen ||
-      isStashMenuOpen ||
-      isComposerModelPickerOpen ||
-      isDragOverComposer ||
-      isPreparingWorktree ||
-      noProviderAvailable ||
-      projectSelectionRequired ||
-      environmentUnavailable !== null ||
-      composerSubmissionError !== null ||
-      providerInputSubmissionError !== null,
-  });
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const composerFooterActionLayoutKey = useMemo(() => {
@@ -2409,6 +2391,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       steps={visibleTaskSteps}
     />
   ) : null;
+  const isComposerResting = shouldUseRestingComposerLayout({
+    isMobileViewport,
+    isFocused: isComposerFocused,
+    hasAttachments: composerHasAttachments,
+    hasExpandedChrome:
+      showComposerTopDrawer ||
+      isTasksDrawerOpen ||
+      composerMenuOpen ||
+      isStashMenuOpen ||
+      isComposerModelPickerOpen ||
+      isDragOverComposer ||
+      isPreparingWorktree ||
+      noProviderAvailable ||
+      projectSelectionRequired ||
+      environmentUnavailable !== null ||
+      composerSubmissionError !== null ||
+      providerInputSubmissionError !== null,
+    hasInlineAccessories: showInlineTasksBadge || showInlineStashBadge,
+  });
   const showShoulderTabs =
     !props.externalDrawerAttached &&
     !showComposerTopDrawer &&
@@ -2692,18 +2693,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     if (isMobileViewport || !isComposerFocused) return;
 
-    const reconcileDesktopFocus = (target: EventTarget | null) => {
-      if (
+    const isInsideDesktopComposerFocusScope = (target: EventTarget | null) =>
+      Boolean(
         target instanceof Node &&
         (composerFormRef.current?.contains(target) ||
-          (target instanceof Element && isInsideComposerFloatingLayer(target)))
-      ) {
-        return;
+          (target instanceof Element && isInsideComposerFloatingLayer(target))),
+      );
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!isInsideDesktopComposerFocusScope(event.target)) {
+        setIsComposerFocused(false);
       }
-      setIsComposerFocused(false);
     };
-    const handleFocusIn = (event: FocusEvent) => reconcileDesktopFocus(event.target);
-    const handlePointerDown = (event: PointerEvent) => reconcileDesktopFocus(event.target);
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!isInsideDesktopComposerFocusScope(event.target)) {
+        scheduleComposerCollapseCheck();
+      }
+    };
 
     document.addEventListener("focusin", handleFocusIn, true);
     document.addEventListener("pointerdown", handlePointerDown, true);
@@ -2711,7 +2716,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       document.removeEventListener("focusin", handleFocusIn, true);
       document.removeEventListener("pointerdown", handlePointerDown, true);
     };
-  }, [isComposerFocused, isMobileViewport]);
+  }, [isComposerFocused, isMobileViewport, scheduleComposerCollapseCheck]);
 
   useEffect(() => {
     return () => {
