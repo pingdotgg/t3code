@@ -68,7 +68,7 @@ describe("mobile file tree helpers", () => {
     const tree = buildFileTree([
       {
         kind: "file",
-        path: ".plans/19-version-control-phase-1-vcs-driver-foundation.md",
+        path: "docs/internals/workspace-layout.md",
       },
       {
         kind: "file",
