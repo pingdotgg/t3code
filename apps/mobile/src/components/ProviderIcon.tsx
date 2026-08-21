@@ -39,6 +39,16 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "antigravity") {
+    const fill = isDarkMode ? "#F0F0F0" : "#1A1A1A";
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path fill={fill} d="M12 2.5A9.5 9.5 0 1 0 21.5 12h-2.4A7.1 7.1 0 1 1 12 4.9V2.5Z" />
+        <Path fill={fill} d="M17.8 3.6a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z" />
+      </Svg>
+    );
+  }
+
   if (props.provider === "cursor") {
     return (
       <Svg width={size} height={size} viewBox="0 0 466.73 532.09" fill="none">
