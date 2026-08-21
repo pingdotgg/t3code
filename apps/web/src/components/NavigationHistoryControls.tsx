@@ -100,8 +100,7 @@ function useNavigationHistoryShortcuts(input: {
       }
       event.preventDefault();
       event.stopPropagation();
-      const navigate = command === "navigation.back" ? input.back : input.forward;
-      navigate();
+      (command === "navigation.back" ? input.back : input.forward)();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);

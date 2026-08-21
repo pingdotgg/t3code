@@ -65,11 +65,11 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
         const previousRoot = target.location.transitionKey.split("/")[0]!;
         const nextRoot = location.transitionKey.split("/")[0]!;
         entries = entries.map((entry, index) => {
-          const suffix = entry.transitionKey.slice(previousRoot.length);
+          const [root, ...nestedKeys] = entry.transitionKey.split("/");
           return index === target.index
             ? location
-            : previousRoot !== nextRoot && (suffix === "" || suffix.startsWith("/"))
-              ? { ...entry, transitionKey: `${nextRoot}${suffix}` }
+            : previousRoot !== nextRoot && root === previousRoot
+              ? { ...entry, transitionKey: [nextRoot, ...nestedKeys].join("/") }
               : entry;
         });
         cursor = target.index;

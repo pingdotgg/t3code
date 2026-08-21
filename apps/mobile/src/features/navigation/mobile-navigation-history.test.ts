@@ -47,6 +47,8 @@ describe("createMobileNavigationHistory", () => {
     history.visit(thread);
     const forward = history.requestForward()!;
     history.visit(location(forward.location.pathname, "settings-new/content-new/settings-new"));
+    expect(history.requestBack()?.location.transitionKey).toBe("thread-a");
+    history.cancelPendingTraversal();
     expect(history.requestForward()?.location.transitionKey).toMatch(/^settings-new\//);
   });
 
