@@ -181,6 +181,7 @@ export function getConnectionAwareBrandHeaderOptions(opts: {
   }
 
   return {
+    headerLeft: () => null,
     headerTitle: () => (
       <WorkspaceConnectionTitle
         brand={<CompactBrandTitle />}
