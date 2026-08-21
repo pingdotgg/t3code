@@ -1276,8 +1276,15 @@ function ComposerInlineTokenPastePlugin() {
 function ComposerSurroundSelectionPlugin(props: {
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   skills: ReadonlyArray<ServerProviderSkill>;
+  plainText: boolean;
 }) {
   const [editor] = useLexicalComposerContext();
+  // Surround-typing is not token behavior, so this plugin renders in both
+  // modes. In plain mode there are no token nodes: cursor mapping is a raw
+  // clamp and the mention-boundary guard would false-positive on answer text
+  // that merely looks like a mention, so it is skipped.
+  const collapseCursor = props.plainText ? clampExpandedCursor : collapseExpandedComposerCursor;
+  const touchesMentionBoundary = props.plainText ? () => false : selectionTouchesMentionBoundary;
   const terminalContextsRef = useRef(props.terminalContexts);
   const skillMetadataRef = useRef(skillMetadataByName(props.skills));
   const pendingSurroundSelectionRef = useRef<{
@@ -1324,7 +1331,7 @@ function ComposerSurroundSelectionPlugin(props: {
             return null;
           }
           const value = $getRoot().getTextContent();
-          if (selectionTouchesMentionBoundary(value, range.start, range.end)) {
+          if (touchesMentionBoundary(value, range.start, range.end)) {
             return null;
           }
           return {
@@ -1343,17 +1350,13 @@ function ComposerSurroundSelectionPlugin(props: {
         selectionSnapshot.expandedEnd,
       );
       const nextValue = `${selectionSnapshot.value.slice(0, selectionSnapshot.expandedStart)}${inputData}${selectedText}${surroundCloseSymbol}${selectionSnapshot.value.slice(selectionSnapshot.expandedEnd)}`;
-      // This plugin only renders in rich (tokenized) mode.
       $setComposerEditorPrompt(
         nextValue,
         terminalContextsRef.current,
         skillMetadataRef.current,
-        false,
+        props.plainText,
       );
-      const selectionStart = collapseExpandedComposerCursor(
-        nextValue,
-        selectionSnapshot.expandedStart,
-      );
+      const selectionStart = collapseCursor(nextValue, selectionSnapshot.expandedStart);
       $setSelectionRangeAtComposerOffsets(
         selectionStart + inputData.length,
         selectionStart + inputData.length + selectedText.length,
@@ -1399,7 +1402,7 @@ function ComposerSurroundSelectionPlugin(props: {
           return;
         }
         const value = $getRoot().getTextContent();
-        if (selectionTouchesMentionBoundary(value, range.start, range.end)) {
+        if (touchesMentionBoundary(value, range.start, range.end)) {
           pendingSurroundSelectionRef.current = null;
           pendingDeadKeySelectionRef.current = null;
           return;
@@ -1480,7 +1483,7 @@ function ComposerSurroundSelectionPlugin(props: {
               pendingDeadKeySelection.expandedStart,
               pendingDeadKeySelection.expandedEnd,
             );
-            const replacementStart = collapseExpandedComposerCursor(
+            const replacementStart = collapseCursor(
               currentValue,
               pendingDeadKeySelection.expandedStart,
             );
@@ -1691,14 +1694,19 @@ function ComposerPromptEditorInner({
   useLayoutEffect(() => {
     if (restoreFocusOnRemountRef.current) {
       restoreFocusOnRemountRef.current = false;
-      focusAt(snapshotRef.current.cursor);
+      // Focus at the end: the snapshot cursor was seeded from the previous
+      // mode's stale cursor prop, while both mode transitions settle the
+      // caret at the end (answer end on question open, draft end on resolve).
+      // Placing it there directly leaves no window for keystrokes to land at
+      // a stale offset before the parent's effects run.
+      focusAt(collapseComposerCursor(snapshotRef.current.value, snapshotRef.current.value.length));
     }
     return () => {
       // Layout cleanup runs before the old DOM node is detached, so
       // activeElement still points at it here.
       restoreFocusOnRemountRef.current = editor.getRootElement() === document.activeElement;
     };
-  }, [editor, focusAt, restoreFocusOnRemountRef]);
+  }, [collapseComposerCursor, editor, focusAt, restoreFocusOnRemountRef]);
 
   const readSnapshot = useCallback((): {
     value: string;
@@ -1832,9 +1840,16 @@ function ComposerPromptEditorInner({
         />
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+        {/* Surround-typing (wrap a selection in brackets/quotes) is plain
+            typing behavior, not token behavior, so it stays mounted in both
+            modes; only the token-dependent plugins are mode-gated. */}
+        <ComposerSurroundSelectionPlugin
+          terminalContexts={terminalContexts}
+          skills={skills}
+          plainText={plainText}
+        />
         {plainText ? null : (
           <>
-            <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
             <ComposerInlineTokenArrowPlugin />
             <ComposerInlineTokenSelectionNormalizePlugin />
             <ComposerInlineTokenBackspacePlugin />
