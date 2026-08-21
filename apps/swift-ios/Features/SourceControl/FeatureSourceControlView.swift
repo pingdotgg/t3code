@@ -7,6 +7,7 @@ public struct FeatureSourceControlView: View {
     @State private var status: FeatureSourceControlStatus?
     @State private var isLoading = true
     @State private var isRunningAction = false
+    @State private var runState = FeatureToolRunState<FeatureSourceControlOperation>()
     @State private var recovery = FeatureToolFailureState<FeatureSourceControlOperation>()
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
@@ -48,7 +49,7 @@ public struct FeatureSourceControlView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
-                    .disabled(isLoading || isRunningAction)
+                    .disabled(isLoading || runState.isBusy)
                     .accessibilityLabel("Reload source control")
             }
         }
@@ -64,7 +65,10 @@ public struct FeatureSourceControlView: View {
                 }
                 pendingCommitAction = nil
             }
-            .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(
+                commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || runState.isBusy
+            )
         }
         .onChange(of: recovery.failure?.id) { _, failureID in
             guard failureID != nil else { return }
@@ -86,12 +90,15 @@ public struct FeatureSourceControlView: View {
                 Label(failure.title, systemImage: "exclamationmark.triangle.fill")
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.danger)
-                Text(failure.message)
-                    .font(T3Typography.tool)
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ScrollView {
+                    Text(failure.message)
+                        .font(T3Typography.tool)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: T3Metrics.maximumToolFailureMessageHeight)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(failure.accessibilityLabel)
@@ -108,7 +115,7 @@ public struct FeatureSourceControlView: View {
                         .frame(minHeight: T3Metrics.minimumTapTarget)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(failure.isRetrying)
+                .disabled(failure.isRetrying || runState.isBusy)
                 .accessibilityLabel(failure.retryAccessibilityLabel)
                 .accessibilityIdentifier("source-control-failure-retry")
 
@@ -169,7 +176,7 @@ public struct FeatureSourceControlView: View {
                         Label(action.title, systemImage: action.icon)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .disabled(isRunningAction)
+                    .disabled(runState.isBusy)
                 }
             }
 
@@ -232,6 +239,7 @@ public struct FeatureSourceControlView: View {
     /// Single entry point for every source control request, so a retry replays the exact failed
     /// operation — commit message included — instead of falling back to a plain reload.
     private func run(_ operation: FeatureSourceControlOperation) async {
+        guard runState.begin(operation) else { return }
         recovery.begin(operation)
         if operation.isLoad {
             isLoading = true
@@ -239,6 +247,7 @@ public struct FeatureSourceControlView: View {
             isRunningAction = true
         }
         defer {
+            runState.finish(operation)
             if operation.isLoad {
                 isLoading = false
             } else {
@@ -249,14 +258,24 @@ public struct FeatureSourceControlView: View {
             switch operation {
             case .load:
                 status = try await client.sourceControlStatus(threadID: threadID)
+                recovery.recordSuccess(operation)
             case .action(let action, let message):
-                status = try await client.performSourceControlAction(
+                try await client.performSourceControlAction(
                     threadID: threadID,
                     action: action,
                     message: message
                 )
+                do {
+                    status = try await client.sourceControlStatus(threadID: threadID)
+                    recovery.recordSuccess(operation)
+                } catch {
+                    recovery.recordFollowUpFailure(
+                        .load,
+                        afterCompletionOf: operation,
+                        error: error
+                    )
+                }
             }
-            recovery.recordSuccess(operation)
         } catch {
             recovery.recordFailure(operation, error: error)
         }

@@ -94,6 +94,7 @@ enum T3Typography {
 
 enum T3Metrics {
     static let minimumTapTarget: CGFloat = 44
+    static let maximumToolFailureMessageHeight: CGFloat = 144
     static let sidebarWidth: CGFloat = 320
     static let minimumSidebarWidth: CGFloat = 280
     static let maximumSidebarWidth: CGFloat = 380

@@ -52,6 +52,18 @@ struct FeatureToolRecoveryTests {
         #expect(state.failure?.isRetrying == false)
     }
 
+    @Test("An unrelated success preserves the failed operation", .bug(id: 3801994163))
+    func unrelatedSuccessDoesNotConsumeTheRetainedFailure() {
+        var state = failedState()
+
+        state.begin(.load)
+        state.recordSuccess(.load)
+
+        #expect(state.failure?.message == "remote rejected: non-fast-forward")
+        #expect(state.retryOperation == .action(.push, message: nil))
+        #expect(state.recoveryAnnouncement == nil)
+    }
+
     @Test
     func repeatedFailureUpdatesContentAndPresentsANewFocusIdentity() {
         var state = failedState()
@@ -153,6 +165,43 @@ struct FeatureToolRecoveryTests {
         #expect(state.failure?.retryAccessibilityLabel == "Retry commit changes")
     }
 
+    @Test("A post-action refresh failure retries only the refresh", .bug(id: 3801994206))
+    func postActionRefreshFailureCannotRepeatTheCompletedAction() {
+        let completedAction = FeatureSourceControlOperation.action(
+            .commit,
+            message: "fix: do not run twice"
+        )
+        var state = FeatureToolFailureState<FeatureSourceControlOperation>()
+
+        state.begin(completedAction)
+        state.recordFollowUpFailure(
+            .load,
+            afterCompletionOf: completedAction,
+            error: StubError(message: "connection lost during refresh")
+        )
+
+        #expect(state.failure?.title == "Repository status failed to load")
+        #expect(state.retryOperation == .load)
+        #expect(state.retryOperation != completedAction)
+    }
+
+    @Test("A cancelled post-action refresh cannot leave the action retryable")
+    func cancelledPostActionRefreshDropsTheCompletedActionFailure() {
+        let completedAction = FeatureSourceControlOperation.action(.push, message: nil)
+        var state = failedState(completedAction)
+
+        state.begin(completedAction)
+        state.recordFollowUpFailure(
+            .load,
+            afterCompletionOf: completedAction,
+            error: CancellationError()
+        )
+
+        #expect(state.failure == nil)
+        #expect(state.retryOperation == nil)
+        #expect(state.recoveryAnnouncement == nil)
+    }
+
     @Test
     func retryLabelIsStableAcrossRepeatedFailuresOfTheSameOperation() {
         var state = failedState()
@@ -194,5 +243,26 @@ struct FeatureToolRecoveryTests {
     func loadOperationIsDistinguishedFromActions() {
         #expect(FeatureSourceControlOperation.load.isLoad)
         #expect(FeatureSourceControlOperation.action(.pull, message: nil).isLoad == false)
+    }
+
+    @Test("Only one source-control request can own the recovery state", .bug(id: 3802036872))
+    func runStateRejectsOverlappingOperations() {
+        var state = FeatureToolRunState<FeatureSourceControlOperation>()
+        let action = FeatureSourceControlOperation.action(.push, message: nil)
+
+        let actionDidBegin = state.begin(action)
+        let overlappingLoadDidBegin = state.begin(.load)
+
+        #expect(actionDidBegin)
+        #expect(state.isBusy)
+        #expect(overlappingLoadDidBegin == false)
+        #expect(state.operation == action)
+
+        state.finish(.load)
+        #expect(state.operation == action)
+
+        state.finish(action)
+        #expect(state.isBusy == false)
+        #expect(state.operation == nil)
     }
 }

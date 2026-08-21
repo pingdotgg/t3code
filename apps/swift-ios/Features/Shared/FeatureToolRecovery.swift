@@ -88,10 +88,30 @@ public struct FeatureToolFailureState<Operation: FeatureRecoverableOperation>: S
     /// Records a successful attempt. The recovered content replaces the failure rather than
     /// being stacked underneath it.
     public mutating func recordSuccess(_ operation: Operation) {
-        let hadFailure = failure != nil
+        guard failure != nil, retryOperation == operation else {
+            recoveryAnnouncement = nil
+            return
+        }
         failure = nil
         retryOperation = nil
-        recoveryAnnouncement = hadFailure ? operation.recoveryAnnouncement : nil
+        recoveryAnnouncement = operation.recoveryAnnouncement
+    }
+
+    /// Records a follow-up failure after an operation already completed. A real failure becomes
+    /// the only retryable operation; cancellation stays silent and removes the completed work.
+    public mutating func recordFollowUpFailure(
+        _ followUpOperation: Operation,
+        afterCompletionOf completedOperation: Operation,
+        error: Error
+    ) {
+        guard Self.isCancellation(error) else {
+            recordFailure(followUpOperation, error: error)
+            return
+        }
+        guard retryOperation == completedOperation else { return }
+        failure = nil
+        retryOperation = nil
+        recoveryAnnouncement = nil
     }
 
     /// Consumes the pending announcement so recovery is never spoken twice.
@@ -117,6 +137,29 @@ public struct FeatureToolFailureState<Operation: FeatureRecoverableOperation>: S
         let described = error.localizedDescription
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return described.isEmpty ? "The operation could not be completed." : described
+    }
+}
+
+/// Single-flight ownership for a tool surface. A second request cannot mutate recovery state
+/// while the operation that acquired the surface is still running.
+public struct FeatureToolRunState<Operation: Equatable & Sendable>: Sendable, Equatable {
+    public private(set) var operation: Operation?
+
+    public init() {}
+
+    public var isBusy: Bool {
+        operation != nil
+    }
+
+    public mutating func begin(_ operation: Operation) -> Bool {
+        guard self.operation == nil else { return false }
+        self.operation = operation
+        return true
+    }
+
+    public mutating func finish(_ operation: Operation) {
+        guard self.operation == operation else { return }
+        self.operation = nil
     }
 }
 
