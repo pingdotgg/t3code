@@ -869,6 +869,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       }),
                     );
                     return;
+                  case "UsageUpdated":
+                  case "AvailableCommandsUpdated":
+                    return;
                 }
               }),
             ),

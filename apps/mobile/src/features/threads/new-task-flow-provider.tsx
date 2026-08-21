@@ -34,6 +34,7 @@ import {
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
+  selectedProviderShowsInteractionModeToggle,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -194,7 +195,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
-  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
+  const { enabled: planModePreferenceEnabled, loaded: planModePreferenceLoaded } =
+    useLegacyPlanModeState();
   const projectScopes = useMemo(
     () =>
       sortHomeProjectScopes({
@@ -401,9 +403,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode = planModeEnabled
-    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
-    : DEFAULT_PROVIDER_INTERACTION_MODE;
 
   // Stored selections only count while their provider is usable on the
   // server; otherwise the server's default model wins instead of silently
@@ -433,6 +432,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     modelOptions.find((option) => option.isDefault)?.selection ??
     modelOptions[0]?.selection ??
     null;
+  const planModeEnabled =
+    planModePreferenceEnabled &&
+    selectedProviderShowsInteractionModeToggle(selectedEnvironmentServerConfig, selectedModel);
+  const interactionMode = planModeEnabled
+    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
+    : DEFAULT_PROVIDER_INTERACTION_MODE;
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;

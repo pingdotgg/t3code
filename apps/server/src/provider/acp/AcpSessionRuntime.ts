@@ -22,9 +22,11 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
+  configOptionCurrentValueMatches,
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
   extractModelConfigId,
+  extractConfigOptionsFromSessionUpdate,
   findSessionConfigOption,
   mergeToolCallState,
   parseSessionModeState,
@@ -399,6 +401,10 @@ export const make = (
           notification.sessionId !== startState.result.sessionId
         ) {
           return;
+        }
+        const configOptions = extractConfigOptionsFromSessionUpdate(notification);
+        if (configOptions) {
+          yield* Ref.set(configOptionsRef, configOptions);
         }
         yield* handleSessionUpdate({
           queue: eventQueue,
@@ -832,20 +838,6 @@ function sessionConfigOptionsFromSetup(
     | undefined,
 ): ReadonlyArray<EffectAcpSchema.SessionConfigOption> {
   return response?.configOptions ?? [];
-}
-
-function configOptionCurrentValueMatches(
-  configOption: EffectAcpSchema.SessionConfigOption,
-  value: string | boolean,
-): boolean {
-  const currentValue = configOption.currentValue;
-  if (configOption.type === "boolean") {
-    return currentValue === value;
-  }
-  if (typeof currentValue !== "string") {
-    return false;
-  }
-  return currentValue.trim() === String(value).trim();
 }
 
 const handleSessionUpdate = ({
