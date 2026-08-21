@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as Electron from "electron";
@@ -18,6 +19,7 @@ const { logWarning } = makeComponentLogger("desktop-spellcheck");
 const LINUX_KEYBOARD_CONFIG_PATHS = ["/etc/vconsole.conf", "/etc/default/keyboard"] as const;
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const WINDOWS_KEYBOARD_QUERY_TIMEOUT = Duration.seconds(3);
+const spellcheckerSyncSemaphore = Semaphore.makeUnsafe(1);
 const WINDOWS_KEYBOARD_LANGUAGE_SCRIPT = [
   "try {",
   'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public static class T3KeyboardLayout { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, IntPtr processId); [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint threadId); }\' -ErrorAction Stop;',
@@ -417,7 +419,7 @@ export function applySpellCheckerSession(
   return { enabled: true, languages };
 }
 
-export const syncBrowserWindowSpellChecker = (
+const syncBrowserWindowSpellCheckerOnce = (
   window: Electron.BrowserWindow,
   settingsOverride?: SpellcheckSettings,
 ) =>
@@ -453,6 +455,7 @@ export const syncBrowserWindowSpellChecker = (
       }
     }
 
+    if (window.isDestroyed()) return;
     yield* Effect.try({
       try: () =>
         applySpellCheckerSession(window.webContents.session, {
@@ -481,3 +484,9 @@ export const syncBrowserWindowSpellChecker = (
       ),
     );
   });
+
+export const syncBrowserWindowSpellChecker = (
+  window: Electron.BrowserWindow,
+  settingsOverride?: SpellcheckSettings,
+) =>
+  spellcheckerSyncSemaphore.withPermit(syncBrowserWindowSpellCheckerOnce(window, settingsOverride));

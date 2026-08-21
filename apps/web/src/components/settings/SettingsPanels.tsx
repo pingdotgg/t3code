@@ -1404,7 +1404,7 @@ function SpellcheckRow() {
       }
     >
       {canSelectLanguages && settings.spellcheckEnabled ? (
-        <div className="space-y-2 pt-3">
+        <div className="space-y-2 pt-3 pb-2">
           <p className="text-xs text-muted-foreground">
             {selectedLanguages.size === 0
               ? "Automatic language selection is on."

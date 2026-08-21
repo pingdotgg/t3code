@@ -380,7 +380,7 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
-    yield* syncBrowserWindowSpellChecker(window).pipe(Effect.provide(context));
+    runFork(syncBrowserWindowSpellChecker(window));
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;

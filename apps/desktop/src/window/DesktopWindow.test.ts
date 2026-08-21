@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -215,10 +216,17 @@ function makeTestLayer(input: {
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
+  readonly clientSettingsGet?: DesktopClientSettings.DesktopClientSettings["Service"]["get"];
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
+  const clientSettingsLayer =
+    input.clientSettingsGet === undefined
+      ? desktopClientSettingsLayer
+      : Layer.mock(DesktopClientSettings.DesktopClientSettings)({
+          get: input.clientSettingsGet,
+        });
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
     load: Effect.sync(() => desktopSettings),
@@ -278,7 +286,7 @@ function makeTestLayer(input: {
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
-        desktopClientSettingsLayer,
+        clientSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
         electronAppLayer,
@@ -477,6 +485,42 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
         assert.deepEqual(fakeWindow.setSpellCheckerEnabled.mock.calls, [[true]]);
         assert.equal(fakeWindow.setSpellCheckerLanguages.mock.calls.length, 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("starts loading without waiting for spellchecker synchronization", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const settingsRead = yield* Deferred.make<void>();
+      const fakeWindow = makeFakeBrowserWindow();
+      fakeWindow.loadURL.mockImplementation(() => {
+        events.push("load");
+        return Promise.resolve();
+      });
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        clientSettingsGet: Effect.gen(function* () {
+          yield* Effect.yieldNow;
+          events.push("spellcheck");
+          yield* Deferred.succeed(settingsRead, undefined);
+          return Option.some({
+            ...DEFAULT_CLIENT_SETTINGS,
+            spellcheckLanguages: ["en-US"],
+          });
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* Deferred.await(settingsRead);
+        yield* Effect.yieldNow;
+        assert.deepEqual(events, ["load", "spellcheck"]);
       }).pipe(Effect.provide(layer));
     }),
   );
