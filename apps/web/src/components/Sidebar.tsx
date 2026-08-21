@@ -3318,9 +3318,29 @@ export default function Sidebar() {
     setShowJumpHints(shouldShowJumpHintsNow);
   }, [shouldShowJumpHintsNow]);
 
+  const listAutoAnimateControllerRef = useRef<ReturnType<typeof autoAnimate> | null>(null);
+  const listAutoAnimateEnableFrameRef = useRef<number | null>(null);
   const attachListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
+    if (listAutoAnimateEnableFrameRef.current !== null) {
+      window.cancelAnimationFrame(listAutoAnimateEnableFrameRef.current);
+      listAutoAnimateEnableFrameRef.current = null;
+    }
+    listAutoAnimateControllerRef.current?.destroy?.();
+    listAutoAnimateControllerRef.current = null;
     if (!node) return;
-    autoAnimate(node, { duration: 150, easing: "ease-out" });
+
+    const controller = autoAnimate(node, { duration: 150, easing: "ease-out" });
+    // DndContext installs its accessibility nodes just after this list mounts.
+    // Treat those setup mutations as part of the initial render; otherwise
+    // auto-animate scales every existing thread row when Settings unmounts and
+    // remounts the sidebar. Real list changes after the first frame still animate.
+    controller.disable();
+    listAutoAnimateControllerRef.current = controller;
+    listAutoAnimateEnableFrameRef.current = window.requestAnimationFrame(() => {
+      if (listAutoAnimateControllerRef.current !== controller) return;
+      controller.enable();
+      listAutoAnimateEnableFrameRef.current = null;
+    });
   }, []);
 
   // New thread defaults to the project you're in (active thread's project,
