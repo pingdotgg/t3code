@@ -87,6 +87,30 @@ it("parseGrokInspectReport ignores extra inspect report fields", () => {
   assert.equal(catalog.slashCommands[0]?.name, "review");
 });
 
+it("parseGrokInspectReport preserves explicit aliases over later bare names", () => {
+  const catalog = parseGrokInspectReport({
+    skills: [
+      {
+        name: "aliased-skill",
+        description: "Explicit alias owner.",
+        source: { type: "bundled", path: "/bundled/aliased/SKILL.md" },
+        userInvocable: true,
+        invocableAs: "review",
+      },
+      {
+        name: "review",
+        description: "Bare-name fallback.",
+        source: { type: "bundled", path: "/bundled/review/SKILL.md" },
+        userInvocable: true,
+      },
+    ],
+  });
+
+  assert.deepEqual(catalog.slashCommands, [
+    { name: "review", description: "Explicit alias owner." },
+  ]);
+});
+
 it("parseGrokAvailableCommands splits harness features from skill commands", () => {
   const catalog = parseGrokAvailableCommands(
     [
@@ -219,6 +243,19 @@ it("resolveGrokPickerCatalog unions filesystem and ACP skills when inspect is mi
   );
   assert.equal(catalog.skills.find((skill) => skill.name === "shared")?.scope, "bundled");
   assert.equal(catalog.slashCommands[0]?.name, "compact");
+});
+
+it("resolveGrokPickerCatalog treats an empty ACP menu as authoritative", () => {
+  const catalog = resolveGrokPickerCatalog({
+    filesystemSkills: [],
+    inspectCatalog: {
+      skills: [],
+      slashCommands: [{ name: "inspect-only" }],
+    },
+    acpCatalog: { skills: [], slashCommands: [] },
+  });
+
+  assert.deepEqual(catalog.slashCommands, []);
 });
 
 it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
@@ -385,6 +422,30 @@ it.layer(NodeServices.layer)("queryGrokInspectCatalog", (it) => {
           workspace,
         );
         assert.ok(catalog?.slashCommands.some((command) => command.name === "create-skill"));
+      }),
+    ),
+  );
+
+  it.effect("parses a report after brace-containing diagnostics", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-inspect-noisy-" });
+        const grokPath = path.join(dir, "grok");
+        yield* fs.writeFileString(
+          grokPath,
+          [
+            "#!/bin/sh",
+            `printf '%s\\n' 'diagnostic {"status":"warming"}' '{"skills":[{"name":"review","source":{"type":"bundled","path":"/bundled/review/SKILL.md"},"userInvocable":true}]}'`,
+            "exit 0",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(grokPath, 0o755);
+
+        const catalog = yield* queryGrokInspectCatalog({ binaryPath: grokPath, cwd: dir });
+        assert.equal(catalog?.skills[0]?.name, "review");
       }),
     ),
   );

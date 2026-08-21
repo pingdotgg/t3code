@@ -132,10 +132,49 @@ function parseInspectJsonObject(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      return JSON.parse(text.slice(start, end + 1));
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === "\\") {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (character === '"' && depth > 0) {
+        inString = true;
+        continue;
+      }
+      if (character === "{") {
+        if (depth === 0) {
+          start = index;
+        }
+        depth += 1;
+        continue;
+      }
+      if (character !== "}" || depth === 0) {
+        continue;
+      }
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        try {
+          const candidate = JSON.parse(text.slice(start, index + 1));
+          if (Exit.isSuccess(decodeGrokInspectReportExit(candidate))) {
+            return candidate;
+          }
+        } catch {
+          // Continue scanning later balanced objects in noisy stdout.
+        }
+        start = -1;
+      }
     }
     throw new SyntaxError("Grok inspect output was not JSON.");
   }
@@ -159,6 +198,7 @@ export function parseGrokInspectReport(report: unknown, sourceCwd?: string): Gro
     : undefined;
   const skillsByKey = new Map<string, ServerProviderSkill>();
   const slashCommandsByName = new Map<string, ServerProviderSlashCommand>();
+  const explicitSlashCommandNames = new Set<string>();
 
   for (const skill of decoded.value.skills) {
     const name = nonEmptyTrimmed(skill.name);
@@ -185,11 +225,19 @@ export function parseGrokInspectReport(report: unknown, sourceCwd?: string): Gro
       continue;
     }
 
-    const slashName = nonEmptyTrimmed(skill.invocableAs) ?? name;
-    slashCommandsByName.set(slashName.toLowerCase(), {
+    const explicitSlashName = nonEmptyTrimmed(skill.invocableAs);
+    const slashName = explicitSlashName ?? name;
+    const slashKey = slashName.toLowerCase();
+    if (!explicitSlashName && explicitSlashCommandNames.has(slashKey)) {
+      continue;
+    }
+    slashCommandsByName.set(slashKey, {
       name: slashName,
       ...(description ? { description } : {}),
     });
+    if (explicitSlashName) {
+      explicitSlashCommandNames.add(slashKey);
+    }
   }
 
   return {
@@ -213,10 +261,12 @@ function grokAvailableCommandSkillMeta(command: EffectAcpSchema.AvailableCommand
   if (!path) {
     return undefined;
   }
+  const scope = nonEmptyTrimmed(typeof meta.scope === "string" ? meta.scope : undefined);
+  const bareName = nonEmptyTrimmed(typeof meta.bareName === "string" ? meta.bareName : undefined);
   return {
     path,
-    scope: nonEmptyTrimmed(typeof meta.scope === "string" ? meta.scope : undefined),
-    bareName: nonEmptyTrimmed(typeof meta.bareName === "string" ? meta.bareName : undefined),
+    ...(scope ? { scope } : {}),
+    ...(bareName ? { bareName } : {}),
   };
 }
 
@@ -309,10 +359,9 @@ export function resolveGrokPickerCatalog(input: {
         { skills: input.filesystemSkills, slashCommands: [] },
         input.acpCatalog ?? { skills: [], slashCommands: [] },
       ]).skills;
-  const slashCommands =
-    input.acpCatalog && input.acpCatalog.slashCommands.length > 0
-      ? input.acpCatalog.slashCommands
-      : (input.inspectCatalog?.slashCommands ?? []);
+  const slashCommands = input.acpCatalog
+    ? input.acpCatalog.slashCommands
+    : (input.inspectCatalog?.slashCommands ?? []);
   return { skills, slashCommands };
 }
 

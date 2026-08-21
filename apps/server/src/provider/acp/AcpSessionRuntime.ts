@@ -381,10 +381,12 @@ export const make = (
           const startState = yield* Ref.get(startStateRef);
           // Capture during startup (Grok advertises before session/new returns)
           // and from the live session; ignore child/foreign session updates.
-          if (
-            startState._tag !== "Started" ||
-            notification.sessionId === startState.result.sessionId
-          ) {
+          const belongsToRuntime =
+            startState._tag === "Started"
+              ? notification.sessionId === startState.result.sessionId
+              : options.resumeSessionId === undefined ||
+                notification.sessionId === options.resumeSessionId;
+          if (belongsToRuntime) {
             yield* Ref.set(availableCommandsRef, notification.update.availableCommands);
           }
         }
@@ -696,6 +698,7 @@ export const make = (
                 ),
                 Effect.onError((cause) =>
                   Deferred.failCause(deferred, cause).pipe(
+                    Effect.andThen(Ref.set(availableCommandsRef, [])),
                     Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
                   ),
                 ),

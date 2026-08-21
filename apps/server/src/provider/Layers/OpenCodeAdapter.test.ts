@@ -439,6 +439,34 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("routes built-in slash commands without requiring command.list to report them", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-built-in-command");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/review branch",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+      yield* advanceTestClock(1);
+
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 0);
+      NodeAssert.equal(runtimeMock.state.commandCalls[0]?.command, "review");
+      NodeAssert.equal(runtimeMock.state.commandCalls[0]?.arguments, "branch");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("sends slash text the harness does not know as a plain prompt", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

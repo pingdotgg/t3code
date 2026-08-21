@@ -29,6 +29,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { OPENCODE_BUILT_IN_SLASH_COMMANDS } from "../Drivers/OpenCodeCommands.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -250,7 +251,13 @@ const resolveOpenCodeSessionCommandNames = Effect.fn("resolveOpenCodeSessionComm
     const listed = yield* runOpenCodeSdk("command.list", () =>
       context.client.command.list({ directory: context.directory }),
     ).pipe(
-      Effect.map((result) => new Set((result.data ?? []).map((command) => command.name))),
+      Effect.map(
+        (result) =>
+          new Set([
+            ...OPENCODE_BUILT_IN_SLASH_COMMANDS.map((command) => command.name),
+            ...(result.data ?? []).map((command) => command.name),
+          ]),
+      ),
       Effect.catch((error) =>
         Effect.logWarning("OpenCode command.list failed; the turn is sent as a plain prompt.", {
           detail: openCodeRuntimeErrorDetail(error),
@@ -1602,8 +1609,8 @@ export function makeOpenCodeAdapter(
             command: slashCommandName,
             arguments: slashInvocation.arguments,
             model: `${parsedModel.providerID}/${parsedModel.modelID}`,
-            ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-            ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+            ...(agent ? { agent } : {}),
+            ...(variant ? { variant } : {}),
             ...(fileParts.length > 0 ? { parts: fileParts } : {}),
           }),
         ).pipe(

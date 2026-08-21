@@ -9,10 +9,10 @@
  * are queried through the SDK `command.list` per directory instead, which
  * additionally sees MCP- and plugin-contributed commands.
  *
- * A command the harness reports for every queried workspace is global; one
- * reported for a subset is tagged with each reporting workspace's
+ * Harness-discovered commands are tagged with each reporting workspace's
  * `sourceCwd` so clients can scope the picker per project (see
- * filterProviderSlashCommandsForWorkspace).
+ * filterProviderSlashCommandsForWorkspace). The per-workspace inventory does
+ * not expose enough provenance to infer that a command is global.
  *
  * Harness built-ins (`init`, `review`) are registered in code rather than
  * config, so neither discovery path is guaranteed to see them; they are
@@ -122,14 +122,11 @@ export interface OpenCodeCommandListForCwd {
 
 /**
  * Merge per-cwd harness inventories into the picker list. Built-ins are
- * always present; harness entries win same-scope name collisions, and a
- * harness entry reported for every queried workspace becomes global while
- * one reported for a subset stays tagged to those workspaces.
+ * always present and harness entries remain tagged to their workspaces.
  */
 export function mergeOpenCodeCommandCwds(
   lists: ReadonlyArray<OpenCodeCommandListForCwd>,
 ): ServerProviderSlashCommand[] {
-  const queriedCwds = new Set(lists.map((list) => normalizeProviderSkillWorkspacePath(list.cwd)));
   const seenByName = new Map<
     string,
     { readonly command: ServerProviderSlashCommand; readonly cwds: Set<string> }
@@ -154,10 +151,6 @@ export function mergeOpenCodeCommandCwds(
   }
   for (const { command, cwds } of seenByName.values()) {
     const key = command.name.toLowerCase();
-    if (queriedCwds.size > 0 && cwds.size === queriedCwds.size) {
-      merged.set(`global\0${key}`, command);
-      continue;
-    }
     for (const sourceCwd of cwds) {
       merged.set(`cwd\0${sourceCwd}\0${key}`, { ...command, sourceCwd });
     }
