@@ -599,7 +599,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="dropdown-glass relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden rounded-lg text-popover-foreground shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] [clip-path:inset(0_round_var(--radius-lg))] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]"
+        className="relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
         data-model-picker-content="true"
       >
         {/* Sidebar */}
