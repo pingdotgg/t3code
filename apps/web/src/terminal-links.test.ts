@@ -4,6 +4,7 @@ import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
   isTerminalLinkActivation,
+  isTerminalUrl,
   resolvePathLinkTarget,
   resolveWrappedTerminalLinkRange,
   wrappedTerminalLinkRangeIntersectsBufferLine,
@@ -33,6 +34,26 @@ describe("extractTerminalLinks", () => {
         text: "src/components/ThreadTerminalDrawer.tsx:42",
         start: 39,
         end: 81,
+      },
+    ]);
+  });
+
+  it("classifies uppercase schemes as URLs at activation time too", () => {
+    // Extraction and activation must agree: a link that hovers as a URL and
+    // then opens as a file path is the bug this guards against.
+    expect(isTerminalUrl("HTTPS://example.com/docs")).toBe(true);
+    expect(isTerminalUrl("Http://example.com")).toBe(true);
+    expect(isTerminalUrl("src/components/main.ts")).toBe(false);
+    expect(isTerminalUrl("httpsdocs/readme.md")).toBe(false);
+  });
+
+  it("finds URLs regardless of scheme casing", () => {
+    expect(extractTerminalLinks("open HTTPS://example.com/docs")).toEqual([
+      {
+        kind: "url",
+        text: "HTTPS://example.com/docs",
+        start: 5,
+        end: 29,
       },
     ]);
   });
