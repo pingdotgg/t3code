@@ -109,6 +109,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
+import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -384,11 +385,17 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         toastManager.add({ type: "warning", title: "Project title cannot be empty" });
         return;
       }
-      if (title === group.displayName) return;
-      if (group.memberProjects.every((member) => member.title === title)) return;
+      if (
+        !projectGroupTitleNeedsUpdate(
+          group.memberProjects.map((member) => member.title),
+          title,
+        )
+      ) {
+        return;
+      }
       await updateAllMembers({ title }, "Failed to rename project");
     },
-    [group.displayName, group.memberProjects, updateAllMembers],
+    [group.memberProjects, updateAllMembers],
   );
 
   // ----- default model -----
