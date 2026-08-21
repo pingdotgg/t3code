@@ -44,4 +44,15 @@ describe("assetResponseHeaders", () => {
       "X-Content-Type-Options": "nosniff",
     });
   });
+
+  it("declares utf-8 for HTML assets so non-ASCII content renders correctly", () => {
+    expect(assetResponseHeaders("/workspace/page.html")).toHaveProperty(
+      "Content-Type",
+      "text/html; charset=utf-8",
+    );
+    expect(assetResponseHeaders("/workspace/PAGE.HTM")).toHaveProperty(
+      "Content-Type",
+      "text/html; charset=utf-8",
+    );
+  });
 });
