@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Provider paths may use either POSIX or Windows syntax.
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
