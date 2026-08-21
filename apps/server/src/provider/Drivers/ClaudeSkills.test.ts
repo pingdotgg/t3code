@@ -219,6 +219,41 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect(
+    "recovers a description containing an unquoted colon that Claude Code itself accepts",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+        const configDir = path.join(tempDir, "claude-home");
+
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          "kane-cli",
+          [
+            "---",
+            "name: kane-cli",
+            "description: Browser automation + AI test authoring via kane-cli: run browser objectives, ...",
+            "---",
+          ].join("\n"),
+        );
+
+        const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+
+        assert.deepEqual(skills, [
+          {
+            name: "kane-cli",
+            path: path.join(configDir, "skills", "kane-cli", "SKILL.md"),
+            enabled: true,
+            scope: "user",
+            description:
+              "Browser automation + AI test authoring via kane-cli: run browser objectives, ...",
+          },
+        ]);
+      }),
+  );
+
   it.effect("honors CLAUDE_CONFIG_DIR from the environment when homePath is unset", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
