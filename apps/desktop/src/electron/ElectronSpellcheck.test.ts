@@ -10,6 +10,7 @@ import {
   preferredSpellcheckLanguages,
   resolveSpellCheckerLanguages,
   spellcheckSettingsEqual,
+  windowsKeyboardLanguageTagsFromOutput,
 } from "./ElectronSpellcheck.ts";
 
 const AVAILABLE = [
@@ -77,6 +78,13 @@ describe("keyboard layout discovery", () => {
       }),
     ).toEqual([{ layout: "us" }, { layout: "ch", variant: "fr" }]);
   });
+
+  it("normalizes and deduplicates Windows keyboard layout query output", () => {
+    expect(windowsKeyboardLanguageTagsFromOutput("pt_BR\r\nen-US\r\npt-BR\r\n")).toEqual([
+      "pt-BR",
+      "en-US",
+    ]);
+  });
 });
 
 describe("matchAvailableSpellcheckLanguage", () => {
@@ -131,11 +139,12 @@ describe("preferredSpellcheckLanguages", () => {
     ).toEqual(["fr", "de-CH"]);
   });
 
-  it("includes OS preferred languages on platforms without XKB", () => {
+  it("prioritizes platform keyboard layouts over OS preferred languages", () => {
     expect(
       preferredSpellcheckLanguages({
         systemLocale: "en-US",
-        preferredSystemLanguages: ["pt_BR", "en-US"],
+        preferredSystemLanguages: ["en-US"],
+        platformKeyboardLanguages: ["pt_BR"],
         env: {},
         configuredLanguages: [],
       }),

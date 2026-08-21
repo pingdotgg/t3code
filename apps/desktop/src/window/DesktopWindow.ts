@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as Electron from "electron";
 
@@ -69,6 +70,7 @@ type DesktopWindowRuntimeServices =
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
   | FileSystem.FileSystem
+  | ChildProcessSpawner.ChildProcessSpawner
   | PreviewManager.PreviewManager;
 
 export type DesktopWindowError =

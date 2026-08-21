@@ -1,8 +1,11 @@
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as Electron from "electron";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -13,6 +16,27 @@ import * as ElectronApp from "./ElectronApp.ts";
 const { logWarning } = makeComponentLogger("desktop-spellcheck");
 
 const LINUX_KEYBOARD_CONFIG_PATHS = ["/etc/vconsole.conf", "/etc/default/keyboard"] as const;
+const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
+const WINDOWS_KEYBOARD_QUERY_TIMEOUT = Duration.seconds(3);
+const WINDOWS_KEYBOARD_LANGUAGE_SCRIPT = [
+  "try {",
+  'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public static class T3KeyboardLayout { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, IntPtr processId); [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint threadId); }\' -ErrorAction Stop;',
+  "$window = [T3KeyboardLayout]::GetForegroundWindow();",
+  "$thread = [T3KeyboardLayout]::GetWindowThreadProcessId($window, [IntPtr]::Zero);",
+  "$layout = [T3KeyboardLayout]::GetKeyboardLayout($thread).ToInt64();",
+  "$activeLangId = [int]($layout -band 0xffff);",
+  "[Globalization.CultureInfo]::GetCultureInfo($activeLangId).Name",
+  "} catch {}",
+  "Get-WinUserLanguageList | ForEach-Object { $_.InputMethodTips } | ForEach-Object {",
+  "try {",
+  "$languageId = ($_ -split ':')[0];",
+  "if ($languageId -match '^[0-9a-fA-F]{4}$') {",
+  "$langId = [Convert]::ToInt32($languageId, 16);",
+  "[Globalization.CultureInfo]::GetCultureInfo($langId).Name",
+  "}",
+  "} catch {}",
+  "}",
+].join(" ");
 
 const XKB_LAYOUT_TO_SPELLCHECK: Readonly<Record<string, string>> = {
   us: "en-US",
@@ -185,6 +209,47 @@ export function localeTagsFromEnvironment(env: NodeJS.Dict<string>): string[] {
   return tags;
 }
 
+export function windowsKeyboardLanguageTagsFromOutput(raw: string): string[] {
+  const tags: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const tag = normalizeLocaleTag(line);
+    if (tag !== undefined) tags.push(tag);
+  }
+  return uniquePreferredLanguages(tags);
+}
+
+export const readWindowsKeyboardLanguageTags = Effect.fn(
+  "desktop.spellcheck.readWindowsKeyboardLanguageTags",
+)(function* (): Effect.fn.Return<
+  readonly string[],
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const output = yield* spawner
+    .string(
+      ChildProcess.make(
+        "powershell.exe",
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_KEYBOARD_LANGUAGE_SCRIPT],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        },
+      ),
+    )
+    .pipe(
+      Effect.timeoutOption(WINDOWS_KEYBOARD_QUERY_TIMEOUT),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+  return Option.match(output, {
+    onNone: () => [],
+    onSome: windowsKeyboardLanguageTagsFromOutput,
+  });
+});
+
 export function matchAvailableSpellcheckLanguage(
   preferred: string,
   available: readonly string[],
@@ -241,6 +306,7 @@ export function resolveSpellCheckerLanguages(input: {
 export function preferredSpellcheckLanguages(input: {
   readonly systemLocale: string;
   readonly preferredSystemLanguages?: readonly string[];
+  readonly platformKeyboardLanguages?: readonly string[];
   readonly env: NodeJS.Dict<string>;
   readonly configuredLanguages: readonly string[];
   readonly keyboardConfigs?: readonly string[];
@@ -257,6 +323,10 @@ export function preferredSpellcheckLanguages(input: {
   for (const layout of layouts) {
     const mapped = spellcheckLanguageForKeyboardLayout(layout);
     if (mapped !== undefined) preferred.push(mapped);
+  }
+  for (const language of input.platformKeyboardLanguages ?? []) {
+    const normalized = normalizeLocaleTag(language);
+    if (normalized !== undefined) preferred.push(normalized);
   }
   for (const language of input.preferredSystemLanguages ?? []) {
     const normalized = normalizeLocaleTag(language);
@@ -303,6 +373,7 @@ export function applySpellCheckerSession(
     readonly configuredLanguages: readonly string[];
     readonly systemLocale: string;
     readonly preferredSystemLanguages?: readonly string[];
+    readonly platformKeyboardLanguages?: readonly string[];
     readonly env: NodeJS.Dict<string>;
     readonly keyboardConfigs?: readonly string[];
   },
@@ -355,6 +426,7 @@ export const syncBrowserWindowSpellChecker = (
 
     let systemLocale = "";
     let preferredSystemLanguages: readonly string[] = [];
+    let platformKeyboardLanguages: readonly string[] = [];
     let keyboardConfigs: readonly string[] = [];
     const needsAutomaticLanguages =
       settings.spellcheckEnabled &&
@@ -367,6 +439,8 @@ export const syncBrowserWindowSpellChecker = (
         keyboardConfigs = yield* Effect.forEach(LINUX_KEYBOARD_CONFIG_PATHS, (path) =>
           fileSystem.readFileString(path).pipe(Effect.orElseSucceed(() => "")),
         );
+      } else if (environment.platform === "win32") {
+        platformKeyboardLanguages = yield* readWindowsKeyboardLanguageTags();
       }
     }
 
@@ -378,6 +452,7 @@ export const syncBrowserWindowSpellChecker = (
           configuredLanguages: settings.spellcheckLanguages,
           systemLocale,
           preferredSystemLanguages,
+          platformKeyboardLanguages,
           env: process.env,
           keyboardConfigs,
         }),

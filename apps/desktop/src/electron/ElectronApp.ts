@@ -51,8 +51,8 @@ export class ElectronApp extends Context.Service<
      */
     readonly systemLocale: Effect.Effect<string>;
     /**
-     * The user's ordered OS language preferences. Unlike the regional locale,
-     * this commonly includes languages added with input methods on Windows.
+     * The user's ordered OS language preferences, distinct from the regional
+     * locale. Keyboard input methods are discovered separately.
      */
     readonly preferredSystemLanguages: Effect.Effect<readonly string[]>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;

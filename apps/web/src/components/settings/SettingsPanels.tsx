@@ -1363,7 +1363,7 @@ function SpellcheckRow() {
     ? "Underline misspelled words in the composer. The browser picks the dictionary."
     : spellcheckInfo?.canSelectLanguages === false
       ? "Underline misspelled words in the composer. macOS detects the language automatically."
-      : "Underline misspelled words in the composer. Leave dictionaries unchecked to use OS preferred languages and Linux keyboard settings.";
+      : "Underline misspelled words in the composer. Leave dictionaries unchecked to use OS languages and platform keyboard settings.";
 
   return (
     <SettingsRow
