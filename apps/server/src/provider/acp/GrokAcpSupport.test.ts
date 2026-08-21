@@ -10,8 +10,11 @@ import {
 
 describe("resolveGrokAcpBaseModelId", () => {
   it("normalizes empty and custom Grok model ids", () => {
-    expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-build");
-    expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-build");
+    // "grok-build" is the CLI's product name, not a modelId its ACP accepts —
+    // it must resolve to a real model alias, not pass through verbatim.
+    expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-4.6");
+    expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-4.6");
+    expect(resolveGrokAcpBaseModelId("grok-build")).toBe("grok-4.6");
     expect(resolveGrokAcpBaseModelId("  grok-test-custom-model  ")).toBe("grok-test-custom-model");
   });
 });

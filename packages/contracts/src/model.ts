@@ -211,6 +211,14 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5-thinking": "claude-opus-4-5",
     "opus-4.5": "claude-opus-4-5",
   },
+  [GROK_DRIVER_KIND]: {
+    // "grok-build" is the Grok Build CLI's own product name, not a model id
+    // its ACP accepts — sending it verbatim as `session/set_model`'s modelId
+    // fails with "unknown model id". Grok's ACP only knows "grok-4.6" and
+    // "grok-4.5"; alias the default/display slug to the current one so the
+    // wire-level id is always valid.
+    "grok-build": "grok-4.6",
+  },
   [OPENCODE_DRIVER_KIND]: {},
 };
 
