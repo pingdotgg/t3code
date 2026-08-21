@@ -710,6 +710,7 @@ export function useSidebarThreadDnd(input: {
   const dropIndicator =
     transaction !== null &&
     transaction.phase !== "reconciling" &&
+    (transaction.sourceSection !== "pinned" || transaction.target?.section !== "pinned") &&
     transaction.target?.threadKey !== null &&
     transaction.target?.threadKey !== undefined &&
     transaction.target.edge !== null

@@ -29,7 +29,7 @@ export const SidebarThreadDragPreview = memo(function SidebarThreadDragPreview(
     return (
       <div
         aria-hidden
-        className="pointer-events-none flex h-9 items-center gap-2.5 overflow-hidden rounded-md bg-sidebar-row-active px-2.5 text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border/70"
+        className="pointer-events-none flex h-9 items-center gap-2.5 overflow-hidden rounded-md bg-sidebar/95 px-2.5 text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border/70"
       >
         {favicon}
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/90">
@@ -41,7 +41,7 @@ export const SidebarThreadDragPreview = memo(function SidebarThreadDragPreview(
 
   return (
     <div aria-hidden className="pointer-events-none h-[5.125rem] py-0.5">
-      <div className="h-[4.875rem] overflow-hidden rounded-md bg-sidebar-row-active text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border/70">
+      <div className="h-[4.875rem] overflow-hidden rounded-md bg-sidebar/95 text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border/70">
         <div className="h-full px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             {favicon}

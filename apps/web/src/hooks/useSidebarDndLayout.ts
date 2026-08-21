@@ -124,7 +124,12 @@ export function useSidebarDndLayout(input: {
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const anchor = layoutAnchorRef.current;
-    if (viewport !== null && anchor !== null && anchor.element.isConnected) {
+    if (
+      viewport !== null &&
+      anchor !== null &&
+      anchor.element.isConnected &&
+      anchor.element.dataset.dndTransformed !== "true"
+    ) {
       const delta = anchor.element.getBoundingClientRect().top - anchor.top;
       if (Math.abs(delta) > 0.5) {
         const requestedScrollTop = viewport.scrollTop + delta;
@@ -138,7 +143,7 @@ export function useSidebarDndLayout(input: {
         top: anchor.element.getBoundingClientRect().top,
       };
     } else if (input.transaction !== null) {
-      retainLayoutAnchor();
+      retainLayoutAnchor(null, input.transaction.sourceThreadKey);
     }
 
     if (input.transaction !== null || input.pinnedReorderInFlightRef.current) return;
@@ -151,12 +156,17 @@ export function useSidebarDndLayout(input: {
 
   useEffect(() => {
     if (input.transaction === null) return;
+    const sourceThreadKey = input.transaction.sourceThreadKey;
     const viewport = viewportRef.current;
     if (viewport === null) return;
     const handleScroll = () => {
       const anchor = layoutAnchorRef.current;
-      if (anchor === null || !anchor.element.isConnected) {
-        retainLayoutAnchor();
+      if (
+        anchor === null ||
+        !anchor.element.isConnected ||
+        anchor.element.dataset.dndTransformed === "true"
+      ) {
+        retainLayoutAnchor(null, sourceThreadKey);
       } else {
         layoutAnchorRef.current = {
           element: anchor.element,
