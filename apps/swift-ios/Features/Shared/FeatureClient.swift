@@ -88,6 +88,55 @@ public protocol FeatureClient: AnyObject {
     func saveSettings(_ settings: FeatureSettings) async throws
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
+    func pullRequestLists(_ input: PullRequestListInput) async throws
+        -> [FeaturePullRequestEnvironmentList]
+    func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail
+    func pullRequestActivity(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestActivity
+    func pullRequestDiff(_ target: FeaturePullRequestTarget, cursor: String?) async throws
+        -> PullRequestDiffResult
+    func runPullRequestAction(
+        _ target: FeaturePullRequestTarget,
+        action: PullRequestAction,
+        mergeMethod: PullRequestMergeMethod?,
+        updateMethod: PullRequestUpdateMethod?
+    ) async throws
+    func updatePullRequest(
+        _ target: FeaturePullRequestTarget,
+        title: String?,
+        body: String?
+    ) async throws
+    func commentOnPullRequest(_ target: FeaturePullRequestTarget, body: String) async throws
+    func submitPullRequestReview(
+        _ target: FeaturePullRequestTarget,
+        verdict: PullRequestReviewVerdict,
+        body: String,
+        comments: [PullRequestReviewCommentDraft]
+    ) async throws
+    func replyToPullRequestThread(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        body: String
+    ) async throws
+    func setPullRequestThreadResolved(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        resolved: Bool
+    ) async throws
+    func setPullRequestReaction(
+        _ target: FeaturePullRequestTarget,
+        subjectID: String?,
+        content: PullRequestReactionContent,
+        reacted: Bool
+    ) async throws
+    func pullRequestReviewerCandidates(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestReviewerCandidateList
+    func requestPullRequestReviewers(
+        _ target: FeaturePullRequestTarget,
+        reviewers: [PullRequestReviewerCandidate],
+        requested: Bool
+    ) async throws
+    func invalidatePullRequests(_ target: FeaturePullRequestTarget?) async throws
 
     func cachedProjectFavicon(
         environmentID: String,
@@ -164,6 +213,71 @@ public extension FeatureClient {
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         []
     }
+    func pullRequestLists(_ input: PullRequestListInput) async throws
+        -> [FeaturePullRequestEnvironmentList]
+    {
+        []
+    }
+    func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail {
+        throw FeatureCapabilityUnavailable("Pull requests")
+    }
+    func pullRequestActivity(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestActivity
+    {
+        throw FeatureCapabilityUnavailable("Pull request activity")
+    }
+    func pullRequestDiff(_ target: FeaturePullRequestTarget, cursor: String?) async throws
+        -> PullRequestDiffResult
+    {
+        throw FeatureCapabilityUnavailable("Pull request diffs")
+    }
+    func runPullRequestAction(
+        _ target: FeaturePullRequestTarget,
+        action: PullRequestAction,
+        mergeMethod: PullRequestMergeMethod?,
+        updateMethod: PullRequestUpdateMethod?
+    ) async throws { throw FeatureCapabilityUnavailable("Pull request actions") }
+    func updatePullRequest(
+        _ target: FeaturePullRequestTarget,
+        title: String?,
+        body: String?
+    ) async throws { throw FeatureCapabilityUnavailable("Pull request editing") }
+    func commentOnPullRequest(_ target: FeaturePullRequestTarget, body: String) async throws {
+        throw FeatureCapabilityUnavailable("Pull request comments")
+    }
+    func submitPullRequestReview(
+        _ target: FeaturePullRequestTarget,
+        verdict: PullRequestReviewVerdict,
+        body: String,
+        comments: [PullRequestReviewCommentDraft]
+    ) async throws { throw FeatureCapabilityUnavailable("Pull request reviews") }
+    func replyToPullRequestThread(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        body: String
+    ) async throws { throw FeatureCapabilityUnavailable("Pull request replies") }
+    func setPullRequestThreadResolved(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        resolved: Bool
+    ) async throws { throw FeatureCapabilityUnavailable("Pull request review threads") }
+    func setPullRequestReaction(
+        _ target: FeaturePullRequestTarget,
+        subjectID: String?,
+        content: PullRequestReactionContent,
+        reacted: Bool
+    ) async throws { throw FeatureCapabilityUnavailable("Pull request reactions") }
+    func pullRequestReviewerCandidates(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestReviewerCandidateList
+    {
+        throw FeatureCapabilityUnavailable("Pull request reviewers")
+    }
+    func requestPullRequestReviewers(
+        _ target: FeaturePullRequestTarget,
+        reviewers: [PullRequestReviewerCandidate],
+        requested: Bool
+    ) async throws { throw FeatureCapabilityUnavailable("Pull request reviewers") }
+    func invalidatePullRequests(_ target: FeaturePullRequestTarget?) async throws {}
     func cachedProjectFavicon(environmentID: String, workspaceRoot: String) async -> Data? {
         nil
     }

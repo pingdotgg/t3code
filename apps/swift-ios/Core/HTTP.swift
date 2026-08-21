@@ -185,6 +185,20 @@ public actor EnvironmentAPI {
         )
     }
 
+    public func pullRequestDiff(
+        _ input: PullRequestDiffInput,
+        environment: Environment
+    ) async throws -> PullRequestDiffResult {
+        try await authorized(
+            environment: environment,
+            path: "/api/pull-requests/diff",
+            method: "POST",
+            body: JSONEncoder.t3.encode(input),
+            timeoutInterval: 60,
+            as: PullRequestDiffResult.self
+        )
+    }
+
     public func webSocketTicket(for environment: Environment) async throws -> WebSocketTicket {
         try await authorized(
             environment: environment,

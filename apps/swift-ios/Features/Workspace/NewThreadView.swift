@@ -32,7 +32,9 @@ public struct NewThreadView: View {
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
-    @FocusState private var promptFocused: Bool
+    // Plain state, not `FocusState`; see the note on `composerFocused` in
+    // ThreadDetailView.
+    @State private var promptFocused = false
 
     public init(
         model: FeatureRootModel,
@@ -63,7 +65,7 @@ public struct NewThreadView: View {
                     hero
                         .padding(.top, 82)
                 }
-                Spacer(minLength: 140)
+                Spacer(minLength: 0)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -83,7 +85,8 @@ public struct NewThreadView: View {
                         onSend: startTask,
                         onStop: {},
                         forceExpanded: true,
-                        powerFeatures: composerPowerFeatures
+                        powerFeatures: composerPowerFeatures,
+                        onDismissKeyboard: { promptFocused = false }
                     )
                 }
                 .background(T3Colors.background)
@@ -147,6 +150,7 @@ public struct NewThreadView: View {
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
                     environments: model.snapshot.environments,
+                    recentGroupIDs: recentProjectGroupIDs,
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
                         if selectProjectGroup(group) {
@@ -170,7 +174,9 @@ public struct NewThreadView: View {
             }
         }
         .alert("Couldn’t start task", isPresented: $submissionFailed) {
-            Button("OK") {}
+            // Refocus on dismissal, not on failure: the alert takes first
+            // responder, so an earlier refocus never survives it.
+            Button("OK") { promptFocused = true }
         } message: {
             Text("Check your connection and try again.")
         }
@@ -296,6 +302,10 @@ public struct NewThreadView: View {
 
     private var creationProjectGroups: [DailyUXProjectGroup] {
         DailyUXCreationContext.projectGroups(in: model.snapshot)
+    }
+
+    private var recentProjectGroupIDs: [String] {
+        DailyUXCreationContext.recentProjects(in: model.snapshot).map(\.group.id)
     }
 
     private var selectedProjectGroup: DailyUXProjectGroup? {
@@ -568,7 +578,6 @@ public struct NewThreadView: View {
             } else {
                 isSubmitting = false
                 submissionFailed = true
-                promptFocused = true
             }
         }
     }
@@ -961,6 +970,7 @@ private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
     let environments: [FeatureEnvironment]
+    let recentGroupIDs: [String]
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
 
@@ -974,46 +984,30 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    List(groups) { group in
-                        Button {
-                            onSelect(group)
-                        } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(group.name)
-                                        .foregroundStyle(T3Colors.textPrimary)
-
-                                    ForEach(group.projects.prefix(2)) { project in
-                                        Text(projectLocation(project))
-                                            .font(T3Typography.supporting)
-                                            .foregroundStyle(T3Colors.textTertiary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-
-                                    if group.projects.count > 2 {
-                                        Text("+\(group.projects.count - 2) more locations")
-                                            .font(T3Typography.supporting)
-                                            .foregroundStyle(T3Colors.textTertiary)
-                                    }
-                                }
-
-                                Spacer(minLength: 10)
-
-                                if group.id == selectionID {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(T3Colors.accent)
+                    let sections = DailyUXProjectPickerSections(
+                        groups: groups,
+                        recentGroupIDs: recentGroupIDs
+                    )
+                    List {
+                        if sections.recents.isEmpty {
+                            ForEach(sections.others) { group in
+                                projectRow(group)
+                            }
+                        } else {
+                            Section("Recent") {
+                                ForEach(sections.recents) { group in
+                                    projectRow(group)
                                 }
                             }
-                            .frame(minHeight: 46)
-                            .contentShape(Rectangle())
+
+                            if !sections.others.isEmpty {
+                                Section("Other projects") {
+                                    ForEach(sections.others) { group in
+                                        projectRow(group)
+                                    }
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(
-                            group.id == selectionID ? .isSelected : []
-                        )
-                        .listRowBackground(T3Colors.background)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -1030,6 +1024,48 @@ private struct NewTaskProjectPicker: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+    }
+
+    private func projectRow(_ group: DailyUXProjectGroup) -> some View {
+        Button {
+            onSelect(group)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.name)
+                        .foregroundStyle(T3Colors.textPrimary)
+
+                    ForEach(group.projects.prefix(2)) { project in
+                        Text(projectLocation(project))
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    if group.projects.count > 2 {
+                        Text("+\(group.projects.count - 2) more locations")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textTertiary)
+                    }
+                }
+
+                Spacer(minLength: 10)
+
+                if group.id == selectionID {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(T3Colors.accent)
+                }
+            }
+            .frame(minHeight: 46)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(
+            group.id == selectionID ? .isSelected : []
+        )
+        .listRowBackground(T3Colors.background)
     }
 
     private func projectLocation(_ project: FeatureProject) -> String {

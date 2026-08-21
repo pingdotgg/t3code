@@ -126,6 +126,126 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
+    func opensNativeThreadLinksInsideTheApp() throws {
+        let snapshot = Self.linkedSnapshot()
+        let expected = PlatformRoute.thread(environmentID: "environment-1", threadID: "thread-7")
+
+        for link in [
+            "\(PlatformRoute.nativeScheme)://threads/environment-1/thread-7",
+            "t3code://threads/environment-1/thread-7",
+            "t3://threads/environment-1/thread-7",
+            "https://app.t3.codes/environment-1/thread-7",
+            "https://app.t3.codes/threads/thread-7?environment=environment-1",
+        ] {
+            let url = try #require(URL(string: link))
+            #expect(
+                PlatformInAppLinkRouter.route(for: url, in: snapshot) == expected,
+                "Expected \(link) to open in the app"
+            )
+        }
+    }
+
+    @Test
+    func opensThreadLinksByWireIdentifierWithoutAnEnvironment() throws {
+        let snapshot = Self.linkedSnapshot()
+        let url = try #require(URL(string: "t3code://threads/wire-thread-7"))
+
+        #expect(
+            PlatformInAppLinkRouter.route(for: url, in: snapshot)
+                == .thread(environmentID: nil, threadID: "wire-thread-7")
+        )
+    }
+
+    @Test
+    func leavesLinksThisDeviceCannotShowToTheSystem() throws {
+        let snapshot = Self.linkedSnapshot()
+
+        for link in [
+            // Nothing on this device matches the destination.
+            "t3code://threads/environment-1/thread-missing",
+            "t3code://threads/environment-missing/thread-7",
+            "t3code://projects/environment-1/project-missing",
+            "t3code://environments/environment-missing",
+            "t3code://new-task?environment=environment-1&project=project-missing",
+            // Trusted web pages that are not thread destinations.
+            "https://app.t3.codes/docs/getting-started",
+            "https://app.t3.codes/settings",
+            // Ordinary links inside message content.
+            "https://example.com/environment-1/thread-7",
+            "mailto:someone@example.com",
+        ] {
+            let url = try #require(URL(string: link))
+            #expect(
+                PlatformInAppLinkRouter.route(for: url, in: snapshot) == nil,
+                "Expected \(link) to keep its system behavior"
+            )
+        }
+    }
+
+    @Test
+    func leavesPairingLinksToOnboarding() throws {
+        let snapshot = Self.linkedSnapshot()
+        let url = try #require(
+            URL(string: "t3code://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3DPAIR")
+        )
+
+        #expect(PlatformInAppLinkRouter.route(for: url, in: snapshot) == nil)
+    }
+
+    @Test
+    func opensProjectEnvironmentAndNewTaskLinksInsideTheApp() throws {
+        let snapshot = Self.linkedSnapshot()
+
+        let project = try #require(URL(string: "t3code://projects/environment-1/project-3"))
+        #expect(
+            PlatformInAppLinkRouter.route(for: project, in: snapshot)
+                == .project(environmentID: "environment-1", projectID: "project-3")
+        )
+
+        let environment = try #require(URL(string: "t3code://environments/environment-1"))
+        #expect(
+            PlatformInAppLinkRouter.route(for: environment, in: snapshot)
+                == .environment(id: "environment-1")
+        )
+
+        let newTask = try #require(
+            URL(string: "t3code://new-task?environment=environment-1&project=project-3")
+        )
+        #expect(
+            PlatformInAppLinkRouter.route(for: newTask, in: snapshot)
+                == .newTask(environmentID: "environment-1", projectID: "project-3")
+        )
+    }
+
+    private static func linkedSnapshot() -> FeatureSnapshot {
+        let environment = FeatureEnvironment(
+            id: "environment-1",
+            name: "Environment 1",
+            endpoint: "https://environment-1.example",
+            isActive: true
+        )
+        let project = FeatureProject(
+            id: "project-3",
+            wireID: "wire-project-3",
+            environmentID: environment.id,
+            name: "Project 3",
+            path: "/project-3"
+        )
+        let thread = FeatureThread(
+            id: "thread-7",
+            wireID: "wire-thread-7",
+            projectID: project.id,
+            environmentID: environment.id,
+            title: "Thread 7"
+        )
+        return FeatureSnapshot(
+            environments: [environment],
+            projects: [project],
+            threads: [thread]
+        )
+    }
+
+    @Test
     func resolverRequiresEnvironmentForDuplicateWireIDs() throws {
         let active = FeatureEnvironment(
             id: "active",

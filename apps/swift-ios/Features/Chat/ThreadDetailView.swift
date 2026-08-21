@@ -21,7 +21,10 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
-    @FocusState private var composerFocused: Bool
+    // Plain state, not `FocusState`: the composer's UIKit text view owns
+    // focus and mirrors it through this binding, because SwiftUI drops
+    // writes to a `FocusState` no `.focused()` view registers with.
+    @State private var composerFocused = false
 
     public init(
         model: FeatureRootModel,
@@ -102,7 +105,10 @@ public struct ThreadDetailView: View {
             .presentationDragIndicator(.visible)
         }
         .alert("Message not sent", isPresented: $sendFailed) {
-            Button("OK") {}
+            // Refocusing happens here rather than when the send fails: the
+            // alert takes first responder from the composer, so a refocus
+            // issued before it presents is lost by the time it dismisses.
+            Button("OK") { composerFocused = true }
         } message: {
             Text("Your draft is still here. Check your connection and try again.")
         }
@@ -360,6 +366,7 @@ public struct ThreadDetailView: View {
                 pendingUserInputs: detail.userInputs,
                 isResolvingRequest: model.isPerformingAction,
                 powerFeatures: composerPowerFeatures,
+                onDismissKeyboard: dismissKeyboard,
                 onApprovalDecision: { id, decision in
                     Task { await model.resolveApproval(id, decision: decision) }
                 },
@@ -367,20 +374,7 @@ public struct ThreadDetailView: View {
                     Task { await model.resolveUserInput(id, answers: answers) }
                 }
             )
-            .simultaneousGesture(composerKeyboardDismissGesture)
         }
-    }
-
-    private var composerKeyboardDismissGesture: some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .local)
-            .onChanged { value in
-                guard composerFocused,
-                      value.translation.height > 8,
-                      value.translation.height > abs(value.translation.width) else {
-                    return
-                }
-                dismissKeyboard()
-            }
     }
 
     private var composerPowerFeatures: FeatureComposerPowerFeatures {
@@ -462,7 +456,6 @@ public struct ThreadDetailView: View {
                     !pendingIDs.contains($0.id)
                 }
                 sendFailed = true
-                composerFocused = true
             }
             isSending = false
             if !sent {
