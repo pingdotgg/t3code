@@ -26,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveLocalThreadError,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -533,6 +534,28 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
         targetThreadId: threadId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveLocalThreadError", () => {
+  it("keeps a bootstrap error visible when its server thread returns to a draft", () => {
+    expect(
+      resolveLocalThreadError({
+        isServerThread: false,
+        draftEntry: undefined,
+        serverEntry: { message: "git fetch origin failed", at: 1 },
+      }),
+    ).toBe("git fetch origin failed");
+  });
+
+  it("keeps a newer draft-side clear from reviving an old server error", () => {
+    expect(
+      resolveLocalThreadError({
+        isServerThread: false,
+        draftEntry: { message: null, at: 2 },
+        serverEntry: { message: "git fetch origin failed", at: 1 },
+      }),
+    ).toBeNull();
   });
 });
 

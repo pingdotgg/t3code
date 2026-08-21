@@ -138,6 +138,20 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
+/** Keep errors visible while a failed bootstrap moves a thread back to its draft. */
+export function resolveLocalThreadError(input: {
+  isServerThread: boolean;
+  draftEntry: { readonly message: string | null; readonly at: number } | undefined;
+  serverEntry: { readonly message: string | null; readonly at: number } | undefined;
+}): string | null {
+  if (input.isServerThread) return input.serverEntry?.message ?? null;
+  if (input.draftEntry === undefined) return input.serverEntry?.message ?? null;
+  if (input.serverEntry === undefined || input.draftEntry.at >= input.serverEntry.at) {
+    return input.draftEntry.message;
+  }
+  return input.serverEntry.message;
+}
+
 export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
   threadId: ThreadId;
   turnId?: TurnId;
