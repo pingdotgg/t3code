@@ -171,7 +171,7 @@ struct FeatureComposerPowerTests {
         "Reasoning label follows the effective composer selection",
         .bug("https://github.com/saphid/t3code-personal/issues/106")
     )
-    func reasoningLabelFollowsEffectiveSelectionAndHidesInvalidModels() {
+    func reasoningLabelFollowsEffectiveSelectionAndMaterializesInvalidModels() {
         let providers = [
             FeatureProvider(
                 id: "codex",
@@ -228,7 +228,7 @@ struct FeatureComposerPowerTests {
                 inherited: nil,
                 providers: providers,
                 materializesDefaultSelection: true
-            ) == nil
+            )?.value == "Low"
         )
     }
 
@@ -266,6 +266,24 @@ struct FeatureComposerPowerTests {
             control?.choices.map(\.label)
                 == ["Low", "Medium", "High", "Extra high", "Max", "Ultra"]
         )
+    }
+
+    @Test(
+        "The reasoning selector materializes the same default model as the adjacent picker",
+        .bug("https://github.com/pingdotgg/t3code/pull/7344#discussion_r3826822638")
+    )
+    func reasoningSelectorMaterializesTheDefaultModel() {
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: nil,
+            inherited: nil,
+            providers: [Self.solProvider],
+            materializesDefaultSelection: true
+        )
+
+        #expect(control?.value == "Low")
+        #expect(control?.currentChoiceID == "low")
+        #expect(control?.selection(choosing: "high").providerID == "codex")
+        #expect(control?.selection(choosing: "high").modelID == "gpt-5.6-sol")
     }
 
     @Test(

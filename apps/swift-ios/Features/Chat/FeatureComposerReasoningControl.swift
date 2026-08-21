@@ -30,7 +30,7 @@ struct FeatureComposerReasoningControl: Equatable {
     ) -> FeatureComposerReasoningControl? {
         let providers = ProviderModelCatalogNormalizer.normalized(providers)
         let selection = if materializesDefaultSelection {
-            ProviderModelSelectionResolver.validated(explicit, in: providers)
+            ProviderModelSelectionResolver.materialized(explicit, in: providers)
         } else {
             ThreadComposerModelSelectionPolicy.resolvedSelection(
                 explicit: explicit,
