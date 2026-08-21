@@ -19,6 +19,8 @@ import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  type PinnedRuntimePruneResult,
+  prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
 import {
   SERVICE_LAUNCHER_FILE,
@@ -403,6 +405,24 @@ export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootS
   }
 }
 
+export class BootServicePruneStateError extends Schema.TaggedErrorClass<BootServicePruneStateError>()(
+  "BootServicePruneStateError",
+  {},
+) {
+  override get message(): string {
+    return "The T3 Code service state is missing or invalid. Run `npx t3@latest service update` before pruning runtimes.";
+  }
+}
+
+export class BootServicePruneError extends Schema.TaggedErrorClass<BootServicePruneError>()(
+  "BootServicePruneError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not prune T3 Code service runtimes.";
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
@@ -417,12 +437,24 @@ export interface BootServiceStatus {
   readonly logPath: string;
 }
 
+export interface BootServicePruneOptions {
+  readonly dryRun: boolean;
+}
+
+export type BootServicePruneResult = PinnedRuntimePruneResult;
+
 export class BootService extends Context.Service<
   BootService,
   {
     readonly install: Effect.Effect<BootServicePlan, BootServiceError>;
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
+    readonly prune: (
+      options: BootServicePruneOptions,
+    ) => Effect.Effect<
+      BootServicePruneResult,
+      BootServicePruneStateError | BootServicePruneError | BootServiceUpdatePendingError
+    >;
   }
 >()("t3/cloud/bootService") {}
 
@@ -683,7 +715,35 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     Effect.withSpan("cloud.boot_service.status"),
   );
 
-  return BootService.of({ install, uninstall, status });
+  const prune: BootService["Service"]["prune"] = Effect.fn("cloud.boot_service.prune")(
+    function* (options) {
+      const stateExists = yield* fs
+        .exists(statePath)
+        .pipe(Effect.mapError((cause) => new BootServicePruneError({ cause })));
+      if (!stateExists) {
+        return yield* new BootServicePruneStateError();
+      }
+      const stateText = yield* fs
+        .readFileString(statePath)
+        .pipe(Effect.mapError((cause) => new BootServicePruneError({ cause })));
+      const state = parseServiceState(stateText);
+      if (state === undefined) {
+        return yield* new BootServicePruneStateError();
+      }
+      if (state.update?.status === "pending") {
+        return yield* new BootServiceUpdatePendingError();
+      }
+      return yield* prunePinnedRuntimes({
+        baseDir: input.baseDir,
+        state,
+        dryRun: options.dryRun,
+        fs,
+        path,
+      }).pipe(Effect.mapError((cause) => new BootServicePruneError({ cause })));
+    },
+  );
+
+  return BootService.of({ install, uninstall, status, prune });
 });
 
 export const layer = (input: {

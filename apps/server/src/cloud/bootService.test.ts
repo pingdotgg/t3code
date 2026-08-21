@@ -155,7 +155,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     ),
   );
-  return { service, fs, statePath, commands, timeouts, control };
+  return { service, fs, baseDir, statePath, commands, timeouts, control };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -247,6 +247,65 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         "systemctl --user stop t3code.service",
         "systemctl --user restart t3code.service",
       ]);
+    }),
+  );
+
+  it.effect("prunes old runtimes without restarting the service", () =>
+    Effect.gen(function* () {
+      const { service, fs, baseDir, commands } = yield* makeHarness();
+      yield* service.install;
+      const path = yield* Path.Path;
+      const oldRuntime = pinnedRuntimePaths(path, baseDir, "1.2.2");
+      yield* fs.makeDirectory(path.dirname(oldRuntime.entryPath), { recursive: true });
+      yield* fs.writeFileString(oldRuntime.entryPath, "export {};\n");
+      yield* fs.writeFileString(oldRuntime.sentinelPath, "1.2.2\n");
+      commands.length = 0;
+
+      expect(yield* service.prune({ dryRun: true })).toEqual({
+        dryRun: true,
+        versions: ["1.2.2"],
+      });
+      expect(yield* fs.exists(oldRuntime.versionDir)).toBe(true);
+      expect(yield* service.prune({ dryRun: false })).toEqual({
+        dryRun: false,
+        versions: ["1.2.2"],
+      });
+      expect(yield* fs.exists(oldRuntime.versionDir)).toBe(false);
+      expect(commands).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses to prune while a remote update is pending", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath } = yield* makeHarness();
+      yield* service.install;
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned test document.
+      const pendingState = JSON.stringify({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.2.3",
+        update: {
+          id: "remote-update",
+          fromVersion: "1.2.3",
+          targetVersion: "1.2.4",
+          dbPath: "/tmp/state.sqlite",
+          status: "pending",
+        },
+      });
+      yield* fs.writeFileString(statePath, pendingState);
+
+      expect((yield* service.prune({ dryRun: false }).pipe(Effect.flip))._tag).toBe(
+        "BootServiceUpdatePendingError",
+      );
+    }),
+  );
+
+  it.effect("fails closed when service state is missing", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+
+      expect((yield* service.prune({ dryRun: false }).pipe(Effect.flip))._tag).toBe(
+        "BootServicePruneStateError",
+      );
     }),
   );
 
