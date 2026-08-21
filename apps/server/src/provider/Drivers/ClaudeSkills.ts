@@ -43,9 +43,11 @@ const YAML_STRUCTURAL_VALUE_PATTERN = /^[[{|>&*!]/;
  * ..."), which strict YAML rejects as an ambiguous nested mapping. A skill
  * that demonstrably loads in Claude Code must not be invisible in T3 purely
  * over that mismatch. This only recovers the two scalar fields we read, and
- * only when the value doesn't look like broken YAML syntax (an unterminated
- * flow collection, block scalar, anchor, alias, or tag) — those still count
- * as malformed, since Claude Code wouldn't load them either.
+ * only when no top-level line's value looks like broken YAML syntax (an
+ * unterminated flow collection, block scalar, anchor, alias, or tag) — any
+ * such line, in this or another field, means the document has a real syntax
+ * error Claude Code wouldn't load either, so the whole file counts as
+ * malformed rather than surfacing a partial, plausible-looking recovery.
  */
 function parseSkillFrontmatterLeniently(yamlSource: string): SkillFrontmatter {
   const fields: Partial<Record<"name" | "description", string>> = {};
@@ -60,11 +62,11 @@ function parseSkillFrontmatterLeniently(yamlSource: string): SkillFrontmatter {
       continue;
     }
     const key = rawLine.slice(0, separatorIndex).trim();
-    if (key !== "name" && key !== "description") {
-      continue;
-    }
     const rawValue = rawLine.slice(separatorIndex + 1).trim();
     if (YAML_STRUCTURAL_VALUE_PATTERN.test(rawValue)) {
+      return { kind: "malformed" };
+    }
+    if (key !== "name" && key !== "description") {
       continue;
     }
     const value =

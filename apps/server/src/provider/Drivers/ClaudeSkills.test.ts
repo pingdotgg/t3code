@@ -254,6 +254,50 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       }),
   );
 
+  it.effect("skips the whole skill when a broken field survives alongside a recoverable one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "broken-name",
+        ["---", "name: [unclosed", "description: Broken skill.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+
+      // A broken `name` must not surface the skill under its directory name
+      // with only the description recovered — Claude Code wouldn't load
+      // this file at all.
+      assert.deepEqual(skills, []);
+    }),
+  );
+
+  it.effect("skips the whole skill when an unread field has broken YAML syntax", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "broken-other-field",
+        ["---", "name: demo", "allowed-tools: [unclosed", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+
+      // The broken field isn't one this scanner reads, but it still means
+      // the document has a real YAML syntax error Claude Code would reject
+      // outright — recovering `name` in isolation would be wrong.
+      assert.deepEqual(skills, []);
+    }),
+  );
+
   it.effect("honors CLAUDE_CONFIG_DIR from the environment when homePath is unset", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
