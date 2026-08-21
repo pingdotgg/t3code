@@ -480,6 +480,10 @@ struct MarkdownDocumentTests {
             ![plot](out/plot.png "generated (final")
 
             ![shot](out/foo(1).png)
+
+            ![single](out/single.png 'a title')
+
+            ![parenthesized](out/parenthesized.png (a title))
             """
         )
 
@@ -487,6 +491,35 @@ struct MarkdownDocumentTests {
             document.blocks == [
                 .image(source: "out/plot.png", alt: "plot"),
                 .image(source: "out/foo(1).png", alt: "shot"),
+                .image(source: "out/single.png", alt: "single"),
+                .image(source: "out/parenthesized.png", alt: "parenthesized"),
+            ]
+        )
+    }
+
+    @Test(
+        "Malformed image titles stay paragraph text",
+        .bug("https://github.com/pingdotgg/t3code/pull/7378#discussion_r3826785013")
+    )
+    func rejectsMalformedImageTitles() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![bare](out/a.png garbage)
+
+            ![trailing](out/b.png "title" garbage)
+
+            ![unclosed](out/c.png "title)
+
+            ![angle](<out/d.png>"title")
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .paragraph("![bare](out/a.png garbage)"),
+                .paragraph("![trailing](out/b.png \"title\" garbage)"),
+                .paragraph("![unclosed](out/c.png \"title)"),
+                .paragraph("![angle](<out/d.png>\"title\")"),
             ]
         )
     }

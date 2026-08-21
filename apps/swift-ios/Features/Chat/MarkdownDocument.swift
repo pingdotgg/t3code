@@ -107,19 +107,47 @@ struct MarkdownImageReference: Equatable, Sendable {
     /// CommonMark allows around a link destination.
     private static func source(in destination: String) -> String? {
         let trimmed = destination.markdownTrimmed
-        if trimmed.first == "<" {
+        let characters = Array(trimmed)
+        let source: String
+        let sourceEnd: Int
+        if characters.first == "<" {
             // The same unescaped scan the delimiter search uses, so an escaped
             // `>` inside the brackets stays part of the file name.
-            let characters = Array(trimmed)
             guard let closing = unescapedIndex(of: ">", in: characters, from: 1) else {
                 return nil
             }
-            return String(characters[1..<closing])
+            source = String(characters[1..<closing])
+            sourceEnd = closing + 1
+        } else {
+            sourceEnd = characters.firstIndex(where: { $0.isMarkdownWhitespace })
+                ?? characters.count
+            source = String(characters[..<sourceEnd])
         }
-        return trimmed
-            .split(whereSeparator: { $0.isMarkdownWhitespace })
-            .first
-            .map(String.init)
+
+        guard titleSuffixIsValid(characters[sourceEnd...]) else { return nil }
+        return source
+    }
+
+    private static func titleSuffixIsValid(_ suffix: ArraySlice<Character>) -> Bool {
+        guard !suffix.isEmpty else { return true }
+        guard suffix.first?.isMarkdownWhitespace == true else { return false }
+
+        let title = String(suffix).markdownTrimmed
+        guard !title.isEmpty else { return true }
+        let characters = Array(title)
+        let closing: Character
+        switch characters.first {
+        case "\"":
+            closing = "\""
+        case "'":
+            closing = "'"
+        case "(":
+            closing = ")"
+        default:
+            return false
+        }
+        guard characters.count >= 2, characters.last == closing else { return false }
+        return unescapedIndex(of: closing, in: characters, from: 1) == characters.count - 1
     }
 
     private static func unescapedIndex(
