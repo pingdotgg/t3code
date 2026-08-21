@@ -242,13 +242,37 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               );
               const content = (
                 <>
+                  {/* Multi-select is the only mode where more than one option
+                      can stay lit, so it is the only one that gets a box: a
+                      leading checkbox reads as "toggle me", where the trailing
+                      check of a single-select reads as "answered". */}
+                  {activeQuestion.multiSelect ? (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "flex size-4 shrink-0 items-center justify-center rounded-[.25rem] border transition-colors duration-150",
+                        isSelected
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : // An empty box has no content to carry it, so it
+                            // borrows the shortcut key's ink rather than the
+                            // hairline border token, which fades to ~4% white in
+                            // dark mode and disappears.
+                            "border-secondary-label/70 bg-background/35 text-transparent group-hover:border-foreground",
+                      )}
+                    >
+                      <CheckIcon className="size-3" strokeWidth={3} />
+                    </span>
+                  ) : null}
                   <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                     <span className="text-sm font-medium">{option.label}</span>
                     {option.description && option.description !== option.label ? (
                       <span className="text-secondary-label text-xs">{option.description}</span>
                     ) : null}
                   </div>
-                  {isSelected ? (
+                  {/* Multi-select keeps every number shortcut on screen while
+                      options are being picked: the checkbox already carries the
+                      state, and the keys stay live for the whole list. */}
+                  {isSelected && !activeQuestion.multiSelect ? (
                     <CheckIcon className="size-3.5 shrink-0 text-primary" />
                   ) : shortcutKey !== null ? (
                     <kbd
@@ -266,6 +290,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 <button
                   key={`${activeQuestion.id}:${option.label}`}
                   type="button"
+                  // Announced as a checkbox only when it behaves like one:
+                  // multi-select options toggle independently, single-select
+                  // options replace each other.
+                  {...(activeQuestion.multiSelect
+                    ? { role: "checkbox", "aria-checked": isSelected }
+                    : {})}
                   disabled={isResponding}
                   onClick={() => {
                     handleOptionSelection(activeQuestion.id, option.label);

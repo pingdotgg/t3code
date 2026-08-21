@@ -22,12 +22,32 @@ const prompt: PendingUserInput = {
   ],
 };
 
-function renderPanel() {
+const multiSelectPrompt: PendingUserInput = {
+  requestId: ApprovalRequestId.make("request-2"),
+  createdAt: "2026-08-15T00:00:00.000Z",
+  questions: [
+    {
+      id: "question-2",
+      header: "Surfaces",
+      question: "Which surfaces should ship the change?",
+      options: [
+        { label: "Web", description: "The browser client" },
+        { label: "Mobile", description: "The React Native client" },
+      ],
+      multiSelect: true,
+    },
+  ],
+};
+
+function renderPanel(
+  input: PendingUserInput = prompt,
+  answers: Record<string, { selectedOptionLabels?: string[]; customAnswer?: string }> = {},
+) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
-      pendingUserInputs={[prompt]}
+      pendingUserInputs={[input]}
       respondingRequestIds={[]}
-      answers={{}}
+      answers={answers}
       questionIndex={0}
       onToggleOption={() => {}}
       onAdvance={() => {}}
@@ -57,5 +77,27 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Which approach should the migration take?");
     expect(markup).toContain("Incremental");
     expect(markup).toContain("Big bang");
+  });
+
+  it("announces multi-select options as checkboxes and keeps their shortcuts", () => {
+    const markup = renderPanel(multiSelectPrompt, {
+      "question-2": { selectedOptionLabels: ["Web"] },
+    });
+
+    const optionButtons = markup.match(/<button[^>]*role="checkbox"[^>]*>/g) ?? [];
+    expect(optionButtons).toHaveLength(2);
+    expect(optionButtons[0]).toContain('aria-checked="true"');
+    expect(optionButtons[1]).toContain('aria-checked="false"');
+    // The trailing number shortcut survives selection, so every option stays
+    // reachable from the keyboard while the answer is being assembled.
+    expect(markup).toContain("<kbd");
+    expect(markup).toContain("Select one or more options.");
+  });
+
+  it("leaves single-select options without checkbox semantics", () => {
+    const markup = renderPanel(prompt, { "question-1": { selectedOptionLabels: ["Incremental"] } });
+
+    expect(markup).not.toContain('role="checkbox"');
+    expect(markup).not.toContain("Select one or more options.");
   });
 });

@@ -88,6 +88,7 @@ const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const iconSubtle = useThemeColor("--color-icon-subtle");
+  const checkboxTint = useThemeColor("--color-primary-foreground");
   const questionCount = props.pendingUserInput.questions.length;
 
   const cardCoverage = props.cardCoverage;
@@ -263,8 +264,17 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   return (
                     <Pressable
                       key={option.label}
+                      // Only multi-select options toggle independently, so only
+                      // they read as checkboxes; single-select pills keep their
+                      // plain button semantics.
+                      {...(question.multiSelect
+                        ? {
+                            accessibilityRole: "checkbox" as const,
+                            accessibilityState: { checked: selected },
+                          }
+                        : {})}
                       className={cn(
-                        "rounded-full border px-3 py-2.5 ",
+                        "flex-row items-center gap-2 rounded-full border px-3 py-2.5 ",
                         selected
                           ? "border-blue-300/50 bg-blue-50 dark:border-blue-400/28 dark:bg-blue-400/14"
                           : "border-neutral-200 bg-white dark:border-white/6 dark:bg-neutral-950/70",
@@ -277,6 +287,28 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         )
                       }
                     >
+                      {/* A pill that can stay lit alongside its neighbours needs
+                          to say so before it is tapped: the box marks the answer
+                          as additive rather than exclusive. */}
+                      {question.multiSelect ? (
+                        <View
+                          className={cn(
+                            "h-4 w-4 items-center justify-center rounded-[4px] border",
+                            selected
+                              ? "border-sky-600 bg-sky-600 dark:border-blue-400 dark:bg-blue-400"
+                              : "border-neutral-300 dark:border-white/20",
+                          )}
+                        >
+                          {selected ? (
+                            <SymbolView
+                              name="checkmark"
+                              size={10}
+                              tintColor={checkboxTint}
+                              type="monochrome"
+                            />
+                          ) : null}
+                        </View>
+                      ) : null}
                       <Text
                         className={cn(
                           "font-t3-bold text-sm",
