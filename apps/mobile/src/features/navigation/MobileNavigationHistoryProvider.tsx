@@ -50,7 +50,6 @@ function useMobileNavigationHistoryCoordinator(
   const navigation = useNavigation();
   const { buildAction } = useLinkBuilder();
   useCancelBlockedTraversal(history);
-
   useEffect(() => {
     history.visit(location);
   }, [history, location]);
@@ -77,9 +76,7 @@ function useMobileNavigationHistoryCoordinator(
   return { back, forward };
 }
 
-function useCancelBlockedTraversal(
-  history: ReturnType<typeof createMobileNavigationHistory>,
-): void {
+function useCancelBlockedTraversal(history: ReturnType<typeof createMobileNavigationHistory>) {
   const navigation = useNavigation();
 
   useEffect(() => {

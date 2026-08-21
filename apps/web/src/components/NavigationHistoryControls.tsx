@@ -12,7 +12,6 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { Button } from "./ui/button";
 import { WORKSPACE_TITLEBAR_CONTROL_CLASS } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-
 interface NavigationHistoryButtonsProps {
   readonly backShortcut: string | null;
   readonly buttonClassName?: string;
@@ -22,7 +21,6 @@ interface NavigationHistoryButtonsProps {
   readonly onBack: () => void;
   readonly onForward: () => void;
 }
-
 function NavigationButton(props: {
   readonly available: boolean;
   readonly className?: string;
@@ -61,7 +59,6 @@ function NavigationButton(props: {
     </Tooltip>
   );
 }
-
 export function NavigationHistoryButtons(props: NavigationHistoryButtonsProps) {
   return (
     <div aria-label="Navigation history" className="flex items-center gap-0.5" role="group">
@@ -84,12 +81,11 @@ export function NavigationHistoryButtons(props: NavigationHistoryButtonsProps) {
     </div>
   );
 }
-
 function useNavigationHistoryShortcuts(input: {
   readonly back: () => void;
   readonly forward: () => void;
   readonly keybindings: ResolvedKeybindingsConfig;
-}): void {
+}) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
@@ -99,7 +95,6 @@ function useNavigationHistoryShortcuts(input: {
       ) {
         return;
       }
-
       const command = resolveShortcutCommand(event, input.keybindings, {
         context: {
           previewFocus: isPreviewFocused(),
@@ -109,7 +104,6 @@ function useNavigationHistoryShortcuts(input: {
       if (command !== "navigation.back" && command !== "navigation.forward") {
         return;
       }
-
       event.preventDefault();
       event.stopPropagation();
       if (command === "navigation.back") {
@@ -118,12 +112,10 @@ function useNavigationHistoryShortcuts(input: {
         input.forward();
       }
     };
-
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [input.back, input.forward, input.keybindings]);
 }
-
 export function NavigationHistoryControls({
   buttonClassName,
 }: {
@@ -134,7 +126,6 @@ export function NavigationHistoryControls({
   const backShortcut = shortcutLabelForCommand(keybindings, "navigation.back");
   const forwardShortcut = shortcutLabelForCommand(keybindings, "navigation.forward");
   useNavigationHistoryShortcuts({ back, forward, keybindings });
-
   return (
     <NavigationHistoryButtons
       backShortcut={backShortcut}

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { createMobileNavigationHistory } from "./mobile-navigation-history";
+import {
+  createMobileNavigationHistory,
+  normalizeMobileNavigationPath,
+} from "./mobile-navigation-history";
 
 describe("createMobileNavigationHistory", () => {
   const location = (pathname: string, transitionKey = pathname) => ({
@@ -60,6 +63,9 @@ describe("createMobileNavigationHistory", () => {
     history.visit(location("/threads/env/thread/terminal?terminalId=b", "thread"));
     history.visit(location("/threads/env/thread/terminal?terminalId=c", "thread"));
     history.visit(location("/threads/env/thread/terminal?terminalId=a", "thread"));
+    expect(
+      normalizeMobileNavigationPath("/settings?params=%5Bobject%20Object%5D&terminalId=a"),
+    ).toBe("/settings?terminalId=a");
     expect(history.requestBack()?.location.pathname).toContain("terminalId=c");
     expect(history.requestForward()).toBeNull();
   });

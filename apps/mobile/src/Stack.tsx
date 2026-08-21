@@ -25,6 +25,7 @@ import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayo
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { MobileNavigationHistoryButtons } from "./features/navigation/MobileNavigationHistoryButtons";
 import { MobileNavigationHistoryProvider } from "./features/navigation/MobileNavigationHistoryProvider";
+import { normalizeMobileNavigationPath } from "./features/navigation/mobile-navigation-history";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
@@ -77,8 +78,6 @@ import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-// React Navigation serializes incomplete nested params with this placeholder.
-const TRANSIENT_NESTED_STATE_PARAM = "%5Bobject%20Object%5D";
 
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
@@ -402,8 +401,7 @@ function RootStackLayout(props: {
   }, [navigation, pendingShare, props.state]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
-  const rawPath = getPathFromState(props.state, navigationPathConfig);
-  const path = rawPath.includes(TRANSIENT_NESTED_STATE_PARAM) ? rawPath.split("?")[0]! : rawPath;
+  const path = normalizeMobileNavigationPath(getPathFromState(props.state, navigationPathConfig));
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspacePathname = workspacePathFromState(props.state);
   const transitionKey = activeNavigationTransitionKey(props.state);

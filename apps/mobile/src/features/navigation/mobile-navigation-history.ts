@@ -8,11 +8,18 @@ export interface MobileNavigationLocation {
   readonly transitionKey: string;
 }
 
-function snapshotFor(cursor: number, entryCount: number): MobileNavigationHistorySnapshot {
+function snapshotFor(cursor: number, entryCount: number) {
   return {
     canGoBack: cursor > 0,
     canGoForward: cursor < entryCount - 1,
   };
+}
+export function normalizeMobileNavigationPath(rawPath: string) {
+  const url = new URL(rawPath, "t3code://app");
+  for (const [key, value] of url.searchParams) {
+    if (value === "[object Object]") url.searchParams.delete(key);
+  }
+  return `${url.pathname}${url.search}`;
 }
 
 export function createMobileNavigationHistory(initialLocation: MobileNavigationLocation) {
