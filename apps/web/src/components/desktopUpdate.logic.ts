@@ -104,8 +104,13 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
 
 export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
+  remoteServerCount = 0,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
+  if (remoteServerCount > 0) {
+    const serverLabel = remoteServerCount === 1 ? "server" : "servers";
+    return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\n${remoteServerCount} connected remote ${serverLabel} will update to the same version first. Any running tasks in T3 Code, including on ${remoteServerCount === 1 ? "that server" : "those servers"}, will be interrupted.`;
+  }
   return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 

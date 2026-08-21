@@ -31,6 +31,12 @@ The update does not remove saved threads, settings, or project files.
 The available action depends on how that server was started. T3 Code does not update connected
 servers silently in the background.
 
+When you confirm a downloaded desktop update, T3 Code also updates every connected remote server
+that advertises self-update support. Those remote updates start together, and the desktop app waits
+for each server to reconnect on the downloaded version before restarting its local backend. If one
+of those servers fails to update, the desktop install does not start and the failed server is named.
+Offline and manually managed servers are not changed.
+
 An older background-service launcher may ask you to run the exact
 `npx t3@<version> service update` command on the server machine. That one local update installs the
 rollback support needed for later remote updates, including versions that change the database.

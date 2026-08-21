@@ -134,6 +134,10 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "./desktopUpdate.toast";
+import {
+  collectRemoteServerUpdateTargets,
+  coordinateDesktopUpdateInstall,
+} from "./desktopUpdate.coordination";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import {
@@ -192,7 +196,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -3078,6 +3082,9 @@ export default function LegacySidebar() {
   const shortcutModifiers = useShortcutModifierState();
   const terminalFocused = useTerminalFocus();
   const { environments } = useEnvironments();
+  const updateServer = useAtomCommand(serverEnvironment.updateServer, {
+    reportFailure: false,
+  });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentLabelById = useMemo(
     () =>
@@ -3584,10 +3591,16 @@ export default function LegacySidebar() {
     }
 
     if (desktopUpdateButtonAction === "install") {
+      const targetVersion =
+        desktopUpdateState.downloadedVersion ?? desktopUpdateState.availableVersion;
+      const remoteUpdateTargets = collectRemoteServerUpdateTargets(environments, targetVersion);
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(desktopUpdateState),
+          getDesktopUpdateInstallConfirmationMessage(
+            desktopUpdateState,
+            remoteUpdateTargets.length,
+          ),
         );
       } catch (error) {
         setDesktopUpdateActionPending(false);
@@ -3604,10 +3617,33 @@ export default function LegacySidebar() {
         setDesktopUpdateActionPending(false);
         return;
       }
-      void bridge
-        .installUpdate()
-        .then((result) => {
-          if (!shouldToastDesktopUpdateActionResult(result)) return;
+
+      let installingDesktop = false;
+      try {
+        const updateResult = await coordinateDesktopUpdateInstall({
+          targets: remoteUpdateTargets,
+          updateServer,
+          installDesktop: () => {
+            installingDesktop = true;
+            return bridge.installUpdate();
+          },
+        });
+        if (updateResult._tag === "RemoteUpdateFailed") {
+          if (!isAtomCommandInterrupted(updateResult.failure.result)) {
+            const error = squashAtomCommandFailure(updateResult.failure.result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not update all servers",
+                description: `${updateResult.failure.target.serverLabel}: ${error instanceof Error ? error.message : "Server update failed."}`,
+              }),
+            );
+          }
+          return;
+        }
+
+        const result = updateResult.result;
+        if (shouldToastDesktopUpdateActionResult(result)) {
           const actionError = getDesktopUpdateActionError(result);
           if (!actionError) return;
           toastManager.add(
@@ -3617,23 +3653,26 @@ export default function LegacySidebar() {
               description: actionError,
             }),
           );
-        })
-        .catch((error) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
-            }),
-          );
-        })
-        .finally(() => setDesktopUpdateActionPending(false));
+        }
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: installingDesktop ? "Could not install update" : "Could not update all servers",
+            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          }),
+        );
+      } finally {
+        setDesktopUpdateActionPending(false);
+      }
     }
   }, [
     desktopUpdateActionPending,
     desktopUpdateButtonAction,
     desktopUpdateButtonDisabled,
     desktopUpdateState,
+    environments,
+    updateServer,
   ]);
 
   const expandThreadListForProject = useCallback((projectKey: string) => {

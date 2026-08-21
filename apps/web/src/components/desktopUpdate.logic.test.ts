@@ -261,6 +261,20 @@ describe("desktop update UI helpers", () => {
     ).toContain("Install update 1.1.1 and restart T3 Code?");
   });
 
+  it("includes connected remote servers in the hard-cut confirmation", () => {
+    expect(
+      getDesktopUpdateInstallConfirmationMessage(
+        {
+          availableVersion: "1.1.0",
+          downloadedVersion: "1.1.1",
+        },
+        2,
+      ),
+    ).toBe(
+      "Install update 1.1.1 and restart T3 Code?\n\n2 connected remote servers will update to the same version first. Any running tasks in T3 Code, including on those servers, will be interrupted.",
+    );
+  });
+
   it("falls back to generic install confirmation copy when no version is available", () => {
     expect(
       getDesktopUpdateInstallConfirmationMessage({
