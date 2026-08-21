@@ -73,8 +73,14 @@ describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
+    expect(settings.tabsEnabled).toBe(true);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
     expect(settings.sidebarAutoSettleOnMerge).toBe(true);
+  });
+
+  it("preserves an explicit tabsEnabled setting", () => {
+    expect(decodeClientSettings({ tabsEnabled: false }).tabsEnabled).toBe(false);
+    expect(decodeClientSettingsPatch({ tabsEnabled: false }).tabsEnabled).toBe(false);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {

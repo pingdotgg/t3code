@@ -11,6 +11,7 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useThread, useThreadRefs } from "../state/entities";
+import { serverTabKey, useWorkspaceTabsStore } from "../workspaceTabsStore";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
@@ -42,6 +43,14 @@ function DraftChatThreadRouteView() {
       return;
     }
 
+    useWorkspaceTabsStore.getState().openTab({
+      key: serverTabKey(canonicalThreadRef.environmentId, canonicalThreadRef.threadId),
+      kind: "server",
+      environmentId: canonicalThreadRef.environmentId,
+      threadId: canonicalThreadRef.threadId,
+      title: serverThread?.title || "Thread",
+    });
+
     let cancelled = false;
     void waitForDraftHeroTransition().then(() => {
       if (cancelled) {
@@ -57,7 +66,7 @@ function DraftChatThreadRouteView() {
     return () => {
       cancelled = true;
     };
-  }, [canonicalThreadRef, navigate]);
+  }, [canonicalThreadRef, draftId, navigate, serverThread?.title]);
 
   useEffect(() => {
     if (draftSession || canonicalThreadRef) {

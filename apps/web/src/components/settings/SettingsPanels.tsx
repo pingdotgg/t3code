@@ -497,6 +497,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
+      ...(settings.tabsEnabled !== DEFAULT_UNIFIED_SETTINGS.tabsEnabled ? ["Workspace tabs"] : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
@@ -567,6 +568,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
+      settings.tabsEnabled,
       settings.timestampFormat,
       settings.wordWrap,
       followSystem,
@@ -647,6 +649,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      tabsEnabled: DEFAULT_UNIFIED_SETTINGS.tabsEnabled,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -1874,6 +1877,28 @@ export function GeneralSettingsPanel() {
                 });
               }}
               aria-label="Project grouping"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("workspace-tabs")}
+          description="Show open conversations as tabs in the workspace topbar."
+          resetAction={
+            settings.tabsEnabled !== DEFAULT_UNIFIED_SETTINGS.tabsEnabled ? (
+              <SettingResetButton
+                label="workspace tabs"
+                onClick={() =>
+                  updateSettings({ tabsEnabled: DEFAULT_UNIFIED_SETTINGS.tabsEnabled })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.tabsEnabled}
+              onCheckedChange={(checked) => updateSettings({ tabsEnabled: Boolean(checked) })}
+              aria-label="Workspace tabs"
             />
           }
         />
