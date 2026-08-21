@@ -174,7 +174,7 @@ export interface TimelineDurationMessage {
 
 export type TimelineLatestTurn = Pick<
   OrchestrationLatestTurn,
-  "turnId" | "state" | "startedAt" | "completedAt"
+  "turnId" | "state" | "requestedAt" | "startedAt" | "completedAt"
 >;
 
 export type MessagesTimelineRow =
@@ -226,6 +226,7 @@ export type MessagesTimelineRow =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
+      queued: boolean;
     }
   | {
       kind: "proposed-plan";
@@ -521,6 +522,30 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
 }
 
 /**
+ * A user message sent while a turn was already running. The server persists
+ * it right away and queues the turn start, so it lands in the timeline with
+ * no work of its own and nothing to show that it has not begun.
+ *
+ * Detected the same way the thread list does it (`hasQueuedTurnStart`):
+ * strictly newer than every timestamp on the turn that is still unsettled.
+ * Adoption clears this on its own — the adopting turn becomes the latest
+ * turn and its `requestedAt` matches the message, so the comparison flips
+ * without any client-side bookkeeping.
+ */
+function isQueuedUserMessage(message: ChatMessage, unsettledTurn: TimelineLatestTurn | null) {
+  if (unsettledTurn === null || message.role !== "user") {
+    return false;
+  }
+  const sentAt = Date.parse(message.createdAt);
+  if (Number.isNaN(sentAt)) {
+    return false;
+  }
+  return [unsettledTurn.requestedAt, unsettledTurn.startedAt, unsettledTurn.completedAt].every(
+    (candidate) => candidate == null || Date.parse(candidate) < sentAt,
+  );
+}
+
+/**
  * Settled turns fold their commentary and tool activity behind a
  * "Worked for ..." row anchored at the turn's first foldable entry; the
  * terminal assistant message stays visible below the fold.
@@ -678,6 +703,12 @@ export function deriveMessagesTimelineRows(input: {
     latestTurn: input.latestTurn ?? null,
     unsettledTurnId,
   });
+  // Only the latest turn can be the one holding a queued message back, and
+  // only while it is the unsettled one.
+  const unsettledTurn =
+    unsettledTurnId !== null && input.latestTurn?.turnId === unsettledTurnId
+      ? input.latestTurn
+      : null;
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
     if (!input.expandedTurnIds?.has(fold.turnId)) {
@@ -1024,6 +1055,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
+      queued: isQueuedUserMessage(timelineEntry.message, unsettledTurn),
     });
   }
 
@@ -1122,7 +1154,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
-        a.revertTurnCount === bm.revertTurnCount
+        a.revertTurnCount === bm.revertTurnCount &&
+        a.queued === bm.queued
       );
     }
   }

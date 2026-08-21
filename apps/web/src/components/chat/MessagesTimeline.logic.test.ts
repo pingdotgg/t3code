@@ -371,6 +371,7 @@ describe("deriveMessagesTimelineRows", () => {
       latestTurn: {
         turnId: "turn-2" as never,
         state: "running",
+        requestedAt: "2026-01-01T00:00:19Z",
         startedAt: "2026-01-01T00:00:19Z",
         completedAt: null,
       },
@@ -632,6 +633,7 @@ describe("deriveMessagesTimelineRows", () => {
       latestTurn: {
         turnId: "turn-2" as never,
         state: "running",
+        requestedAt: "2026-01-01T00:00:14Z",
         startedAt: "2026-01-01T00:00:14Z",
         completedAt: null,
       },
@@ -669,6 +671,7 @@ describe("deriveMessagesTimelineRows", () => {
       latestTurn: {
         turnId: "turn-1" as never,
         state: "interrupted",
+        requestedAt: "2026-01-01T00:00:00Z",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:47Z",
       },
@@ -737,6 +740,7 @@ describe("deriveMessagesTimelineRows", () => {
       latestTurn: {
         turnId: "turn-1" as never,
         state: "completed",
+        requestedAt: "2026-01-01T00:00:00Z",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:22Z",
       },
@@ -789,6 +793,7 @@ describe("deriveMessagesTimelineRows", () => {
       latestTurn: {
         turnId: "turn-1" as never,
         state: "running",
+        requestedAt: "2026-01-01T00:00:00Z",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: null,
       },
@@ -1201,6 +1206,7 @@ describe("deriveMessagesTimelineRows", () => {
       latestTurn: {
         turnId: "turn-1" as never,
         state: "completed",
+        requestedAt: "2026-01-01T00:00:00Z",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:25Z",
       },
@@ -1285,6 +1291,7 @@ describe("deriveMessagesTimelineRows", () => {
       latestTurn: {
         turnId: "turn-1" as never,
         state: "running",
+        requestedAt: "2026-01-01T00:00:00Z",
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: null,
       },
@@ -1373,6 +1380,114 @@ describe("deriveMessagesTimelineRows", () => {
     expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       expanded: true,
     });
+  });
+
+  it("marks a message sent mid-turn as queued and clears it once a turn adopts it", () => {
+    const startingMessage = {
+      id: "user-entry-1",
+      kind: "message" as const,
+      createdAt: "2026-01-01T00:00:00Z",
+      message: {
+        id: "user-1" as never,
+        role: "user" as const,
+        text: "Build it",
+        turnId: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        streaming: false,
+      },
+    };
+    // Sent while turn-1 was already running, so no turn owns it yet.
+    const queuedMessage = {
+      id: "user-entry-2",
+      kind: "message" as const,
+      createdAt: "2026-01-01T00:00:30Z",
+      message: {
+        id: "user-2" as never,
+        role: "user" as const,
+        text: "Also add tests",
+        turnId: null,
+        createdAt: "2026-01-01T00:00:30Z",
+        updatedAt: "2026-01-01T00:00:30Z",
+        streaming: false,
+      },
+    };
+    const timelineEntries = [startingMessage, queuedMessage];
+    const runningTurn = {
+      turnId: "turn-1" as never,
+      state: "running" as const,
+      requestedAt: "2026-01-01T00:00:00Z",
+      startedAt: "2026-01-01T00:00:05Z",
+      completedAt: null,
+    };
+
+    const queuedRows = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: runningTurn,
+      isWorking: true,
+      activeTurnStartedAt: runningTurn.startedAt,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+    const queuedByEntryId = new Map(
+      queuedRows.flatMap((row) => (row.kind === "message" ? [[row.id, row.queued] as const] : [])),
+    );
+    // The message that started the running turn is not queued; the one sent
+    // after it started is.
+    expect(queuedByEntryId.get("user-entry-1")).toBe(false);
+    expect(queuedByEntryId.get("user-entry-2")).toBe(true);
+
+    // Adoption: a new turn requested at the queued message's timestamp takes
+    // it over, so the derivation stops flagging it with no extra bookkeeping.
+    const adoptedRows = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId: "turn-2" as never,
+        state: "running",
+        requestedAt: "2026-01-01T00:00:30Z",
+        startedAt: "2026-01-01T00:00:31Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:31Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+    expect(adoptedRows.every((row) => row.kind !== "message" || row.queued === false)).toBe(true);
+  });
+
+  it("never marks messages queued while no turn is unsettled", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry-1",
+          kind: "message" as const,
+          createdAt: "2026-01-01T00:01:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "Thanks",
+            turnId: null,
+            createdAt: "2026-01-01T00:01:00Z",
+            updatedAt: "2026-01-01T00:01:00Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "completed",
+        requestedAt: "2026-01-01T00:00:00Z",
+        startedAt: "2026-01-01T00:00:05Z",
+        completedAt: "2026-01-01T00:00:20Z",
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.find((row) => row.kind === "message")?.queued).toBe(false);
   });
 });
 

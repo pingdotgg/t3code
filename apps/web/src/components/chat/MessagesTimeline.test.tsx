@@ -299,6 +299,7 @@ describe("MessagesTimeline", () => {
         latestTurn={{
           turnId,
           state: "completed",
+          requestedAt: MESSAGE_CREATED_AT,
           startedAt: MESSAGE_CREATED_AT,
           completedAt: MESSAGE_CREATED_AT,
         }}
