@@ -61,6 +61,7 @@ const runtimeMock = {
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
+    onAbort: null as ((sessionID: string) => void) | null,
     sessionChildrenById: new Map<string, Array<{ id: string }>>(),
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
@@ -82,6 +83,7 @@ const runtimeMock = {
     this.state.sessionCreateInputs.length = 0;
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
+    this.state.onAbort = null;
     this.state.sessionChildrenById.clear();
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
@@ -178,6 +180,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         abort: async ({ sessionID }: { sessionID: string }) => {
           runtimeMock.state.abortCalls.push(sessionID);
+          runtimeMock.state.onAbort?.(sessionID);
         },
         children: async ({ sessionID }: { sessionID: string }) => ({
           data: runtimeMock.state.sessionChildrenById.get(sessionID) ?? [],
@@ -607,7 +610,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("interrupts OpenCode child sessions before the parent session", () =>
+  it.effect("interrupts the parent before all surviving OpenCode child sessions", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-opencode-children");
@@ -621,12 +624,20 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         { id: "child-a" },
         { id: "child-b" },
       ]);
+      runtimeMock.state.onAbort = (sessionID) => {
+        if (sessionID === "http://127.0.0.1:9999/session") {
+          runtimeMock.state.sessionChildrenById
+            .get("http://127.0.0.1:9999/session")
+            ?.push({ id: "child-created-during-parent-abort" });
+        }
+      };
 
       yield* adapter.interruptTurn(threadId);
 
+      NodeAssert.equal(runtimeMock.state.abortCalls[0], "http://127.0.0.1:9999/session");
       NodeAssert.deepEqual(
-        runtimeMock.state.abortCalls.slice().sort(),
-        ["child-a", "child-b", "http://127.0.0.1:9999/session"].sort(),
+        runtimeMock.state.abortCalls.slice(1).sort(),
+        ["child-a", "child-b", "child-created-during-parent-abort"].sort(),
       );
 
       yield* adapter.stopSession(threadId);
