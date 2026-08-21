@@ -52,7 +52,14 @@ import {
 export const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
-const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
+// Each probe crosses the real SSH link (desktop -> tunnel -> remote), so on a
+// high-RTT connection (satellite/in-flight wifi) a single request can
+// legitimately take longer than a typical LAN round trip. Also feeds the
+// remote-side reuse/launch scripts' own loopback probe (T3_READY_PROBE_TIMEOUT_MS),
+// where the same generous bound is harmless — that probe never crosses the
+// slow link, so it can only make an already-slow remote boot wait a little
+// longer before giving up, never make a healthy one fail faster.
+const SSH_READY_PROBE_TIMEOUT_MS = 8_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;

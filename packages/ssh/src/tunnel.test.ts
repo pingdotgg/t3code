@@ -310,6 +310,36 @@ describe("ssh tunnel scripts", () => {
     ),
   );
 
+  const slowHttpClient = HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))).pipe(
+      Effect.delay(Duration.millis(1_500)),
+    ),
+  );
+
+  it.effect(
+    "succeeds on a single response slower than 1s, so a high-RTT link only makes readiness slower, not impossible",
+    () =>
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(
+          Effect.result(
+            waitForHttpReady({
+              baseUrl: "http://127.0.0.1:41773/",
+              timeoutMs: 5_000,
+            }),
+          ),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(5_000));
+
+        const result = yield* Fiber.join(fiber);
+        assert.isTrue(Result.isSuccess(result));
+      }).pipe(
+        Effect.provide(
+          Layer.merge(TestClock.layer(), Layer.succeed(HttpClient.HttpClient, slowHttpClient)),
+        ),
+      ),
+  );
+
   it("preserves primitive readiness reason values in diagnostic output", () => {
     assert.deepEqual(
       describeReadinessCause({
