@@ -301,11 +301,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("fails closed when service state is missing", () =>
     Effect.gen(function* () {
-      const { service } = yield* makeHarness();
+      const { service, statePath } = yield* makeHarness();
 
-      expect((yield* service.prune({ dryRun: false }).pipe(Effect.flip))._tag).toBe(
-        "BootServicePruneStateError",
-      );
+      expect(yield* service.prune({ dryRun: false }).pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePruneStateError",
+        statePath,
+      });
     }),
   );
 

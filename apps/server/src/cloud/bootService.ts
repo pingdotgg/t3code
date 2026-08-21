@@ -407,19 +407,23 @@ export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootS
 
 export class BootServicePruneStateError extends Schema.TaggedErrorClass<BootServicePruneStateError>()(
   "BootServicePruneStateError",
-  {},
+  { statePath: Schema.String },
 ) {
   override get message(): string {
-    return "The T3 Code service state is missing or invalid. Run `npx t3@latest service update` before pruning runtimes.";
+    return `The T3 Code service state at '${this.statePath}' is missing or invalid. Run \`npx t3@latest service update\` before pruning runtimes.`;
   }
 }
 
 export class BootServicePruneError extends Schema.TaggedErrorClass<BootServicePruneError>()(
   "BootServicePruneError",
-  { cause: Schema.Defect() },
+  {
+    stage: Schema.Literals(["checking service state", "reading service state", "pruning runtimes"]),
+    path: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return "Could not prune T3 Code service runtimes.";
+    return `Could not prune T3 Code service runtimes while ${this.stage} at '${this.path}'.`;
   }
 }
 
@@ -717,18 +721,32 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const prune: BootService["Service"]["prune"] = Effect.fn("cloud.boot_service.prune")(
     function* (options) {
-      const stateExists = yield* fs
-        .exists(statePath)
-        .pipe(Effect.mapError((cause) => new BootServicePruneError({ cause })));
+      const stateExists = yield* fs.exists(statePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BootServicePruneError({
+              stage: "checking service state",
+              path: statePath,
+              cause,
+            }),
+        ),
+      );
       if (!stateExists) {
-        return yield* new BootServicePruneStateError();
+        return yield* new BootServicePruneStateError({ statePath });
       }
-      const stateText = yield* fs
-        .readFileString(statePath)
-        .pipe(Effect.mapError((cause) => new BootServicePruneError({ cause })));
+      const stateText = yield* fs.readFileString(statePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BootServicePruneError({
+              stage: "reading service state",
+              path: statePath,
+              cause,
+            }),
+        ),
+      );
       const state = parseServiceState(stateText);
       if (state === undefined) {
-        return yield* new BootServicePruneStateError();
+        return yield* new BootServicePruneStateError({ statePath });
       }
       if (state.update?.status === "pending") {
         return yield* new BootServiceUpdatePendingError();
@@ -739,7 +757,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         dryRun: options.dryRun,
         fs,
         path,
-      }).pipe(Effect.mapError((cause) => new BootServicePruneError({ cause })));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BootServicePruneError({
+              stage: "pruning runtimes",
+              path: path.dirname(runtimePaths.versionDir),
+              cause,
+            }),
+        ),
+      );
     },
   );
 
