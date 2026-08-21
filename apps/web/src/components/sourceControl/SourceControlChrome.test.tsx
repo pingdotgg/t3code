@@ -93,7 +93,7 @@ describe("SourceControlHeader", () => {
 });
 
 describe("SourceControlPanelShell", () => {
-  it("uses the same sidebar surface as the project and session panel", () => {
+  it("separates Electron window dragging from the global titlebar controls", () => {
     const markup = renderToStaticMarkup(
       <SourceControlPanelShell mode="inline">
         <DiffPanelShell className="bg-transparent" header={<span>Repository</span>} mode="embedded">
@@ -109,8 +109,11 @@ describe("SourceControlPanelShell", () => {
     expect(titlebarClassName).toContain("h-[var(--workspace-topbar-height)]");
     expect(titlebarClassName).toContain("min-h-[var(--workspace-topbar-height)]");
     expect(titlebarClassName).toContain("shrink-0 items-center");
-    expect(titlebarClassName).toContain("drag-region");
+    expect(titlebarClassName.split(" ")).not.toContain("drag-region");
     expect(titlebarClassName.split(" ")).not.toContain("workspace-topbar");
+    const dragRegionClassName = classNameFor(markup, "data-source-control-panel-drag-region");
+    expect(dragRegionClassName).toContain("flex-1");
+    expect(dragRegionClassName.split(" ")).toContain("drag-region");
     expect(markup).toContain("flex h-full min-w-0 flex-col w-full bg-transparent");
     expect(markup).not.toContain("flex h-full min-w-0 flex-col w-full bg-background");
   });
@@ -127,6 +130,8 @@ describe("SourceControlPanelShell", () => {
     expect(titlebarClassName).toContain("h-[var(--workspace-topbar-height)]");
     expect(titlebarClassName).toContain("min-h-[var(--workspace-topbar-height)]");
     expect(titlebarClassName.split(" ")).not.toContain("drag-region");
+    const dragRegionClassName = classNameFor(markup, "data-source-control-panel-drag-region");
+    expect(dragRegionClassName.split(" ")).not.toContain("drag-region");
   });
 });
 

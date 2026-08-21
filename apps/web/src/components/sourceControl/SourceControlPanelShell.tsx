@@ -32,15 +32,22 @@ export function SourceControlPanelShell(props: {
             "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
             props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
             props.mode === "inline" ? "pr-32" : "pr-3",
-            ownsDesktopTitleBar && "drag-region",
             ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+8rem)]",
             props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
           data-source-control-panel-titlebar
         >
-          <span className="truncate px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-sidebar-muted-foreground">
-            Source Control
-          </span>
+          <div
+            className={cn(
+              "flex h-full min-w-0 flex-1 items-center",
+              ownsDesktopTitleBar && "drag-region",
+            )}
+            data-source-control-panel-drag-region
+          >
+            <span className="truncate px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-sidebar-muted-foreground">
+              Source Control
+            </span>
+          </div>
           {props.layoutControls ? (
             <div className="ml-auto h-full">{props.layoutControls}</div>
           ) : null}
