@@ -1559,7 +1559,10 @@ function ComposerPromptEditorInner({
   onCommandKeyDown,
   onPaste,
   editorRef,
-}: ComposerPromptEditorProps) {
+  restoreFocusOnRemountRef,
+}: ComposerPromptEditorProps & {
+  restoreFocusOnRemountRef: React.RefObject<boolean>;
+}) {
   const [editor] = useLexicalComposerContext();
   // Plain mode has no token nodes, so every collapsed<->expanded cursor
   // mapping is a raw clamp. The editor remounts when the mode flips (the
@@ -1678,6 +1681,24 @@ function ComposerPromptEditorInner({
     },
     [clampComposerCursor, editor, expandComposerCursor],
   );
+
+  // The plainText flip remounts the editor (see the LexicalComposer key),
+  // replacing the focused contenteditable and silently dropping focus. Record
+  // focus ownership when this instance unmounts and take it back on the next
+  // mount, so a question opening or resolving mid-typing doesn't eat
+  // keystrokes. Every dep is stable for the lifetime of a mount, so this runs
+  // once per editor instance.
+  useLayoutEffect(() => {
+    if (restoreFocusOnRemountRef.current) {
+      restoreFocusOnRemountRef.current = false;
+      focusAt(snapshotRef.current.cursor);
+    }
+    return () => {
+      // Layout cleanup runs before the old DOM node is detached, so
+      // activeElement still points at it here.
+      restoreFocusOnRemountRef.current = editor.getRootElement() === document.activeElement;
+    };
+  }, [editor, focusAt, restoreFocusOnRemountRef]);
 
   const readSnapshot = useCallback((): {
     value: string;
@@ -1854,6 +1875,9 @@ export function ComposerPromptEditor({
   initialSkillMetadataRef.current = skillMetadataByName(skills);
   const initialPlainTextRef = useRef(plainText);
   initialPlainTextRef.current = plainText;
+  // Survives the plainText remount so the new editor instance knows whether
+  // its predecessor owned focus and should take it back.
+  const restoreFocusOnRemountRef = useRef(false);
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
       namespace: "t3tools-composer-editor",
@@ -1891,6 +1915,7 @@ export function ComposerPromptEditor({
         onChange={onChange}
         onPaste={onPaste}
         editorRef={editorRef}
+        restoreFocusOnRemountRef={restoreFocusOnRemountRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(className ? { className } : {})}
       />
