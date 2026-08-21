@@ -457,7 +457,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         });
       }
 
-      const skillItems = (selectedProviderStatus?.skills ?? [])
+      const skillItems = selectedProviderSkills
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,

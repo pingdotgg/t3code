@@ -148,6 +148,10 @@ it("parseGrokAvailableCommands splits harness features from skill commands", () 
   assert.equal(catalog.slashCommands[0]?.input?.hint, "optional context");
   assert.equal(catalog.skills.find((skill) => skill.name === "create-skill")?.scope, "bundled");
   assert.equal(catalog.skills.find((skill) => skill.name === "review")?.sourceCwd, "/repo");
+  assert.equal(
+    catalog.slashCommands.find((command) => command.name === "local:review")?.sourceCwd,
+    "/repo",
+  );
 });
 
 it("parseGrokInspectReport treats a JSON object without skills as empty", () => {
@@ -277,10 +281,16 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         "local-grok",
         "---\nname: local-grok\ndescription: Grok project skill.\n---\n",
       );
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "agents-compatible",
+        "---\nname: agents-compatible\ndescription: Agents compatibility skill.\n---\n",
+      );
 
       const skills = yield* discoverGrokSkills(workspace);
       assert.ok(skills.some((skill) => skill.name === "gray-horizon-godot-loop"));
       assert.ok(skills.some((skill) => skill.name === "local-grok"));
+      assert.ok(skills.some((skill) => skill.name === "agents-compatible"));
       assert.equal(
         skills.find((skill) => skill.name === "gray-horizon-godot-loop")?.scope,
         "project",

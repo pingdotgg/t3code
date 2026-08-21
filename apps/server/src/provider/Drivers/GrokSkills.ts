@@ -37,7 +37,7 @@ import {
 } from "./SkillDiscovery.ts";
 
 const GROK_USER_SKILL_DIR_NAMES = [".claude", ".agents", ".grok"] as const;
-const GROK_PROJECT_SKILL_DIR_NAMES = [".claude", ".grok"] as const;
+const GROK_PROJECT_SKILL_DIR_NAMES = [".claude", ".agents", ".grok"] as const;
 
 function skillRootsForDir(
   pathApi: Path.Path,
@@ -99,6 +99,17 @@ const GrokInspectReport = Schema.Struct({
 
 const decodeGrokInspectReport = Schema.decodeUnknownEffect(GrokInspectReport);
 const decodeGrokInspectReportExit = Schema.decodeUnknownExit(GrokInspectReport);
+
+class GrokInspectError extends Schema.TaggedErrorClass<GrokInspectError>()("GrokInspectError", {
+  operation: Schema.Literals(["command", "parse"]),
+  cwd: Schema.String,
+  exitCode: Schema.optional(Schema.Number),
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    return `Grok inspect ${this.operation} failed for ${this.cwd}.`;
+  }
+}
 
 export interface GrokHarnessCatalog {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -292,19 +303,20 @@ export function parseGrokAvailableCommands(
     }
     const description = nonEmptyTrimmed(command.description);
     const hint = nonEmptyTrimmed(command.input?.hint);
+    const skillMeta = grokAvailableCommandSkillMeta(command);
+    const projectScoped = skillMeta?.scope ? isGrokProjectSkillSource(skillMeta.scope) : false;
+    const skillSourceCwd = projectScoped ? normalizedSourceCwd : undefined;
     slashCommandsByName.set(name.toLowerCase(), {
       name,
       ...(description ? { description } : {}),
       ...(hint ? { input: { hint } } : {}),
+      ...(skillSourceCwd ? { sourceCwd: skillSourceCwd } : {}),
     });
 
-    const skillMeta = grokAvailableCommandSkillMeta(command);
     if (!skillMeta) {
       continue;
     }
     const skillName = skillMeta.bareName ?? name;
-    const projectScoped = skillMeta.scope ? isGrokProjectSkillSource(skillMeta.scope) : false;
-    const skillSourceCwd = projectScoped ? normalizedSourceCwd : undefined;
     skillsByKey.set(skillInventoryKey(skillName, skillSourceCwd), {
       name: skillName,
       path: skillMeta.path,
@@ -399,13 +411,19 @@ const queryGrokInspectAtCwd = Effect.fn("queryGrokInspectAtCwd")(function* (inpu
     }),
   );
   if (result.code !== 0) {
-    return yield* Effect.fail(new Error("Grok inspect exited with a non-zero status."));
+    return yield* new GrokInspectError({
+      operation: "command",
+      cwd: input.cwd,
+      exitCode: result.code,
+    });
   }
   const raw = yield* Effect.try({
     try: () => parseInspectJsonObject(result.stdout),
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    catch: (cause) => new GrokInspectError({ operation: "parse", cwd: input.cwd, cause }),
   });
-  const report = yield* decodeGrokInspectReport(raw);
+  const report = yield* decodeGrokInspectReport(raw).pipe(
+    Effect.mapError((cause) => new GrokInspectError({ operation: "parse", cwd: input.cwd, cause })),
+  );
   return parseGrokInspectReport(report, input.cwd);
 });
 
@@ -444,7 +462,10 @@ export const queryGrokInspectCatalog = Effect.fn("queryGrokInspectCatalog")(func
         Effect.catch((error) =>
           Effect.logDebug("Grok inspect catalog query failed.", {
             cwd,
-            errorTag: error instanceof Error ? error.name : "UnknownError",
+            errorTag: "_tag" in error ? error._tag : "UnknownError",
+            ...("_tag" in error && error._tag === "GrokInspectError"
+              ? { operation: error.operation }
+              : {}),
           }).pipe(Effect.as(undefined)),
         ),
       ),

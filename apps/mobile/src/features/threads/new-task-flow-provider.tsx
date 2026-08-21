@@ -446,7 +446,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.model === selectedModel.model,
     ) ?? null;
   const skillProjectRoot = selectedProject?.workspaceRoot ?? null;
-  const skillWorkspaceCwd = selectedWorktreePath ?? skillProjectRoot;
+  const skillWorkspaceCwd =
+    workspaceMode === "local" ? (selectedWorktreePath ?? skillProjectRoot) : skillProjectRoot;
   const selectedProviderSkills = useMemo(() => {
     const skills =
       selectedEnvironmentServerConfig?.providers.find(
