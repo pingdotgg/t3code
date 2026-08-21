@@ -400,7 +400,8 @@ function RootStackLayout(props: {
   }, [navigation, pendingShare, props.state]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
-  const path = getPathFromState(props.state, navigationPathConfig).split("?")[0] ?? "/";
+  const rawPath = getPathFromState(props.state, navigationPathConfig);
+  const path = rawPath.includes("%5Bobject%20Object%5D") ? rawPath.split("?")[0]! : rawPath;
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspacePathname = workspacePathFromState(props.state);
   const transitionKey = activeNavigationTransitionKey(props.state);

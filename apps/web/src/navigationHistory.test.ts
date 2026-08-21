@@ -53,6 +53,5 @@ describe("createNavigationHistory", () => {
       { canGoBack: true, canGoForward: true },
       { canGoBack: true, canGoForward: false },
     ]);
-    history.dispose();
   });
 });

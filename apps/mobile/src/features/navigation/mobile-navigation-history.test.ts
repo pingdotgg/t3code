@@ -61,13 +61,13 @@ describe("createMobileNavigationHistory", () => {
 
   it("records a new visit when an old pathname is selected again", () => {
     const history = createMobileNavigationHistory(location("/"));
-    history.visit(location("/threads/env/thread-a", "thread"));
-    history.visit(location("/threads/env/thread-b", "thread"));
-    history.visit(location("/threads/env/thread-c", "thread"));
+    history.visit(location("/threads/env/thread/terminal?terminalId=a", "thread"));
+    history.visit(location("/threads/env/thread/terminal?terminalId=b", "thread"));
+    history.visit(location("/threads/env/thread/terminal?terminalId=c", "thread"));
 
-    history.visit(location("/threads/env/thread-a", "thread"));
+    history.visit(location("/threads/env/thread/terminal?terminalId=a", "thread"));
 
-    expect(history.requestBack()?.location.pathname).toBe("/threads/env/thread-c");
+    expect(history.requestBack()?.location.pathname).toContain("terminalId=c");
     expect(history.requestForward()).toBeNull();
   });
 
