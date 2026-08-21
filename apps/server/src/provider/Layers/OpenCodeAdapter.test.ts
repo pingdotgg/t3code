@@ -16,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import {
+  ApprovalRequestId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -68,11 +69,21 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    eventGate: undefined as Promise<void> | undefined,
     sessionGetIds: [] as string[],
+    sessionInfoById: new Map<string, Record<string, unknown>>(),
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
     sessionDirectoryById: new Map<string, string>(),
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
+    permissionReplyCalls: [] as Array<{
+      requestID: string;
+      directory?: string;
+      reply: string;
+    }>,
+    permissionRejectCalls: [] as Array<{ requestID: string; directory?: string }>,
+    questionReplyCalls: [] as Array<{ requestID: string; directory?: string; answers: unknown }>,
+    questionRejectCalls: [] as Array<{ requestID: string; directory?: string }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
   },
   reset() {
@@ -89,11 +100,17 @@ const runtimeMock = {
     this.state.messages = [];
     this.state.subscribedEvents = [];
     this.state.sessionGetIds.length = 0;
+    this.state.sessionInfoById.clear();
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
     this.state.sessionDirectoryById.clear();
     this.state.sessionUpdateCalls.length = 0;
+    this.state.permissionReplyCalls.length = 0;
+    this.state.permissionRejectCalls.length = 0;
+    this.state.questionReplyCalls.length = 0;
+    this.state.questionRejectCalls.length = 0;
     this.state.forkCalls.length = 0;
+    this.state.eventGate = undefined;
   },
 };
 
@@ -159,7 +176,14 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             });
           }
           const directory = runtimeMock.state.sessionDirectoryById.get(sessionID);
-          return { data: { id: sessionID, ...(directory ? { directory } : {}) } };
+          const sessionInfo = runtimeMock.state.sessionInfoById.get(sessionID);
+          return {
+            data: {
+              id: sessionID,
+              ...(directory ? { directory } : {}),
+              ...sessionInfo,
+            },
+          };
         },
         update: async ({ sessionID, permission }: { sessionID: string; permission: unknown }) => {
           runtimeMock.state.sessionUpdateCalls.push({ sessionID, permission });
@@ -174,7 +198,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }
           return { data: { id: forkedId, ...(directory ? { directory } : {}) } };
         },
-        abort: async ({ sessionID }: { sessionID: string }) => {
+        abort: async ({ sessionID }: { sessionID: string; directory?: string }) => {
           runtimeMock.state.abortCalls.push(sessionID);
         },
         promptAsync: async (input: unknown) => {
@@ -203,9 +227,30 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
               : runtimeMock.state.messages;
         },
       },
+      permission: {
+        reply: async (input: { requestID: string; directory?: string; reply: string }) => {
+          runtimeMock.state.permissionReplyCalls.push(input);
+        },
+        reject: async (input: { requestID: string; directory?: string }) => {
+          runtimeMock.state.permissionRejectCalls.push(input);
+        },
+      },
+      question: {
+        reply: async (input: { requestID: string; directory?: string; answers: unknown }) => {
+          runtimeMock.state.questionReplyCalls.push(input);
+        },
+        reject: async (input: { requestID: string; directory?: string }) => {
+          runtimeMock.state.questionRejectCalls.push(input);
+        },
+      },
       event: {
         subscribe: async () => ({
           stream: (async function* () {
+            // Optional gate so tests can hold provider events until the
+            // adapter-side setup (e.g. an in-flight turn) has landed.
+            if (runtimeMock.state.eventGate) {
+              await runtimeMock.state.eventGate;
+            }
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
             }
@@ -1255,6 +1300,474 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       if (metadataUpdated[0]?.type === "thread.metadata.updated") {
         NodeAssert.equal(metadataUpdated[0].payload.name, "Investigate reconnect failures");
       }
+    }),
+  );
+
+  it.effect("routes child permission requests into the parent with generic details", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-child-permission");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child-permission";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.created",
+          properties: {
+            info: {
+              id: childSessionId,
+              parentID: parentSessionId,
+              directory: "/repo/child",
+              title: "Inspect workspace",
+              agent: "explore",
+              model: { providerID: "openai", id: "gpt-5" },
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: { sessionID: childSessionId, status: { type: "busy" } },
+        },
+        {
+          type: "permission.asked",
+          properties: {
+            id: "perm-child-external-directory",
+            sessionID: childSessionId,
+            permission: "external_directory",
+            patterns: ["/Users/sabraman/sandbox/marginalia/marginalia-simulator/*"],
+            always: [],
+            metadata: { reason: "Task needs simulator files" },
+          },
+        },
+        {
+          type: "session.status",
+          properties: { sessionID: parentSessionId, status: { type: "idle" } },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "task.started", "task.progress", "request.opened"],
+      );
+      const approval = events.find((event) => event.type === "request.opened");
+      NodeAssert.ok(approval);
+      if (approval.type === "request.opened") {
+        NodeAssert.equal(approval.requestId, "perm-child-external-directory");
+        NodeAssert.equal(approval.providerRefs?.providerSessionId, childSessionId);
+        NodeAssert.equal(approval.payload.requestType, "unknown");
+        NodeAssert.match(approval.payload.detail ?? "", /external_directory/);
+        NodeAssert.match(approval.payload.detail ?? "", /marginalia-simulator\//);
+        NodeAssert.deepEqual(approval.payload.args, {
+          permission: "external_directory",
+          patterns: ["/Users/sabraman/sandbox/marginalia/marginalia-simulator/*"],
+          metadata: { reason: "Task needs simulator files" },
+          always: [],
+          sessionID: childSessionId,
+        });
+      }
+      NodeAssert.deepEqual(runtimeMock.state.sessionUpdateCalls, [
+        {
+          sessionID: childSessionId,
+          permission: [
+            { permission: "*", pattern: "*", action: "ask" },
+            { permission: "bash", pattern: "*", action: "ask" },
+            { permission: "edit", pattern: "*", action: "ask" },
+            { permission: "webfetch", pattern: "*", action: "ask" },
+            { permission: "websearch", pattern: "*", action: "ask" },
+            { permission: "codesearch", pattern: "*", action: "ask" },
+            { permission: "external_directory", pattern: "*", action: "ask" },
+            { permission: "doom_loop", pattern: "*", action: "ask" },
+            { permission: "question", pattern: "*", action: "allow" },
+          ],
+        },
+      ]);
+      NodeAssert.equal(
+        (yield* adapter.listSessions()).find((session) => session.threadId === threadId)?.status,
+        "running",
+      );
+
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make("perm-child-external-directory"),
+        "accept",
+      );
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+        {
+          requestID: "perm-child-external-directory",
+          directory: "/repo/child",
+          reply: "once",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("inherits full-access permissions and exposes child completion errors", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-child-error");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child-error";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.status",
+          properties: { sessionID: parentSessionId, status: { type: "busy" } },
+        },
+        {
+          type: "session.created",
+          properties: {
+            info: {
+              id: childSessionId,
+              parentID: parentSessionId,
+              title: "Run checks",
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: { sessionID: childSessionId, status: { type: "busy" } },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: childSessionId,
+            info: { id: "child-error-message", role: "assistant" },
+          },
+        },
+        {
+          type: "session.error",
+          properties: {
+            sessionID: childSessionId,
+            error: { data: { message: "child task failed" } },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(7),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const taskEvents = events.filter(
+        (event) =>
+          event.type === "task.started" ||
+          event.type === "task.progress" ||
+          event.type === "task.completed",
+      );
+      NodeAssert.deepEqual(
+        taskEvents.map((event) => event.type),
+        ["task.started", "task.progress", "task.progress", "task.completed"],
+      );
+      const completed = taskEvents.find((event) => event.type === "task.completed");
+      NodeAssert.ok(completed);
+      if (completed.type === "task.completed") {
+        NodeAssert.equal(completed.payload.status, "failed");
+        NodeAssert.equal(completed.payload.summary, "child task failed");
+        NodeAssert.equal(completed.providerRefs?.providerSessionId, childSessionId);
+        NodeAssert.equal(completed.providerRefs?.providerParentSessionId, parentSessionId);
+      }
+      const runtimeError = events.find(
+        (event) =>
+          event.type === "runtime.error" &&
+          event.providerRefs?.providerSessionId === childSessionId,
+      );
+      NodeAssert.ok(runtimeError);
+      if (runtimeError?.type === "runtime.error") {
+        NodeAssert.equal(runtimeError.providerRefs?.providerParentSessionId, parentSessionId);
+      }
+      NodeAssert.deepEqual(runtimeMock.state.sessionUpdateCalls, [
+        {
+          sessionID: childSessionId,
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        },
+      ]);
+    }),
+  );
+
+  it.effect("settles child approvals when the parent session is torn down", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-child-teardown");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child-teardown";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.created",
+          properties: {
+            info: { id: childSessionId, parentID: parentSessionId, directory: "/repo/child" },
+          },
+        },
+        {
+          type: "permission.asked",
+          properties: {
+            id: "perm-child-teardown",
+            sessionID: childSessionId,
+            permission: "task",
+            patterns: [],
+            always: [],
+            metadata: {},
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      yield* advanceTestClock(10);
+      yield* adapter.stopSession(threadId);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(
+        events.some((event) => event.type === "request.opened"),
+        true,
+      );
+      const resolved = events.find((event) => event.type === "request.resolved");
+      NodeAssert.ok(resolved);
+      if (resolved.type === "request.resolved") {
+        NodeAssert.equal(resolved.requestId, "perm-child-teardown");
+        NodeAssert.equal(resolved.payload.decision, "cancel");
+        NodeAssert.equal(resolved.providerRefs?.providerSessionId, childSessionId);
+      }
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+        { requestID: "perm-child-teardown", directory: "/repo/child", reply: "reject" },
+      ]);
+      NodeAssert.equal(runtimeMock.state.abortCalls.includes(childSessionId), true);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+
+  it.effect("layers the runtime-mode baseline under inherited child rules", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-child-inherit");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child-inherit";
+      // Rules OpenCode derived at child-create time: an inherited parent
+      // allow plus a plan-style deny. They must stay authoritative over the
+      // T3 baseline (last matching rule wins).
+      runtimeMock.state.sessionInfoById.set(childSessionId, {
+        parentID: parentSessionId,
+        directory: "/repo/child",
+        permission: [
+          { permission: "external_directory", pattern: "/tmp/foo/*", action: "allow" },
+          { permission: "edit", pattern: "*", action: "deny" },
+        ],
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.created",
+          properties: {
+            info: { id: childSessionId, parentID: parentSessionId, directory: "/repo/child" },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "task.started"],
+      );
+      NodeAssert.equal(runtimeMock.state.sessionUpdateCalls.length, 1);
+      NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.sessionID, childSessionId);
+      NodeAssert.deepEqual(runtimeMock.state.sessionUpdateCalls[0]?.permission, [
+        // Runtime-mode baseline first …
+        { permission: "*", pattern: "*", action: "ask" },
+        { permission: "bash", pattern: "*", action: "ask" },
+        { permission: "edit", pattern: "*", action: "ask" },
+        { permission: "webfetch", pattern: "*", action: "ask" },
+        { permission: "websearch", pattern: "*", action: "ask" },
+        { permission: "codesearch", pattern: "*", action: "ask" },
+        { permission: "external_directory", pattern: "*", action: "ask" },
+        { permission: "doom_loop", pattern: "*", action: "ask" },
+        { permission: "question", pattern: "*", action: "allow" },
+        // … inherited rules last, so they override where they match.
+        { permission: "external_directory", pattern: "/tmp/foo/*", action: "allow" },
+        { permission: "edit", pattern: "*", action: "deny" },
+      ]);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("completes a root turn once its final pending approval is resolved", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-root-reply-settles");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      // Hold provider events until the turn is in flight so the idle-while-
+      // pending interleaving is deterministic.
+      let releaseEvents!: () => void;
+      runtimeMock.state.eventGate = new Promise<void>((resolve) => {
+        releaseEvents = resolve;
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.status",
+          properties: { sessionID: parentSessionId, status: { type: "busy" } },
+        },
+        {
+          type: "permission.asked",
+          properties: {
+            id: "perm-root-last",
+            sessionID: parentSessionId,
+            permission: "bash",
+            patterns: ["ls -la"],
+            always: [],
+            metadata: {},
+          },
+        },
+        // The root reports idle while the approval is still open; resolving
+        // it afterwards must finish the turn without needing another event.
+        {
+          type: "session.status",
+          properties: { sessionID: parentSessionId, status: { type: "idle" } },
+        },
+        {
+          type: "permission.replied",
+          properties: { sessionID: parentSessionId, requestID: "perm-root-last", reply: "once" },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(6),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const started = yield* adapter.sendTurn({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        interactionMode: "default",
+        input: "run it",
+        modelSelection: { instanceId: ProviderInstanceId.make("opencode"), model: "prov/model" },
+      });
+      releaseEvents();
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "session.started",
+          "thread.started",
+          "turn.started",
+          "request.opened",
+          "request.resolved",
+          "turn.completed",
+        ],
+      );
+      NodeAssert.equal(started.turnId != null, true);
+      const completed = events.find((event) => event.type === "turn.completed");
+      if (completed?.type === "turn.completed") {
+        NodeAssert.equal(completed.payload.state, "completed");
+      }
+      NodeAssert.equal(
+        (yield* adapter.listSessions()).find((session) => session.threadId === threadId)?.status,
+        "ready",
+      );
+    }),
+  );
+
+  it.effect("keeps child narration out of the parent transcript", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-child-text");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child-text";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.created",
+          properties: {
+            info: { id: childSessionId, parentID: parentSessionId, directory: "/repo/child" },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: childSessionId,
+            info: { id: "child-msg-1", role: "assistant" },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "child-part-1",
+              messageID: "child-msg-1",
+              type: "text",
+              text: "Subagent narration that must not reach the chat",
+              time: { start: 1750000000000, end: 1750000001000 },
+            },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "task.started", "task.progress"],
+      );
+      NodeAssert.equal(
+        events.some((event) => event.type === "content.delta" || event.type === "item.completed"),
+        false,
+      );
+
+      yield* adapter.stopSession(threadId);
     }),
   );
 

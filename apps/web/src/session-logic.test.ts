@@ -156,6 +156,35 @@ describe("derivePendingApprovals", () => {
     ]);
   });
 
+  it("keeps unknown provider permissions visible as generic approvals", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-external-directory",
+        kind: "approval.requested",
+        summary: "Approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-external-directory",
+          requestType: "unknown",
+          detail: "Permission: external_directory\n\nPatterns:\n/another/project/*",
+          args: {
+            permission: "external_directory",
+            sessionID: "ses_child",
+          },
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-external-directory",
+        requestKind: "unknown",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        detail: "Permission: external_directory\n\nPatterns:\n/another/project/*",
+      },
+    ]);
+  });
+
   it("clears stale pending approvals when provider reports unknown pending request", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

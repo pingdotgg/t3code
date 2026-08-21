@@ -298,7 +298,7 @@ function sessionStatusAllowsActiveTurn(
 
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
-): "command" | "file-read" | "file-change" | undefined {
+): "command" | "file-read" | "file-change" | "unknown" | undefined {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -308,6 +308,8 @@ function requestKindFromCanonicalRequestType(
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "unknown":
+      return "unknown";
     default:
       return undefined;
   }
@@ -369,6 +371,15 @@ export function runtimeEventToActivities(
       ? { sequence: eventWithSequence.sessionSequence }
       : {};
   })();
+  const providerSessionFields =
+    event.providerRefs?.providerSessionId !== undefined
+      ? {
+          providerSessionId: event.providerRefs.providerSessionId,
+          ...(event.providerRefs.providerParentSessionId !== undefined
+            ? { providerParentSessionId: event.providerRefs.providerParentSessionId }
+            : {}),
+        }
+      : {};
   switch (event.type) {
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
@@ -391,9 +402,11 @@ export function runtimeEventToActivities(
                   : "Approval requested",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
+            ...providerSessionFields,
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+            ...(event.payload.args !== undefined ? { args: event.payload.args } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -415,6 +428,7 @@ export function runtimeEventToActivities(
           summary: "Approval resolved",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
+            ...providerSessionFields,
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.decision ? { decision: event.payload.decision } : {}),
@@ -435,6 +449,7 @@ export function runtimeEventToActivities(
           summary: "Runtime error",
           payload: {
             message: truncateDetail(event.payload.message),
+            ...providerSessionFields,
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -452,6 +467,7 @@ export function runtimeEventToActivities(
           summary: `Tool denied: ${event.payload.toolName}`,
           payload: {
             toolName: event.payload.toolName,
+            ...providerSessionFields,
             ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
             ...(event.payload.reason ? { detail: truncateDetail(event.payload.reason) } : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
@@ -474,6 +490,7 @@ export function runtimeEventToActivities(
           summary: truncateDetail(event.payload.message, 120),
           payload: {
             message: truncateDetail(event.payload.message),
+            ...providerSessionFields,
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -512,6 +529,7 @@ export function runtimeEventToActivities(
           summary: "User input requested",
           payload: {
             ...(event.requestId ? { requestId: event.requestId } : {}),
+            ...providerSessionFields,
             questions: event.payload.questions,
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -530,6 +548,7 @@ export function runtimeEventToActivities(
           summary: "User input submitted",
           payload: {
             ...(event.requestId ? { requestId: event.requestId } : {}),
+            ...providerSessionFields,
             answers: event.payload.answers,
           },
           turnId: toTurnId(event.turnId) ?? null,
@@ -553,6 +572,7 @@ export function runtimeEventToActivities(
                 : "Task started",
           payload: {
             taskId: event.payload.taskId,
+            ...providerSessionFields,
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
@@ -602,6 +622,7 @@ export function runtimeEventToActivities(
                     : "Reasoning update",
                 payload: {
                   taskId: event.payload.taskId,
+                  ...providerSessionFields,
                   ...title,
                   detail: truncateDetail(event.payload.summary ?? event.payload.description),
                   ...(event.payload.summary
@@ -630,6 +651,7 @@ export function runtimeEventToActivities(
                 summary: "Task usage updated",
                 payload: {
                   taskId: event.payload.taskId,
+                  ...providerSessionFields,
                   ...title,
                   ...identityLinkage,
                   usageSnapshot: true,
@@ -658,6 +680,7 @@ export function runtimeEventToActivities(
                 : "Task updated",
           payload: {
             taskId: event.payload.taskId,
+            ...providerSessionFields,
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
               : {}),
@@ -692,6 +715,7 @@ export function runtimeEventToActivities(
           summary: event.payload.toolName ?? "Tool progress",
           payload: {
             taskId: event.payload.taskId,
+            ...providerSessionFields,
             ...(event.payload.toolName ? { toolName: event.payload.toolName } : {}),
             ...(event.payload.toolUseId ? { toolUseId: event.payload.toolUseId } : {}),
             ...(event.payload.elapsedSeconds !== undefined
@@ -722,6 +746,7 @@ export function runtimeEventToActivities(
                 : "Task completed",
           payload: {
             taskId: event.payload.taskId,
+            ...providerSessionFields,
             status: event.payload.status,
             ...(taskTitle ? { title: truncateDetail(taskTitle, 120) } : {}),
             // summary + detail mirror task.progress: clients label the row from
@@ -754,6 +779,7 @@ export function runtimeEventToActivities(
           kind: "context-compaction",
           summary: "Context compacted",
           payload: {
+            ...providerSessionFields,
             state: event.payload.state,
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
@@ -776,7 +802,7 @@ export function runtimeEventToActivities(
           tone: "info",
           kind: "context-window.updated",
           summary: "Context window updated",
-          payload,
+          payload: { ...payload, ...providerSessionFields },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
         },
@@ -802,6 +828,7 @@ export function runtimeEventToActivities(
           kind: "tool.updated",
           summary: event.payload.title ?? "Tool updated",
           payload: {
+            ...providerSessionFields,
             itemType: event.payload.itemType,
             ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
@@ -830,6 +857,7 @@ export function runtimeEventToActivities(
           kind: "tool.completed",
           summary: event.payload.title ?? "Tool",
           payload: {
+            ...providerSessionFields,
             itemType: event.payload.itemType,
             ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
@@ -858,6 +886,7 @@ export function runtimeEventToActivities(
           kind: "tool.started",
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
+            ...providerSessionFields,
             itemType: event.payload.itemType,
             ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
@@ -1884,7 +1913,7 @@ const make = Effect.gen(function* () {
           ? true
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
-        if (shouldApplyRuntimeError) {
+        if (shouldApplyRuntimeError && event.providerRefs?.providerParentSessionId === undefined) {
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "runtime-error-session-set"),

@@ -14,6 +14,7 @@ import {
 import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
+  derivePendingApprovals,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -149,6 +150,34 @@ function makeThread(
     settledAt: input.settledAt ?? null,
   };
 }
+
+describe("derivePendingApprovals", () => {
+  it("keeps unknown provider permissions visible", () => {
+    const approvals = derivePendingApprovals([
+      makeActivity({
+        id: EventId.make("mobile-approval-external-directory"),
+        createdAt: "2026-04-01T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "mobile-req-external-directory",
+          requestType: "unknown",
+          detail: "Permission: external_directory",
+        },
+      }),
+    ]);
+
+    expect(approvals).toEqual([
+      {
+        requestId: "mobile-req-external-directory",
+        requestKind: "unknown",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        detail: "Permission: external_directory",
+      },
+    ]);
+  });
+});
 
 describe("buildThreadFeed", () => {
   it("keeps historic work entries attributed to their turns", () => {
