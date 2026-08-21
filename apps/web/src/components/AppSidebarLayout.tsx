@@ -124,7 +124,7 @@ function WorkspaceChromeControls() {
           Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
-      <div className="pointer-events-auto">
+      <div className="pointer-events-auto ml-0.5">
         <NavigationHistoryControls
           {...(backdropControlClass ? { buttonClassName: backdropControlClass } : {})}
         />

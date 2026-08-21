@@ -13,8 +13,8 @@ function snapshotFor(currentPosition: number, maximumPosition: number): Navigati
 }
 
 export function createNavigationHistory(history: RouterHistory) {
-  let currentPosition = 0;
-  let maximumPosition = 0;
+  let currentPosition = history.location.state.__TSR_index ?? 0;
+  let maximumPosition = currentPosition;
   let snapshot = snapshotFor(currentPosition, maximumPosition);
   let started = false;
   const listeners = new Set<() => void>();
