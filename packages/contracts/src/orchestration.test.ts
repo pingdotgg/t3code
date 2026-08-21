@@ -266,6 +266,26 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts durable after-current delivery in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-after-current",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-after-current",
+        role: "user",
+        text: "run next",
+        attachments: [],
+      },
+      deliveryMode: "after-current",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.deliveryMode, "after-current");
+  }),
+);
+
 it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

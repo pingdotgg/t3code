@@ -454,6 +454,75 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("queued turn delivery", () => {
+    const queuedMessage = {
+      id: MessageId.make("msg-queued"),
+      role: "user" as const,
+      text: "Run this next",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-04-01T07:00:00.000Z",
+      updatedAt: "2026-04-01T07:00:00.000Z",
+    };
+
+    it("marks, dispatches, and cancels durable queued messages", () => {
+      const thread = { ...baseThread, messages: [queuedMessage] };
+      const queued = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-queued",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: queuedMessage.id,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: queuedMessage.createdAt,
+        },
+      });
+      expect(queued.kind).toBe("updated");
+      if (queued.kind !== "updated") return;
+      expect(queued.thread.messages[0]?.deliveryState).toBe("queued");
+
+      const dispatched = applyThreadDetailEvent(queued.thread, {
+        ...baseEventFields,
+        sequence: 10,
+        occurredAt: "2026-04-01T07:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-turn-dispatched",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: queuedMessage.id,
+          dispatchedAt: "2026-04-01T07:01:00.000Z",
+        },
+      });
+      expect(dispatched.kind).toBe("updated");
+      if (dispatched.kind !== "updated") return;
+      expect(dispatched.thread.messages[0]?.deliveryState).toBeUndefined();
+
+      const cancelled = applyThreadDetailEvent(queued.thread, {
+        ...baseEventFields,
+        sequence: 11,
+        occurredAt: "2026-04-01T07:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.queued-turn-cancelled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: queuedMessage.id,
+          cancelledAt: "2026-04-01T07:02:00.000Z",
+        },
+      });
+      expect(cancelled.kind).toBe("updated");
+      if (cancelled.kind === "updated") {
+        expect(cancelled.thread.messages).toEqual([]);
+      }
+    });
+  });
+
   describe("thread.session-set", () => {
     it("settles a running latestTurn when the session leaves the running status", () => {
       const threadWithRunningTurn: OrchestrationThread = {
@@ -834,6 +903,16 @@ describe("applyThreadDetailEvent", () => {
             createdAt: "2026-04-01T03:00:00.000Z",
             updatedAt: "2026-04-01T03:00:00.000Z",
           },
+          {
+            id: MessageId.make("msg-queued"),
+            role: "user",
+            text: "Run this next",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T03:30:00.000Z",
+            updatedAt: "2026-04-01T03:30:00.000Z",
+            deliveryState: "queued",
+          },
         ],
         checkpoints: [
           {
@@ -875,8 +954,10 @@ describe("applyThreadDetailEvent", () => {
         // turn-2 checkpoint is filtered out (turnCount 2 > revert target 1)
         expect(result.thread.checkpoints).toHaveLength(1);
         expect(result.thread.checkpoints[0]?.turnId).toBe("turn-1");
-        // msg-3 (turn-2) is filtered, msg-1 (no turn) and msg-2 (turn-1) remain
+        // msg-3 (turn-2) and the cancelled-by-revert queue entry are filtered;
+        // msg-1 (no turn) and msg-2 (turn-1) remain.
         expect(result.thread.messages).toHaveLength(2);
+        expect(result.thread.messages.some((message) => message.id === "msg-queued")).toBe(false);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
       }
     });

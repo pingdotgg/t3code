@@ -533,6 +533,8 @@ function GeneralSettingsSection() {
   const autoSettleOnMerge =
     !AsyncResult.isSuccess(preferencesResult) ||
     preferencesResult.value.autoSettleOnMerge !== false;
+  const steerActiveTurns =
+    !AsyncResult.isSuccess(preferencesResult) || preferencesResult.value.steerActiveTurns !== false;
 
   return (
     <SettingsSection title="General">
@@ -542,6 +544,13 @@ function GeneralSettingsSection() {
         label="Auto-settle merged threads"
         value={autoSettleOnMerge}
         onValueChange={(value) => savePreferences({ autoSettleOnMerge: value })}
+      />
+      <SettingsSwitchRow
+        icon="arrow.up.right.circle"
+        label="Steer active turns"
+        subtitle="When off, messages wait on the server and run next."
+        value={steerActiveTurns}
+        onValueChange={(value) => savePreferences({ steerActiveTurns: value })}
       />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>

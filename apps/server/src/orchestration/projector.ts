@@ -147,7 +147,9 @@ function retainThreadMessagesAfterRevert(
     }
   }
 
-  return messages.filter((message) => retainedMessageIds.has(message.id));
+  return messages.filter(
+    (message) => message.deliveryState !== "queued" && retainedMessageIds.has(message.id),
+  );
 }
 
 function retainThreadActivitiesAfterRevert(
@@ -548,6 +550,58 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-queued": {
+      const thread = nextBase.threads.find((entry) => entry.id === event.payload.threadId);
+      if (!thread) {
+        return Effect.succeed(nextBase);
+      }
+      return Effect.succeed({
+        ...nextBase,
+        threads: updateThread(nextBase.threads, event.payload.threadId, {
+          messages: thread.messages.map((message) =>
+            message.id === event.payload.messageId
+              ? { ...message, deliveryState: "queued" as const }
+              : message,
+          ),
+          updatedAt: event.occurredAt,
+        }),
+      });
+    }
+
+    case "thread.queued-turn-dispatched": {
+      const thread = nextBase.threads.find((entry) => entry.id === event.payload.threadId);
+      if (!thread) {
+        return Effect.succeed(nextBase);
+      }
+      return Effect.succeed({
+        ...nextBase,
+        threads: updateThread(nextBase.threads, event.payload.threadId, {
+          messages: thread.messages.map((message) => {
+            if (message.id !== event.payload.messageId) {
+              return message;
+            }
+            const { deliveryState: _, ...deliveredMessage } = message;
+            return deliveredMessage;
+          }),
+          updatedAt: event.occurredAt,
+        }),
+      });
+    }
+
+    case "thread.queued-turn-cancelled": {
+      const thread = nextBase.threads.find((entry) => entry.id === event.payload.threadId);
+      if (!thread) {
+        return Effect.succeed(nextBase);
+      }
+      return Effect.succeed({
+        ...nextBase,
+        threads: updateThread(nextBase.threads, event.payload.threadId, {
+          messages: thread.messages.filter((message) => message.id !== event.payload.messageId),
+          updatedAt: event.occurredAt,
+        }),
+      });
+    }
 
     case "thread.session-set":
       return Effect.gen(function* () {

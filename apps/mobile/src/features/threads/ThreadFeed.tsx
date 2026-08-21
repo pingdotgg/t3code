@@ -159,6 +159,7 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onCancelQueuedMessage: (messageId: MessageId) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: {
@@ -805,6 +806,7 @@ function renderFeedEntry(
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
+    readonly onCancelQueuedMessage: (messageId: MessageId) => void;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -918,6 +920,21 @@ function renderFeedEntry(
             })}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+            {message.deliveryState === "queued" ? (
+              <>
+                <Text className="font-t3-medium text-xs text-foreground-muted">Queued</Text>
+                <Pressable
+                  accessibilityLabel="Cancel queued message"
+                  accessibilityRole="button"
+                  hitSlop={6}
+                  onPress={() => props.onCancelQueuedMessage(message.id)}
+                >
+                  <Text className="font-t3-semibold text-xs text-red-600 dark:text-red-400">
+                    Cancel
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
               {timestampLabel}
             </Text>
@@ -1804,6 +1821,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onToggleTurnFold,
         onPressImage,
         onMarkdownLinkPress,
+        onCancelQueuedMessage: props.onCancelQueuedMessage,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -1825,6 +1843,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleMaxWidth,
       onCopyWorkRow,
       onMarkdownLinkPress,
+      props.onCancelQueuedMessage,
       onPressImage,
       onToggleTurnFold,
       onToggleWorkGroup,

@@ -42,6 +42,8 @@ export interface Preferences {
   readonly legacyThreadListEnabled?: boolean;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
+  /** When false, messages sent during active work wait on the server for the next turn. */
+  readonly steerActiveTurns?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -100,6 +102,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     autoSettleOnMerge?: boolean;
     legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
+    steerActiveTurns?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -169,6 +172,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (typeof parsed.steerActiveTurns === "boolean") {
+    preferences.steerActiveTurns = parsed.steerActiveTurns;
   }
   return preferences;
 }

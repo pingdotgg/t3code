@@ -69,6 +69,9 @@ export function eventThreadId(event: OrchestrationEvent): ThreadId | null {
 export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boolean {
   switch (event.type) {
     case "thread.message-sent":
+    case "thread.turn-queued":
+    case "thread.queued-turn-dispatched":
+    case "thread.queued-turn-cancelled":
     case "thread.turn-start-requested":
       // These events express intent to start work, but the shell still contains
       // the previous turn's terminal state until the provider acknowledges the

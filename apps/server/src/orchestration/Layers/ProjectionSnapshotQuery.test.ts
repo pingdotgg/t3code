@@ -455,6 +455,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
           latestUserMessageAt: "2026-02-24T00:00:04.000Z",
+          hasQueuedTurns: false,
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
@@ -573,6 +574,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.queuedTurns}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 4, '2026-04-06T00:00:07.000Z')
       `;
 
@@ -677,6 +679,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.queuedTurns}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 4, '2026-04-06T00:00:07.000Z')
       `;
 
@@ -1426,6 +1429,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 3, '2026-04-03T00:00:40.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 3, '2026-04-03T00:00:40.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 3, '2026-04-03T00:00:40.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.queuedTurns}, 3, '2026-04-03T00:00:40.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 3, '2026-04-03T00:00:40.000Z')
       `;
 
@@ -2402,6 +2406,84 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(ids.includes(asEventId("user-input-closed")), false);
         assert.equal(ids.includes(asEventId("user-input-tied-z-request")), true);
       }
+    }),
+  );
+
+  it.effect("hydrates durable queued messages into command and shell reads", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      yield* sql`DELETE FROM projection_thread_turn_queue`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
+        ) VALUES (
+          'project-queue-read', 'Queue read', '/tmp/queue-read', '[]',
+          '2026-08-16T12:00:00.000Z', '2026-08-16T12:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          pending_approval_count, pending_user_input_count, has_actionable_proposed_plan,
+          created_at, updated_at, deleted_at
+        ) VALUES (
+          'thread-queue-read', 'project-queue-read', 'Queue read',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          0, 0, 0, '2026-08-16T12:00:00.000Z', '2026-08-16T12:01:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming,
+          created_at, updated_at, delivery_state
+        ) VALUES
+          ('message-history', 'thread-queue-read', NULL, 'user', 'Already delivered', 0,
+            '2026-08-16T12:00:00.000Z', '2026-08-16T12:00:00.000Z', NULL),
+          ('message-queued', 'thread-queue-read', NULL, 'user', 'Run next', 0,
+            '2026-08-16T12:01:00.000Z', '2026-08-16T12:01:00.000Z', 'queued')
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_turn_queue (
+          message_id, thread_id, event_id, command_id, model_selection_json, title_seed,
+          runtime_mode, interaction_mode, source_proposed_plan_thread_id,
+          source_proposed_plan_id, queued_at, event_sequence, status
+        ) VALUES (
+          'message-queued', 'thread-queue-read', 'event-queue-read', 'command-queue-read',
+          NULL, NULL, 'full-access', 'default', NULL, NULL,
+          '2026-08-16T12:01:00.000Z', 1, 'queued'
+        )
+      `;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (
+            ${projector},
+            ${projector === ORCHESTRATION_PROJECTOR_NAMES.queuedTurns ? 3 : 5},
+            '2026-08-16T12:01:00.000Z'
+          )
+        `;
+      }
+
+      const commandRead = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(
+        commandRead.threads[0]?.messages.map((message) => message.id),
+        [asMessageId("message-queued")],
+      );
+      assert.equal(commandRead.threads[0]?.messages[0]?.deliveryState, "queued");
+
+      const shellRead = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(shellRead.snapshotSequence, 3);
+      assert.equal(shellRead.threads[0]?.hasQueuedTurns, true);
     }),
   );
 

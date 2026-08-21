@@ -436,6 +436,19 @@ describe("hasQueuedTurnStart", () => {
   // Within the adoption grace window of the queued message.
   const JUST_AFTER = { now: "2026-04-09T12:00:30.000Z" };
 
+  it("keeps durable server-queued work blocked beyond the adoption grace window", () => {
+    expect(
+      hasQueuedTurnStart(
+        {
+          ...makeShell({ activityAt: FRESH }),
+          latestUserMessageAt: "2026-04-01T00:00:00.000Z",
+          hasQueuedTurns: true,
+        },
+        { now: NOW },
+      ),
+    ).toBe(true);
+  });
+
   it("flags a user message no turn has picked up, within the grace window", () => {
     const noTurn = { latestUserMessageAt: QUEUED_AT, latestTurn: null, session: null };
     expect(hasQueuedTurnStart(noTurn, JUST_AFTER)).toBe(true);

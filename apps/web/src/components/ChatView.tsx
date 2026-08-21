@@ -1257,6 +1257,10 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const cancelQueuedTurn = useAtomCommand(
+    threadEnvironment.cancelQueuedTurn,
+    "queued message cancellation",
+  );
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -6168,6 +6172,21 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const onCancelQueuedMessage = useCallback(
+    (messageId: MessageId) => {
+      if (!activeThread) {
+        return;
+      }
+      void cancelQueuedTurn({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          messageId,
+        },
+      });
+    },
+    [activeThread, cancelQueuedTurn],
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -6441,6 +6460,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
+                onCancelQueuedMessage={onCancelQueuedMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}

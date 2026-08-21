@@ -389,6 +389,136 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
   },
 );
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-queue-revert-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("cancels durable queued messages when a thread is reverted", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-08-16T12:00:00.000Z";
+        const threadId = ThreadId.make("thread-queue-revert");
+        const messageId = MessageId.make("message-queue-revert");
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "project.created",
+          eventId: EventId.make("event-queue-revert-project"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-queue-revert"),
+          occurredAt: now,
+          commandId: CommandId.make("command-queue-revert-project"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("command-queue-revert-project"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("project-queue-revert"),
+            title: "Queue revert",
+            workspaceRoot: "/tmp/queue-revert",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.make("event-queue-revert-thread"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("command-queue-revert-thread"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("command-queue-revert-thread"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.make("project-queue-revert"),
+            title: "Queue revert",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.make("event-queue-revert-message"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("command-queue-revert-message"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("command-queue-revert-message"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            role: "user",
+            text: "Run this next",
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.turn-queued",
+          eventId: EventId.make("event-queue-revert-queued"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("command-queue-revert-queued"),
+          causationEventId: EventId.make("event-queue-revert-message"),
+          correlationId: CorrelationId.make("command-queue-revert-message"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.reverted",
+          eventId: EventId.make("event-queue-revert-reverted"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("command-queue-revert-reverted"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("command-queue-revert-reverted"),
+          metadata: {},
+          payload: { threadId, turnCount: 0 },
+        });
+
+        const messageRows = yield* sql<{ readonly messageId: string }>`
+          SELECT message_id AS "messageId"
+          FROM projection_thread_messages
+          WHERE thread_id = ${threadId}
+        `;
+        const queueRows = yield* sql<{ readonly messageId: string }>`
+          SELECT message_id AS "messageId"
+          FROM projection_thread_turn_queue
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(messageRows, []);
+        assert.deepEqual(queueRows, []);
+      }),
+    );
+  },
+);
+
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   it.effect(
     "passes explicit empty attachment arrays through the projection pipeline to clear attachments",

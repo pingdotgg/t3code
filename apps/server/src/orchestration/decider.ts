@@ -88,9 +88,10 @@ function hasOpenBlockingRequest(thread: {
 
 /**
  * A queued turn start — a user message no turn has picked up yet — is work
- * in flight even though session is still null (turn.start emits
- * message-sent + turn-start-requested; the session arrives later). Detection
- * mirrors the client's hasQueuedTurnStart: the newest user message is
+ * in flight even though session is still null. Durable after-current messages
+ * carry an explicit delivery state and remain work until dispatched or
+ * cancelled. For legacy immediate starts, detection mirrors the client's
+ * hasQueuedTurnStart: the newest user message is
  * strictly newer than every latestTurn timestamp (adoption stamps the new
  * turn's requestedAt with the message time, clearing this), and only within
  * the adoption grace window — historical threads whose last user message
@@ -106,7 +107,11 @@ function hasOpenBlockingRequest(thread: {
  */
 function threadHasQueuedTurnStart(
   thread: {
-    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
+    readonly messages: ReadonlyArray<{
+      readonly role: string;
+      readonly createdAt: string;
+      readonly deliveryState?: "queued" | undefined;
+    }>;
     readonly latestTurn: {
       readonly requestedAt: string;
       readonly startedAt: string | null;
@@ -116,6 +121,9 @@ function threadHasQueuedTurnStart(
   },
   occurredAt: string,
 ): boolean {
+  if (thread.messages.some((message) => message.deliveryState === "queued")) {
+    return true;
+  }
   const latestUserMessageAtMs = thread.messages.reduce(
     (latest, message) =>
       message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
@@ -973,7 +981,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
-      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+      const turnIntentEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -981,7 +989,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           commandId: command.commandId,
         })),
         causationEventId: userMessageEvent.eventId,
-        type: "thread.turn-start-requested",
+        type:
+          command.deliveryMode === "after-current"
+            ? "thread.turn-queued"
+            : "thread.turn-start-requested",
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
@@ -1033,7 +1044,90 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
-      return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
+      return [...lifecycleResetEvents, userMessageEvent, turnIntentEvent];
+    }
+
+    case "thread.queued-turn.cancel": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const message = thread.messages.find((entry) => entry.id === command.messageId);
+      if (message?.role !== "user" || message.deliveryState !== "queued") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued user message '${command.messageId}' does not exist on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.queued-turn-cancelled",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          cancelledAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.queued-turn.dispatch": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const message = thread.messages.find((entry) => entry.id === command.messageId);
+      if (message?.role !== "user" || message.deliveryState !== "queued") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued user message '${command.messageId}' is no longer waiting on thread '${command.threadId}'.`,
+        });
+      }
+      const dispatchedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.queued-turn-dispatched",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          dispatchedAt: command.createdAt,
+        },
+      };
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        causationEventId: dispatchedEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
+            : {}),
+          ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+          ...(command.sourceProposedPlan !== undefined
+            ? { sourceProposedPlan: command.sourceProposedPlan }
+            : {}),
+          createdAt: command.queuedAt,
+        },
+      };
+      return [dispatchedEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {

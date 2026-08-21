@@ -185,6 +185,7 @@ function buildProps() {
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
+    onCancelQueuedMessage: () => {},
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
@@ -560,6 +561,27 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
     expect(markup).toContain("rounded-2xl bg-message p-3");
+  });
+
+  it("keeps server-queued messages visibly cancellable", () => {
+    const entry = buildUserTimelineEntry("Run this next");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: { ...entry.message, deliveryState: "queued" },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Queued");
+    expect(markup).toContain("Cancel");
+    expect(markup).toContain('aria-label="Cancel queued message"');
+    expect(markup).toContain('data-slot="button"');
+    expect(markup).toContain("opacity-100");
   });
 
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {

@@ -114,9 +114,13 @@ export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
  * within the adoption grace window.
  */
 export function hasQueuedTurnStart(
-  shell: Pick<OrchestrationThreadShell, "latestUserMessageAt" | "latestTurn" | "session">,
+  shell: Pick<
+    OrchestrationThreadShell,
+    "latestUserMessageAt" | "latestTurn" | "session" | "hasQueuedTurns"
+  >,
   options: { readonly now: string },
 ): boolean {
+  if (shell.hasQueuedTurns === true) return true;
   if (shell.latestUserMessageAt == null) return false;
   // A failed session start clears the queued state: the failure is already
   // visible (status edge / error).
@@ -147,7 +151,12 @@ export function hasQueuedTurnStart(
 export function canSettle(
   shell: Pick<
     OrchestrationThreadShell,
-    "hasPendingApprovals" | "hasPendingUserInput" | "session" | "latestUserMessageAt" | "latestTurn"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "session"
+    | "latestUserMessageAt"
+    | "latestTurn"
+    | "hasQueuedTurns"
   >,
   options: { readonly now: string },
 ): boolean {
