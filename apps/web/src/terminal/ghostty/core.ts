@@ -1,5 +1,6 @@
 import {
   type GhosttyKeyboardLayoutMap,
+  ghosttyConsumedMods,
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
@@ -464,7 +465,11 @@ export class GhosttyTerminalCore {
       (event.getModifierState("CapsLock") ? 1 << 4 : 0) |
       (event.getModifierState("NumLock") ? 1 << 5 : 0);
     this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
-    this.runtime.call("ghostty_key_event_set_consumed_mods", this.keyEvent, 0);
+    this.runtime.call(
+      "ghostty_key_event_set_consumed_mods",
+      this.keyEvent,
+      ghosttyConsumedMods(event),
+    );
     this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
     this.runtime.call(
       "ghostty_key_event_set_unshifted_codepoint",
