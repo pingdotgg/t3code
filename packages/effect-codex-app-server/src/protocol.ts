@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -13,10 +14,11 @@ import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
 const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
+const textEncoder = new TextEncoder();
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
-  readonly stage: "raw" | "decoded" | "decode_failed";
+  readonly stage: "raw" | "decoded" | "decode_failed" | "ignored_preamble";
   readonly payload: unknown;
 }
 
@@ -33,6 +35,7 @@ export interface CodexAppServerIncomingRequest {
 
 export interface CodexAppServerPatchedProtocolOptions {
   readonly stdio: Stdio.Stdio;
+  readonly ignoreNonJsonPreamble?: boolean;
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
@@ -158,6 +161,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
     const remainder = yield* Ref.make("");
+    const receivedProtocolMessage = yield* Ref.make(false);
     const terminationHandled = yield* Ref.make(false);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -323,12 +327,38 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         stage: "raw",
         payload: line,
       }).pipe(
-        Effect.flatMap(() => decodeWireMessage(line)),
-        Effect.tap((decoded) =>
-          logProtocol({
-            direction: "incoming",
-            stage: "decoded",
-            payload: decoded,
+        Effect.flatMap(() =>
+          decodeWireMessage(line).pipe(
+            Effect.map(Option.some),
+            Effect.catchTag("CodexAppServerProtocolParseError", (error) =>
+              options.ignoreNonJsonPreamble
+                ? Ref.get(receivedProtocolMessage).pipe(
+                    Effect.flatMap((received) =>
+                      received
+                        ? Effect.fail(error)
+                        : logProtocol({
+                            direction: "incoming",
+                            stage: "ignored_preamble",
+                            payload: { byteLength: textEncoder.encode(line).byteLength },
+                          }).pipe(Effect.as(Option.none<unknown>())),
+                    ),
+                  )
+                : Effect.fail(error),
+            ),
+          ),
+        ),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (decoded) =>
+              logProtocol({
+                direction: "incoming",
+                stage: "decoded",
+                payload: decoded,
+              }).pipe(
+                Effect.andThen(routeMessage(decoded)),
+                Effect.andThen(Ref.set(receivedProtocolMessage, true)),
+              ),
           }),
         ),
         Effect.tapErrorTag("CodexAppServerProtocolParseError", (error) =>
@@ -347,7 +377,6 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             },
           }),
         ),
-        Effect.flatMap(routeMessage),
       );
     };
 
