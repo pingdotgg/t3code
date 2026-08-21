@@ -338,7 +338,11 @@ function IosHomeHeader(props: HomeHeaderProps) {
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={filterMenu.items}
+        optionsVersion={{
+          canGoBack: navigationHistory.canGoBack,
+          canGoForward: navigationHistory.canGoForward,
+          filterMenuItems: filterMenu.items,
+        }}
         options={{
           // Static header config (glass, title, fonts) lives in Stack.tsx
           // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.

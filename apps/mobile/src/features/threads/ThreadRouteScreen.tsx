@@ -844,6 +844,10 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        optionsVersion={{
+          canGoBack: navigationHistory.canGoBack,
+          canGoForward: navigationHistory.canGoForward,
+        }}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
