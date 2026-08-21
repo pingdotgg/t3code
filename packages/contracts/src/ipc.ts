@@ -1070,6 +1070,13 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale?: () => string | null;
+  /**
+   * The filesystem path of a dropped/pasted `File`, which the renderer cannot
+   * read for itself (Electron removed `File.path` in v32). Returns null when
+   * the object has no path — e.g. a file synthesised in-page rather than
+   * dragged in from the OS.
+   */
+  getPathForFile?: (file: File) => string | null;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
