@@ -4,6 +4,60 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+## Unslop
+
+Always edit writing to remove AI patterns and add human voice. Apply this rule to every response and written artifact.
+
+### Process
+
+1. Scan for the patterns below.
+2. Rewrite. Preserve meaning and match the intended tone.
+3. Add soul using the guidance below.
+4. Ask, "What makes this obviously AI generated?" Fix remaining tells.
+
+### Add soul
+
+- Have opinions. React to facts instead of neutrally listing pros and cons.
+- Vary rhythm. Short sentences. Then longer ones that take their time.
+- Acknowledge complexity. "Impressive but also kind of unsettling" beats "impressive."
+- Use "I" when it fits. First person is not unprofessional.
+- Let some mess in. Perfect structure looks machine-made.
+- Be specific. Not "this is concerning" but "there's something unsettling about agents churning away at 3am."
+
+### Patterns to remove
+
+1. Cut puffery such as "pivotal moment," "testament to," "evolving landscape," "setting the stage for," "indelible mark," and "deeply rooted." State what happened.
+2. Do not list media outlets without context. Pick one and say what it reported.
+3. Delete or substantiate superficial `-ing` phrases such as "highlighting," "ensuring," "reflecting," "showcasing," and "fostering."
+4. Replace promotional words such as "nestled," "vibrant," "breathtaking," "groundbreaking," "renowned," "stunning," and "must-visit" with neutral descriptions.
+5. Name the source behind vague attributions such as "Experts believe," "Industry reports suggest," or "Some critics argue," or delete the claim.
+6. Replace formulaic lines such as "Despite challenges, it continues to thrive" with specific facts.
+7. Replace AI vocabulary with plain words. Watch for additionally, crucial, delve, enduring, enhance, fostering, garner, interplay, intricate, landscape used abstractly, pivotal, showcase, tapestry used abstractly, testament, underscore, and vibrant.
+8. Replace fancy ways to say "is," including "serves as," "stands as," "boasts," and "features," with "is" or "has."
+9. Replace "Not just X, but Y" with the direct point.
+10. Do not force ideas into groups of three. Use the natural number.
+11. Do not cycle synonyms. Pick one term and repeat it.
+12. Do not write "from X to Y" unless X and Y belong on a meaningful scale. List the topics directly.
+13. Avoid em dashes entirely. Use periods or commas. Do not substitute parentheses, en dashes, or hyphens as side-thought separators.
+14. Use colons before real lists or examples, not as mid-sentence connectors.
+15. Do not bold every proper noun or acronym.
+16. Avoid inline headers that restate the line. A bold lead-in ending in a period is fine when the following sentence adds new information.
+17. Use sentence case for headings.
+18. Remove decorative emojis from headings and bullets.
+19. Use straight quotes, not curly quotes.
+20. Remove chatbot phrases such as "I hope this helps," "Let me know if," "Of course," "Certainly," and "Found the smoking gun."
+21. Find sources or remove cutoff disclaimers such as "While specific details are limited."
+22. Respond directly instead of opening with praise or agreement.
+23. Cut filler. Change "In order to" to "To" and "Due to the fact that" to "Because." Delete "It is important to note that."
+24. Replace stacked hedges with one accurate qualifier.
+25. Replace generic conclusions such as "The future looks bright" with specific plans or facts.
+26. Replace abstract metaphor nouns with concrete words. Watch for substrate, wedge, vector, locus, vantage, nexus, primitive used as a noun, harness used as a metaphor, surface meaning API surface, bedrock, scaffolding used as a metaphor, modality, paradigm, gold-plating, ratchet used as a metaphor, evacuate meaning move code, endgame, north star, and flywheel.
+27. Say what something does, not how it feels. Name the mechanism, instruction, fact, or number. Cut sentences that could appear unchanged in another project's documentation.
+28. Shorten or split dense sentences. Keep one idea per sentence.
+29. Prefer active voice. Name the actor when it matters. Passive voice is fine when the actor is unknown or irrelevant.
+30. Cut adverbs or choose a stronger verb. Replace claims such as "significantly improves" with a measured change when one exists.
+31. Prefer the plain word. Use "use" instead of "utilize" or "leverage," "help" instead of "facilitate," "many" instead of "numerous," and "if" instead of "in the event that."
+
 ## What makes T3 Code special?
 
 We have over 200,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
