@@ -86,4 +86,36 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("<svg");
     expect(markup).toContain("text-icon-muted");
   });
+
+  it("renders slash skill results with only the skill prefix dimmed", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[
+          {
+            id: "skill:codex:browser",
+            type: "skill",
+            provider: ProviderDriverKind.make("codex"),
+            skill: {
+              name: "browser",
+              path: "/skills/browser/SKILL.md",
+              enabled: true,
+            },
+            label: "skill:browser",
+            description: "Open and control the in-app browser",
+          },
+        ]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="slash-command"
+        activeItemId="skill:codex:browser"
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('<span class="text-secondary-label">skill:</span>browser');
+    expect(markup).toContain("Open and control the in-app browser");
+    expect(markup).not.toContain("font-medium text-secondary-label");
+    expect(markup).not.toContain("<svg");
+  });
 });

@@ -6,7 +6,7 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 
-function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
+export function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
   const normalizedName = skill.name.toLowerCase();
   const normalizedLabel = formatProviderSkillDisplayName(skill).toLowerCase();
   const normalizedShortDescription = skill.shortDescription?.toLowerCase() ?? "";
