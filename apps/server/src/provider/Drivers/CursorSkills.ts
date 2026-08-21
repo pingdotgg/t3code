@@ -19,7 +19,7 @@ type CursorSkillScope = "user" | "project";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SKILL_NAME_PATTERN = /^[a-z0-9-]+$/;
-const SKILL_TOKEN_PATTERN = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const SKILL_TOKEN_PATTERN = /(^|\s)\$([a-z0-9-]+)(?=\s|$|[^\w-])/g;
 
 type SkillFrontmatter =
   | { readonly kind: "malformed" }

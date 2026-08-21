@@ -1074,6 +1074,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: true,
         version: parsed.version,

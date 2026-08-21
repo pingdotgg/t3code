@@ -72,11 +72,18 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
 
       yield* writeSkill(skillsDirectory, "shipping/deploy", skill("deploy"));
       yield* writeSkill(skillsDirectory, "wrong-folder", skill("another-name"));
-      yield* writeSkill(skillsDirectory, "no-description", ["---", "name: no-description", "---"].join("\n"));
+      yield* writeSkill(
+        skillsDirectory,
+        "no-description",
+        ["---", "name: no-description", "---"].join("\n"),
+      );
 
       const skills = yield* discoverCursorSkills(workspace, { HOME: path.join(tempDir, "home") });
 
-      assert.deepEqual(skills.map((entry) => entry.name), ["deploy"]);
+      assert.deepEqual(
+        skills.map((entry) => entry.name),
+        ["deploy"],
+      );
       assert.equal(skills[0]?.path, path.join(skillsDirectory, "shipping", "deploy", "SKILL.md"));
     }),
   );
@@ -84,7 +91,10 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
 
 it("renders only known `$skill` tokens as Cursor skill invocations", () => {
   assert.equal(
-    renderCursorSkillInvocations("$deploy then $unknown and $review", new Set(["deploy", "review"])),
-    "/deploy then $unknown and /review",
+    renderCursorSkillInvocations(
+      "$deploy, then $123-skill. Keep $unknown and $review!",
+      new Set(["deploy", "123-skill", "review"]),
+    ),
+    "/deploy, then /123-skill. Keep $unknown and /review!",
   );
 });
