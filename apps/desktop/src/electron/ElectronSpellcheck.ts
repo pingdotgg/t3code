@@ -291,11 +291,19 @@ export function matchAvailableSpellcheckLanguage(
 export function resolveSpellCheckerLanguages(input: {
   readonly available: readonly string[];
   readonly preferred: readonly string[];
+  readonly requireExact?: boolean;
 }): string[] {
   const resolved: string[] = [];
   const seen = new Set<string>();
+  const availableByLower = input.requireExact
+    ? new Map(input.available.map((language) => [language.toLowerCase(), language]))
+    : undefined;
   for (const preferred of input.preferred) {
-    const matched = matchAvailableSpellcheckLanguage(preferred, input.available);
+    const matched =
+      availableByLower?.get(preferred.toLowerCase()) ??
+      (input.requireExact
+        ? undefined
+        : matchAvailableSpellcheckLanguage(preferred, input.available));
     if (matched === undefined || seen.has(matched.toLowerCase())) continue;
     seen.add(matched.toLowerCase());
     resolved.push(matched);
@@ -393,6 +401,7 @@ export function applySpellCheckerSession(
   const languages = resolveSpellCheckerLanguages({
     available: session.availableSpellCheckerLanguages,
     preferred: preferredSpellcheckLanguages(input),
+    requireExact: input.configuredLanguages.length > 0,
   });
   if (languages.length === 0) {
     // Electron silently falls back to en-US when its language list is empty.

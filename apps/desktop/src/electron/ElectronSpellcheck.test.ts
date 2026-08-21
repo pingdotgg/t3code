@@ -181,6 +181,16 @@ describe("resolveSpellCheckerLanguages", () => {
     ).toEqual([]);
   });
 
+  it("does not substitute another regional dictionary for an explicit selection", () => {
+    expect(
+      resolveSpellCheckerLanguages({
+        available: ["en-US"],
+        preferred: ["en-GB"],
+        requireExact: true,
+      }),
+    ).toEqual([]);
+  });
+
   it("does not truncate a user-selected language list", () => {
     const preferred = AVAILABLE.slice(0, 12);
     expect(resolveSpellCheckerLanguages({ available: AVAILABLE, preferred })).toEqual(preferred);
@@ -281,6 +291,31 @@ describe("applySpellCheckerSession", () => {
         platform: "linux",
         configuredLanguages: [],
         systemLocale: "C",
+        env: {},
+      }),
+    ).toEqual({ enabled: false, languages: [] });
+    expect(enabled).toBe(false);
+  });
+
+  it("disables Hunspell when an explicit dictionary is unavailable", () => {
+    let enabled: boolean | undefined;
+    const session = {
+      availableSpellCheckerLanguages: ["en-US"],
+      getSpellCheckerLanguages: () => ["en-US"],
+      setSpellCheckerLanguages: () => {
+        throw new Error("must not substitute en-US for en-GB");
+      },
+      setSpellCheckerEnabled: (value: boolean) => {
+        enabled = value;
+      },
+    };
+
+    expect(
+      applySpellCheckerSession(session, {
+        enabled: true,
+        platform: "linux",
+        configuredLanguages: ["en-GB"],
+        systemLocale: "en-US",
         env: {},
       }),
     ).toEqual({ enabled: false, languages: [] });
