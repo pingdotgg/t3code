@@ -66,21 +66,19 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
     },
     visit: (location: MobileNavigationLocation) => {
       const current = entries[cursor];
+      const target = pendingTarget;
+      if (target?.location.pathname === location.pathname) {
+        pendingTarget = null;
+        entries = entries.map((entry, index) => (index === target.index ? location : entry));
+        cursor = target.index;
+        publish();
+        return;
+      }
       if (location.pathname === current?.pathname) {
         entries = entries.map((entry, index) => (index === cursor ? location : entry));
         return;
       }
-
-      if (pendingTarget) {
-        const target = pendingTarget;
-        pendingTarget = null;
-        if (target.location.pathname === location.pathname) {
-          entries = entries.map((entry, index) => (index === target.index ? location : entry));
-          cursor = target.index;
-          publish();
-          return;
-        }
-      }
+      pendingTarget = null;
 
       if (location.transitionKey !== current?.transitionKey) {
         const priorIndex = entries.findLastIndex(
