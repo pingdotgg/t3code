@@ -10,6 +10,7 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  resolveThreadViewedAt,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
@@ -51,6 +52,23 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
     expect(markThreadUnread(next, threadId, null)).toBe(next);
+  });
+
+  it("uses local view state only while its server command is pending", () => {
+    const input = {
+      serverViewedAt: "2026-02-25T12:30:00.000Z",
+      localViewedAt: "2026-02-25T12:35:00.000Z",
+    };
+
+    expect(resolveThreadViewedAt({ ...input, pending: undefined })).toBe(
+      "2026-02-25T12:30:00.000Z",
+    );
+    expect(
+      resolveThreadViewedAt({
+        ...input,
+        pending: { kind: "viewed", targetAt: "2026-02-25T12:35:00.000Z" },
+      }),
+    ).toBe("2026-02-25T12:35:00.000Z");
   });
 
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {

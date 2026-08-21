@@ -400,6 +400,25 @@ it.effect("decodes thread settle and unsettle commands", () =>
   }),
 );
 
+it.effect("decodes thread view-state commands", () =>
+  Effect.gen(function* () {
+    const view = yield* decodeOrchestrationCommand({
+      type: "thread.view",
+      commandId: "cmd-view-1",
+      threadId: "thread-1",
+      viewedThrough: "2026-01-01T00:00:00.000Z",
+    });
+    const markUnread = yield* decodeOrchestrationCommand({
+      type: "thread.mark-unread",
+      commandId: "cmd-mark-unread-1",
+      threadId: "thread-1",
+    });
+
+    assert.strictEqual(view.type, "thread.view");
+    assert.strictEqual(markUnread.type, "thread.mark-unread");
+  }),
+);
+
 it.effect("defaults settled fields when decoding historical thread data", () =>
   Effect.gen(function* () {
     const common = {
@@ -523,6 +542,41 @@ it.effect("decodes thread settled and unsettled events", () =>
 
     assert.strictEqual(settled.type, "thread.settled");
     assert.strictEqual(unsettled.type, "thread.unsettled");
+  }),
+);
+
+it.effect("decodes thread view-state events", () =>
+  Effect.gen(function* () {
+    const viewedAt = "2026-01-02T00:00:00.000Z";
+    const viewed = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-viewed-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.viewed",
+      occurredAt: viewedAt,
+      commandId: "cmd-viewed-1",
+      causationEventId: null,
+      correlationId: "cmd-viewed-1",
+      metadata: {},
+      payload: { threadId: "thread-1", viewedAt },
+    });
+    const markedUnread = yield* decodeOrchestrationEvent({
+      sequence: 2,
+      eventId: "event-marked-unread-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.marked-unread",
+      occurredAt: viewedAt,
+      commandId: "cmd-marked-unread-1",
+      causationEventId: null,
+      correlationId: "cmd-marked-unread-1",
+      metadata: {},
+      payload: { threadId: "thread-1", viewedAt },
+    });
+
+    assert.strictEqual(viewed.type, "thread.viewed");
+    assert.strictEqual(markedUnread.type, "thread.marked-unread");
   }),
 );
 

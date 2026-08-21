@@ -106,7 +106,8 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { useUiStateStore } from "../uiStateStore";
+import { resolveThreadViewedAt, useUiStateStore } from "../uiStateStore";
+import { useThreadViewState } from "../hooks/useThreadViewState";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -1314,7 +1315,7 @@ function ChatViewContent(props: ChatViewProps) {
       },
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
+  const { markViewed } = useThreadViewState();
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1732,12 +1733,9 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     const completedAt = serverThread?.latestTurn?.completedAt;
     if (!serverThread?.id || !completedAt) return;
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
-    );
+    markViewed(scopeThreadRef(serverThread.environmentId, serverThread.id), completedAt);
   }, [
-    markThreadVisited,
+    markViewed,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.latestTurn?.completedAt,
@@ -4268,13 +4266,21 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
   const acknowledgeActiveThreadWoke = useCallback(() => {
     if (activeThreadRef === null || activeThreadWokeAt === null) return;
-    markThreadVisited(scopedThreadKey(activeThreadRef), activeThreadWokeAt);
-  }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
+    markViewed(activeThreadRef, activeThreadWokeAt);
+  }, [activeThreadRef, activeThreadWokeAt, markViewed]);
   // Mirror of the sidebar's Woke pill for the open thread. It uses the same
   // visit comparison and change request settle rule.
-  const activeThreadLastVisitedAt = useUiStateStore((store) =>
+  const activeThreadLocalLastVisitedAt = useUiStateStore((store) =>
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
   );
+  const activeThreadPendingViewState = useUiStateStore((store) =>
+    activeThreadKey === null ? undefined : store.threadViewStatePendingById[activeThreadKey],
+  );
+  const activeThreadLastVisitedAt = resolveThreadViewedAt({
+    serverViewedAt: activeThreadShell?.viewedAt,
+    localViewedAt: activeThreadLocalLastVisitedAt,
+    pending: activeThreadPendingViewState,
+  });
   const activeThreadWokeVisible = useMemo(() => {
     if (activeThreadWokeAt === null) return false;
     if (

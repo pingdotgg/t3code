@@ -237,6 +237,64 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         WHERE thread_id = 'thread-1'
       `;
       assert.deepEqual(unsettledRows, [{ settledOverride: "active", settledAt: null }]);
+
+      yield* eventStore.append({
+        type: "thread.viewed",
+        eventId: EventId.make("evt-viewed-1"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:03.000Z",
+        commandId: CommandId.make("cmd-viewed-1"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-viewed-1"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          viewedAt: "2026-01-01T00:00:03.000Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      const viewedRows = yield* sql<{
+        readonly viewedAt: string;
+        readonly updatedAt: string;
+      }>`
+        SELECT
+          viewed_at AS "viewedAt",
+          updated_at AS "updatedAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(viewedRows, [
+        {
+          viewedAt: "2026-01-01T00:00:03.000Z",
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+      ]);
+
+      yield* eventStore.append({
+        type: "thread.marked-unread",
+        eventId: EventId.make("evt-marked-unread-1"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:04.000Z",
+        commandId: CommandId.make("cmd-marked-unread-1"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-marked-unread-1"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          viewedAt: "2025-12-31T23:59:59.999Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      const markedUnreadRows = yield* sql<{ readonly viewedAt: string }>`
+        SELECT viewed_at AS "viewedAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-1'
+      `;
+      assert.deepEqual(markedUnreadRows, [{ viewedAt: "2025-12-31T23:59:59.999Z" }]);
     }),
   );
 });

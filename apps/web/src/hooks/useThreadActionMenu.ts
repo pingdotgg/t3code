@@ -1,4 +1,4 @@
-import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -30,11 +30,11 @@ import {
   readThreadShell,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
-import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { useThreadViewState } from "./useThreadViewState";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -79,7 +79,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
-  const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
+  const { markUnread } = useThreadViewState();
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
@@ -231,7 +231,7 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "mark-unread":
-            markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
+            markUnread(threadRef, thread.latestTurn?.completedAt);
             return;
           case "copy-path": {
             const workspacePath = thread.worktreePath ?? projectCwd;
@@ -320,7 +320,7 @@ export function useThreadActionMenu(input: {
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
-      markThreadUnread,
+      markUnread,
       onStartRename,
       pinThread,
       projectCwd,

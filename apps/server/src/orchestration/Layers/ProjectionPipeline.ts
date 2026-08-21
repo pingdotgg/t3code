@@ -617,6 +617,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            viewedAt: event.payload.createdAt,
             snoozedUntil: null,
             snoozedAt: null,
             pinnedAt: null,
@@ -691,6 +692,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             settledOverride: event.payload.reason === "user" ? "active" : null,
             settledAt: null,
             updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.viewed":
+        case "thread.marked-unread": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            viewedAt: event.payload.viewedAt,
           });
           return;
         }

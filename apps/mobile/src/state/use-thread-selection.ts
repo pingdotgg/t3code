@@ -60,6 +60,7 @@ function threadDetailToShell(
     archivedAt: thread.archivedAt,
     settledOverride: thread.settledOverride,
     settledAt: thread.settledAt,
+    viewedAt: thread.viewedAt,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
     session: thread.session,

@@ -7,6 +7,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -569,6 +570,74 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           reason: command.reason,
           updatedAt: alreadyPinnedActive ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.view": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      const cappedViewedAt = DateTime.make(command.viewedThrough).pipe(
+        Option.filter(
+          (viewedThrough) => DateTime.Order(viewedThrough, DateTime.makeUnsafe(occurredAt)) <= 0,
+        ),
+        Option.as(command.viewedThrough),
+        Option.getOrElse(() => occurredAt),
+      );
+      const viewedAt = DateTime.make(thread.viewedAt ?? thread.createdAt).pipe(
+        Option.filter(
+          (previousViewedAt) =>
+            DateTime.Order(previousViewedAt, DateTime.makeUnsafe(cappedViewedAt)) >= 0,
+        ),
+        Option.as(thread.viewedAt ?? thread.createdAt),
+        Option.getOrElse(() => cappedViewedAt),
+      );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.viewed",
+        payload: {
+          threadId: command.threadId,
+          viewedAt,
+        },
+      };
+    }
+
+    case "thread.mark-unread": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      const latestCompletedAt = thread.latestTurn?.completedAt;
+      const viewedAt =
+        latestCompletedAt == null
+          ? (thread.viewedAt ?? thread.createdAt)
+          : DateTime.make(latestCompletedAt).pipe(
+              Option.map(DateTime.subtractDuration("1 millis")),
+              Option.map(DateTime.formatIso),
+              Option.getOrElse(() => thread.viewedAt ?? thread.createdAt),
+            );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.marked-unread",
+        payload: {
+          threadId: command.threadId,
+          viewedAt,
         },
       };
     }

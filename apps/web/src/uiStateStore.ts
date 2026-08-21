@@ -45,6 +45,11 @@ export interface UiEndpointState {
 
 export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
 
+export interface PendingThreadViewState {
+  kind: "viewed" | "unread";
+  targetAt: string;
+}
+
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
@@ -270,6 +275,16 @@ export function markThreadUnread(
   };
 }
 
+export function resolveThreadViewedAt(input: {
+  serverViewedAt: string | undefined;
+  localViewedAt: string | undefined;
+  pending: PendingThreadViewState | undefined;
+}): string | undefined {
+  return input.pending === undefined
+    ? (input.serverViewedAt ?? input.localViewedAt)
+    : (input.localViewedAt ?? input.serverViewedAt);
+}
+
 export function setThreadChangedFilesExpanded(
   state: UiState,
   threadId: string,
@@ -382,8 +397,11 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
+  threadViewStatePendingById: Record<string, PendingThreadViewState>;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
+  setThreadViewStatePending: (threadId: string, pending: PendingThreadViewState) => void;
+  clearThreadViewStatePending: (threadId: string, pending: PendingThreadViewState) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
@@ -396,10 +414,25 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  threadViewStatePendingById: {},
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
+  setThreadViewStatePending: (threadId, pending) =>
+    set((state) => ({
+      threadViewStatePendingById: {
+        ...state.threadViewStatePendingById,
+        [threadId]: pending,
+      },
+    })),
+  clearThreadViewStatePending: (threadId, pending) =>
+    set((state) => {
+      if (state.threadViewStatePendingById[threadId] !== pending) return state;
+      const threadViewStatePendingById = { ...state.threadViewStatePendingById };
+      delete threadViewStatePendingById[threadId];
+      return { threadViewStatePendingById };
+    }),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>

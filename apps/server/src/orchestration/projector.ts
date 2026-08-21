@@ -30,6 +30,8 @@ import {
   ThreadUnarchivedPayload,
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
+  ThreadViewedPayload,
+  ThreadMarkedUnreadPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -377,6 +379,26 @@ export function projectEvent(
             settledOverride: payload.reason === "user" ? "active" : null,
             settledAt: null,
             updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.viewed":
+      return decodeForEvent(ThreadViewedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            viewedAt: payload.viewedAt,
+          }),
+        })),
+      );
+
+    case "thread.marked-unread":
+      return decodeForEvent(ThreadMarkedUnreadPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            viewedAt: payload.viewedAt,
           }),
         })),
       );

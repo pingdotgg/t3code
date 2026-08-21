@@ -96,6 +96,13 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return value ?? null;
 }
 
+function timestampCovers(timestamp: string | undefined, target: string): boolean {
+  if (timestamp === undefined) return false;
+  const timestampMs = Date.parse(timestamp);
+  const targetMs = Date.parse(target);
+  return Number.isFinite(timestampMs) && Number.isFinite(targetMs) && timestampMs >= targetMs;
+}
+
 function OpeningThreadLoadingScreen() {
   return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
 }
@@ -280,9 +287,45 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const viewThread = useAtomCommand(threadEnvironment.view, { reportFailure: false });
+  const selectedThreadEnvironmentId = selectedThread?.environmentId ?? null;
+  const selectedThreadId = selectedThread?.id ?? null;
+  const selectedThreadCompletedAt = selectedThread?.latestTurn?.completedAt ?? null;
+  const selectedThreadViewedAtRef = useRef(selectedThread?.viewedAt);
+  selectedThreadViewedAtRef.current = selectedThread?.viewedAt;
+  const supportsThreadViewState = serverConfig?.environment.capabilities.threadViewState === true;
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        selectedThreadEnvironmentId === null ||
+        selectedThreadId === null ||
+        selectedThreadCompletedAt === null ||
+        !supportsThreadViewState
+      ) {
+        return;
+      }
+      if (timestampCovers(selectedThreadViewedAtRef.current, selectedThreadCompletedAt)) {
+        return;
+      }
+      void viewThread({
+        environmentId: selectedThreadEnvironmentId,
+        input: {
+          threadId: selectedThreadId,
+          viewedThrough: selectedThreadCompletedAt,
+        },
+      });
+    }, [
+      selectedThreadCompletedAt,
+      selectedThreadEnvironmentId,
+      selectedThreadId,
+      supportsThreadViewState,
+      viewThread,
+    ]),
+  );
   const selectedThreadWithDraftSettings = useMemo(
     () =>
       selectedThread
@@ -758,7 +801,6 @@ function ThreadRouteContent(
     detailDeleted: selectedThreadDetailState.status === "deleted",
     connectionState: routeConnectionState,
   });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />

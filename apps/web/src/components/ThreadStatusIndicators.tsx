@@ -13,7 +13,7 @@ import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
-import { useUiStateStore } from "../uiStateStore";
+import { resolveThreadViewedAt, useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
@@ -406,9 +406,17 @@ export function ThreadStatusLabel({
  */
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const lastVisitedAt = useUiStateStore(
+  const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
+  const pendingViewState = useUiStateStore(
+    (state) => state.threadViewStatePendingById[scopedThreadKey(threadRef)],
+  );
+  const lastVisitedAt = resolveThreadViewedAt({
+    serverViewedAt: thread.viewedAt,
+    localViewedAt: localLastVisitedAt,
+    pending: pendingViewState,
+  });
   const threadProject = useProject(
     useMemo(
       () => scopeProjectRef(thread.environmentId, thread.projectId),
