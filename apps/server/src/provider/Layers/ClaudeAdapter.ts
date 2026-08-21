@@ -141,6 +141,14 @@ interface ClaudeTurnState {
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
   readonly reasoningBlocks: Map<number, ReasoningBlockState>;
+  /**
+   * `${apiMessageId}:${blockIndex}` of every reasoning item already emitted
+   * this turn — the dedup key that keeps snapshot backfills from re-emitting
+   * blocks that streamed live (or were already backfilled).
+   */
+  readonly emittedReasoningBlockKeys: Set<string>;
+  /** API message id from the latest `message_start` stream event. */
+  activeStreamMessageId: string | undefined;
   readonly capturedProposedPlanKeys: Set<string>;
   nextSyntheticAssistantBlockIndex: number;
 }
@@ -164,6 +172,8 @@ interface AssistantTextBlockState {
 interface ReasoningBlockState {
   readonly itemId: string;
   readonly blockIndex: number;
+  /** API message id (`message_start`) this block streamed under. */
+  readonly messageId: string | undefined;
   text: string;
   completionEmitted: boolean;
   /** Length of `text` at the last emitted `item.updated` (throttles live updates). */
@@ -183,6 +193,15 @@ interface ReasoningBlockState {
  * than a per-delta threshold would.
  */
 const REASONING_UPDATE_CHUNK = 512;
+
+/**
+ * Dedup key shared by live-streamed and snapshot-backfilled reasoning items:
+ * the API message id scopes the content-block index, which repeats across
+ * messages within a turn.
+ */
+function reasoningBlockKey(messageId: string | undefined, blockIndex: number): string {
+  return `${messageId ?? ""}:${blockIndex}`;
+}
 
 interface PendingApproval {
   readonly requestType: CanonicalRequestType;
@@ -1883,6 +1902,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const block: ReasoningBlockState = {
       itemId: yield* randomUUIDv4,
       blockIndex,
+      messageId: turnState.activeStreamMessageId,
       text: "",
       completionEmitted: false,
       lastEmittedLength: 0,
@@ -1931,6 +1951,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     block.completionEmitted = true;
+    turnState.emittedReasoningBlockKeys.add(reasoningBlockKey(block.messageId, block.blockIndex));
     if (turnState.reasoningBlocks.get(block.blockIndex) === block) {
       turnState.reasoningBlocks.delete(block.blockIndex);
     }
@@ -2113,6 +2134,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
    * accumulate into, so the snapshot is the only place the text survives.
    * Live turns are excluded deliberately — their blocks already streamed and
    * completed, and a second completed item would duplicate the row.
+   *
+   * Synthetic turns stay open across messages, so later thinking deltas DO
+   * stream live into them; `emittedReasoningBlockKeys` (message id + block
+   * index) keeps the backfill from re-emitting those as duplicate rows.
    */
   const backfillReasoningBlocksFromSnapshot = Effect.fn("backfillReasoningBlocksFromSnapshot")(
     function* (context: ClaudeSessionContext, message: SDKMessage) {
@@ -2127,7 +2152,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (!Array.isArray(content)) {
         return;
       }
-      for (const block of content) {
+      const snapshotMessageId = trimmedString(
+        (message.message as { id?: unknown } | undefined)?.id,
+      );
+      for (const [blockIndex, block] of content.entries()) {
         if (!block || typeof block !== "object") {
           continue;
         }
@@ -2139,6 +2167,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         if (text.length === 0) {
           continue;
         }
+        const blockKey = reasoningBlockKey(snapshotMessageId, blockIndex);
+        if (turnState.emittedReasoningBlockKeys.has(blockKey)) {
+          continue;
+        }
+        turnState.emittedReasoningBlockKeys.add(blockKey);
         const itemId = yield* randomUUIDv4;
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
@@ -2631,6 +2664,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (dropStart || dropDelta) {
         return;
       }
+    }
+
+    if (event.type === "message_start") {
+      // Track the API message id so streamed reasoning blocks can be told
+      // apart from same-index blocks of other messages (snapshot dedup).
+      if (streamParentToolUseId === null || streamParentToolUseId === undefined) {
+        const apiMessageId = trimmedString((event.message as { id?: unknown } | undefined)?.id);
+        if (apiMessageId && context.turnState) {
+          context.turnState.activeStreamMessageId = apiMessageId;
+        }
+      }
+      return;
     }
 
     if (event.type === "message_delta") {
@@ -3171,6 +3216,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
         reasoningBlocks: new Map(),
+        emittedReasoningBlockKeys: new Set(),
+        activeStreamMessageId: undefined,
         capturedProposedPlanKeys: new Set(),
         nextSyntheticAssistantBlockIndex: -1,
       };
@@ -4692,6 +4739,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
         reasoningBlocks: new Map(),
+        emittedReasoningBlockKeys: new Set(),
+        activeStreamMessageId: undefined,
         capturedProposedPlanKeys: new Set(),
         nextSyntheticAssistantBlockIndex: -1,
       };

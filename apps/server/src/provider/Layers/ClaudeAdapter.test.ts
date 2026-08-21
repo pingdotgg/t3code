@@ -1209,6 +1209,137 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "does not duplicate reasoning that streamed live into a synthetic turn when its snapshot arrives",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        // No sendTurn: a background assistant snapshot opens a synthetic turn
+        // and backfills its thinking.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-1",
+          uuid: "assistant-bg-1",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-bg-message-1",
+            content: [
+              { type: "thinking", thinking: "Background thought" },
+              { type: "text", text: "Background answer." },
+            ],
+          },
+        } as unknown as SDKMessage);
+
+        // The background agent keeps working: its next message streams live
+        // into the still-open synthetic turn.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-bg-0",
+          parent_tool_use_id: null,
+          event: {
+            type: "message_start",
+            message: { id: "assistant-bg-message-2" },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-bg-1",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "thinking",
+              thinking: "",
+            },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-bg-2",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: {
+              type: "thinking_delta",
+              thinking: "Streamed thought",
+            },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-1",
+          uuid: "stream-bg-3",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_stop",
+            index: 0,
+          },
+        } as unknown as SDKMessage);
+
+        // The full snapshot of that same message must not re-emit the block.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-1",
+          uuid: "assistant-bg-2",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-bg-message-2",
+            content: [
+              { type: "thinking", thinking: "Streamed thought" },
+              { type: "text", text: "Done." },
+            ],
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-1",
+          uuid: "result-bg-1",
+        } as unknown as SDKMessage);
+
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        const reasoningCompleted = events.filter(
+          (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+        );
+        assert.equal(reasoningCompleted.length, 2);
+        assert.deepEqual(
+          reasoningCompleted.map((event) =>
+            event.type === "item.completed" ? event.payload.detail : undefined,
+          ),
+          ["Background thought", "Streamed thought"],
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("ignores a subagent's content_block_stop for the parent's reasoning block", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
