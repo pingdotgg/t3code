@@ -1,5 +1,5 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
@@ -68,13 +68,7 @@ function buildPeriodColumns(
   });
 }
 
-/**
- * Monotone cubic tangents (Fritsch-Carlson).
- *
- * Plain cubic smoothing overshoots on spiky daily data and would dip the area
- * below zero between points, which reads as negative spend. This variant is
- * shape-preserving, so a smoothed series never leaves the range of its samples.
- */
+/** Shape-preserving cubic tangents that cannot overshoot spiky usage data. */
 function monotoneTangents(points: readonly Point[]): readonly number[] {
   const count = points.length;
   if (count < 2) return [0];
@@ -115,7 +109,6 @@ function monotoneTangents(points: readonly Point[]): readonly number[] {
   return tangents;
 }
 
-/** One cubic segment of a smoothed boundary. */
 interface CurveSegment {
   readonly from: Point;
   readonly c1: Point;
@@ -123,7 +116,6 @@ interface CurveSegment {
   readonly to: Point;
 }
 
-/** Smoothed polyline through `points`, as explicit cubic control points. */
 function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
   if (points.length < 2) return [];
   const tangents = monotoneTangents(points);
@@ -144,10 +136,10 @@ function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
   return segments;
 }
 
-function curvePath(segments: readonly CurveSegment[], startCommand: "M" | "L"): string {
+function curvePath(segments: readonly CurveSegment[]): string {
   const first = segments[0];
   if (first === undefined) return "";
-  let path = `${startCommand}${first.from.x.toFixed(2)},${first.from.y.toFixed(2)}`;
+  let path = `M${first.from.x.toFixed(2)},${first.from.y.toFixed(2)}`;
   for (const segment of segments) {
     path += ` C${segment.c1.x.toFixed(2)},${segment.c1.y.toFixed(2)} ${segment.c2.x.toFixed(2)},${segment.c2.y.toFixed(2)} ${segment.to.x.toFixed(2)},${segment.to.y.toFixed(2)}`;
   }
@@ -179,10 +171,8 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
 /**
  * Turns the merged daily totals into one column per day.
  *
- * Values are absolute, not cumulative: the series are layered from a shared
- * zero baseline rather than stacked. A stacked chart puts whichever provider is
- * drawn last permanently above the other, which reads as "that one is bigger"
- * even on days where it is not.
+ * Values are absolute, not cumulative: each provider is drawn from the same
+ * zero baseline so the chart never implies that one provider is always larger.
  *
  * The chart paths and the hover readout both consume this, so the number under
  * the cursor is by construction the number that was plotted rather than a
@@ -216,42 +206,44 @@ export function UsageProviderChart({
   );
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
-  const { paths, ticks, stepX, toY, series } = useMemo(() => {
+  const { paths, series, stepX, ticks, toY } = useMemo(() => {
     if (periods.length === 0) {
       return {
         paths: [],
-        ticks: [0] as readonly number[],
-        stepX: 0,
-        toY: () => VIEW_HEIGHT,
         series: [] as readonly DayColumn[],
+        stepX: 0,
+        ticks: [0] as readonly number[],
+        toY: () => VIEW_HEIGHT,
       };
     }
 
     const columns = buildPeriodColumns(periods, byPeriod, metric);
-
-    // The scale tops out at the largest single provider-day, not the largest
-    // sum: layered series each measure from zero, so a combined peak would
-    // leave the plot permanently half empty.
+    // The scale tops out at the largest single provider-period, not the sum:
+    // layered series each measure from zero, so a combined peak would leave
+    // the plot permanently half empty.
     const peak = columns.reduce(
       (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
       0,
     );
     const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
     const step = periods.length === 1 ? 0 : VIEW_WIDTH / (periods.length - 1);
-    // Reserve a sliver above the top gridline so the series stroke, which is
-    // drawn at constant screen width, is not shaved off at a peak.
+    // Leave room above the top gridline so the constant-width stroke is not
+    // clipped when a series reaches the peak.
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
     const built = PROVIDER_ORDER.map((provider, providerIndex) => {
-      const curve = smoothCurve(
-        columns.map((column, dayIndex) => ({
-          x: dayIndex * step,
-          y: toY(column.bands[providerIndex]?.value ?? 0),
-        })),
+      const line = curvePath(
+        smoothCurve(
+          columns.map((column, periodIndex) => ({
+            x: periodIndex * step,
+            y: toY(column.bands[providerIndex]?.value ?? 0),
+          })),
+        ),
       );
-      const line = curvePath(curve, "M");
       return {
         provider,
         total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
@@ -260,30 +252,76 @@ export function UsageProviderChart({
       };
     });
 
-    // Paint the heavier series first so the lighter one is never buried under
-    // it. The fills are faint enough that the order barely shows, but the
-    // strokes are drawn in a second pass regardless, so neither can be hidden.
-    const ordered = [...built].sort((a, b) => b.total - a.total);
-
-    return { paths: ordered, ticks: tickValues, stepX: step, toY, series: columns };
+    // Paint the heavier series first so the lighter one is not buried.
+    return {
+      paths: built.toSorted((a, b) => b.total - a.total),
+      series: columns,
+      stepX: step,
+      ticks: tickValues,
+      toY,
+    };
   }, [byPeriod, metric, periods]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
+  const positionTooltip = useCallback(() => {
+    const plot = plotRef.current;
+    const tooltip = tooltipRef.current;
+    const hoverPosition = hoverPositionRef.current;
+    if (plot === null || tooltip === null || hoverPosition === null) return;
+
+    const gap = 12;
+    const tooltipWidth = tooltip.offsetWidth;
+    const tooltipHeight = tooltip.offsetHeight;
+    const plotWidth = plot.clientWidth;
+    const plotHeight = plot.clientHeight;
+    const preferredLeft =
+      hoverPosition.x + gap + tooltipWidth <= plotWidth
+        ? hoverPosition.x + gap
+        : hoverPosition.x - gap - tooltipWidth;
+    const preferredTop =
+      hoverPosition.y + gap + tooltipHeight <= plotHeight
+        ? hoverPosition.y + gap
+        : hoverPosition.y - gap - tooltipHeight;
+    const left = Math.min(Math.max(0, preferredLeft), Math.max(0, plotWidth - tooltipWidth));
+    const top = Math.min(Math.max(0, preferredTop), Math.max(0, plotHeight - tooltipHeight));
+    plot.style.setProperty("--usage-tooltip-left", `${left}px`);
+    plot.style.setProperty("--usage-tooltip-top", `${top}px`);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (hoverIndex === null) return;
+    positionTooltip();
+
+    const plot = plotRef.current;
+    const tooltip = tooltipRef.current;
+    if (plot === null || tooltip === null || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(positionTooltip);
+    observer.observe(plot);
+    observer.observe(tooltip);
+    return () => observer.disconnect();
+  }, [hoverIndex, positionTooltip]);
+
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      const bounds = plotRef.current?.getBoundingClientRect();
-      if (bounds === undefined || bounds.width === 0 || periods.length === 0) return;
-      const fraction = (event.clientX - bounds.left) / bounds.width;
+      const plot = plotRef.current;
+      if (plot === null || periods.length === 0) return;
+      const bounds = plot.getBoundingClientRect();
+      if (bounds.width === 0) return;
+      const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
+      const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
+      const fraction = localX / bounds.width;
       const index = Math.round(fraction * (periods.length - 1));
+      hoverPositionRef.current = { x: localX, y: localY };
+      positionTooltip();
       setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
     },
-    [periods.length],
+    [periods.length, positionTooltip],
   );
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
-  const hoverLeft = periods.length <= 1 ? 0 : ((hoverIndex ?? 0) / (periods.length - 1)) * 100;
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
@@ -311,7 +349,10 @@ export function UsageProviderChart({
           ref={plotRef}
           className="relative h-56 flex-1"
           onMouseMove={handleMove}
-          onMouseLeave={() => setHoverIndex(null)}
+          onMouseLeave={() => {
+            hoverPositionRef.current = null;
+            setHoverIndex(null);
+          }}
         >
           <svg
             className="h-full w-full"
@@ -373,10 +414,11 @@ export function UsageProviderChart({
 
           {hoveredPeriod === undefined ? null : (
             <div
-              className="pointer-events-none absolute top-0 z-10 min-w-36 border border-border bg-background/95 px-2 py-1.5 text-xs"
+              ref={tooltipRef}
+              className="surface-glass pointer-events-none absolute z-10 min-w-36 max-w-full rounded-xl border border-border/50 px-2.5 py-2 text-xs shadow-lg"
               style={{
-                left: `${hoverLeft}%`,
-                transform: hoverLeft > 60 ? "translateX(-100%)" : "translateX(0)",
+                left: "var(--usage-tooltip-left, 0px)",
+                top: "var(--usage-tooltip-top, 0px)",
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
@@ -420,24 +462,6 @@ export function UsageProviderChart({
             : formatPeriod(periods[periods.length - 1] ?? "")}
         </span>
       </div>
-    </div>
-  );
-}
-
-export function UsageChartLegend() {
-  return (
-    <div className="flex items-center gap-4">
-      {PROVIDER_ORDER.map((provider) => {
-        // Brand marks keep monochrome providers identifiable even when their
-        // chart series use distinct colors.
-        const { label, mark: Mark } = PROVIDER_PRESENTATION[provider];
-        return (
-          <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Mark className="size-3.5 shrink-0" aria-hidden />
-            {label}
-          </span>
-        );
-      })}
     </div>
   );
 }
