@@ -357,6 +357,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
     () => ({
       terminal: {
         element: <TerminalHeaderMenuButton {...props} />,
+        hidesSharedBackground: true,
         type: "custom",
       },
       files: {
