@@ -49,6 +49,8 @@ public final class FeatureRootModel {
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
+    private var settingsWriteTask: Task<Void, Error>?
+    private var settingsWriteGeneration: UInt64 = 0
 
     public init(
         client: any FeatureClient,
@@ -565,10 +567,15 @@ public final class FeatureRootModel {
 
     @discardableResult
     public func saveSettings(_ settings: FeatureSettings) async -> Bool {
-        await perform {
-            try await client.saveSettings(settings)
-            snapshot.settings = settings
+        let previous = snapshot.settings
+        snapshot.settings = settings
+        let saved = await perform {
+            try await enqueueSettingsWrite(settings)
         }
+        if !saved, snapshot.settings == settings {
+            snapshot.settings = previous
+        }
+        return saved
     }
 
     /// Applies appearance optimistically so selecting a theme updates every
@@ -606,7 +613,7 @@ public final class FeatureRootModel {
         snapshot.settings = updated
 
         do {
-            try await client.saveSettings(updated)
+            try await enqueueSettingsWrite(updated)
             return true
         } catch {
             if snapshot.settings == updated {
@@ -617,6 +624,27 @@ public final class FeatureRootModel {
             }
             return false
         }
+    }
+
+    /// Preserves settings write order across main-actor reentrancy so an older
+    /// full-settings snapshot cannot finish after and replace a newer one.
+    private func enqueueSettingsWrite(_ settings: FeatureSettings) async throws {
+        let predecessor = settingsWriteTask
+        let write = Task { @MainActor [client] in
+            if let predecessor {
+                _ = await predecessor.result
+            }
+            try await client.saveSettings(settings)
+        }
+        settingsWriteGeneration &+= 1
+        let generation = settingsWriteGeneration
+        settingsWriteTask = write
+        defer {
+            if settingsWriteGeneration == generation {
+                settingsWriteTask = nil
+            }
+        }
+        try await write.value
     }
 
     @discardableResult
