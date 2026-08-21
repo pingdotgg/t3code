@@ -84,13 +84,15 @@ describe("deriveWorkLogEntries command output", () => {
   });
 
   it("drops duplicated command detail when it only differs by a toolName prefix", () => {
+    // Matches the wire shape after server-side payload projection drops
+    // data.toolName (see ActivityPayloadProjection.ts) — detail keeps its
+    // "Bash: " heading, but data only carries the bare command.
     const [entry] = deriveWorkLogEntries([
       makeCommandActivity("bash-prefixed-command", {
         itemType: "command_execution",
         title: "Command run",
         detail: 'Bash: cd project && grep -n "TODO" file.md',
         data: {
-          toolName: "Bash",
           kind: "execute",
           command: 'cd project && grep -n "TODO" file.md',
         },
@@ -99,5 +101,22 @@ describe("deriveWorkLogEntries command output", () => {
 
     expect(entry?.command).toBe('cd project && grep -n "TODO" file.md');
     expect(entry?.detail).toBeUndefined();
+  });
+
+  it("keeps detail that merely happens to contain the command as a suffix", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("unrelated-suffix-match", {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: "warning: deprecated flag used in: true",
+        data: {
+          kind: "execute",
+          command: "true",
+        },
+      }),
+    ]);
+
+    expect(entry?.command).toBe("true");
+    expect(entry?.detail).toBe("warning: deprecated flag used in: true");
   });
 });
