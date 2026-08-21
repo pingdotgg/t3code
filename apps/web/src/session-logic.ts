@@ -1585,6 +1585,18 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
   );
 }
 
+function stripLeadingToolNamePrefix(
+  value: string,
+  payload: Record<string, unknown> | null,
+): string {
+  const toolName = asTrimmedString(asRecord(payload?.data)?.toolName);
+  if (!toolName) {
+    return value;
+  }
+  const prefix = `${toolName}: `;
+  return value.toLowerCase().startsWith(prefix.toLowerCase()) ? value.slice(prefix.length) : value;
+}
+
 function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
@@ -1592,7 +1604,9 @@ function extractToolDetail(
   const rawDetail = asTrimmedString(payload?.detail);
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
-  const normalizedDetail = normalizePreviewForComparison(detail);
+  const normalizedDetail = normalizePreviewForComparison(
+    detail ? stripLeadingToolNamePrefix(detail, payload) : detail,
+  );
   const commandTool = isCommandToolDetail(payload, heading);
   const commandPreview = commandTool
     ? extractToolCommand(payload)
