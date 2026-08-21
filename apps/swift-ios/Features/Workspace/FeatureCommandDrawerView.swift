@@ -90,15 +90,22 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             }
     }
 
-    /// The reported frame is in screen coordinates and can sit fully offscreen
-    /// while the keyboard is dismissing, so only its on-screen overlap counts.
+    /// The reported frame is in screen coordinates. Measure it against this
+    /// app's key window so another scene, or an undocked keyboard, cannot
+    /// shorten the drawer.
     private func applyKeyboardFrame(from note: Notification) {
         guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-              let screen = UIApplication.shared.connectedScenes
-                  .compactMap({ ($0 as? UIWindowScene)?.screen })
-                  .first
+              let window = UIApplication.shared.connectedScenes
+                  .compactMap({ $0 as? UIWindowScene })
+                  .filter({ $0.activationState == .foregroundActive })
+                  .flatMap(\.windows)
+                  .first(where: \.isKeyWindow)
         else { return }
-        keyboardHeight = max(0, screen.bounds.maxY - frame.minY)
+        let windowFrame = window.screen.coordinateSpace.convert(window.bounds, from: window)
+        keyboardHeight = FeatureCommandDrawerGeometry.keyboardOverlap(
+            keyboardFrame: frame,
+            windowFrame: windowFrame
+        )
     }
 
     private var progress: CGFloat {

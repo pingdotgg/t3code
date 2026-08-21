@@ -14,6 +14,42 @@ struct FeatureCommandDrawerTests {
     private static let keyboardHeight: CGFloat = 336
 
     @Test
+    func floatingAndUndockedKeyboardsDoNotShortenTheDrawer() {
+        let windowFrame = CGRect(x: 0, y: 0, width: 393, height: Self.windowHeight)
+
+        #expect(
+            FeatureCommandDrawerGeometry.keyboardOverlap(
+                keyboardFrame: CGRect(x: 70, y: 654, width: 300, height: 220),
+                windowFrame: windowFrame
+            ) == 0
+        )
+        #expect(
+            FeatureCommandDrawerGeometry.keyboardOverlap(
+                keyboardFrame: CGRect(x: 0, y: 500, width: 393, height: 300),
+                windowFrame: windowFrame
+            ) == 0
+        )
+    }
+
+    @Test
+    func dockedKeyboardUsesTheHostingWindowsFrame() {
+        let windowFrame = CGRect(x: 100, y: 80, width: 393, height: 700)
+
+        #expect(
+            FeatureCommandDrawerGeometry.keyboardOverlap(
+                keyboardFrame: CGRect(x: 0, y: 500, width: 700, height: 400),
+                windowFrame: windowFrame
+            ) == 280
+        )
+        #expect(
+            FeatureCommandDrawerGeometry.keyboardOverlap(
+                keyboardFrame: CGRect(x: 0, y: 900, width: 700, height: 300),
+                windowFrame: windowFrame
+            ) == 0
+        )
+    }
+
+    @Test
     func theOpenDrawersBottomEdgeMeetsTheTopOfTheKeyboard() {
         // The rejected build left a band of the page showing between the
         // drawer and the keyboard. The drawer's edge must land exactly on the

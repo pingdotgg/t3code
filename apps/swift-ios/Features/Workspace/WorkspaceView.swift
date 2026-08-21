@@ -648,6 +648,7 @@ public struct WorkspaceView: View {
     }
 
     private func dismissTransientPresentations() {
+        commandDrawer.close()
         showingNewTask = false
         showingAddProject = false
         showingSettings = false

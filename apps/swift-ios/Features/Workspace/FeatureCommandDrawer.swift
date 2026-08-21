@@ -28,6 +28,23 @@ enum FeatureCommandDrawerGeometry {
     /// short fast swipe commits on the speed it was thrown at.
     static let settleProjectionInterval: CGFloat = 0.14
 
+    /// Height a docked software keyboard covers inside the hosting window.
+    ///
+    /// Keyboard notifications report screen coordinates. Floating, split, and
+    /// undocked iPad keyboards must not shorten the full-width drawer, so the
+    /// frame only counts when it spans the window and reaches its bottom edge.
+    static func keyboardOverlap(keyboardFrame: CGRect, windowFrame: CGRect) -> CGFloat {
+        guard windowFrame.width > 0,
+              windowFrame.height > 0,
+              keyboardFrame.minX <= windowFrame.minX,
+              keyboardFrame.maxX >= windowFrame.maxX,
+              keyboardFrame.maxY >= windowFrame.maxY
+        else { return 0 }
+
+        let overlap = keyboardFrame.intersection(windowFrame)
+        return overlap.isNull ? 0 : overlap.height
+    }
+
     /// Fully open covers the whole page: the drawer runs from the top of the
     /// screen down to the keyboard's top edge, or to the home indicator when
     /// there is no keyboard. No part of the page underneath stays visible.
