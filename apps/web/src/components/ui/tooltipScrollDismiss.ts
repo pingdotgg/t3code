@@ -19,7 +19,10 @@ function createTooltipScrollDismissController(): TooltipScrollDismissController 
       const tooltip = hoveredTooltip;
       hoveredTooltip = null;
 
-      if (tooltip === null || tooltip.trigger.ownerDocument.activeElement === tooltip.trigger) {
+      if (
+        tooltip === null ||
+        tooltip.trigger.contains(tooltip.trigger.ownerDocument.activeElement)
+      ) {
         return;
       }
 

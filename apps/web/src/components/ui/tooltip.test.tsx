@@ -40,9 +40,15 @@ function createFakeTooltipTrigger() {
   const ownerDocument = {
     activeElement: null as Element | null,
   };
-  const trigger = { ownerDocument } as unknown as HTMLElement;
+  const descendants = new Set<Node>();
+  const trigger = {
+    ownerDocument,
+    contains(node: Node | null) {
+      return node === trigger || (node !== null && descendants.has(node));
+    },
+  } as unknown as HTMLElement;
 
-  return { ownerDocument, trigger };
+  return { descendants, ownerDocument, trigger };
 }
 
 describe("tooltip layering", () => {
@@ -82,6 +88,20 @@ describe("tooltip scroll dismissal", () => {
     const { ownerDocument, trigger } = createFakeTooltipTrigger();
     const dismiss = vi.fn();
     ownerDocument.activeElement = trigger;
+
+    controller.setHoveredTooltip({ trigger, dismiss });
+    controller.dismissHoveredTooltip();
+
+    expect(dismiss).not.toHaveBeenCalled();
+  });
+
+  it("keeps a tooltip open when focus is within its trigger", () => {
+    const controller = createTooltipScrollDismissController();
+    const { descendants, ownerDocument, trigger } = createFakeTooltipTrigger();
+    const focusedChild = {} as Element;
+    const dismiss = vi.fn();
+    descendants.add(focusedChild);
+    ownerDocument.activeElement = focusedChild;
 
     controller.setHoveredTooltip({ trigger, dismiss });
     controller.dismissHoveredTooltip();
