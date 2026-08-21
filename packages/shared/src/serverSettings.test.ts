@@ -264,6 +264,40 @@ describe("serverSettings helpers", () => {
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
   });
 
+  it("replaces worktreeDirectoryOverrides wholesale so clearing a project works", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      worktreeDirectoryOverrides: {
+        "/repos/alpha": "/custom/alpha",
+        "/repos/beta": "/custom/beta",
+      },
+    };
+
+    // Omitting a key must remove it; a deep merge would silently keep it.
+    expect(
+      applyServerSettingsPatch(current, {
+        worktreeDirectoryOverrides: { "/repos/beta": "/custom/beta" },
+      }).worktreeDirectoryOverrides,
+    ).toEqual({ "/repos/beta": "/custom/beta" });
+
+    expect(
+      applyServerSettingsPatch(current, { worktreeDirectoryOverrides: {} })
+        .worktreeDirectoryOverrides,
+    ).toEqual({});
+  });
+
+  it("leaves worktreeDirectoryOverrides untouched when the patch omits it", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      worktreeDirectoryOverrides: { "/repos/alpha": "/custom/alpha" },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, { newWorktreesStartFromOrigin: false })
+        .worktreeDirectoryOverrides,
+    ).toEqual({ "/repos/alpha": "/custom/alpha" });
+  });
+
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {

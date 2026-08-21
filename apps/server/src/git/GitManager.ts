@@ -56,6 +56,7 @@ import {
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
+import { joinWorktreePath, lookupWorktreeRoot } from "./worktreeLocation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1849,6 +1850,38 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  /** Configured worktree path for a PR thread, or null for the default layout. */
+  const resolvePullRequestWorktreePath = Effect.fn("resolvePullRequestWorktreePath")(
+    function* (input: { readonly cwd: string; readonly branch: string }) {
+      const settings = yield* serverSettingsService.getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "preparePullRequestThread",
+              cwd: input.cwd,
+              detail: "Failed to read server settings while resolving the worktree location.",
+              cause,
+            }),
+        ),
+      );
+      const resolution = lookupWorktreeRoot({ settings, workspaceRoot: input.cwd });
+      if (resolution === null) {
+        return null;
+      }
+      if (!resolution.ok) {
+        return yield* new GitManagerError({
+          operation: "preparePullRequestThread",
+          cwd: input.cwd,
+          detail: `${resolution.reason} Update this project's worktree location in settings.`,
+        });
+      }
+      return joinWorktreePath({
+        root: resolution.root,
+        refName: input.branch,
+      });
+    },
+  );
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2097,10 +2130,17 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      // The PR branch name is only known here, so this flow resolves the
+      // project's configured worktree root itself rather than via
+      // GitWorkflowService.
+      const configuredRoot = yield* resolvePullRequestWorktreePath({
+        cwd: input.cwd,
+        branch: localPullRequestBranch,
+      });
       const worktree = yield* gitCore.createWorktree({
         cwd: input.cwd,
         refName: localPullRequestBranch,
-        path: null,
+        path: configuredRoot,
       });
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);

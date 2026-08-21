@@ -36,6 +36,7 @@ import {
   parseRemoteNamesInGitOrder,
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
+import { sanitizeWorktreeBranch } from "../git/worktreeLocation.ts";
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -2764,7 +2765,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "createWorktree",
   )(function* (input) {
     const targetBranch = input.newRefName ?? input.refName;
-    const sanitizedBranch = targetBranch.replace(/\//g, "-");
+    const sanitizedBranch = sanitizeWorktreeBranch(targetBranch);
     const repoName = path.basename(input.cwd);
     const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
     const args = input.newRefName

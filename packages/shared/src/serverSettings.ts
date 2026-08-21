@@ -188,6 +188,11 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    // Replaced wholesale rather than deep-merged so removing a key actually
+    // clears that project's override.
+    ...(patch.worktreeDirectoryOverrides !== undefined
+      ? { worktreeDirectoryOverrides: patch.worktreeDirectoryOverrides }
+      : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),

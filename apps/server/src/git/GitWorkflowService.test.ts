@@ -2,12 +2,26 @@ import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  VcsRepositoryDetectionError,
+  type VcsCreateWorktreeInput,
+} from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+
+/** Settings stub with no per-project worktree overrides configured. */
+export function mockServerSettingsLayer(worktreeDirectoryOverrides: Record<string, string> = {}) {
+  return Layer.mock(ServerSettings.ServerSettingsService)({
+    getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, worktreeDirectoryOverrides }),
+    streamChanges: Stream.empty,
+  });
+}
 
 function makeLayer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
@@ -20,6 +34,7 @@ function makeLayer(input: {
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(mockServerSettingsLayer()),
   );
 }
 
@@ -100,6 +115,7 @@ describe("GitWorkflowService", () => {
           status,
         }),
       ),
+      Layer.provide(mockServerSettingsLayer()),
     );
 
     return Effect.gen(function* () {
@@ -134,6 +150,123 @@ describe("GitWorkflowService", () => {
       ),
     ),
   );
+
+  describe("createWorktree worktree location", () => {
+    // ensureGitCommand only inspects `kind`, so the rest of the handle is stubbed.
+    const gitRepoHandle = (cwd: string) =>
+      Effect.succeed({ kind: "git", repository: { kind: "git", rootPath: cwd } } as never);
+
+    const makeCreateWorktreeLayer = (input: {
+      readonly overrides: Record<string, string>;
+      readonly createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"];
+    }) =>
+      GitWorkflowService.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+            detect: (request) => gitRepoHandle(request.cwd),
+            resolve: (request) => gitRepoHandle(request.cwd),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({ createWorktree: input.createWorktree }),
+        ),
+        Layer.provide(Layer.mock(GitManager.GitManager)({})),
+        Layer.provide(mockServerSettingsLayer(input.overrides)),
+      );
+
+    it.effect("leaves path null when the project has no configured location", () => {
+      const createWorktree = vi.fn((_input: VcsCreateWorktreeInput) =>
+        Effect.succeed({ worktree: { path: "/default/path", refName: "feature" } }),
+      );
+
+      return Effect.gen(function* () {
+        const workflow = yield* GitWorkflowService.GitWorkflowService;
+        yield* workflow.createWorktree({
+          cwd: "/repos/alpha",
+          refName: "main",
+          newRefName: "feature",
+          path: null,
+        });
+
+        expect(createWorktree.mock.calls[0]?.[0]).toMatchObject({ path: null });
+      }).pipe(Effect.provide(makeCreateWorktreeLayer({ overrides: {}, createWorktree })));
+    });
+
+    it.effect("substitutes the configured location for the project", () => {
+      const createWorktree = vi.fn((_input: VcsCreateWorktreeInput) =>
+        Effect.succeed({ worktree: { path: "/custom/feature-login", refName: "feature" } }),
+      );
+
+      return Effect.gen(function* () {
+        const workflow = yield* GitWorkflowService.GitWorkflowService;
+        yield* workflow.createWorktree({
+          cwd: "/repos/alpha",
+          refName: "main",
+          newRefName: "feature/login",
+          path: null,
+        });
+
+        expect(createWorktree.mock.calls[0]?.[0]).toMatchObject({
+          path: "/custom/feature-login",
+        });
+      }).pipe(
+        Effect.provide(
+          makeCreateWorktreeLayer({
+            overrides: { "/repos/alpha": "/custom" },
+            createWorktree,
+          }),
+        ),
+      );
+    });
+
+    it.effect("fails instead of silently falling back when the location is invalid", () => {
+      const createWorktree = vi.fn((_input: VcsCreateWorktreeInput) =>
+        Effect.succeed({ worktree: { path: "/unused", refName: "feature" } }),
+      );
+
+      return Effect.gen(function* () {
+        const workflow = yield* GitWorkflowService.GitWorkflowService;
+        const error = yield* workflow
+          .createWorktree({ cwd: "/repos/alpha", refName: "main", path: null })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("GitCommandError");
+        expect(error.detail).toContain("absolute");
+        expect(createWorktree.mock.calls.length).toBe(0);
+      }).pipe(
+        Effect.provide(
+          makeCreateWorktreeLayer({
+            overrides: { "/repos/alpha": "not/absolute" },
+            createWorktree,
+          }),
+        ),
+      );
+    });
+
+    it.effect("honours an explicit path over the configured location", () => {
+      const createWorktree = vi.fn((_input: VcsCreateWorktreeInput) =>
+        Effect.succeed({ worktree: { path: "/explicit", refName: "feature" } }),
+      );
+
+      return Effect.gen(function* () {
+        const workflow = yield* GitWorkflowService.GitWorkflowService;
+        yield* workflow.createWorktree({
+          cwd: "/repos/alpha",
+          refName: "main",
+          path: "/explicit",
+        });
+
+        expect(createWorktree.mock.calls[0]?.[0]).toMatchObject({ path: "/explicit" });
+      }).pipe(
+        Effect.provide(
+          makeCreateWorktreeLayer({
+            overrides: { "/repos/alpha": "/custom" },
+            createWorktree,
+          }),
+        ),
+      );
+    });
+  });
 
   it.effect("structures workflow detection failures without exposing upstream details", () => {
     const cause = new VcsRepositoryDetectionError({

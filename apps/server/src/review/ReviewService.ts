@@ -16,6 +16,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { resolveConfiguredWorktreeRoot } from "../git/worktreeLocation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -37,6 +39,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -74,6 +77,30 @@ export const make = Effect.gen(function* () {
 
     if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
       return;
+    }
+
+    // Projects with a custom worktree root put worktrees outside both roots
+    // above; those locations are user-configured, so they're in bounds too.
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new VcsRepositoryDetectionError({
+            operation,
+            cwd,
+            detail: "Failed to read server settings while validating the review workspace.",
+            cause,
+          }),
+      ),
+    );
+    for (const configured of Object.values(settings.worktreeDirectoryOverrides)) {
+      const resolution = resolveConfiguredWorktreeRoot(configured);
+      if (!resolution.ok) {
+        continue;
+      }
+      const configuredRoot = yield* canonicalizePath(resolution.root);
+      if (isWithinRoot(candidate, configuredRoot)) {
+        return;
+      }
     }
 
     return yield* new VcsRepositoryDetectionError({

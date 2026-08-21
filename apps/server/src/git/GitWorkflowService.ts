@@ -31,6 +31,8 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { joinWorktreePath, lookupWorktreeRoot } from "./worktreeLocation.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -138,6 +140,49 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+
+  // An explicit `path` means the caller already picked a location; only the
+  // default case consults the project's configured worktree root.
+  const resolveWorktreeInput = Effect.fn("GitWorkflowService.resolveWorktreeInput")(function* (
+    input: VcsCreateWorktreeInput,
+  ) {
+    if (input.path !== null) {
+      return input;
+    }
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation: "GitWorkflowService.createWorktree",
+            command: "git",
+            cwd: input.cwd,
+            detail: "Failed to read server settings while resolving the worktree location.",
+            cause,
+          }),
+      ),
+    );
+    const resolution = lookupWorktreeRoot({ settings, workspaceRoot: input.cwd });
+    if (resolution === null) {
+      return input;
+    }
+    if (!resolution.ok) {
+      return yield* new GitCommandError({
+        operation: "GitWorkflowService.createWorktree",
+        command: "git",
+        cwd: input.cwd,
+        detail: `${resolution.reason} Update this project's worktree location in settings.`,
+      });
+    }
+    return {
+      ...input,
+      path: joinWorktreePath({
+        root: resolution.root,
+        refName: input.refName,
+        newRefName: input.newRefName,
+      }),
+    };
+  });
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -301,7 +346,8 @@ export const make = Effect.gen(function* () {
       ),
     createWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
-        Effect.andThen(git.createWorktree(input)),
+        Effect.andThen(resolveWorktreeInput(input)),
+        Effect.flatMap((resolved) => git.createWorktree(resolved)),
       ),
     fetchRemote: (input) =>
       ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(

@@ -40,6 +40,7 @@ import { isElectron } from "../../env";
 import {
   useClientSettings,
   useUpdateClientSettings,
+  useUpdateEnvironmentSettings,
   usePrimarySettings,
 } from "../../hooks/useSettings";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -82,6 +83,7 @@ import {
   type ProjectScriptEditorRequest,
 } from "../projectScriptEditor";
 import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import {
   Menu,
@@ -109,6 +111,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
+import { isAbsoluteWorktreeLocation } from "./ProjectSettingsPanel.logic";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -454,6 +457,53 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
   const keybindings = selectedServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   const scripts = selectedCheckout.scripts;
+
+  // ----- worktree location (per checkout, keyed by its workspace root) -----
+  const updateSelectedCheckoutSettings = useUpdateEnvironmentSettings(
+    selectedCheckout.environmentId,
+  );
+  const worktreeDirectoryOverrides = selectedServerConfig?.settings?.worktreeDirectoryOverrides;
+  const configuredWorktreeDirectory =
+    worktreeDirectoryOverrides?.[selectedCheckout.workspaceRoot] ?? "";
+  // The rejected text is kept so it can stay in the field: DraftInput drops its
+  // draft on blur, so otherwise the message would describe text that is gone.
+  const [rejectedWorktreeDirectory, setRejectedWorktreeDirectory] = useState<{
+    readonly value: string;
+    readonly message: string;
+  } | null>(null);
+  const commitWorktreeDirectory = useCallback(
+    (next: string) => {
+      // The patch replaces the whole map, so writing before the config loads
+      // would drop every other project's override.
+      if (!selectedServerConfig) return;
+      const trimmed = next.trim();
+      const os = selectedServerConfig.environment.platform.os;
+      // Rejected here as well as server-side so a typo can't be stored and
+      // then fail every new thread one at a time. An unknown host OS can't be
+      // checked without guessing, so the server has the final say.
+      if (trimmed !== "" && os !== "unknown" && !isAbsoluteWorktreeLocation(trimmed, os)) {
+        setRejectedWorktreeDirectory({
+          value: trimmed,
+          message:
+            os === "windows"
+              ? 'Must be an absolute path (e.g. "C:\\worktrees"), or start with "~".'
+              : 'Must be an absolute path starting with "/", or with "~".',
+        });
+        return;
+      }
+      setRejectedWorktreeDirectory(null);
+      const { [selectedCheckout.workspaceRoot]: _cleared, ...others } =
+        selectedServerConfig.settings.worktreeDirectoryOverrides;
+      updateSelectedCheckoutSettings({
+        worktreeDirectoryOverrides:
+          trimmed === "" ? others : { ...others, [selectedCheckout.workspaceRoot]: trimmed },
+      });
+    },
+    [selectedCheckout.workspaceRoot, selectedServerConfig, updateSelectedCheckoutSettings],
+  );
+  useEffect(() => {
+    setRejectedWorktreeDirectory(null);
+  }, [selectedCheckout.workspaceRoot]);
   const [editorRequest, setEditorRequest] = useState<ProjectScriptEditorRequest | null>(null);
   // Script writes replace the whole array, so two overlapping writes computed
   // from the same snapshot would drop each other's changes. One at a time.
@@ -989,6 +1039,37 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   </SelectItem>
                 </SelectPopup>
               </Select>
+            }
+          />
+          <SettingsRow
+            title="Worktree location"
+            description={`Where new worktrees for this checkout are created. Leave empty for the default location inside T3's home directory. Must be an absolute path; "~" is allowed. Existing worktrees are never moved.`}
+            status={
+              rejectedWorktreeDirectory ? (
+                <span className="text-destructive">{rejectedWorktreeDirectory.message}</span>
+              ) : null
+            }
+            resetAction={
+              selectedServerConfig && configuredWorktreeDirectory !== "" ? (
+                <SettingResetButton
+                  label="worktree location"
+                  onClick={() => commitWorktreeDirectory("")}
+                />
+              ) : null
+            }
+            control={
+              <DraftInput
+                className="w-full sm:w-72"
+                value={rejectedWorktreeDirectory?.value ?? configuredWorktreeDirectory}
+                onCommit={commitWorktreeDirectory}
+                disabled={!selectedServerConfig}
+                placeholder="Default (T3 home)"
+                spellCheck={false}
+                // `|| undefined` so a literal aria-invalid="false" does not hit
+                // the input wrapper's attribute-presence shadow-none branch.
+                aria-invalid={rejectedWorktreeDirectory !== null || undefined}
+                aria-label={`Worktree location for ${selectedCheckoutLabel}`}
+              />
             }
           />
           {group.memberProjects.length > 1 ? (
