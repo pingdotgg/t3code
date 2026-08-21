@@ -175,8 +175,90 @@ jobs:
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
 
+  # The static analysis below needs a macOS runner, which bills ~6.7x a Linux
+  # minute, so gate it on the native sources it actually lints instead of paying
+  # for it on every push. Detection is API-only (no checkout) and fails open: if
+  # the diff cannot be resolved, the lint runs.
+  mobile_native_changes:
+    name: Mobile Native Changes
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+    steps:
+      - name: Detect mobile native changes
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+
+          fail_open() {
+            echo "$* Running native static analysis."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          count_rows() {
+            printf '%s\n' "$1" | grep -c . || true
+          }
+
+          # One row per changed file, holding the new path and, for a rename,
+          # the path it replaced: renaming a matched file out of the matched
+          # paths removes a lint input just like editing it.
+          row='[.filename, (.previous_filename // empty)] | @tsv'
+
+          if [[ -n "${PR_NUMBER}" ]]; then
+            # The PR files endpoint stops at 3000 files and pagination cannot
+            # extend it, so cross-check against the count the PR itself reports.
+            expected=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.changed_files') \
+              || fail_open "Could not read the pull request."
+            rows=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq ".[] | ${row}") \
+              || fail_open "Could not resolve changed files."
+
+            listed=$(count_rows "$rows")
+            if [[ "$listed" -lt "$expected" ]]; then
+              fail_open "GitHub listed only ${listed} of ${expected} changed files."
+            fi
+          else
+            rows=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE_SHA}...${GITHUB_SHA}" --jq ".files[]? | ${row}") \
+              || fail_open "Could not resolve changed files."
+
+            # The compare endpoint reports at most 300 files and pagination does
+            # not extend that list, so a full list may be hiding native changes.
+            listed=$(count_rows "$rows")
+            if [[ "$listed" -ge 300 ]]; then
+              fail_open "GitHub listed ${listed} changed files, the compare endpoint maximum."
+            fi
+          fi
+
+          paths=$(tr '\t' '\n' <<< "$rows")
+
+          # Sources scripts/mobile-native-static-check.ts lints, plus the tool
+          # and rule configuration that decides how it lints them, plus the
+          # root package.json that defines the lint:mobile command.
+          pattern='^apps/mobile/.*\.(swift|kt|kts)$|^apps/mobile/(\.swiftlint\.yml|detekt\.yml|\.editorconfig|Brewfile)$|^scripts/mobile-native-static-check\.ts$|^package\.json$|^\.github/workflows/ci\.yml$'
+
+          if grep -qE "$pattern" <<< "$paths"; then
+            echo "Native sources or lint configuration changed:"
+            grep -E "$pattern" <<< "$paths"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No mobile native sources or lint configuration changed."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
+    needs: mobile_native_changes
+    # Skip only on an explicit "no": a gate job that failed or errored leaves the
+    # output empty, and that must run the lint rather than silently skip it.
+    if: ${{ !cancelled() && needs.mobile_native_changes.outputs.changed != 'false' }}
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 10
     steps:
