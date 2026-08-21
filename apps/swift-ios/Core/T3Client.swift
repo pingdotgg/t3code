@@ -101,6 +101,182 @@ public actor T3Client {
         )
     }
 
+    public func pullRequests(_ input: PullRequestListInput) async throws -> PullRequestListResult {
+        try await rpc.request(
+            RPCMethod.pullRequestsList.rawValue,
+            payload: try JSONValue.encode(input),
+            as: PullRequestListResult.self
+        )
+    }
+
+    public func pullRequestDetail(_ reference: PullRequestRef) async throws -> PullRequestDetail {
+        try await rpc.request(
+            RPCMethod.pullRequestsDetail.rawValue,
+            payload: try JSONValue.encode(reference),
+            as: PullRequestDetail.self
+        )
+    }
+
+    public func pullRequestActivity(_ reference: PullRequestRef) async throws
+        -> PullRequestActivity
+    {
+        try await rpc.request(
+            RPCMethod.pullRequestsActivity.rawValue,
+            payload: try JSONValue.encode(reference),
+            as: PullRequestActivity.self
+        )
+    }
+
+    public func pullRequestDiff(_ input: PullRequestDiffInput) async throws
+        -> PullRequestDiffResult
+    {
+        try await api.pullRequestDiff(input, environment: environment)
+    }
+
+    public func runPullRequestAction(
+        _ reference: PullRequestRef,
+        action: PullRequestAction,
+        mergeMethod: PullRequestMergeMethod? = nil,
+        updateMethod: PullRequestUpdateMethod? = nil
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["action"] = .string(action.rawValue)
+        if let mergeMethod { payload["mergeMethod"] = .string(mergeMethod.rawValue) }
+        if let updateMethod { payload["updateMethod"] = .string(updateMethod.rawValue) }
+        try await rpc.request(
+            RPCMethod.pullRequestsRunAction.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func updatePullRequest(
+        _ reference: PullRequestRef,
+        title: String? = nil,
+        body: String? = nil
+    ) async throws {
+        var payload = try reference.jsonObject
+        if let title { payload["title"] = .string(title) }
+        if let body { payload["body"] = .string(body) }
+        try await rpc.request(RPCMethod.pullRequestsUpdate.rawValue, payload: .object(payload))
+    }
+
+    public func commentOnPullRequest(_ reference: PullRequestRef, body: String) async throws {
+        var payload = try reference.jsonObject
+        payload["body"] = .string(body)
+        try await rpc.request(RPCMethod.pullRequestsComment.rawValue, payload: .object(payload))
+    }
+
+    public func updatePullRequestComment(
+        _ reference: PullRequestRef,
+        commentID: String,
+        kind: PullRequestCommentKind,
+        body: String
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["commentId"] = .string(commentID)
+        payload["kind"] = .string(kind.rawValue)
+        payload["body"] = .string(body)
+        try await rpc.request(
+            RPCMethod.pullRequestsUpdateComment.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func submitPullRequestReview(
+        _ reference: PullRequestRef,
+        verdict: PullRequestReviewVerdict,
+        body: String,
+        comments: [PullRequestReviewCommentDraft]
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["verdict"] = .string(verdict.rawValue)
+        payload["body"] = .string(body)
+        payload["comments"] = try .encode(comments)
+        try await rpc.request(
+            RPCMethod.pullRequestsSubmitReview.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func replyToPullRequestThread(
+        _ reference: PullRequestRef,
+        threadID: String,
+        body: String
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["threadId"] = .string(threadID)
+        payload["body"] = .string(body)
+        try await rpc.request(
+            RPCMethod.pullRequestsReplyToThread.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func setPullRequestThreadResolved(
+        _ reference: PullRequestRef,
+        threadID: String,
+        resolved: Bool
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["threadId"] = .string(threadID)
+        payload["resolved"] = .bool(resolved)
+        try await rpc.request(
+            RPCMethod.pullRequestsSetThreadResolution.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func setPullRequestReaction(
+        _ reference: PullRequestRef,
+        subjectID: String?,
+        content: PullRequestReactionContent,
+        reacted: Bool
+    ) async throws {
+        var payload = try reference.jsonObject
+        if let subjectID { payload["subjectId"] = .string(subjectID) }
+        payload["content"] = .string(content.rawValue)
+        payload["reacted"] = .bool(reacted)
+        try await rpc.request(
+            RPCMethod.pullRequestsSetReaction.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func pullRequestReviewerCandidates(_ reference: PullRequestRef) async throws
+        -> PullRequestReviewerCandidateList
+    {
+        try await rpc.request(
+            RPCMethod.pullRequestsReviewerCandidates.rawValue,
+            payload: try JSONValue.encode(reference),
+            as: PullRequestReviewerCandidateList.self
+        )
+    }
+
+    public func requestPullRequestReviewers(
+        _ reference: PullRequestRef,
+        reviewers: [PullRequestReviewerCandidate],
+        requested: Bool
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["reviewers"] = .array(reviewers.map {
+            .object(["id": .string($0.id), "kind": .string($0.kind)])
+        })
+        payload["requested"] = .bool(requested)
+        try await rpc.request(
+            RPCMethod.pullRequestsRequestReviewers.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func invalidatePullRequests(_ reference: PullRequestRef? = nil) async throws {
+        var payload: [String: JSONValue] = [:]
+        if let reference { payload["reference"] = try JSONValue.encode(reference) }
+        try await rpc.request(
+            RPCMethod.pullRequestsInvalidate.rawValue,
+            payload: .object(payload)
+        )
+    }
+
     public func serverConfigEvents() async
         -> AsyncThrowingStream<ServerConfigStreamEvent, Error>
     {
@@ -1248,6 +1424,20 @@ public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
     case serverGetUsageSummary = "server.getUsageSummary"
+    case pullRequestsList = "pullRequests.list"
+    case pullRequestsDetail = "pullRequests.detail"
+    case pullRequestsActivity = "pullRequests.activity"
+    case pullRequestsRunAction = "pullRequests.runAction"
+    case pullRequestsUpdate = "pullRequests.update"
+    case pullRequestsComment = "pullRequests.comment"
+    case pullRequestsUpdateComment = "pullRequests.updateComment"
+    case pullRequestsSubmitReview = "pullRequests.submitReview"
+    case pullRequestsReplyToThread = "pullRequests.replyToThread"
+    case pullRequestsSetThreadResolution = "pullRequests.setThreadResolution"
+    case pullRequestsSetReaction = "pullRequests.setReaction"
+    case pullRequestsInvalidate = "pullRequests.invalidate"
+    case pullRequestsReviewerCandidates = "pullRequests.reviewerCandidates"
+    case pullRequestsRequestReviewers = "pullRequests.requestReviewers"
     case dispatchCommand = "orchestration.dispatchCommand"
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"

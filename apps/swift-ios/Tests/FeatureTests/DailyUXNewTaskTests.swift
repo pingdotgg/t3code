@@ -839,6 +839,77 @@ struct DailyUXNewTaskTests {
         #expect(attachment.mimeType == "image/jpeg")
     }
 
+    @Test
+    func projectPickerLeadsWithRecentGroupsAndKeepsTheRestAlphabetical() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let gamma = rankedProject("gamma", name: "Gamma")
+        let delta = rankedProject("delta", name: "Delta")
+        let epsilon = rankedProject("epsilon", name: "Epsilon")
+        let value = rankedSnapshot(
+            projects: [gamma, alpha, epsilon, delta, beta],
+            threads: [
+                rankedThread("delta-thread", projectID: delta.id, activity: 40),
+                rankedThread("beta-thread", projectID: beta.id, activity: 30),
+                rankedThread("epsilon-thread", projectID: epsilon.id, activity: 20),
+                rankedThread("alpha-thread", projectID: alpha.id, activity: 10),
+            ]
+        )
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+
+        let sections = DailyUXProjectPickerSections(
+            groups: groups,
+            recentGroupIDs: DailyUXCreationContext.recentProjects(in: value).map(\.group.id)
+        )
+
+        #expect(groups.map(\.name) == ["Alpha", "Beta", "Delta", "Epsilon", "Gamma"])
+        #expect(sections.recents.map(\.name) == ["Delta", "Beta", "Epsilon"])
+        #expect(sections.others.map(\.name) == ["Alpha", "Gamma"])
+        #expect(
+            Set(sections.recents.map(\.id))
+                .isDisjoint(with: Set(sections.others.map(\.id)))
+        )
+        #expect(sections.recents.count + sections.others.count == groups.count)
+    }
+
+    @Test
+    func projectPickerKeepsTheAlphabeticalListWhenNoProjectHasBeenUsed() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let value = rankedSnapshot(projects: [beta, alpha], threads: [])
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+
+        let sections = DailyUXProjectPickerSections(
+            groups: groups,
+            recentGroupIDs: DailyUXCreationContext.recentProjects(in: value).map(\.group.id)
+        )
+
+        #expect(sections.recents.isEmpty)
+        #expect(sections.others.map(\.name) == ["Alpha", "Beta"])
+    }
+
+    @Test
+    func projectPickerRecentSectionIgnoresRepeatsAndProjectsThatAreGone() throws {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let value = rankedSnapshot(projects: [alpha, beta], threads: [])
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+        let alphaGroup = try #require(
+            DailyUXProjectGrouping.group(containing: alpha.id, in: groups)
+        )
+        let betaGroup = try #require(
+            DailyUXProjectGrouping.group(containing: beta.id, in: groups)
+        )
+
+        let sections = DailyUXProjectPickerSections(
+            groups: groups,
+            recentGroupIDs: [betaGroup.id, "removed-project-group", betaGroup.id, alphaGroup.id]
+        )
+
+        #expect(sections.recents.map(\.name) == ["Beta", "Alpha"])
+        #expect(sections.others.isEmpty)
+    }
+
     private func rankedProject(
         _ id: String,
         name: String,

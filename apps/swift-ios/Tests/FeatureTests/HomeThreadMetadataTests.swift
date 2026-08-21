@@ -291,4 +291,37 @@ struct HomeThreadMetadataTests {
             ) == nil
         )
     }
+
+    @Test
+    func rowContextUsesRepositoryGroupNameInsteadOfStalePhysicalProjectTitle() throws {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Test T3 Code Functionality"
+        )
+        let snapshot = FeatureSnapshot(
+            projects: [
+                FeatureProject(
+                    id: "project",
+                    environmentID: "bb-1",
+                    name: "wat",
+                    path: "/work/t3code",
+                    repositoryIdentity: FeatureRepositoryIdentity(
+                        canonicalKey: "github.com/pingdotgg/t3code",
+                        rootPath: "/work/t3code",
+                        displayName: "pingdotgg/t3code",
+                        name: "t3code"
+                    )
+                ),
+            ],
+            threads: [thread],
+            preferencesByEnvironment: [
+                "bb-1": FeatureEnvironmentPreferences(projectGroupingMode: .repository),
+            ]
+        )
+
+        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+
+        #expect(context.projectName == "pingdotgg/t3code")
+    }
 }
