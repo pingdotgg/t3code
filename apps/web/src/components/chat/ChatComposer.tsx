@@ -2592,9 +2592,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return false;
     }
     if (!insertComposerTextAtEnd(text, { ensureLeadingBoundary: true })) {
-      // This refusal comes from the same composer state that already rejected
-      // the images, so one drop never says it twice.
-      if (!hadImages) {
+      // Pending plan questions is the ONLY refusal `addComposerImages` shares
+      // with the insert, so that is the only case a mixed drop has already been
+      // told about. Staying silent for the others — connecting, approval,
+      // project selection — would attach the images and drop the paths without
+      // a word, which is the failure this whole branch exists to avoid.
+      const alreadyReported = hadImages && pendingUserInputs.length > 0;
+      if (!alreadyReported) {
         reportFailure("The composer is busy; try again once it is ready.");
       }
       return false;
