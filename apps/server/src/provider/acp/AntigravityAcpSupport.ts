@@ -17,7 +17,6 @@ interface AntigravityAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "spawn"
 > {
-  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly antigravitySettings: AntigravityAcpRuntimeAntigravitySettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
 }
@@ -40,9 +39,10 @@ export const makeAntigravityAcpRuntime = (
 ): Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
@@ -52,9 +52,7 @@ export const makeAntigravityAcpRuntime = (
           input.environment,
         ),
       }).pipe(
-        Layer.provide(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-        ),
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner)),
       ),
     );
     return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(

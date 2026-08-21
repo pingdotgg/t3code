@@ -568,7 +568,6 @@ export function makeAntigravityAdapter(
           const acp = yield* makeAntigravityAcpRuntime({
             antigravitySettings,
             ...(options?.environment ? { environment: options.environment } : {}),
-            childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
@@ -592,13 +591,14 @@ export function makeAntigravityAdapter(
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
             Effect.provideService(Scope.Scope, sessionScope),
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterProcessError({
                   provider: PROVIDER,
                   threadId: input.threadId,
-                  detail: cause.message,
+                  detail: "Failed to start the Antigravity ACP session process.",
                   cause,
                 }),
             ),
@@ -919,7 +919,7 @@ export function makeAntigravityAdapter(
                           new ProviderAdapterRequestError({
                             provider: PROVIDER,
                             method: "session/prompt",
-                            detail: cause.message,
+                            detail: `Failed to read attachment '${attachment.id}'.`,
                             cause,
                           }),
                       ),

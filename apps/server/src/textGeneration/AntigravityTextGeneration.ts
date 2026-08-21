@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
 import { type AntigravitySettings, type ModelSelection } from "@t3tools/contracts";
@@ -39,7 +38,6 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const crypto = yield* Crypto.Crypto;
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const runAntigravityJson = <S extends Schema.Top>({
     operation,
@@ -64,7 +62,6 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       const runtime = yield* makeAntigravityAcpRuntime({
         antigravitySettings,
         environment,
-        childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
@@ -123,14 +120,19 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         ),
       );
 
+      // A cancelled turn may have streamed partial text; never decode it.
+      if (promptResult.stopReason === "cancelled") {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Antigravity ACP request was cancelled.",
+        });
+      }
+
       const trimmed = (yield* Ref.get(outputRef)).trim();
       if (!trimmed) {
         return yield* new TextGenerationError({
           operation,
-          detail:
-            promptResult.stopReason === "cancelled"
-              ? "Antigravity ACP request was cancelled."
-              : "Antigravity Agent returned empty output.",
+          detail: "Antigravity Agent returned empty output.",
         });
       }
 
