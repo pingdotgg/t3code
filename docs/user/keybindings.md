@@ -52,9 +52,7 @@ successful pick; its hover glow and badge preview the element and color family t
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Keybindings** if you want to use it.
 
-`navigation.back` and `navigation.forward` move through visited T3 Code locations. Their defaults are
-`mod+[` and `mod+]`. Web and desktop also show arrow buttons beside the sidebar toggle and commands
-in the palette. Mobile shows the buttons in app headers and supports the shortcuts on a keyboard.
+`navigation.back` and `navigation.forward` move through visited locations using `mod+[` and `mod+]`.
 
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
