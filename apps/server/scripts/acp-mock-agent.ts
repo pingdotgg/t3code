@@ -14,6 +14,7 @@ import type * as AcpSchema from "effect-acp/schema";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
+const emitEditPermission = process.env.T3_ACP_EMIT_EDIT_PERMISSION === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -660,15 +661,18 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           toolCall: {
             toolCallId,
-            title: "`cat server/package.json`",
-            kind: "execute",
+            title: emitEditPermission ? "Delete obsolete file" : "`cat server/package.json`",
+            ...(emitEditPermission ? {} : { kind: "execute" as const }),
             status: "pending",
+            ...(emitEditPermission ? { locations: [{ path: "/tmp/obsolete.ts" }] } : {}),
             content: [
               {
                 type: "content",
                 content: {
                   type: "text",
-                  text: "Not in allowlist: cat server/package.json",
+                  text: emitEditPermission
+                    ? "Delete obsolete file"
+                    : "Not in allowlist: cat server/package.json",
                 },
               },
             ],
@@ -693,8 +697,8 @@ const program = Effect.gen(function* () {
           update: {
             sessionUpdate: "tool_call_update",
             toolCallId,
-            title: "Terminal",
-            kind: "execute",
+            title: emitEditPermission ? "Delete obsolete file" : "Terminal",
+            ...(emitEditPermission ? {} : { kind: "execute" as const }),
             status: "completed",
             rawOutput: {
               exitCode: 0,

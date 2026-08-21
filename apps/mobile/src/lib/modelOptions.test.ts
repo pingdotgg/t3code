@@ -7,9 +7,43 @@ import {
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
+  selectedProviderShowsInteractionModeToggle,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("preserves the upstream provider for OMP model rows", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "omp",
+          driver: "omp",
+          displayName: "Oh My Pi",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "moonshot/kimi-k2.6",
+              name: "Kimi K2.6",
+              subProvider: "Moonshot",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(buildModelOptions(config, null)).toMatchObject([
+      {
+        label: "Kimi K2.6",
+        providerLabel: "Oh My Pi",
+        subProvider: "Moonshot",
+        subtitle: "Oh My Pi · Moonshot",
+      },
+    ]);
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [
@@ -170,5 +204,33 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(config, legacy)).toBeNull();
     // Offline: nothing to validate against, selection passes through.
     expect(resolveDefaultableModelSelection(null, legacy)).toBe(legacy);
+  });
+
+  it("uses the selected provider interaction-mode capability", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "omp",
+          driver: "omp",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          showInteractionModeToggle: false,
+          models: [],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const ompSelection = {
+      instanceId: ProviderInstanceId.make("omp"),
+      model: "moonshot/kimi-k2.6",
+    };
+    const missingSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+    };
+
+    expect(selectedProviderShowsInteractionModeToggle(config, ompSelection)).toBe(false);
+    expect(selectedProviderShowsInteractionModeToggle(config, missingSelection)).toBe(true);
+    expect(selectedProviderShowsInteractionModeToggle(null, ompSelection)).toBe(true);
   });
 });

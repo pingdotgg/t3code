@@ -187,14 +187,41 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.cursor.enabled).toBe(true);
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
+    expect(decoded.providers.omp.enabled).toBe(false);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("omp"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
+  });
+
+  it("decodes OMP settings and patch fields", () => {
+    expect(decodeServerSettings({}).providers.omp).toMatchObject({
+      enabled: false,
+      binaryPath: "omp",
+      launchArgs: "",
+      customModels: [],
+    });
+
+    expect(
+      decodeServerSettingsPatch({
+        providers: {
+          omp: {
+            binaryPath: "/opt/omp",
+            launchArgs: "--config /tmp/omp.yml",
+            customModels: ["extension/model"],
+          },
+        },
+      }).providers?.omp,
+    ).toEqual({
+      binaryPath: "/opt/omp",
+      launchArgs: "--config /tmp/omp.yml",
+      customModels: ["extension/model"],
+    });
   });
 
   it("resolves instance enabled state with explicit false winning", () => {

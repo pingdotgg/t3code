@@ -3,7 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
+  configOptionCurrentValueMatches,
   extractModelConfigId,
+  extractConfigOptionsFromSessionUpdate,
+  findSessionConfigOption,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionModeState,
@@ -59,6 +62,38 @@ describe("AcpRuntimeModel", () => {
     } satisfies EffectAcpSchema.NewSessionResponse);
 
     expect(modelConfigId).toBe("model");
+  });
+
+  it("uses native config updates when deciding whether a later model change is needed", () => {
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "native-model",
+            options: [
+              { value: "native-model", name: "Native model" },
+              { value: "requested-model", name: "Requested model" },
+            ],
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    const configOptions = extractConfigOptionsFromSessionUpdate(notification);
+    const modelOption = findSessionConfigOption(configOptions, "model");
+
+    expect(modelOption?.currentValue).toBe("native-model");
+    expect(modelOption).toBeDefined();
+    if (modelOption) {
+      expect(configOptionCurrentValueMatches(modelOption, "native-model")).toBe(true);
+      expect(configOptionCurrentValueMatches(modelOption, "requested-model")).toBe(false);
+    }
   });
 
   it("detects Grok session replay updates from _meta.isReplay", () => {
@@ -330,6 +365,89 @@ describe("AcpRuntimeModel", () => {
               type: "text",
               text: "hello from acp",
             },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("projects typed ACP usage and available command updates", () => {
+    const usageResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1234,
+        size: 8192,
+        cost: {
+          amount: 0.42,
+          currency: "USD",
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(usageResult.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        payload: {
+          used: 1234,
+          size: 8192,
+          cost: {
+            amount: 0.42,
+            currency: "USD",
+          },
+        },
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1234,
+            size: 8192,
+            cost: {
+              amount: 0.42,
+              currency: "USD",
+            },
+          },
+        },
+      },
+    ]);
+
+    const commandsResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          {
+            name: "review",
+            description: "Review the current changes",
+            input: { hint: "optional focus" },
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(commandsResult.events).toEqual([
+      {
+        _tag: "AvailableCommandsUpdated",
+        payload: {
+          availableCommands: [
+            {
+              name: "review",
+              description: "Review the current changes",
+              input: { hint: "optional focus" },
+            },
+          ],
+        },
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "review",
+                description: "Review the current changes",
+                input: { hint: "optional focus" },
+              },
+            ],
           },
         },
       },

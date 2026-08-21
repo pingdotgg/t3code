@@ -14,6 +14,7 @@ export type ModelOption = {
   readonly subtitle: string;
   readonly providerKey: string;
   readonly providerLabel: string;
+  readonly subProvider?: string;
   readonly providerDriver: string;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
@@ -35,6 +36,7 @@ function providerDisplayLabel(provider: {
   if (provider.displayName) return provider.displayName;
   if (provider.driver === "codex") return "Codex";
   if (provider.driver === "claudeAgent") return "Claude";
+  if (provider.driver === "omp") return "Oh My Pi";
   return provider.instanceId;
 }
 
@@ -104,6 +106,24 @@ export function resolveDefaultableModelSelection(
   return model?.isLegacy === true ? null : usable;
 }
 
+/**
+ * The server owns whether a provider supports interaction-mode selection. If
+ * the environment is offline or the selected provider is not in its latest
+ * snapshot, preserve the existing control until the server can describe it.
+ */
+export function selectedProviderShowsInteractionModeToggle(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+): boolean {
+  if (!config || !selection) {
+    return true;
+  }
+  return (
+    config.providers.find((provider) => provider.instanceId === selection.instanceId)
+      ?.showInteractionModeToggle ?? true
+  );
+}
+
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
@@ -118,12 +138,14 @@ export function buildModelOptions(
     const providerLabel = providerDisplayLabel(provider);
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
+      const subProvider = model.subProvider?.trim();
       options.set(key, {
         key,
         label: model.name,
-        subtitle: providerLabel,
+        subtitle: subProvider ? `${providerLabel} · ${subProvider}` : providerLabel,
         providerKey: provider.instanceId,
         providerLabel,
+        ...(subProvider ? { subProvider } : {}),
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,

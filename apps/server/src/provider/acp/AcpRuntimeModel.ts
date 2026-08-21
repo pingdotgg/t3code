@@ -108,6 +108,16 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly payload: EffectAcpSchema.UsageUpdate;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "AvailableCommandsUpdated";
+      readonly payload: EffectAcpSchema.AvailableCommandsUpdate;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -143,6 +153,28 @@ export function findSessionConfigOption(
     return undefined;
   }
   return configOptions.find((option) => option.id.trim() === normalizedConfigId);
+}
+
+export function extractConfigOptionsFromSessionUpdate(
+  params: EffectAcpSchema.SessionNotification,
+): ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined {
+  return params.update.sessionUpdate === "config_option_update"
+    ? params.update.configOptions
+    : undefined;
+}
+
+export function configOptionCurrentValueMatches(
+  configOption: EffectAcpSchema.SessionConfigOption,
+  value: string | boolean,
+): boolean {
+  const currentValue = configOption.currentValue;
+  if (configOption.type === "boolean") {
+    return currentValue === value;
+  }
+  if (typeof currentValue !== "string") {
+    return false;
+  }
+  return currentValue.trim() === String(value).trim();
 }
 
 export function collectSessionConfigOptionValues(
@@ -572,6 +604,32 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           rawPayload: params,
         });
       }
+      break;
+    }
+    case "usage_update": {
+      const payload: EffectAcpSchema.UsageUpdate = {
+        ...(upd._meta !== undefined ? { _meta: upd._meta } : {}),
+        ...(upd.cost !== undefined ? { cost: upd.cost } : {}),
+        size: upd.size,
+        used: upd.used,
+      };
+      events.push({
+        _tag: "UsageUpdated",
+        payload,
+        rawPayload: params,
+      });
+      break;
+    }
+    case "available_commands_update": {
+      const payload: EffectAcpSchema.AvailableCommandsUpdate = {
+        ...(upd._meta !== undefined ? { _meta: upd._meta } : {}),
+        availableCommands: upd.availableCommands,
+      };
+      events.push({
+        _tag: "AvailableCommandsUpdated",
+        payload,
+        rawPayload: params,
+      });
       break;
     }
     default:

@@ -94,7 +94,11 @@ function ModelRow(props: {
   const checkmarkColor = useThemeColor("--color-icon");
   return (
     <Pressable
-      accessibilityLabel={props.option.label}
+      accessibilityLabel={
+        props.option.subProvider
+          ? `${props.option.label}. ${props.option.subProvider}`
+          : props.option.label
+      }
       accessibilityRole="radio"
       accessibilityState={{ checked: props.selected }}
       onPress={props.onPress}
@@ -104,9 +108,16 @@ function ModelRow(props: {
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
       )}
     >
-      <Text className="min-w-0 shrink text-base font-t3-medium text-foreground" numberOfLines={1}>
-        {props.option.label}
-      </Text>
+      <View className="min-w-0 shrink gap-0.5">
+        <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
+          {props.option.label}
+        </Text>
+        {props.option.subProvider ? (
+          <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+            {props.option.subProvider}
+          </Text>
+        ) : null}
+      </View>
       {props.option.isDefault ? (
         <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
           <Text className="text-3xs font-t3-bold text-foreground-muted">Default</Text>
