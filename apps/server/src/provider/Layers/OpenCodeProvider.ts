@@ -12,6 +12,10 @@ import * as Effect from "effect/Effect";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
+  sanitizeTerminalValue,
+  stripTerminalEscapes,
+} from "@t3tools/shared/stripTerminalEscapes";
+import {
   buildServerProvider,
   nonEmptyTrimmed,
   parseGenericCliVersion,
@@ -174,14 +178,18 @@ function openCodeCapabilitiesForModel(input: {
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
-  const variantValues = Object.keys(input.model.variants ?? {});
+  const variantValues = Object.keys(input.model.variants ?? {}).map(sanitizeTerminalValue);
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
       ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
       : { id: value, label: titleCaseSlug(value) },
   );
-  const primaryAgents = input.agents.filter(
+  const sanitizedAgents = input.agents.map((agent) => ({
+    ...agent,
+    name: sanitizeTerminalValue(agent.name),
+  }));
+  const primaryAgents = sanitizedAgents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
   const defaultAgent = inferDefaultAgent(primaryAgents);
@@ -390,7 +398,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     if (versionExit._tag === "Failure") {
       return fallback(Cause.squash(versionExit.cause));
     }
-    version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
+    version = parseGenericCliVersion(stripTerminalEscapes(versionExit.value.stdout)) ?? null;
 
     if (!version) {
       return fallback(
