@@ -23,6 +23,7 @@ import {
   launchOrReuseRemoteServer,
   REMOTE_PICK_PORT_SCRIPT,
   SshEnvironmentManager,
+  SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
   waitForHttpReady,
 } from "./tunnel.ts";
 
@@ -317,7 +318,7 @@ describe("ssh tunnel scripts", () => {
   );
 
   it.effect(
-    "succeeds on a single response slower than 1s, so a high-RTT link only makes readiness slower, not impossible",
+    "succeeds on a single response slower than 1s using the tunnel probe bound, so a high-RTT link only makes readiness slower, not impossible",
     () =>
       Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(
@@ -325,6 +326,7 @@ describe("ssh tunnel scripts", () => {
             waitForHttpReady({
               baseUrl: "http://127.0.0.1:41773/",
               timeoutMs: 5_000,
+              probeTimeoutMs: SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
             }),
           ),
         );
