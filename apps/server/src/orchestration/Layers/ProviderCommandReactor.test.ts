@@ -2449,7 +2449,7 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("reacts to thread.turn.interrupt-requested by calling provider interrupt", async () => {
+  it("interrupts the provider and cancels pending user input", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -2473,6 +2473,35 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-user-input-requested"),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make("activity-user-input-requested-before-interrupt"),
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: {
+            requestId: "user-input-request-1",
+            questions: [
+              {
+                id: "continue",
+                header: "Continue",
+                question: "Continue?",
+                options: [{ label: "Yes", description: "Continue the turn." }],
+                multiSelect: false,
+              },
+            ],
+          },
+          turnId: asTurnId("turn-1"),
+          createdAt: "2025-12-31T23:59:59.000Z",
+        },
+        createdAt: "2025-12-31T23:59:59.000Z",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.turn.interrupt",
         commandId: CommandId.make("cmd-turn-interrupt"),
         threadId: ThreadId.make("thread-1"),
@@ -2484,6 +2513,30 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
+    });
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some(
+          (activity) =>
+            activity.kind === "user-input.resolved" &&
+            (activity.payload as { requestId?: unknown }).requestId === "user-input-request-1",
+        ) ?? false
+      );
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.find((activity) => activity.kind === "user-input.resolved"),
+    ).toMatchObject({
+      summary: "User input cancelled",
+      payload: {
+        requestId: "user-input-request-1",
+        cancelled: true,
+      },
+      turnId: "turn-1",
     });
   });
 

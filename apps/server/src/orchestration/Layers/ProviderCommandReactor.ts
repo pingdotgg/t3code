@@ -4,6 +4,7 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationThread,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -16,6 +17,7 @@ import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shar
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -48,6 +50,10 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+
+// Server-side timestamps for reactor-appended activities. Client-supplied
+// command timestamps can predate the thread activity they must follow.
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -275,6 +281,43 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
+function pendingUserInputRequests(
+  activities: OrchestrationThread["activities"],
+): ReadonlyArray<{ readonly requestId: string; readonly turnId: TurnId | null }> {
+  const openRequests = new Map<string, TurnId | null>();
+  const ordered = [...activities].toSorted(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+  );
+
+  for (const activity of ordered) {
+    const payload =
+      typeof activity.payload === "object" && activity.payload !== null
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
+    if (requestId === null) continue;
+
+    if (activity.kind === "user-input.requested") {
+      openRequests.set(requestId, activity.turnId);
+    } else if (activity.kind === "user-input.resolved") {
+      openRequests.delete(requestId);
+    } else if (activity.kind === "provider.user-input.respond.failed") {
+      const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : "";
+      if (
+        detail.includes("stale pending user-input request") ||
+        detail.includes("unknown pending user-input request") ||
+        detail.includes("unknown pending user input request") ||
+        detail.includes("unknown pending codex user input request")
+      ) {
+        openRequests.delete(requestId);
+      }
+    }
+  }
+
+  return [...openRequests].map(([requestId, turnId]) => ({ requestId, turnId }));
+}
+
 function buildGeneratedWorktreeBranchName(raw: string): string {
   const normalized = raw
     .trim()
@@ -365,6 +408,36 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const appendCancelledUserInputActivity = Effect.fn(
+    "ProviderCommandReactor.appendCancelledUserInputActivity",
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: string;
+    readonly turnId: TurnId | null;
+    readonly createdAt: string;
+  }) {
+    const commandId = yield* serverCommandId("user-input-cancelled");
+    const eventId = yield* serverEventId();
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId,
+      threadId: input.threadId,
+      activity: {
+        id: eventId,
+        tone: "info",
+        kind: "user-input.resolved",
+        summary: "User input cancelled",
+        payload: {
+          requestId: input.requestId,
+          cancelled: true,
+        },
+        turnId: input.turnId,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+  });
 
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
@@ -1194,6 +1267,28 @@ const make = Effect.gen(function* () {
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
     yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    // Some providers discard their callbacks without emitting a matching
+    // resolution event. Close those requests once the interrupt succeeds,
+    // deriving from a fresh read: the provider can append real resolutions
+    // while handling the interrupt. Cancellations get server-side timestamps
+    // so they order after the request activity even when the interrupt
+    // command predates it.
+    const postInterruptThread = yield* resolveThread(event.payload.threadId);
+    if (!postInterruptThread) {
+      return;
+    }
+    yield* Effect.forEach(
+      pendingUserInputRequests(postInterruptThread.activities),
+      ({ requestId, turnId }) =>
+        Effect.flatMap(nowIso, (cancelledAt) =>
+          appendCancelledUserInputActivity({
+            threadId: event.payload.threadId,
+            requestId,
+            turnId,
+            createdAt: cancelledAt,
+          }),
+        ),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
