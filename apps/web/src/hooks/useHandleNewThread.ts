@@ -4,6 +4,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
 import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
@@ -24,8 +25,14 @@ import {
 } from "../logicalProject";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import { readThreadShell, useProjects, useThread } from "../state/entities";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  resolveAvailableNewThreadProjectRef,
+  resolveNewDraftStartFromOrigin,
+  resolveWorkspaceOptionsAfterEnvironmentRetarget,
+} from "../lib/chatThreadActions";
 import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
+import { shouldReadProjectFileForNewThreadDefaults } from "../session-logic";
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -52,6 +59,8 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
 
 export function useNewThreadHandler() {
   const projects = useProjects();
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   // New-thread defaults are a user preference, and the settings UI only ever
   // edits the primary environment's settings.json. Reading the target
   // environment's own settings here would silently reset remote projects to
@@ -67,7 +76,7 @@ export function useNewThreadHandler() {
 
   return useCallback(
     (
-      projectRef: ScopedProjectRef,
+      requestedProjectRef: ScopedProjectRef,
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
@@ -156,16 +165,56 @@ export function useNewThreadHandler() {
           moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
         }
       };
-      const project = projects.find(
+      const requestedProject = projects.find(
         (candidate) =>
-          candidate.id === projectRef.projectId &&
-          candidate.environmentId === projectRef.environmentId,
+          candidate.id === requestedProjectRef.projectId &&
+          candidate.environmentId === requestedProjectRef.environmentId,
       );
+      const requestedLogicalProjectKey = requestedProject
+        ? deriveLogicalProjectKeyFromSettings(requestedProject, projectGroupingSettings)
+        : scopedProjectKey(requestedProjectRef);
+      const siblingProjects = requestedProject
+        ? projects.filter(
+            (candidate) =>
+              deriveLogicalProjectKeyFromSettings(candidate, projectGroupingSettings) ===
+              requestedLogicalProjectKey,
+          )
+        : [];
+      const projectRef = resolveAvailableNewThreadProjectRef({
+        requested: requestedProjectRef,
+        members: siblingProjects.map((candidate) => ({
+          environmentId: candidate.environmentId,
+          projectId: candidate.id,
+          isPrimary: candidate.environmentId === primaryEnvironmentId,
+        })),
+        isEnvironmentReachable: (environmentId) =>
+          canCreateProjectInEnvironment(
+            environments.find((environment) => environment.environmentId === environmentId)
+              ?.connection.phase,
+          ),
+      });
+      const project =
+        projects.find(
+          (candidate) =>
+            candidate.id === projectRef.projectId &&
+            candidate.environmentId === projectRef.environmentId,
+        ) ?? requestedProject;
+      const workspaceOptions = resolveWorkspaceOptionsAfterEnvironmentRetarget({
+        requestedEnvironmentId: requestedProjectRef.environmentId,
+        targetEnvironmentId: projectRef.environmentId,
+        options,
+      });
       // The shared resolver owns the priority order. The t3.json read is
-      // skipped entirely when a higher-priority source decides, and its
-      // query atom caches per project after the first call.
+      // skipped entirely when a higher-priority source decides or the
+      // environment cannot serve: executeAtomQuery waits on a live RPC, so
+      // a down machine would leave New Thread hanging.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-        const consultProjectFile = project !== undefined && project.defaultThreadEnvMode == null;
+        const connectionPhase = environments.find(
+          (environment) => environment.environmentId === projectRef.environmentId,
+        )?.connection.phase;
+        const consultProjectFile =
+          project !== undefined &&
+          shouldReadProjectFileForNewThreadDefaults(project.defaultThreadEnvMode, connectionPhase);
         return resolveDefaultThreadEnvMode({
           projectSetting: project?.defaultThreadEnvMode,
           projectFile: consultProjectFile
@@ -180,10 +229,10 @@ export function useNewThreadHandler() {
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
-      const hasBranchOption = options?.branch !== undefined;
-      const hasWorktreePathOption = options?.worktreePath !== undefined;
-      const hasEnvModeOption = options?.envMode !== undefined;
-      const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+      const hasBranchOption = workspaceOptions?.branch !== undefined;
+      const hasWorktreePathOption = workspaceOptions?.worktreePath !== undefined;
+      const hasEnvModeOption = workspaceOptions?.envMode !== undefined;
+      const hasStartFromOriginOption = workspaceOptions?.startFromOrigin !== undefined;
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -230,7 +279,7 @@ export function useNewThreadHandler() {
           // the user may have just picked a branch in the composer.
           let workspaceContext: NewThreadWorkspaceOptions | null = null;
           if (hasExplicitWorkspaceOption) {
-            workspaceContext = pickExplicitWorkspaceOptions(options);
+            workspaceContext = pickExplicitWorkspaceOptions(workspaceOptions);
           } else if (!isDraftAlreadyOpen) {
             const defaultEnvMode = await resolveDefaultEnvMode();
             // The await yields. If the draft was opened (a concurrent
@@ -336,14 +385,17 @@ export function useNewThreadHandler() {
           hasEnvModeOption ||
           hasStartFromOriginOption
         ) {
-          setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
+          setDraftThreadContext(
+            currentRouteTarget.draftId,
+            pickExplicitWorkspaceOptions(workspaceOptions),
+          );
         }
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
           threadId: latestActiveDraftThread.threadId,
           createdAt: latestActiveDraftThread.createdAt,
           runtimeMode: latestActiveDraftThread.runtimeMode,
           interactionMode: latestActiveDraftThread.interactionMode,
-          ...pickExplicitWorkspaceOptions(options),
+          ...pickExplicitWorkspaceOptions(workspaceOptions),
         });
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
@@ -355,7 +407,7 @@ export function useNewThreadHandler() {
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       return (async () => {
-        const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
+        const initialEnvMode = workspaceOptions?.envMode ?? (await resolveDefaultEnvMode());
         // The await yields, so a concurrent invocation may have registered a
         // draft for this logical project in the meantime. Registering ours
         // too would evict that draft while its navigation is in flight —
@@ -383,7 +435,7 @@ export function useNewThreadHandler() {
             createdAt: racedDraft.createdAt,
             runtimeMode: racedDraft.runtimeMode,
             interactionMode: racedDraft.interactionMode,
-            ...pickExplicitWorkspaceOptions(options),
+            ...pickExplicitWorkspaceOptions(workspaceOptions),
           });
           carryComposerContentTo(racedDraft.draftId);
           await router.navigate({
@@ -396,11 +448,11 @@ export function useNewThreadHandler() {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
           createdAt,
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
+          branch: workspaceOptions?.branch ?? null,
+          worktreePath: workspaceOptions?.worktreePath ?? null,
           envMode: initialEnvMode,
           startFromOrigin:
-            options?.startFromOrigin ??
+            workspaceOptions?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({
               envMode: initialEnvMode,
               newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
@@ -427,7 +479,15 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],
+    [
+      environments,
+      getCurrentRouteTarget,
+      primaryEnvironmentId,
+      primaryServerSettings,
+      projectGroupingSettings,
+      projects,
+      router,
+    ],
   );
 }
 

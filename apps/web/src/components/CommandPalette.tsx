@@ -95,6 +95,7 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
+import { shouldOpenLatestThreadForProject } from "../session-logic";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -987,7 +988,19 @@ function OpenCommandPaletteDialog(props: {
             project.id,
             clientSettings.sidebarThreadSortOrder,
           );
-      if (latestThread) {
+      const latestThreadConnectionPhase = latestThread
+        ? environments.find(
+            (environment) => environment.environmentId === latestThread.environmentId,
+          )?.connection.phase
+        : undefined;
+      if (
+        latestThread &&
+        shouldOpenLatestThreadForProject(
+          latestThread.latestTurn,
+          latestThread.session,
+          latestThreadConnectionPhase,
+        )
+      ) {
         await navigate({
           to: "/$environmentId/$threadId",
           params: buildThreadRouteParams(
@@ -1001,6 +1014,7 @@ function OpenCommandPaletteDialog(props: {
     },
     [
       clientSettings.sidebarThreadSortOrder,
+      environments,
       handleNewThread,
       navigate,
       projectGroupByTargetKey,
@@ -1732,7 +1746,19 @@ function OpenCommandPaletteDialog(props: {
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );
-        if (latestThread) {
+        const latestThreadConnectionPhase = latestThread
+          ? environments.find(
+              (environment) => environment.environmentId === latestThread.environmentId,
+            )?.connection.phase
+          : undefined;
+        if (
+          latestThread &&
+          shouldOpenLatestThreadForProject(
+            latestThread.latestTurn,
+            latestThread.session,
+            latestThreadConnectionPhase,
+          )
+        ) {
           await navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(

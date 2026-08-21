@@ -19,6 +19,9 @@ import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  shouldEscapeUnsettledThreadOnOfflineEnvironment,
+  shouldOpenLatestThreadForProject,
+  shouldReadProjectFileForNewThreadDefaults,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
@@ -1916,6 +1919,66 @@ describe("isLatestTurnSettled", () => {
         null,
       ),
     ).toBe(false);
+  });
+});
+
+describe("offline environment escape for unsettled latest turns", () => {
+  const settledTurn = {
+    turnId: TurnId.make("turn-1"),
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: "2026-02-27T21:10:06.000Z",
+  } as const;
+  const inFlightTurn = {
+    turnId: TurnId.make("turn-1"),
+    startedAt: "2026-02-27T21:10:00.000Z",
+    completedAt: null,
+  } as const;
+  const runningSession = {
+    status: "running" as const,
+    activeTurnId: TurnId.make("turn-1"),
+  };
+  const readySession = {
+    status: "ready" as const,
+    activeTurnId: null,
+  };
+
+  it("still opens the latest thread when the owning environment is reachable and the turn is unsettled", () => {
+    expect(shouldOpenLatestThreadForProject(inFlightTurn, runningSession, "connected")).toBe(true);
+    expect(
+      shouldEscapeUnsettledThreadOnOfflineEnvironment(inFlightTurn, runningSession, "connected"),
+    ).toBe(false);
+  });
+
+  it("does not open an unsettled latest thread when the owning environment is offline", () => {
+    expect(shouldOpenLatestThreadForProject(inFlightTurn, runningSession, "offline")).toBe(false);
+    expect(
+      shouldEscapeUnsettledThreadOnOfflineEnvironment(inFlightTurn, runningSession, "offline"),
+    ).toBe(true);
+  });
+
+  it("does not open an unsettled latest thread when the owning environment is reconnecting or unknown", () => {
+    expect(shouldOpenLatestThreadForProject(inFlightTurn, runningSession, "reconnecting")).toBe(
+      false,
+    );
+    expect(shouldOpenLatestThreadForProject(inFlightTurn, runningSession, undefined)).toBe(false);
+  });
+
+  it("still opens a settled latest thread even if the owning environment is offline", () => {
+    expect(shouldOpenLatestThreadForProject(settledTurn, readySession, "offline")).toBe(true);
+    expect(
+      shouldEscapeUnsettledThreadOnOfflineEnvironment(settledTurn, readySession, "offline"),
+    ).toBe(false);
+  });
+
+  it("does not treat a never-started thread as an unsettled trap when the environment is offline", () => {
+    expect(shouldEscapeUnsettledThreadOnOfflineEnvironment(null, null, "offline")).toBe(false);
+    expect(shouldOpenLatestThreadForProject(null, null, "offline")).toBe(true);
+  });
+
+  it("does not consult t3.json for new-thread defaults unless the environment is connected", () => {
+    expect(shouldReadProjectFileForNewThreadDefaults(null, "connected")).toBe(true);
+    expect(shouldReadProjectFileForNewThreadDefaults(null, "offline")).toBe(false);
+    expect(shouldReadProjectFileForNewThreadDefaults("worktree", "connected")).toBe(false);
   });
 });
 
