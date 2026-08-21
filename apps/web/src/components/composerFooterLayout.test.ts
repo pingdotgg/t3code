@@ -5,6 +5,7 @@ import {
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
+  shouldUseRestingComposerLayout,
 } from "./composerFooterLayout";
 
 describe("shouldUseCompactComposerFooter", () => {
@@ -48,5 +49,34 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
         hasWideActions: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldUseRestingComposerLayout", () => {
+  const resting = {
+    isMobileViewport: false,
+    isFocused: false,
+    hasAttachments: false,
+    hasExpandedChrome: false,
+  };
+
+  it("uses the resting layout for an unfocused desktop composer", () => {
+    expect(shouldUseRestingComposerLayout(resting)).toBe(true);
+  });
+
+  it("leaves responsive mobile on its existing collapse path", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, isMobileViewport: true })).toBe(false);
+  });
+
+  it("expands when focus is anywhere in the composer", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, isFocused: true })).toBe(false);
+  });
+
+  it("keeps attachments at their full editing height", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, hasAttachments: true })).toBe(false);
+  });
+
+  it("keeps drawers and composer-owned menus expanded", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, hasExpandedChrome: true })).toBe(false);
   });
 });
