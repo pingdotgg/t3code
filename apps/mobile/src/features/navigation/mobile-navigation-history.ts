@@ -2,12 +2,10 @@ export interface MobileNavigationHistorySnapshot {
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
 }
-
 export interface MobileNavigationLocation {
   readonly pathname: string;
   readonly transitionKey: string;
 }
-
 function snapshotFor(cursor: number, entryCount: number) {
   return {
     canGoBack: cursor > 0,
@@ -21,14 +19,22 @@ export function normalizeMobileNavigationPath(rawPath: string) {
   );
   return `${url.pathname}${search.size > 0 ? `?${search}` : ""}`;
 }
-
 export function createMobileNavigationHistory(initialLocation: MobileNavigationLocation) {
   let entries = [initialLocation];
   let cursor = 0;
   let snapshot = snapshotFor(cursor, entries.length);
-  let pendingTarget: { index: number; location: MobileNavigationLocation } | null = null;
+  let pendingTarget: {
+    direction: "back" | "forward";
+    index: number;
+    location: MobileNavigationLocation;
+  } | null = null;
   const listeners = new Set<() => void>();
-
+  const request = (direction: "back" | "forward", index: number) => {
+    if (pendingTarget) return null;
+    const location = entries[index];
+    pendingTarget = location ? { direction, index, location } : null;
+    return pendingTarget;
+  };
   const publish = () => {
     const nextSnapshot = snapshotFor(cursor, entries.length);
     if (
@@ -40,26 +46,13 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
     snapshot = nextSnapshot;
     listeners.forEach((listener) => listener());
   };
-
   return {
     cancelPendingTraversal: () => {
       pendingTarget = null;
     },
     getSnapshot: () => snapshot,
-    requestBack: () => {
-      if (pendingTarget) return null;
-      const index = cursor - 1;
-      const location = entries[index];
-      pendingTarget = location ? { index, location } : null;
-      return pendingTarget;
-    },
-    requestForward: () => {
-      if (pendingTarget) return null;
-      const index = cursor + 1;
-      const location = entries[index];
-      pendingTarget = location ? { index, location } : null;
-      return pendingTarget;
-    },
+    requestBack: () => request("back", cursor - 1),
+    requestForward: () => request("forward", cursor + 1),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -79,7 +72,6 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
         return;
       }
       pendingTarget = null;
-
       if (location.transitionKey !== current?.transitionKey) {
         const priorIndex = entries.findLastIndex(
           (entry, index) => index < cursor && entry.transitionKey === location.transitionKey,
@@ -98,7 +90,6 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
           return;
         }
       }
-
       entries = [...entries.slice(0, cursor + 1), location];
       cursor = entries.length - 1;
       publish();
