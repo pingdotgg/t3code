@@ -124,13 +124,18 @@ function forEachMentionMatch(
   });
 }
 
-function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegment[] {
+function splitPromptTextIntoComposerSegments(
+  text: string,
+  includeSkillTokens: boolean,
+): ComposerPromptSegment[] {
   const segments: ComposerPromptSegment[] = [];
   if (!text) {
     return segments;
   }
 
-  const tokenMatches = collectComposerInlineTokens(text);
+  const tokenMatches = collectComposerInlineTokens(text).filter(
+    (token) => includeSkillTokens || token.type !== "skill",
+  );
   let cursor = 0;
   for (const match of tokenMatches) {
     if (match.start < cursor) {
@@ -198,6 +203,7 @@ export function selectionTouchesMentionBoundary(
 export function splitPromptIntoComposerSegments(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft> = [],
+  includeSkillTokens = true,
 ): ComposerPromptSegment[] {
   if (!prompt) {
     return [];
@@ -207,7 +213,7 @@ export function splitPromptIntoComposerSegments(
   let terminalContextIndex = 0;
   forEachPromptSegmentSlice(prompt, (slice) => {
     if (slice.type === "text") {
-      segments.push(...splitPromptTextIntoComposerSegments(slice.text));
+      segments.push(...splitPromptTextIntoComposerSegments(slice.text, includeSkillTokens));
       return false;
     }
 

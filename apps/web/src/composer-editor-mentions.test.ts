@@ -126,6 +126,12 @@ describe("splitPromptIntoComposerSegments", () => {
     ]);
   });
 
+  it("keeps completed skill syntax as text when skill tokens are disabled", () => {
+    expect(splitPromptIntoComposerSegments("Use $find-skills please", [], false)).toEqual([
+      { type: "text", text: "Use $find-skills please" },
+    ]);
+  });
+
   it("keeps inline terminal context placeholders at their prompt positions", () => {
     expect(
       splitPromptIntoComposerSegments(

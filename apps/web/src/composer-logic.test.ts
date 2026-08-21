@@ -106,6 +106,14 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("keeps $skill syntax inert when skill tokens are disabled", () => {
+    const skillText = "Use $find-skills";
+    expect(detectComposerTrigger(skillText, skillText.length, false)).toBeNull();
+
+    const pathText = "Use @AGENTS";
+    expect(detectComposerTrigger(pathText, pathText.length, false)?.kind).toBe("path");
+  });
+
   it("detects @path trigger in the middle of existing text", () => {
     // User typed @ between "inspect " and "in this sentence"
     const text = "Please inspect @in this sentence";
@@ -209,6 +217,11 @@ describe("expandCollapsedComposerCursor", () => {
       expandedCursorAfterSkill,
     );
   });
+
+  it("keeps skill syntax cursor offsets unchanged when skill tokens are disabled", () => {
+    const text = "run $find-skills ";
+    expect(expandCollapsedComposerCursor(text, text.length, false)).toBe(text.length);
+  });
 });
 
 describe("collapseExpandedComposerCursor", () => {
@@ -272,6 +285,11 @@ describe("collapseExpandedComposerCursor", () => {
     expect(collapseExpandedComposerCursor(text, expandedCursorAfterSkill)).toBe(
       collapsedCursorAfterSkill,
     );
+  });
+
+  it("keeps expanded skill syntax offsets unchanged when skill tokens are disabled", () => {
+    const text = "run $find-skills ";
+    expect(collapseExpandedComposerCursor(text, text.length, false)).toBe(text.length);
   });
 });
 
