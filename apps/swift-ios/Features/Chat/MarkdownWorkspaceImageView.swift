@@ -64,6 +64,28 @@ enum MarkdownWorkspaceImageReference {
     }
 }
 
+/// Resolves the workspace asset on every view load so an overwritten file can
+/// produce a new signed URL. The shared attachment loader still deduplicates
+/// downloads while that exact URL remains current.
+@MainActor
+enum MarkdownWorkspaceImageLoader {
+    static func image(
+        threadID: String,
+        path: String,
+        maximumPixelSize: Int,
+        resolver: any FeatureWorkspaceAssetResolving,
+        loadImage: (URL, Int) async throws -> UIImage = { url, maximumPixelSize in
+            try await FeatureAttachmentThumbnailLoader.image(
+                for: url,
+                maximumPixelSize: maximumPixelSize
+            )
+        }
+    ) async throws -> UIImage {
+        let url = try await resolver.workspaceAssetURL(threadID: threadID, path: path)
+        return try await loadImage(url, maximumPixelSize)
+    }
+}
+
 /// Renders a workspace image referenced by a Markdown message inline, reusing
 /// the transcript's attachment thumbnail loader and its bounded image cache.
 struct MarkdownWorkspaceImageView: View {
@@ -160,34 +182,15 @@ struct MarkdownWorkspaceImageView: View {
         .frame(height: 160)
     }
 
-    /// Keyed by workspace file rather than by resolved URL: every resolution is
-    /// a server round trip that mints a fresh signed URL, so a recycled
-    /// transcript cell would otherwise re-resolve and re-download an image it
-    /// has already decoded.
-    private func cacheKey(for request: Request) -> NSString {
-        "workspace:\(request.threadID)/\(request.path)#\(request.maximumPixelSize)" as NSString
-    }
-
     private func load(_ request: Request, context: MarkdownWorkspaceImageContext) async {
-        let key = cacheKey(for: request)
-        if let cached = FeatureAttachmentThumbnailCache.shared.image(for: key) {
-            image = cached
-            loadedRequest = request
-            failedRequest = nil
-            return
-        }
-
         do {
-            let url = try await context.resolver.workspaceAssetURL(
+            let loaded = try await MarkdownWorkspaceImageLoader.image(
                 threadID: request.threadID,
-                path: request.path
-            )
-            let loaded = try await FeatureAttachmentThumbnailLoader.image(
-                for: url,
-                maximumPixelSize: request.maximumPixelSize
+                path: request.path,
+                maximumPixelSize: request.maximumPixelSize,
+                resolver: context.resolver
             )
             try Task.checkCancellation()
-            FeatureAttachmentThumbnailCache.shared.insert(loaded, for: key)
             image = loaded
             loadedRequest = request
             failedRequest = nil
