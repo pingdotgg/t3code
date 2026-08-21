@@ -12,24 +12,19 @@ export function createNativeNavigationHistoryItems(input: {
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
   readonly identifierPrefix: string;
-  readonly includeBack?: boolean;
   readonly onBack: () => void;
   readonly onForward: () => void;
 }): NativeStackHeaderItem[] {
   return [
-    ...(input.includeBack === false
-      ? []
-      : [
-          withNativeGlassHeaderItem({
-            accessibilityLabel: "Back",
-            disabled: !input.canGoBack,
-            icon: navigationIcon("chevron.left"),
-            identifier: `${input.identifierPrefix}-back`,
-            label: "",
-            onPress: input.onBack,
-            type: "button" as const,
-          }),
-        ]),
+    withNativeGlassHeaderItem({
+      accessibilityLabel: "Back",
+      disabled: !input.canGoBack,
+      icon: navigationIcon("chevron.left"),
+      identifier: `${input.identifierPrefix}-back`,
+      label: "",
+      onPress: input.onBack,
+      type: "button" as const,
+    }),
     withNativeGlassHeaderItem({
       accessibilityLabel: "Forward",
       disabled: !input.canGoForward,

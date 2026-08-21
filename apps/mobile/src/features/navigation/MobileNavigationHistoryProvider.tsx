@@ -1,4 +1,4 @@
-import { useLinkTo, useNavigation } from "@react-navigation/native";
+import { useLinkBuilder, useNavigation } from "@react-navigation/native";
 import {
   createContext,
   useCallback,
@@ -47,7 +47,8 @@ function useMobileNavigationHistoryCoordinator(
   history: ReturnType<typeof createMobileNavigationHistory>,
   location: MobileNavigationLocation,
 ) {
-  const linkTo = useLinkTo();
+  const navigation = useNavigation();
+  const { buildAction } = useLinkBuilder();
   useCancelBlockedTraversal(history);
 
   useEffect(() => {
@@ -59,9 +60,10 @@ function useMobileNavigationHistoryCoordinator(
       if (!target) {
         return;
       }
-      linkTo(target.location.pathname);
+      const action = buildAction(target.location.pathname);
+      navigation.dispatch({ ...action, type: "REPLACE" });
     },
-    [linkTo],
+    [buildAction, history, navigation],
   );
 
   const back = useCallback(() => {

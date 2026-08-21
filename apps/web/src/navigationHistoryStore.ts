@@ -5,15 +5,6 @@ export interface NavigationHistorySnapshot {
   readonly canGoForward: boolean;
 }
 
-export interface NavigationHistory {
-  readonly back: () => void;
-  readonly dispose: () => void;
-  readonly forward: () => void;
-  readonly getSnapshot: () => NavigationHistorySnapshot;
-  readonly start: () => void;
-  readonly subscribe: (listener: () => void) => () => void;
-}
-
 function snapshotFor(currentPosition: number, maximumPosition: number): NavigationHistorySnapshot {
   return {
     canGoBack: currentPosition > 0,
@@ -21,7 +12,7 @@ function snapshotFor(currentPosition: number, maximumPosition: number): Navigati
   };
 }
 
-export function createNavigationHistory(history: RouterHistory): NavigationHistory {
+export function createNavigationHistory(history: RouterHistory) {
   let currentPosition = 0;
   let maximumPosition = 0;
   let snapshot = snapshotFor(currentPosition, maximumPosition);
@@ -81,12 +72,14 @@ export function createNavigationHistory(history: RouterHistory): NavigationHisto
       }
       stopTracking = history.subscribe(update);
     },
-    subscribe: (listener) => {
+    subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
   };
 }
+
+export type NavigationHistory = ReturnType<typeof createNavigationHistory>;
 
 const navigationHistoryByRouterHistory = new WeakMap<RouterHistory, NavigationHistory>();
 

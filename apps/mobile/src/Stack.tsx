@@ -23,6 +23,7 @@ import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardi
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
+import { MobileNavigationHistoryButtons } from "./features/navigation/MobileNavigationHistoryButtons";
 import { MobileNavigationHistoryProvider } from "./features/navigation/MobileNavigationHistoryProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
@@ -88,6 +89,7 @@ type AppScreenOptions = NativeStackNavigationOptions & {
 // iOS versions. Pre-glass iOS gets the same solid material as internal-scroll
 // surfaces so content is laid out below the bar instead of underlapping it.
 const GLASS_HEADER_OPTIONS: AppScreenOptions = {
+  headerLeft: () => <MobileNavigationHistoryButtons grouped />,
   headerBackButtonDisplayMode: "minimal",
   headerBackTitle: "",
   headerLargeTitle: false,
@@ -103,6 +105,7 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
 // SOLID: opaque sheet-colored header for surfaces whose content scrolls internally
 // (file viewer, terminal, review) — there is nothing for glass to sample there.
 const SOLID_HEADER_OPTIONS: AppScreenOptions = {
+  headerLeft: () => <MobileNavigationHistoryButtons grouped />,
   headerBackButtonDisplayMode: "minimal",
   headerBackTitle: "",
   headerLargeTitle: false,
@@ -397,7 +400,7 @@ function RootStackLayout(props: {
   }, [navigation, pendingShare, props.state]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
-  const path = getPathFromState(props.state, navigationPathConfig);
+  const path = getPathFromState(props.state, navigationPathConfig).split("?")[0] ?? "/";
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspacePathname = workspacePathFromState(props.state);
   const transitionKey = activeNavigationTransitionKey(props.state);
