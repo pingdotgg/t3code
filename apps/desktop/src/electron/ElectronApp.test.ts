@@ -8,6 +8,7 @@ const {
   autoUpdaterRemoveListenerMock,
   exitMock,
   getAppPathMock,
+  getPreferredSystemLanguagesMock,
   getSystemLocaleMock,
   getVersionMock,
   isDefaultProtocolClientMock,
@@ -30,6 +31,7 @@ const {
   autoUpdaterRemoveListenerMock: vi.fn(),
   exitMock: vi.fn(),
   getAppPathMock: vi.fn(() => "/app"),
+  getPreferredSystemLanguagesMock: vi.fn(() => ["pt_BR", "en-US"]),
   getSystemLocaleMock: vi.fn(() => "en-GB"),
   getVersionMock: vi.fn(() => "1.2.3"),
   isDefaultProtocolClientMock: vi.fn(() => false),
@@ -62,6 +64,7 @@ vi.mock("electron", () => ({
       setIcon: setDockIconMock,
     },
     getAppPath: getAppPathMock,
+    getPreferredSystemLanguages: getPreferredSystemLanguagesMock,
     getSystemLocale: getSystemLocaleMock,
     getVersion: getVersionMock,
     isDefaultProtocolClient: isDefaultProtocolClientMock,
@@ -119,6 +122,14 @@ describe("ElectronApp", () => {
       const electronApp = yield* ElectronApp.ElectronApp;
 
       assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("reads and normalizes the OS preferred languages", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+
+      assert.deepEqual(yield* electronApp.preferredSystemLanguages, ["pt-BR", "en-US"]);
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 

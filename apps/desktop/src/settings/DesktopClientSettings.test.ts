@@ -47,6 +47,8 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
+  spellcheckEnabled: true,
+  spellcheckLanguages: [],
   wordWrap: true,
 };
 

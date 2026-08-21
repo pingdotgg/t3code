@@ -50,6 +50,11 @@ export class ElectronApp extends Context.Service<
      * pinned to `en-US` however the machine is configured.
      */
     readonly systemLocale: Effect.Effect<string>;
+    /**
+     * The user's ordered OS language preferences, distinct from the regional
+     * locale. Keyboard input methods are discovered separately.
+     */
+    readonly preferredSystemLanguages: Effect.Effect<readonly string[]>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
     readonly quit: Effect.Effect<void>;
     readonly exit: (code: number) => Effect.Effect<void>;
@@ -130,6 +135,9 @@ export const make = ElectronApp.of({
   // (`en_GB`). `Intl` rejects those outright rather than normalizing them, so
   // the tag is normalized here rather than in the renderer that consumes it.
   systemLocale: Effect.sync(() => Electron.app.getSystemLocale().replace(/_/g, "-")),
+  preferredSystemLanguages: Effect.sync(() =>
+    Electron.app.getPreferredSystemLanguages().map((language) => language.replace(/_/g, "-")),
+  ),
   whenReady: Effect.gen(function* () {
     const isPackaged = Electron.app.isPackaged;
     yield* Effect.tryPromise({

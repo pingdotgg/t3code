@@ -114,6 +114,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Checkbox } from "../ui/checkbox";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -498,6 +499,10 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Auto-settle merged threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.spellcheckEnabled !== DEFAULT_UNIFIED_SETTINGS.spellcheckEnabled ||
+      settings.spellcheckLanguages.length > 0
+        ? ["Spelling"]
+        : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
@@ -569,6 +574,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
+      settings.spellcheckEnabled,
+      settings.spellcheckLanguages,
       followSystem,
       theme,
       themeHalves,
@@ -640,6 +647,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      spellcheckEnabled: DEFAULT_UNIFIED_SETTINGS.spellcheckEnabled,
+      spellcheckLanguages: DEFAULT_UNIFIED_SETTINGS.spellcheckLanguages,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1319,6 +1328,134 @@ function WordWrapRow() {
   );
 }
 
+const SPELLCHECK_LANGUAGE_DISPLAY_NAMES = new Intl.DisplayNames(["en"], { type: "language" });
+
+function spellcheckLanguageLabel(language: string) {
+  try {
+    return SPELLCHECK_LANGUAGE_DISPLAY_NAMES.of(language) ?? language;
+  } catch {
+    return language;
+  }
+}
+
+function useSpellcheckLanguageModel(configuredLanguages: readonly string[]) {
+  const spellcheckInfo = useMemo(
+    () =>
+      isElectron && typeof window !== "undefined"
+        ? (window.desktopBridge?.getSpellcheckInfo?.() ?? null)
+        : null,
+    [],
+  );
+
+  return useMemo(() => {
+    const availableLanguages = spellcheckInfo?.availableLanguages ?? [];
+    return {
+      spellcheckInfo,
+      canSelectLanguages: spellcheckInfo?.canSelectLanguages === true,
+      availableLanguageSet: new Set(availableLanguages),
+      selectedLanguages: new Set(configuredLanguages),
+      languageOptions: Array.from(new Set([...availableLanguages, ...configuredLanguages]))
+        .map((id) => ({ id, label: spellcheckLanguageLabel(id) }))
+        .sort((left, right) => left.label.localeCompare(right.label)),
+    };
+  }, [configuredLanguages, spellcheckInfo]);
+}
+
+function SpellcheckRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const {
+    spellcheckInfo,
+    canSelectLanguages,
+    availableLanguageSet,
+    selectedLanguages,
+    languageOptions,
+  } = useSpellcheckLanguageModel(settings.spellcheckLanguages);
+  const description = !isElectron
+    ? "Underline misspelled words in the composer. The browser picks the dictionary."
+    : spellcheckInfo?.canSelectLanguages === false
+      ? "Underline misspelled words in the composer. macOS detects the language automatically."
+      : "Underline misspelled words in the composer. Leave dictionaries unchecked to use OS languages and platform keyboard settings.";
+
+  return (
+    <SettingsRow
+      {...searchableSetting("check-spelling")}
+      description={description}
+      resetAction={
+        settings.spellcheckEnabled !== DEFAULT_UNIFIED_SETTINGS.spellcheckEnabled ||
+        settings.spellcheckLanguages.length > 0 ? (
+          <SettingResetButton
+            label="spelling"
+            onClick={() =>
+              updateSettings({
+                spellcheckEnabled: DEFAULT_UNIFIED_SETTINGS.spellcheckEnabled,
+                spellcheckLanguages: DEFAULT_UNIFIED_SETTINGS.spellcheckLanguages,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.spellcheckEnabled}
+          onCheckedChange={(checked) => updateSettings({ spellcheckEnabled: Boolean(checked) })}
+          aria-label="Check spelling in the composer"
+        />
+      }
+    >
+      {canSelectLanguages && settings.spellcheckEnabled ? (
+        <div className="space-y-2 pt-3 pb-2">
+          <p className="text-xs text-muted-foreground">
+            {selectedLanguages.size === 0
+              ? "Automatic language selection is on."
+              : `${selectedLanguages.size} ${selectedLanguages.size === 1 ? "dictionary" : "dictionaries"} selected.`}
+          </p>
+          {languageOptions.length > 0 ? (
+            <div className="grid max-h-52 grid-cols-1 gap-1 overflow-y-auto rounded-lg border border-border/60 p-1 sm:grid-cols-2">
+              {languageOptions.map((option) => {
+                const isAvailable = availableLanguageSet.has(option.id);
+                return (
+                  <label
+                    key={option.id}
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-muted/40"
+                  >
+                    <Checkbox
+                      checked={selectedLanguages.has(option.id)}
+                      onCheckedChange={(checked) => {
+                        const enabled = Boolean(checked);
+                        const spellcheckLanguages = enabled
+                          ? selectedLanguages.has(option.id)
+                            ? settings.spellcheckLanguages
+                            : [...settings.spellcheckLanguages, option.id]
+                          : settings.spellcheckLanguages.filter(
+                              (language) => language !== option.id,
+                            );
+                        updateSettings({ spellcheckLanguages });
+                      }}
+                      aria-label={option.label}
+                    />
+                    <span className="min-w-0 truncate">
+                      {option.label}
+                      {!isAvailable ? " (unavailable)" : ""}
+                    </span>
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                      {option.id}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No configurable dictionaries are available in this Electron build.
+            </p>
+          )}
+        </div>
+      ) : null}
+    </SettingsRow>
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -1416,6 +1553,7 @@ function TypographySection() {
     >
       {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <SpellcheckRow />
     </SettingsSection>
   );
 }

@@ -157,6 +157,16 @@ export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopUpdateChannel = "latest" | "nightly";
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
 
+export interface DesktopSpellcheckInfo {
+  readonly canSelectLanguages: boolean;
+  readonly availableLanguages: readonly string[];
+}
+
+export const DesktopSpellcheckInfoSchema: Schema.Codec<DesktopSpellcheckInfo> = Schema.Struct({
+  canSelectLanguages: Schema.Boolean,
+  availableLanguages: Schema.Array(Schema.String),
+});
+
 export const DesktopUpdateStatusSchema = Schema.Literals([
   "disabled",
   "idle",
@@ -1070,6 +1080,11 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale?: () => string | null;
+  /**
+   * Languages accepted by this Electron build's spellchecker. The native
+   * macOS checker selects its own languages, so canSelectLanguages is false.
+   */
+  getSpellcheckInfo?: () => DesktopSpellcheckInfo | null;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.

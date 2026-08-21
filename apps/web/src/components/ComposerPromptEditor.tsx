@@ -68,6 +68,7 @@ import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
@@ -1541,6 +1542,7 @@ function ComposerPromptEditorInner({
   editorRef,
 }: ComposerPromptEditorProps) {
   const [editor] = useLexicalComposerContext();
+  const spellcheckEnabled = useClientSettings((settings) => settings.spellcheckEnabled);
   const onChangeRef = useRef(onChange);
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
@@ -1758,6 +1760,7 @@ function ComposerPromptEditorInner({
                 className,
               )}
               data-testid="composer-editor"
+              spellCheck={spellcheckEnabled}
               aria-placeholder={placeholder}
               placeholder={<span />}
               onPaste={onPaste}

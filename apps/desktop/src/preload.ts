@@ -39,6 +39,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
   },
+  getSpellcheckInfo: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_SPELLCHECK_INFO_CHANNEL);
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      !("canSelectLanguages" in result) ||
+      typeof result.canSelectLanguages !== "boolean" ||
+      !("availableLanguages" in result) ||
+      !Array.isArray(result.availableLanguages) ||
+      !result.availableLanguages.every((language: unknown) => typeof language === "string")
+    ) {
+      return null;
+    }
+    return result as ReturnType<NonNullable<DesktopBridge["getSpellcheckInfo"]>>;
+  },
   getLocalEnvironmentBootstraps: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL);
     if (!Array.isArray(result)) {
