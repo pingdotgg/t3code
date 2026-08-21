@@ -16,6 +16,7 @@ import {
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
   primeTerminalCopyInput,
+  resolveTerminalMouseData,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
@@ -400,6 +401,22 @@ describe("application mouse reporting", () => {
 
   it("maps browser buttons to Ghostty's button enum", () => {
     expect([0, 1, 2, 3, 4, 5].map(ghosttyMouseButton)).toEqual([1, 3, 2, 4, 5, null]);
+  });
+
+  it("drops repeated motion reports until another mouse action resets the cell", () => {
+    const first = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", "");
+    expect(first).toEqual({ send: true, nextMotionData: "\u001b[<35;8;4M" });
+
+    const duplicate = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", first.nextMotionData);
+    expect(duplicate).toEqual({ send: false, nextMotionData: "\u001b[<35;8;4M" });
+
+    const press = resolveTerminalMouseData("press", "\u001b[<0;8;4M", duplicate.nextMotionData);
+    expect(press).toEqual({ send: true, nextMotionData: "" });
+
+    expect(resolveTerminalMouseData("motion", "\u001b[<35;8;4M", press.nextMotionData)).toEqual({
+      send: true,
+      nextMotionData: "\u001b[<35;8;4M",
+    });
   });
 
   it("only shows link hover during mouse tracking when the link modifier is held", () => {
