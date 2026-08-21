@@ -125,6 +125,32 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+vi.mock("../ui/tooltip", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ui/tooltip")>();
+
+  return {
+    ...actual,
+    TooltipLayerProvider: ({
+      children,
+      layer,
+      onTriggerHoverChange,
+    }: {
+      children: ReactNode;
+      layer: string;
+      onTriggerHoverChange?: (
+        tooltip: { trigger: HTMLElement; dismiss: () => void } | null,
+      ) => void;
+    }) => (
+      <div
+        data-tooltip-layer={layer}
+        data-tooltip-scroll-dismiss={onTriggerHoverChange ? "enabled" : undefined}
+      >
+        {children}
+      </div>
+    ),
+  };
+});
+
 function matchMedia() {
   return {
     matches: false,
@@ -236,6 +262,18 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders timeline tooltips in the content layer", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry("[Link](https://example.com)")]}
+      />,
+    );
+
+    expect(markup).toContain('data-tooltip-layer="content"');
+    expect(markup).toContain('data-tooltip-scroll-dismiss="enabled"');
+  });
+
   it("renders the worked-for row at assistant response text size", () => {
     const turnId = TurnId.make("turn-with-fold");
     const assistantEntry = buildAssistantTimelineEntry("Done.");

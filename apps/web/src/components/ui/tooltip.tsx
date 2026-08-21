@@ -1,15 +1,92 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef } from "react";
 
 import { cn } from "~/lib/utils";
+import type { HoveredTooltip } from "./tooltipScrollDismiss";
 
 const TooltipCreateHandle = TooltipPrimitive.createHandle;
 
+type TooltipLayer = "global" | "content";
+
+type TooltipLayerContextValue = {
+  layer: TooltipLayer;
+  onTriggerHoverChange: ((tooltip: HoveredTooltip | null) => void) | undefined;
+};
+
+const DEFAULT_TOOLTIP_LAYER_CONTEXT = {
+  layer: "global",
+  onTriggerHoverChange: undefined,
+} as const;
+const TooltipLayerContext = createContext<TooltipLayerContextValue>(DEFAULT_TOOLTIP_LAYER_CONTEXT);
+const TooltipDismissContext = createContext<(() => void) | null>(null);
+
+function TooltipLayerProvider({
+  children,
+  layer,
+  onTriggerHoverChange,
+}: {
+  children: ReactNode;
+  layer: TooltipLayer;
+  onTriggerHoverChange?: (tooltip: HoveredTooltip | null) => void;
+}) {
+  const value = useMemo(() => ({ layer, onTriggerHoverChange }), [layer, onTriggerHoverChange]);
+
+  return <TooltipLayerContext value={value}>{children}</TooltipLayerContext>;
+}
+
 const TooltipProvider = TooltipPrimitive.Provider;
 
-const Tooltip = TooltipPrimitive.Root;
+function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
+  const { onTriggerHoverChange } = useContext(TooltipLayerContext);
 
-function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+  if (!onTriggerHoverChange) {
+    return <TooltipPrimitive.Root {...props} />;
+  }
+
+  return <TrackedTooltip {...props} />;
+}
+
+function TrackedTooltip<Payload>({ actionsRef, ...props }: TooltipPrimitive.Root.Props<Payload>) {
+  const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
+  const resolvedActionsRef = actionsRef ?? localActionsRef;
+  const dismiss = useCallback(() => resolvedActionsRef.current?.close(), [resolvedActionsRef]);
+
+  return (
+    <TooltipDismissContext value={dismiss}>
+      <TooltipPrimitive.Root actionsRef={resolvedActionsRef} {...props} />
+    </TooltipDismissContext>
+  );
+}
+
+function TooltipTrigger({ onMouseEnter, onMouseLeave, ...props }: TooltipPrimitive.Trigger.Props) {
+  const { onTriggerHoverChange } = useContext(TooltipLayerContext);
+  const dismiss = useContext(TooltipDismissContext);
+
+  if (!onTriggerHoverChange || !dismiss) {
+    return (
+      <TooltipPrimitive.Trigger
+        data-slot="tooltip-trigger"
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        {...props}
+      />
+    );
+  }
+
+  return (
+    <TooltipPrimitive.Trigger
+      data-slot="tooltip-trigger"
+      onMouseEnter={(event) => {
+        onTriggerHoverChange({ trigger: event.currentTarget, dismiss });
+        onMouseEnter?.(event);
+      }}
+      onMouseLeave={(event) => {
+        onTriggerHoverChange(null);
+        onMouseLeave?.(event);
+      }}
+      {...props}
+    />
+  );
 }
 
 function TooltipPopup({
@@ -28,12 +105,17 @@ function TooltipPopup({
   variant?: "default" | "glass";
   anchor?: TooltipPrimitive.Positioner.Props["anchor"];
 }) {
+  const { layer } = useContext(TooltipLayerContext);
+
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Positioner
         align={align}
         anchor={anchor}
-        className="pointer-events-none z-[140] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none"
+        className={cn(
+          "pointer-events-none h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none",
+          layer === "content" ? "z-[15]" : "z-[140]",
+        )}
         data-slot="tooltip-positioner"
         side={side}
         sideOffset={sideOffset}
@@ -61,4 +143,11 @@ function TooltipPopup({
   );
 }
 
-export { TooltipCreateHandle, TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup };
+export {
+  TooltipCreateHandle,
+  TooltipLayerProvider,
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+};
