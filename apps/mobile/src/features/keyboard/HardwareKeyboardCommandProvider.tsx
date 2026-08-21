@@ -1,4 +1,4 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { useCallback, useMemo, useSyncExternalStore, type PropsWithChildren } from "react";
 
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
@@ -26,7 +26,7 @@ export function HardwareKeyboardCommandProvider({
   const enabledCommands = useMemo(() => {
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
-    if (pathname !== "/" || navigationHistory.canGoBack) commands.add("back");
+    if (navigationHistory.canGoBack) commands.add("back");
     if (navigationHistory.canGoForward) commands.add("forward");
     if (parseActiveThreadPath(pathname)) {
       commands.add("files");
@@ -45,11 +45,7 @@ export function HardwareKeyboardCommandProvider({
         return;
       }
       if (command === "back") {
-        if (navigationHistory.canGoBack) {
-          navigationHistory.back();
-        } else {
-          navigation.dispatch(StackActions.replace("Home"));
-        }
+        navigationHistory.back();
         return;
       }
       if (command === "forward") {

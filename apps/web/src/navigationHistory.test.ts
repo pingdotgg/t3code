@@ -23,6 +23,8 @@ describe("createNavigationHistory", () => {
   it("tracks back and forward availability through navigation", () => {
     const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
     const history = createNavigationHistory(withoutRouterLocationState(routerHistory));
+    const snapshots: Array<ReturnType<typeof history.getSnapshot>> = [];
+    history.subscribe(() => snapshots.push(history.getSnapshot()));
     history.start();
 
     expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: false });
@@ -44,27 +46,13 @@ describe("createNavigationHistory", () => {
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
     history.forward();
     expect(routerHistory.location.pathname).toBe("/settings/general");
-    history.dispose();
-  });
-
-  it("notifies subscribers only when availability changes", () => {
-    const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
-    const history = createNavigationHistory(routerHistory);
-    const snapshots: Array<ReturnType<typeof history.getSnapshot>> = [];
-    const unsubscribe = history.subscribe(() => snapshots.push(history.getSnapshot()));
-    history.start();
-
-    routerHistory.replace("/?tab=all");
-    routerHistory.push("/thread-a");
-    routerHistory.push("/thread-b");
-    history.back();
-
     expect(snapshots).toEqual([
       { canGoBack: true, canGoForward: false },
       { canGoBack: true, canGoForward: true },
+      { canGoBack: true, canGoForward: false },
+      { canGoBack: true, canGoForward: true },
+      { canGoBack: true, canGoForward: false },
     ]);
-
-    unsubscribe();
     history.dispose();
   });
 });

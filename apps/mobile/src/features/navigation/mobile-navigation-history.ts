@@ -3,24 +3,9 @@ export interface MobileNavigationHistorySnapshot {
   readonly canGoForward: boolean;
 }
 
-export interface MobileNavigationHistory {
-  readonly cancelPendingTraversal: () => void;
-  readonly getSnapshot: () => MobileNavigationHistorySnapshot;
-  readonly requestBack: () => MobileNavigationTarget | null;
-  readonly requestForward: () => MobileNavigationTarget | null;
-  readonly subscribe: (listener: () => void) => () => void;
-  readonly visit: (location: MobileNavigationLocation) => void;
-}
-
 export interface MobileNavigationLocation {
   readonly pathname: string;
   readonly transitionKey: string;
-}
-
-export interface MobileNavigationTarget {
-  readonly direction: "back" | "forward";
-  readonly index: number;
-  readonly location: MobileNavigationLocation;
 }
 
 function snapshotFor(cursor: number, entryCount: number): MobileNavigationHistorySnapshot {
@@ -30,13 +15,11 @@ function snapshotFor(cursor: number, entryCount: number): MobileNavigationHistor
   };
 }
 
-export function createMobileNavigationHistory(
-  initialLocation: MobileNavigationLocation,
-): MobileNavigationHistory {
+export function createMobileNavigationHistory(initialLocation: MobileNavigationLocation) {
   let entries = [initialLocation];
   let cursor = 0;
   let snapshot = snapshotFor(cursor, entries.length);
-  let pendingTarget: MobileNavigationTarget | null = null;
+  let pendingTarget: { index: number; location: MobileNavigationLocation } | null = null;
   const listeners = new Set<() => void>();
 
   const publish = () => {
@@ -59,25 +42,22 @@ export function createMobileNavigationHistory(
     requestBack: () => {
       const index = cursor - 1;
       const location = entries[index];
-      pendingTarget = location ? { direction: "back", index, location } : null;
+      pendingTarget = location ? { index, location } : null;
       return pendingTarget;
     },
     requestForward: () => {
       const index = cursor + 1;
       const location = entries[index];
-      pendingTarget = location ? { direction: "forward", index, location } : null;
+      pendingTarget = location ? { index, location } : null;
       return pendingTarget;
     },
-    subscribe: (listener) => {
+    subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    visit: (location) => {
+    visit: (location: MobileNavigationLocation) => {
       const current = entries[cursor];
-      if (
-        location.pathname === current?.pathname &&
-        location.transitionKey === current.transitionKey
-      ) {
+      if (location.pathname === current?.pathname) {
         return;
       }
 

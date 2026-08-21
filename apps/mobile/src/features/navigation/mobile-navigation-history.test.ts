@@ -12,6 +12,7 @@ describe("createMobileNavigationHistory", () => {
     const history = createMobileNavigationHistory(location("/"));
     history.visit(location("/threads/env/thread-a", "thread-a"));
     history.visit(location("/threads/env/thread-b", "thread-b"));
+    history.visit(location("/threads/env/thread-b", "thread-b-remount"));
 
     const backTarget = history.requestBack();
     expect(backTarget?.location.pathname).toBe("/threads/env/thread-a");
@@ -78,7 +79,6 @@ describe("createMobileNavigationHistory", () => {
 
     const forward = history.requestForward();
     expect(forward).toEqual({
-      direction: "forward",
       index: 2,
       location: location("/threads/env/thread-a", "a-2"),
     });
