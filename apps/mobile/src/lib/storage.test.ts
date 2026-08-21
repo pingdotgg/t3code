@@ -177,6 +177,25 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
   });
 
+  it("persists independent light and dark theme choices", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        themeId: "grove",
+        lightThemeId: "iris",
+        darkThemeId: "ocean",
+        themeMode: "system",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({
+      themeId: "grove",
+      lightThemeId: "iris",
+      darkThemeId: "ocean",
+      themeMode: "system",
+    });
+  });
+
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
     await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({ baseFontSize: 19 });
