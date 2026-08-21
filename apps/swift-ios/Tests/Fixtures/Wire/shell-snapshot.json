@@ -1,0 +1,63 @@
+{
+  "snapshotSequence": 42,
+  "projects": [
+    {
+      "id": "project-fixture",
+      "title": "Fixture project",
+      "workspaceRoot": "/workspace/fixture",
+      "repositoryIdentity": null,
+      "defaultModelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-5.6-sol",
+        "options": [
+          {
+            "id": "effort",
+            "value": "high"
+          }
+        ]
+      },
+      "scripts": [],
+      "createdAt": "2026-08-07T12:00:00.000Z",
+      "updatedAt": "2026-08-07T12:00:00.000Z"
+    }
+  ],
+  "threads": [
+    {
+      "id": "thread-fixture",
+      "projectId": "project-fixture",
+      "title": "Fixture thread",
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-5.6-sol",
+        "options": [
+          {
+            "id": "effort",
+            "value": "high"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": null,
+      "latestTurn": null,
+      "createdAt": "2026-08-07T12:00:00.000Z",
+      "updatedAt": "2026-08-07T12:00:00.000Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "pinnedAt": null,
+      "titleRegeneration": null,
+      "session": null,
+      "latestUserMessageAt": "2026-08-07T12:00:00.000Z",
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false,
+      "backgroundLiveness": null,
+      "planProgress": null
+    }
+  ],
+  "updatedAt": "2026-08-07T12:00:00.000Z"
+}
