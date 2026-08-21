@@ -3319,27 +3319,26 @@ export default function Sidebar() {
   }, [shouldShowJumpHintsNow]);
 
   const listAutoAnimateControllerRef = useRef<ReturnType<typeof autoAnimate> | null>(null);
-  const listAutoAnimateEnableFrameRef = useRef<number | null>(null);
+  const listAutoAnimateAttachFrameRef = useRef<number | null>(null);
   const attachListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
-    if (listAutoAnimateEnableFrameRef.current !== null) {
-      window.cancelAnimationFrame(listAutoAnimateEnableFrameRef.current);
-      listAutoAnimateEnableFrameRef.current = null;
+    if (listAutoAnimateAttachFrameRef.current !== null) {
+      window.cancelAnimationFrame(listAutoAnimateAttachFrameRef.current);
+      listAutoAnimateAttachFrameRef.current = null;
     }
     listAutoAnimateControllerRef.current?.destroy?.();
     listAutoAnimateControllerRef.current = null;
     if (!node) return;
 
-    const controller = autoAnimate(node, { duration: 150, easing: "ease-out" });
     // DndContext installs its accessibility nodes just after this list mounts.
-    // Treat those setup mutations as part of the initial render; otherwise
-    // auto-animate scales every existing thread row when Settings unmounts and
-    // remounts the sidebar. Real list changes after the first frame still animate.
-    controller.disable();
-    listAutoAnimateControllerRef.current = controller;
-    listAutoAnimateEnableFrameRef.current = window.requestAnimationFrame(() => {
-      if (listAutoAnimateControllerRef.current !== controller) return;
-      controller.enable();
-      listAutoAnimateEnableFrameRef.current = null;
+    // Attach one frame later so those setup mutations are ignored without
+    // canceling auto-animate's initial coordinate tracking.
+    listAutoAnimateAttachFrameRef.current = window.requestAnimationFrame(() => {
+      listAutoAnimateAttachFrameRef.current = null;
+      if (!node.isConnected) return;
+      listAutoAnimateControllerRef.current = autoAnimate(node, {
+        duration: 150,
+        easing: "ease-out",
+      });
     });
   }, []);
 
