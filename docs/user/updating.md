@@ -31,6 +31,9 @@ The update does not remove saved threads, settings, or project files.
 The available action depends on how that server was started. T3 Code does not update connected
 servers silently in the background.
 
+If an environment is still connecting or reconnecting, **Update** and **Retry** stay disabled and
+become available automatically once its status reaches **Connected**.
+
 An older background-service launcher may ask you to run the exact
 `npx t3@<version> service update` command on the server machine. That one local update installs the
 rollback support needed for later remote updates, including versions that change the database.
