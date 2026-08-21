@@ -1298,17 +1298,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </button>
                 )
               ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
-                <button
-                  type="button"
-                  aria-label="Un-settle thread"
-                  onClick={handleUnsettleClick}
-                  className={cn(
-                    "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
-                    isWoke && "group-hover/sidebar-row:static",
-                  )}
-                >
-                  <Undo2Icon className="mb-px size-3.5" />
-                </button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Un-settle thread"
+                        onClick={handleUnsettleClick}
+                        className={cn(
+                          "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                          isWoke && "group-hover/sidebar-row:static",
+                        )}
+                      />
+                    }
+                  >
+                    <Undo2Icon className="mb-px size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Un-settle thread</TooltipPopup>
+                </Tooltip>
               ) : (
                 <button
                   type="button"
