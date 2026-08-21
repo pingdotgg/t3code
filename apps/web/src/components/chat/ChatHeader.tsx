@@ -15,6 +15,7 @@ import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -22,6 +23,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import GitActionsControl from "../GitActionsControl";
+import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -87,6 +89,10 @@ export function resolveRenameCommit(input: {
   if (trimmed === input.originalTitle) return { action: "noop" };
   return { action: "commit", title: trimmed };
 }
+
+// How long a click on the thread title waits before opening the action menu,
+// so a double-click-to-rename can cancel it first.
+const TITLE_MENU_OPEN_DELAY_MS = 250;
 
 export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
@@ -195,11 +201,56 @@ export const ChatHeader = memo(function ChatHeader({
     onStartRename: startRename,
   });
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
-  const openMenuFromTitle = useCallback(() => {
+  const titleMenuTimerRef = useRef<number | null>(null);
+  // Drop a pending menu-open when the thread changes or the header unmounts,
+  // so it can never fire for a thread the user already left.
+  useEffect(
+    () => () => {
+      if (titleMenuTimerRef.current !== null) {
+        clearTimeout(titleMenuTimerRef.current);
+        titleMenuTimerRef.current = null;
+      }
+    },
+    [activeThreadId],
+  );
+  const openTitleMenuNow = useCallback(() => {
     const rect = titleButtonRef.current?.getBoundingClientRect();
     if (!rect) return;
     openMenu({ x: rect.left, y: rect.bottom + 4 });
   }, [openMenu]);
+  const openMenuFromTitle = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      // The trailing click of a double-click belongs to rename, not the menu.
+      if (isTrailingDoubleClick(event.detail)) return;
+      // Keyboard activation and the explicit chevron affordance can never be
+      // the first half of a double-click, so they open without waiting.
+      const clickedChevron =
+        (event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null;
+      if (event.detail === 0 || clickedChevron) {
+        openTitleMenuNow();
+        return;
+      }
+      // A native desktop menu swallows the second click of a double-click, so
+      // the open must stay pending long enough for dblclick to cancel it.
+      if (titleMenuTimerRef.current !== null) clearTimeout(titleMenuTimerRef.current);
+      titleMenuTimerRef.current = window.setTimeout(() => {
+        titleMenuTimerRef.current = null;
+        openTitleMenuNow();
+      }, TITLE_MENU_OPEN_DELAY_MS);
+    },
+    [openTitleMenuNow],
+  );
+  const handleTitleDoubleClick = useCallback(
+    (event: ReactMouseEvent) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (titleMenuTimerRef.current !== null) {
+        clearTimeout(titleMenuTimerRef.current);
+        titleMenuTimerRef.current = null;
+      }
+      startRename();
+    },
+    [startRename],
+  );
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (!isServerThread || renamingTitle !== null) return;
@@ -285,6 +336,7 @@ export const ChatHeader = memo(function ChatHeader({
                     aria-label={`Thread actions for ${activeThreadTitle}`}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
+                    onDoubleClick={handleTitleDoubleClick}
                     className="group/thread-title inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 }
@@ -292,6 +344,7 @@ export const ChatHeader = memo(function ChatHeader({
                 <h2 className="min-w-0 truncate">{activeThreadTitle}</h2>
                 <ChevronDownIcon
                   aria-hidden
+                  data-thread-title-chevron
                   className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
                 />
               </TooltipTrigger>
