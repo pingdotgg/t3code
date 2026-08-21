@@ -330,21 +330,22 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         Effect.flatMap(() =>
           decodeWireMessage(line).pipe(
             Effect.map(Option.some),
-            Effect.catchTag("CodexAppServerProtocolParseError", (error) =>
-              options.ignoreNonJsonPreamble
-                ? Ref.get(receivedProtocolMessage).pipe(
-                    Effect.flatMap((received) =>
-                      received
-                        ? Effect.fail(error)
-                        : logProtocol({
-                            direction: "incoming",
-                            stage: "ignored_preamble",
-                            payload: { byteLength: textEncoder.encode(line).byteLength },
-                          }).pipe(Effect.as(Option.none<unknown>())),
-                    ),
-                  )
-                : Effect.fail(error),
-            ),
+            Effect.catchTags({
+              CodexAppServerProtocolParseError: (error) =>
+                options.ignoreNonJsonPreamble
+                  ? Ref.get(receivedProtocolMessage).pipe(
+                      Effect.flatMap((received) =>
+                        received
+                          ? Effect.fail(error)
+                          : logProtocol({
+                              direction: "incoming",
+                              stage: "ignored_preamble",
+                              payload: { byteLength: textEncoder.encode(line).byteLength },
+                            }).pipe(Effect.as(Option.none<unknown>())),
+                      ),
+                    )
+                  : Effect.fail(error),
+            }),
           ),
         ),
         Effect.flatMap(
