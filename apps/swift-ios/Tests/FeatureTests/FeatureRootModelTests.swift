@@ -923,6 +923,120 @@ struct FeatureRootModelTests {
         #expect(model.details[thread.id] == live)
     }
 
+    @Test(
+        "Later overlapping detail load wins for either completion order",
+        .bug("https://github.com/pingdotgg/t3code/pull/7206#discussion_r3816827717"),
+        arguments: [[1, 2], [2, 1]]
+    )
+    func laterOverlappingDetailLoadWins(completionOrder: [Int]) async throws {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let initial = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Refreshed")]
+        )
+        let loadStarted = AsyncStream<Int>.makeStream()
+        var loadIndex = 0
+        var loadContinuations: [Int: CheckedContinuation<FeatureThreadDetail, Never>] = [:]
+        defer {
+            loadStarted.continuation.finish()
+            for continuation in loadContinuations.values {
+                continuation.resume(returning: refreshed)
+            }
+        }
+        client.loadThreadHandler = { _ in
+            loadIndex += 1
+            let index = loadIndex
+            loadStarted.continuation.yield(index)
+            return await withCheckedContinuation { continuation in
+                loadContinuations[index] = continuation
+            }
+        }
+        let model = testRootModel(client: client)
+        var starts = loadStarted.stream.makeAsyncIterator()
+
+        let initialLoad = Task { await model.detail(for: thread.id, force: true) }
+        let firstStart = await starts.next()
+        #expect(firstStart == 1)
+        let refresh = Task { await model.detail(for: thread.id, force: true) }
+        let secondStart = await starts.next()
+        #expect(secondStart == 2)
+
+        for index in completionOrder {
+            let pendingContinuation = loadContinuations.removeValue(forKey: index)
+            let continuation = try #require(pendingContinuation)
+            continuation.resume(returning: index == 1 ? initial : refreshed)
+            if index == 1 {
+                _ = await initialLoad.value
+            } else {
+                _ = await refresh.value
+            }
+        }
+
+        let expectedInitialResult = completionOrder.first == 1 ? initial : refreshed
+        #expect(await initialLoad.value == expectedInitialResult)
+        #expect(await refresh.value == refreshed)
+        #expect(model.details[thread.id] == refreshed)
+    }
+
+    @Test(
+        "Pagination does not cancel an overlapping detail refresh",
+        .bug("https://github.com/pingdotgg/t3code/pull/7206#discussion_r3816827717")
+    )
+    func paginationDoesNotCancelOverlappingDetailRefresh() async throws {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let cached = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Cached")],
+            page: FeatureThreadPage(beforeCursor: "cursor-1", hasMore: true)
+        )
+        let paginated = FeatureThreadDetail(
+            thread: thread,
+            messages: [
+                FeatureMessage(id: "message-1", role: .user, text: "Earlier"),
+                cached.messages[0],
+            ],
+            page: FeatureThreadPage(beforeCursor: nil, hasMore: false)
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-3", role: .assistant, text: "Refreshed")]
+        )
+        client.threadDetail = cached
+        client.earlierThreadDetail = paginated
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+
+        let loadStarted = AsyncStream<Void>.makeStream()
+        var refreshContinuation: CheckedContinuation<FeatureThreadDetail, Never>?
+        defer {
+            loadStarted.continuation.finish()
+            refreshContinuation?.resume(returning: refreshed)
+        }
+        client.loadThreadHandler = { _ in
+            loadStarted.continuation.yield(())
+            return await withCheckedContinuation { continuation in
+                refreshContinuation = continuation
+            }
+        }
+        var starts = loadStarted.stream.makeAsyncIterator()
+
+        let refresh = Task { await model.detail(for: thread.id, force: true) }
+        _ = await starts.next()
+        await model.loadEarlierTurns(for: thread.id)
+        let continuation = try #require(refreshContinuation)
+        refreshContinuation = nil
+        continuation.resume(returning: refreshed)
+
+        #expect(await refresh.value == refreshed)
+        #expect(model.details[thread.id]?.messages == refreshed.messages)
+    }
+
     @Test
     func initialDetailLoadDoesNotRestoreRemovedThread() async {
         let client = FeatureClientStub()
@@ -1627,6 +1741,7 @@ private final class FeatureClientStub: FeatureClient {
     var removedEnvironmentID: String?
     var beforeSendMessage: (() throws -> Void)?
     var loadThreadError: (any Error)?
+    var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
     var beforeLoadThreadReturn: (() async -> Void)?
     var loadEarlierCallCount = 0
     var resolvedInputID: String?
@@ -1736,6 +1851,9 @@ private final class FeatureClientStub: FeatureClient {
     func loadThread(id: String) async throws -> FeatureThreadDetail {
         if let loadThreadError {
             throw loadThreadError
+        }
+        if let loadThreadHandler {
+            return try await loadThreadHandler(id)
         }
         await beforeLoadThreadReturn?()
         if let threadDetail {

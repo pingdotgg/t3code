@@ -48,6 +48,8 @@ public final class FeatureRootModel {
     private var detailRecency: [String] = []
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
+    private var detailLoadRequestRevision: UInt64 = 0
+    private var storedDetailLoadRequestRevisions: [String: UInt64] = [:]
     private var detailMetadataRevisions: [String: UInt64] = [:]
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
@@ -392,6 +394,8 @@ public final class FeatureRootModel {
         let loadRevisionBeforeLoad = detailLoadRevisions[id]
         let metadataRevisionBeforeLoad = detailMetadataRevisions[id]
         let threadBeforeLoad = snapshot.threads.first { $0.id == id }
+        detailLoadRequestRevision &+= 1
+        let loadRequestRevision = detailLoadRequestRevision
         do {
             var detail = try await client.loadThread(id: id)
             guard currentEnvironmentIdentity == environment else {
@@ -399,6 +403,10 @@ public final class FeatureRootModel {
             }
             if detailLoadGeneration != loadGenerationBeforeLoad
                 || detailLoadRevisions[id] != loadRevisionBeforeLoad {
+                return details[id]
+            }
+            if let storedLoadRequestRevision = storedDetailLoadRequestRevisions[id],
+               loadRequestRevision < storedLoadRequestRevision {
                 return details[id]
             }
             let currentThread = snapshot.threads.first { $0.id == id }
@@ -409,7 +417,8 @@ public final class FeatureRootModel {
             } else if let currentThread, currentThread != threadBeforeLoad {
                 detail.thread = currentThread
             }
-            store(detail)
+            store(detail, invalidatesInFlightLoad: false)
+            storedDetailLoadRequestRevisions[id] = loadRequestRevision
             upsert(detail.thread)
             return detail
         } catch {
@@ -427,7 +436,7 @@ public final class FeatureRootModel {
         do {
             guard let detail = try await client.loadEarlierThreadTurns(id: id),
                   currentEnvironmentIdentity == environment else { return }
-            store(detail)
+            store(detail, invalidatesInFlightLoad: false)
         } catch {
             if !Self.isBenignCancellation(error) {
                 errorMessage = error.localizedDescription
@@ -802,7 +811,10 @@ public final class FeatureRootModel {
         }
     }
 
-    private func store(_ incoming: FeatureThreadDetail) {
+    private func store(
+        _ incoming: FeatureThreadDetail,
+        invalidatesInFlightLoad: Bool = true
+    ) {
         let incoming = retainingLocalAttachmentPreviews(in: incoming)
         let id = incoming.thread.id
         acknowledgeDeliveredMessages(incoming.messages)
@@ -821,7 +833,9 @@ public final class FeatureRootModel {
         guard details[id] != next else { return }
         details[id] = next
         markDetailRecentlyUsed(id)
-        bumpDetailLoadRevision(id: id)
+        if invalidatesInFlightLoad {
+            bumpDetailLoadRevision(id: id)
+        }
         bumpDetailRevision(id: id, change: .full)
     }
 
@@ -865,6 +879,7 @@ public final class FeatureRootModel {
         if details.removeValue(forKey: id) != nil {
             detailRecency.removeAll { $0 == id }
         }
+        storedDetailLoadRequestRevisions.removeValue(forKey: id)
         bumpDetailLoadRevision(id: id)
         bumpDetailRevision(id: id, change: .full)
     }
@@ -872,6 +887,7 @@ public final class FeatureRootModel {
     private func clearDetails() {
         detailLoadGeneration &+= 1
         detailLoadRevisions.removeAll()
+        storedDetailLoadRequestRevisions.removeAll()
         detailMetadataRevisions.removeAll()
         let hadDetails = !details.isEmpty
         details.removeAll()
