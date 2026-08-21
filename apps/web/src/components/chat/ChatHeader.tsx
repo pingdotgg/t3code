@@ -1,6 +1,8 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type ProjectId,
+  type ProjectOrigin,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -29,6 +31,7 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
+import { MirrorStatusChip } from "./MirrorStatusChip";
 import { OpenInPicker } from "./OpenInPicker";
 import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -54,8 +57,11 @@ interface ChatHeaderProps {
   /** PR feeding the settled classification, resolved by ChatView. */
   changeRequest: ChangeRequestSettleSource | null;
   activeProjectName: string | undefined;
+  activeProjectId: ProjectId | null;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
+  /** Non-null when the project is mirrored from another environment. */
+  activeProjectOrigin: ProjectOrigin | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -115,8 +121,10 @@ export const ChatHeader = memo(function ChatHeader({
   isServerThread,
   changeRequest,
   activeProjectName,
+  activeProjectId,
   activeProjectCwd,
   activeProjectFaviconPath,
+  activeProjectOrigin,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -235,7 +243,7 @@ export const ChatHeader = memo(function ChatHeader({
             doesn't answer it. */}
         {activeProjectName ? (
           <>
-            <WorkspaceBreadcrumbItem>
+            <WorkspaceBreadcrumbItem className="gap-1.5">
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -257,6 +265,14 @@ export const ChatHeader = memo(function ChatHeader({
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>
+              {activeProjectId && activeProjectOrigin ? (
+                <MirrorStatusChip
+                  environmentId={activeThreadEnvironmentId}
+                  projectId={activeProjectId}
+                  origin={activeProjectOrigin}
+                  workspaceRoot={activeProjectCwd}
+                />
+              ) : null}
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
           </>

@@ -141,6 +141,29 @@ function devCompressionPlugin(): Plugin {
   };
 }
 
+// React Grab's fiber layer (bippy) has to install window.__REACT_DEVTOOLS_GLOBAL_HOOK__
+// before react-dom evaluates and reads it. main.tsx's own module graph pulls in
+// react-dom, so importing the overlay from inside main.tsx — even at the very
+// top — is already too late. Sibling top-level `<script type="module">` tags
+// instead execute in document order, so injecting a separate tag ahead of
+// main.tsx's gives React Grab's entry a clean head start. Dev only: no
+// production HTML gets this tag, so the overlay never reaches a shipped build.
+function reactGrabDevPlugin(): Plugin {
+  return {
+    name: "t3code:react-grab-dev",
+    apply: "serve",
+    transformIndexHtml() {
+      return [
+        {
+          tag: "script",
+          attrs: { type: "module", src: "/src/lib/reactGrabDevEntry.ts" },
+          injectTo: "head-prepend",
+        },
+      ];
+    },
+  };
+}
+
 // Vite rejects requests whose Host header isn't localhost, which blocks sharing
 // a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:
 // the DNS is controlled by tailscale, so they can't be rebound by an attacker.
@@ -156,6 +179,7 @@ export default defineConfig(() => {
     assetsInclude: ["**/*.wasm"],
     plugins: [
       devCompressionPlugin(),
+      reactGrabDevPlugin(),
       tanstackRouter(),
       react(),
       babel({

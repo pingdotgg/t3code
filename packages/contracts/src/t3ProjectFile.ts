@@ -12,6 +12,7 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
+const T3_PROJECT_FILE_MAX_MIRROR_INCLUDE = 100;
 
 // Annotations go on the encoded (string) side so they survive into the
 // published JSON Schema; decoding still trims and re-validates non-emptiness.
@@ -86,6 +87,28 @@ export const T3ProjectFile = Schema.Struct({
         description: "Project scripts shared with everyone who opens this repository in T3 Code.",
       })
       .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_SCRIPTS)),
+  ),
+  mirror: Schema.optionalKey(
+    Schema.Struct({
+      include: Schema.optionalKey(
+        Schema.Array(
+          trimmedNonEmpty(
+            {
+              description:
+                'Workspace-relative path of a gitignored file that mirrored projects still sync (e.g. ".env").',
+            },
+            T3_PROJECT_FILE_PATH_MAX_LENGTH,
+          ),
+        )
+          .annotate({
+            description:
+              "Gitignored paths that project mirroring syncs anyway. Git-based sync never transfers ignored files, so secrets and local config the agent needs must be listed here explicitly.",
+          })
+          .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_MIRROR_INCLUDE)),
+      ),
+    }).annotate({
+      description: "Project mirroring configuration (files on one machine, agents on another).",
+    }),
   ),
 }).annotate({
   title: "T3 project file",

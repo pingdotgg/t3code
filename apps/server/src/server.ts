@@ -13,6 +13,7 @@ import * as ServerConfig from "./config.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
+  mirrorBundleRouteLayer,
   serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
@@ -37,6 +38,11 @@ import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReap
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
+import * as GitSync from "./mirror/GitSync.ts";
+import * as MirrorAgent from "./mirror/MirrorAgent.ts";
+import * as MirrorBundleTransfer from "./mirror/MirrorBundleTransfer.ts";
+import * as MirrorHooks from "./mirror/MirrorHooks.ts";
+import * as MirrorServiceModule from "./mirror/MirrorService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -59,6 +65,7 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
+import { MirrorProjectDeletionReactorLive } from "./orchestration/Layers/MirrorProjectDeletionReactor.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
@@ -245,6 +252,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(MirrorProjectDeletionReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
@@ -320,6 +328,48 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
+// Project mirroring: after mirror contents change in bulk, the search index
+// and VCS status must catch up, exactly as the checkpoint reactor does after
+// a turn. Setup scripts are thread-bound, so seeding only points the user at
+// them instead of running them.
+const MirrorHooksLive = Layer.effect(
+  MirrorHooks.MirrorHooks,
+  Effect.gen(function* () {
+    const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+    const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+    return MirrorHooks.MirrorHooks.of({
+      afterMirrorChanged: ({ workspaceRoot }) =>
+        Effect.all(
+          [
+            workspaceEntries.refresh(workspaceRoot),
+            vcsStatusBroadcaster.refreshLocalStatus(workspaceRoot).pipe(Effect.ignore),
+          ],
+          { discard: true },
+        ),
+      runSeedScripts: ({ projectId, workspaceRoot }) =>
+        Effect.logInfo(
+          "Mirror seeded. Run the project's setup script to install dependencies on this host.",
+          { projectId, workspaceRoot },
+        ),
+    });
+  }),
+);
+
+const MirrorLayerLive = Layer.mergeAll(MirrorServiceModule.layer, MirrorAgent.layer).pipe(
+  Layer.provideMerge(MirrorBundleTransfer.layer),
+  Layer.provideMerge(GitSync.layer.pipe(Layer.provide(ProcessRunner.layer))),
+  Layer.provide(MirrorHooksLive),
+);
+
+// Origin-side agents for persisted mirror links reconnect as soon as the
+// server is up; each holds its own outbound connection to its host.
+const MirrorAgentStartupLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const manager = yield* MirrorAgent.MirrorAgentManager;
+    yield* manager.startPersisted;
+  }),
+);
+
 const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
@@ -368,52 +418,59 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
-  // Core Services
-  Layer.provideMerge(ServerSettingsLayerLive),
-  Layer.provideMerge(CheckpointingLayerLive),
-  Layer.provideMerge(SourceControlProviderRegistryLayerLive),
-  Layer.provideMerge(GitLayerLive),
-  Layer.provideMerge(VcsLayerLive),
-  Layer.provideMerge(ProviderRuntimeLayerLive),
-  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
-  Layer.provideMerge(PersistenceLayerLive),
-  Layer.provideMerge(Keybindings.layer),
-  Layer.provideMerge(ProviderRegistryLive),
-  // The instance registry is the new routing keystone — text generation,
-  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
-  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
-  // `providerInstances` hydration merges `settings.providers.<kind>`
-  // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-  // Shared native/canonical NDJSON writers used by both the per-instance
-  // drivers (native stream, written from inside each `<X>Adapter`) and
-  // `ProviderService` (canonical stream, written after event normalization).
-  // Provided once at the runtime level so every consumer sees the same
-  // logger instances.
-  Layer.provideMerge(ProviderEventLoggers.layer),
-  // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
-  // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
-  // the rewritten registry reads snapshots off the instance registry and
-  // no longer transitively provides it. Exposing it at the runtime level
-  // keeps a single Live for all opencode consumers.
-  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-  Layer.provideMerge(WorkspaceLayerLive),
-  Layer.provideMerge(ProjectFaviconResolverLayerLive),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(ServerEnvironment.layer),
-  Layer.provideMerge(AuthLayerLive),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      CloudCliTokenManager.layer.pipe(
-        Layer.provide(ServerSecretStore.layer),
-        Layer.provide(ExternalLauncher.layer),
+const RuntimeCoreDependenciesLive = Layer.mergeAll(ReactorLayerLive, MirrorAgentStartupLive)
+  .pipe(
+    // Mirroring sits above the core services: reactors and the ws layer see
+    // MirrorService, while its own dependencies (persistence, workspace,
+    // VCS) are provided by the chain below.
+    Layer.provideMerge(MirrorLayerLive),
+  )
+  .pipe(
+    // Core Services
+    Layer.provideMerge(ServerSettingsLayerLive),
+    Layer.provideMerge(CheckpointingLayerLive),
+    Layer.provideMerge(SourceControlProviderRegistryLayerLive),
+    Layer.provideMerge(GitLayerLive),
+    Layer.provideMerge(VcsLayerLive),
+    Layer.provideMerge(ProviderRuntimeLayerLive),
+    Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
+    Layer.provideMerge(PersistenceLayerLive),
+    Layer.provideMerge(Keybindings.layer),
+    Layer.provideMerge(ProviderRegistryLive),
+    // The instance registry is the new routing keystone — text generation,
+    // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
+    // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
+    // `providerInstances` hydration merges `settings.providers.<kind>`
+    // with explicit `providerInstances` entries on boot.
+    Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+    // Shared native/canonical NDJSON writers used by both the per-instance
+    // drivers (native stream, written from inside each `<X>Adapter`) and
+    // `ProviderService` (canonical stream, written after event normalization).
+    // Provided once at the runtime level so every consumer sees the same
+    // logger instances.
+    Layer.provideMerge(ProviderEventLoggers.layer),
+    // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
+    // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
+    // the rewritten registry reads snapshots off the instance registry and
+    // no longer transitively provides it. Exposing it at the runtime level
+    // keeps a single Live for all opencode consumers.
+    Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+    Layer.provideMerge(WorkspaceLayerLive),
+    Layer.provideMerge(ProjectFaviconResolverLayerLive),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(ServerEnvironment.layer),
+    Layer.provideMerge(AuthLayerLive),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        CloudCliTokenManager.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ExternalLauncher.layer),
+        ),
+        CloudManagedEndpointRuntimeLive,
       ),
-      CloudManagedEndpointRuntimeLive,
     ),
-  ),
-);
+  );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
@@ -456,6 +513,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    mirrorBundleRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

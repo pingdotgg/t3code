@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import { cast } from "effect/Function";
 import {
   HttpBody,
@@ -28,6 +29,7 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { MIRROR_BUNDLE_ROUTE_PREFIX, MirrorBundleTransfer } from "./mirror/MirrorBundleTransfer.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -228,6 +230,88 @@ export const assetRouteLayer = HttpRouter.add(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
   }),
+);
+
+/**
+ * Git bundle transfer for project mirroring. The HMAC-signed single-use
+ * token in the path is the entire authorization (the asset-access pattern):
+ * origin agents PUT sync/seed bundles up and GET apply-back bundles down.
+ * Bundle bytes deliberately bypass the JSON RPC WebSocket.
+ */
+const resolveBundleTransfer = (direction: "upload" | "download") =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) return null;
+    const token = url.value.pathname.slice(`${MIRROR_BUNDLE_ROUTE_PREFIX}/`.length);
+    if (token.length === 0 || token.includes("/")) return null;
+    const transfer = yield* MirrorBundleTransfer;
+    return yield* transfer.resolve(token, direction);
+  });
+
+export const mirrorBundleRouteLayer = Layer.mergeAll(
+  HttpRouter.add(
+    "GET",
+    `${MIRROR_BUNDLE_ROUTE_PREFIX}/*`,
+    Effect.gen(function* () {
+      const resolved = yield* resolveBundleTransfer("download");
+      if (resolved === null) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
+      return yield* HttpServerResponse.file(resolved.bundlePath, {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      }).pipe(
+        Effect.orElseSucceed(() =>
+          HttpServerResponse.text("Internal Server Error", { status: 500 }),
+        ),
+      );
+    }),
+  ),
+  HttpRouter.add(
+    "PUT",
+    `${MIRROR_BUNDLE_ROUTE_PREFIX}/*`,
+    Effect.gen(function* () {
+      const resolved = yield* resolveBundleTransfer("upload");
+      if (resolved === null) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const transfer = yield* MirrorBundleTransfer;
+      // Feed the live status stream: count bytes as they land so seeding
+      // and syncing can show transfer progress.
+      const contentLength = Number.parseInt(request.headers["content-length"] ?? "", 10);
+      const totalBytes = Number.isFinite(contentLength) && contentLength > 0 ? contentLength : null;
+      let receivedBytes = 0;
+      const counted = request.stream.pipe(
+        Stream.tap((chunk) => {
+          receivedBytes += chunk.byteLength;
+          return transfer.trackUpload({
+            projectId: resolved.projectId,
+            syncId: resolved.syncId,
+            bytes: receivedBytes,
+            totalBytes,
+          });
+        }),
+      );
+      const written = yield* Stream.run(counted, fileSystem.sink(resolved.bundlePath)).pipe(
+        Effect.result,
+        Effect.ensuring(transfer.clearUpload(resolved.syncId)),
+      );
+      if (written._tag === "Failure") {
+        yield* fileSystem.remove(resolved.bundlePath, { force: true }).pipe(Effect.ignore);
+        yield* Effect.logWarning("Mirror bundle upload failed mid-stream.", {
+          syncId: resolved.syncId,
+        });
+        return HttpServerResponse.text("Bad Request", { status: 400 });
+      }
+      return HttpServerResponse.empty({ status: 204 });
+    }),
+  ),
 );
 
 export const staticAndDevRouteLayer = HttpRouter.add(

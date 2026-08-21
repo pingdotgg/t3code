@@ -15,8 +15,11 @@ import {
   ApprovalRequestId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EnvironmentId,
   EventId,
   MessageId,
+  MirrorOriginOfflineError,
+  MirrorProjectNotMirroredError,
   ProjectId,
   ThreadId,
   TurnId,
@@ -63,6 +66,7 @@ import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as MirrorServiceModule from "../../mirror/MirrorService.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -153,6 +157,7 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    readonly mirrorServiceLayer?: Layer.Layer<MirrorServiceModule.MirrorService>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -390,6 +395,7 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(input?.mirrorServiceLayer ?? MirrorServiceModule.layerTest),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
@@ -511,6 +517,116 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  it("gates mirrored-project turns and allows the explicit stale-run retry", async () => {
+    // ensureFresh always fails offline: the first turn must fail visibly,
+    // and only resending the same thread's message (the explicit override)
+    // may proceed against the last-synced mirror.
+    const offlineMirrorLayer = Layer.succeed(
+      MirrorServiceModule.MirrorService,
+      MirrorServiceModule.MirrorService.of({
+        connect: (input) =>
+          Effect.fail(new MirrorProjectNotMirroredError({ projectId: input.projectId })),
+        respond: () => Effect.void,
+        projectIdForConnection: () => Effect.succeed(null),
+        ensureFresh: (projectId) =>
+          Effect.fail(new MirrorOriginOfflineError({ projectId, originLabel: "Laptop" })),
+        applyBack: () => Effect.void,
+        queueApplyBack: () => Effect.void,
+        requestSync: (projectId) => Effect.fail(new MirrorProjectNotMirroredError({ projectId })),
+        originConnected: () => Effect.succeed(false),
+        statusStream: () => Effect.succeed(Stream.empty),
+        isMirroredProject: () => Effect.succeed(true),
+        revokeLink: () => Effect.void,
+      }),
+    );
+    const harness = await createHarness({ mirrorServiceLayer: offlineMirrorLayer });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-mirrored-project-create"),
+        projectId: asProjectId("project-mirrored"),
+        title: "Mirrored Project",
+        workspaceRoot: "/tmp/mirrored-project",
+        origin: {
+          environmentId: EnvironmentId.make("origin-env"),
+          rootPath: "/home/user/repo",
+          label: "Laptop",
+        },
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-mirrored-thread-create"),
+        threadId: ThreadId.make("thread-mirrored"),
+        projectId: asProjectId("project-mirrored"),
+        title: "Mirrored Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+
+    const startTurn = (commandId: string, messageId: string, createdAt: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-mirrored"),
+          message: {
+            messageId: asMessageId(messageId),
+            role: "user",
+            text: "do the work",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
+        }),
+      );
+
+    await startTurn("cmd-mirrored-turn-1", "mirrored-message-1", now);
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find(
+        (entry) => entry.id === ThreadId.make("thread-mirrored"),
+      );
+      return (
+        thread?.activities.some(
+          (activity) =>
+            activity.kind === "provider.turn.start.failed" &&
+            activity.summary === "Project files are unreachable",
+        ) ?? false
+      );
+    });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+
+    // Resending the SAME failed message within the window is the explicit
+    // stale-run approval; a different message must not ride the open offer.
+    await startTurn("cmd-mirrored-turn-2", "mirrored-message-1", "2026-01-01T00:00:05.000Z");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-mirrored"));
+    expect(
+      thread?.activities.some(
+        (activity) => activity.summary === "Running against last-synced files",
+      ),
+    ).toBe(true);
+  });
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
@@ -2806,7 +2922,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -2824,7 +2940,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -2857,7 +2973,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),

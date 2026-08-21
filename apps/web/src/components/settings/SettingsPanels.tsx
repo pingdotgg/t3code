@@ -1669,6 +1669,32 @@ const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Tools for working *on* T3 Code, absent from shipped builds. React Grab is a
+ * devDependency that production bundles never include, so a switch for it in a
+ * shipped app would do nothing.
+ */
+function DeveloperToolsSection() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  if (!import.meta.env.DEV) return null;
+  return (
+    <SettingsSection title="Developer tools">
+      <SettingsRow
+        {...searchableSetting("react-grab")}
+        description="Hover any part of T3 Code's own UI and press the React Grab activation key to copy that element's component stack and source locations, ready to paste into an agent working on this repo. Dev builds only."
+        control={
+          <Switch
+            checked={settings.reactGrabEnabled}
+            onCheckedChange={(checked) => updateSettings({ reactGrabEnabled: Boolean(checked) })}
+            aria-label="React Grab overlay"
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
+
+/**
  * Retired features kept only for users who still depend on them. Collapsed by
  * default so they stay out of the everyday settings path; a settings-search
  * jump to one of the rows unfolds the section.
@@ -2399,6 +2425,7 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
+      <DeveloperToolsSection />
       <LegacyFeaturesSection />
     </SettingsPageContainer>
   );

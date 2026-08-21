@@ -670,6 +670,9 @@ importers:
       msw:
         specifier: 2.12.11
         version: 2.12.11(@types/node@24.12.4)(typescript@6.0.3)
+      react-grab:
+        specifier: ^0.1.32
+        version: 0.1.44(react@19.2.6)
       tailwindcss:
         specifier: ^4.0.0
         version: 4.3.0

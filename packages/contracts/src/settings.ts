@@ -210,6 +210,11 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // React Grab overlay for T3 Code's own UI: hover an element, copy its
+  // component stack and source location for an agent. A tool for people
+  // *developing* T3 Code, so the web client only honors it in dev builds and
+  // only surfaces the switch there.
+  reactGrabEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Legacy plan mode. The composer's Build/Plan toggle was removed from the
   // default UI; this beta flag restores it (plus the /plan and /default slash
   // commands) for users who still rely on the old workflow.
@@ -900,6 +905,7 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  reactGrabEnabled: Schema.optionalKey(Schema.Boolean),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),

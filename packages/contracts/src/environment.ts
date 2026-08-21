@@ -74,6 +74,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  /** Server understands project mirroring (mirror.* RPCs, projects with an
+      origin). Same version-skew contract as threadSettlement: clients hide
+      the feature unless both environments advertise it. */
+  projectMirroring: Schema.optionalKey(Schema.Boolean),
   /** Agent-activity publishes (push notifications and Live Activities)
       currently leave this environment: the publish opt-in is enabled and the
       relay link credentials exist. Clients skip seeding a Live Activity when

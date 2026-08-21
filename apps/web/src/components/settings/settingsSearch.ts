@@ -15,6 +15,12 @@ export interface SettingsSearchItem {
   readonly title: string;
   readonly to: SettingsPath;
   readonly targetId?: string;
+  /**
+   * Rows that only render in dev builds. Kept in the catalog so panels can
+   * still take their anchor props from it, but filtered out of search results
+   * everywhere else — a result that jumps to a row that isn't there is a bug.
+   */
+  readonly devOnly?: boolean;
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
@@ -173,6 +179,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "react-grab",
+    title: "React Grab overlay",
+    to: "/settings/general",
+    devOnly: true,
+  },
+  {
     id: "legacy-plan-mode",
     title: "Plan mode (legacy)",
     to: "/settings/general",
@@ -281,6 +293,7 @@ export function searchSettings(
 
   return items.filter(
     (item) =>
+      (item.devOnly !== true || import.meta.env.DEV) &&
       (isElectron || item.desktopOnly !== true) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );

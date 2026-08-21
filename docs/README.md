@@ -10,6 +10,7 @@
 - [Customize a project icon](./user/project-settings.md)
 - [Mobile appearance](./user/mobile-appearance.md)
 - [Remote access](./user/remote-access.md)
+- [Project mirroring](./user/project-mirroring.md)
 - [Keeping app and server in sync](./user/updating.md)
 - [Source control integrations](./user/source-control.md)
 - [Background service (Linux)](./user/background-service.md)

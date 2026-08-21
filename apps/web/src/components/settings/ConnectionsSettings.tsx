@@ -127,6 +127,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { MirrorLinksSection } from "./MirrorLinksSection";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
@@ -3458,6 +3459,13 @@ export function ConnectionsSettings() {
           savedEnvironments={savedEnvironments}
         />
       </SettingsSection>
+
+      <MirrorLinksSection
+        environments={environments.filter(
+          (environment) =>
+            environment.serverConfig?.environment.capabilities.projectMirroring === true,
+        )}
+      />
     </SettingsPageContainer>
   );
 }

@@ -289,6 +289,17 @@ export function useLegacySidebarEnabled(): boolean {
   return settingsHydrated && legacySidebarEnabled;
 }
 
+/**
+ * Whether the React Grab overlay (Settings → General → Developer tools) is on.
+ *
+ * Always false outside dev builds: the overlay is a devDependency that never
+ * ships, so honoring a synced setting in production would be a dead switch.
+ */
+export function useReactGrabEnabled(): boolean {
+  const reactGrabEnabled = useClientSettingsValue().reactGrabEnabled;
+  return import.meta.env.DEV && reactGrabEnabled;
+}
+
 /** Read current settings for one environment, merged with client-local preferences. */
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,

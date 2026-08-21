@@ -249,6 +249,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
+          origin: command.origin ?? null,
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
           scripts: [],
@@ -290,6 +291,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.defaultThreadEnvMode !== undefined
             ? { defaultThreadEnvMode: command.defaultThreadEnvMode }
+            : {}),
+          ...(command.mirrorIncludeIgnoredFiles !== undefined
+            ? { mirrorIncludeIgnoredFiles: command.mirrorIncludeIgnoredFiles }
             : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),

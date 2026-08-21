@@ -2,10 +2,11 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
-import { ModelSelection, ProjectScript } from "@t3tools/contracts";
+import { ModelSelection, ProjectOrigin, ProjectScript } from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionProjectInput,
@@ -17,11 +18,21 @@ import {
 
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
+    origin: Schema.NullOr(Schema.fromJsonString(ProjectOrigin)),
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    mirrorIncludeIgnoredFiles: Schema.NullOr(Schema.Number),
   }),
 );
 type ProjectionProjectDbRow = typeof ProjectionProjectDbRow.Type;
+
+function toProjectionProject(row: ProjectionProjectDbRow): ProjectionProject {
+  return {
+    ...row,
+    mirrorIncludeIgnoredFiles:
+      row.mirrorIncludeIgnoredFiles === null ? null : row.mirrorIncludeIgnoredFiles === 1,
+  };
+}
 
 const makeProjectionProjectRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -34,8 +45,10 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           project_id,
           title,
           workspace_root,
+          origin_json,
           default_model_selection_json,
           default_thread_env_mode,
+          mirror_include_ignored_files,
           favicon_path,
           scripts_json,
           created_at,
@@ -46,8 +59,10 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.projectId},
           ${row.title},
           ${row.workspaceRoot},
+          ${row.origin != null ? JSON.stringify(row.origin) : null},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${row.defaultThreadEnvMode},
+          ${row.mirrorIncludeIgnoredFiles === null ? null : row.mirrorIncludeIgnoredFiles ? 1 : 0},
           ${row.faviconPath ?? null},
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
@@ -58,8 +73,10 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
         DO UPDATE SET
           title = excluded.title,
           workspace_root = excluded.workspace_root,
+          origin_json = excluded.origin_json,
           default_model_selection_json = excluded.default_model_selection_json,
           default_thread_env_mode = excluded.default_thread_env_mode,
+          mirror_include_ignored_files = excluded.mirror_include_ignored_files,
           favicon_path = excluded.favicon_path,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
@@ -77,8 +94,10 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          origin_json AS "origin",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          mirror_include_ignored_files AS "mirrorIncludeIgnoredFiles",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -98,8 +117,10 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          origin_json AS "origin",
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
+          mirror_include_ignored_files AS "mirrorIncludeIgnoredFiles",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -126,11 +147,13 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
 
   const getById: ProjectionProjectRepositoryShape["getById"] = (input) =>
     getProjectionProjectRow(input).pipe(
+      Effect.map(Option.map(toProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
   const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
     listProjectionProjectRows().pipe(
+      Effect.map((rows) => rows.map(toProjectionProject)),
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
     );
 

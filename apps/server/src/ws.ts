@@ -50,6 +50,8 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  AuthMirrorSyncScope,
+  MirrorProjectNotMirroredError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -86,6 +88,8 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as MirrorService from "./mirror/MirrorService.ts";
+import * as MirrorAgent from "./mirror/MirrorAgent.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -398,6 +402,8 @@ const makeWsRpcLayer = (
         ),
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const mirrorService = yield* MirrorService.MirrorService;
+      const mirrorAgentManager = yield* MirrorAgent.MirrorAgentManager;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
@@ -1097,6 +1103,12 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
+              // A mirrored project's origin must learn its link is gone when
+              // the host project is deleted, or it keeps the link (and its
+              // token) forever. Handled by MirrorProjectDeletionReactor off
+              // the project.deleted domain event so it covers every dispatch
+              // transport (WebSocket, HTTP, and the offline CLI), not just
+              // this one.
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               if (parkingCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
@@ -2161,6 +2173,110 @@ const makeWsRpcLayer = (
             WS_METHODS.previewAutomationFocusHost,
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.mirrorCreatePeerCredential]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorCreatePeerCredential,
+            Effect.gen(function* () {
+              const isMirrored = yield* mirrorService.isMirroredProject(input.projectId);
+              if (!isMirrored) {
+                return yield* new MirrorProjectNotMirroredError({ projectId: input.projectId });
+              }
+              const peerSubject = `mirror-peer:${input.projectId}`;
+              // Reissuing a credential (e.g. moving the mirror to a new
+              // origin) must not leave the previous origin's token live:
+              // mirrorConnect authorizes solely by matching this subject, so
+              // an un-revoked prior token could still reconnect and displace
+              // the new origin's live connection. The new session must be
+              // issued before the old ones are revoked: if issuing fails,
+              // the old (still-valid) sessions are the only way back in.
+              const existingSessions = yield* serverAuth.listSessions().pipe(Effect.orDie);
+              const issued = yield* serverAuth
+                .issueSession({
+                  subject: peerSubject,
+                  scopes: [AuthMirrorSyncScope],
+                  label: `Mirror peer (${input.originEnvironmentId})`,
+                  ttl: Duration.days(365),
+                })
+                .pipe(Effect.orDie);
+              yield* Effect.forEach(
+                existingSessions.filter((session) => session.subject === peerSubject),
+                (session) => serverAuth.revokeSession(session.sessionId).pipe(Effect.orDie),
+                { discard: true },
+              );
+              return { token: issued.token };
+            }),
+            { "rpc.aggregate": "mirror" },
+          ),
+        [WS_METHODS.mirrorAttach]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorAttach,
+            mirrorAgentManager.attach(input).pipe(Effect.as({ projectId: input.projectId })),
+            {
+              "rpc.aggregate": "mirror",
+            },
+          ),
+        [WS_METHODS.mirrorDetach]: (input) =>
+          observeRpcEffect(WS_METHODS.mirrorDetach, mirrorAgentManager.detach(input), {
+            "rpc.aggregate": "mirror",
+          }),
+        [WS_METHODS.mirrorListLinks]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorListLinks,
+            mirrorAgentManager.listLinks.pipe(
+              Effect.map((links) => ({
+                links: links.map((link) => ({
+                  projectId: link.projectId,
+                  hostUrl: link.hostUrl,
+                  localRootPath: link.localRoot,
+                  createdAt: link.createdAt,
+                })),
+              })),
+            ),
+            { "rpc.aggregate": "mirror" },
+          ),
+        // Peer credentials are minted with a project-specific subject
+        // (`mirror-peer:<projectId>`), but AuthMirrorSyncScope alone doesn't
+        // encode which project a token was issued for. Without binding the
+        // subject to the request's project, a peer token for one mirrored
+        // project could connect (or respond) as the origin for any other,
+        // replacing its live connection and receiving its sync directives.
+        [WS_METHODS.mirrorConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.mirrorConnect,
+            Effect.gen(function* () {
+              if (currentSession.subject !== `mirror-peer:${input.projectId}`) {
+                return yield* Effect.fail(authorizationError(AuthMirrorSyncScope));
+              }
+              return yield* mirrorService.connect(input);
+            }),
+            { "rpc.aggregate": "mirror" },
+          ),
+        [WS_METHODS.mirrorRespond]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorRespond,
+            Effect.gen(function* () {
+              const projectId = yield* mirrorService.projectIdForConnection(input.connectionId);
+              if (projectId === null || currentSession.subject !== `mirror-peer:${projectId}`) {
+                return yield* Effect.fail(authorizationError(AuthMirrorSyncScope));
+              }
+              return yield* mirrorService.respond(input);
+            }),
+            { "rpc.aggregate": "mirror" },
+          ),
+        [WS_METHODS.mirrorRequestSync]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mirrorRequestSync,
+            mirrorService.requestSync(input.projectId),
+            {
+              "rpc.aggregate": "mirror",
+            },
+          ),
+        [WS_METHODS.subscribeMirrorStatus]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.subscribeMirrorStatus,
+            mirrorService.statusStream(input.projectId),
+            { "rpc.aggregate": "mirror" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {

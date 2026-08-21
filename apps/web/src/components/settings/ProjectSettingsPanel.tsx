@@ -14,7 +14,9 @@ import {
 } from "../../logicalProject";
 import type {
   ContextMenuItem,
+  EnvironmentId,
   ModelSelection,
+  ProjectId,
   ProviderDriverKind,
   SidebarProjectGroupingMode,
   T3ProjectFileScript,
@@ -67,7 +69,10 @@ import {
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { mirrorEnvironment } from "../../state/mirror";
 import { projectEnvironment } from "../../state/projects";
+import { useEnvironmentQuery } from "../../state/query";
+import { mirrorStatusChipLabel } from "../chat/MirrorStatusChip";
 import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -94,6 +99,7 @@ import {
 } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
+import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -348,6 +354,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         title: string;
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
+        mirrorIncludeIgnoredFiles: boolean | null;
         faviconPath: string | null;
       }>,
       failureTitle: string,
@@ -421,6 +428,18 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       void updateAllMembers(
         { defaultThreadEnvMode: mode },
         "Failed to update new-thread workspace",
+      ),
+    [updateAllMembers],
+  );
+
+  // ----- mirror: sync gitignored env files -----
+  const isMirrored = group.memberProjects.some((member) => member.origin != null);
+  const mirrorIncludeIgnoredFiles = representative.mirrorIncludeIgnoredFiles ?? false;
+  const setMirrorIncludeIgnoredFiles = useCallback(
+    (enabled: boolean) =>
+      void updateAllMembers(
+        { mirrorIncludeIgnoredFiles: enabled ? true : null },
+        "Failed to update mirror env-file sync",
       ),
     [updateAllMembers],
   );
@@ -895,6 +914,38 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           />
         </SettingsSection>
 
+        {isMirrored ? (
+          <SettingsSection title="Mirroring">
+            {representative.origin != null ? (
+              <MirroredProjectInfoRow
+                environmentId={representative.environmentId}
+                projectId={representative.id}
+                origin={representative.origin}
+              />
+            ) : null}
+            <SettingsRow
+              id="project-mirror-include-ignored-files"
+              title="Sync gitignored env files"
+              description="Also sync .env, .env.local, and .env.*.local files anywhere in the project (except node_modules) to the mirror, even though they're gitignored."
+              resetAction={
+                representative.mirrorIncludeIgnoredFiles != null ? (
+                  <SettingResetButton
+                    label="sync gitignored env files"
+                    onClick={() => setMirrorIncludeIgnoredFiles(false)}
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  checked={mirrorIncludeIgnoredFiles}
+                  onCheckedChange={(checked) => setMirrorIncludeIgnoredFiles(Boolean(checked))}
+                  aria-label="Sync gitignored env files"
+                />
+              }
+            />
+          </SettingsSection>
+        ) : null}
+
         <SettingsSection
           title="Checkout"
           headerAction={
@@ -1139,7 +1190,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             description={
               group.memberProjects.length > 1
                 ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                : "Deletes the project entry and its threads. Files on disk are not touched."
+                : isMirrored
+                  ? "Deletes the project entry and its threads, and disconnects the mirror link on the machine holding the files. Files on disk are not touched on either machine."
+                  : "Deletes the project entry and its threads. Files on disk are not touched."
             }
             control={
               <Button
@@ -1171,5 +1224,42 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         projectName={group.displayName}
       />
     </>
+  );
+}
+
+/**
+ * "Mirrored project" info row: origin machine and path, plus the live sync
+ * state. Rendered only for mirrored projects so the status subscription
+ * never opens for plain local ones.
+ */
+function MirroredProjectInfoRow({
+  environmentId,
+  projectId,
+  origin,
+}: {
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+  origin: NonNullable<SidebarProjectGroupMember["origin"]>;
+}) {
+  const statusQuery = useEnvironmentQuery(
+    mirrorEnvironment.statusByProject({ environmentId, input: { projectId } }),
+  );
+  const status = statusQuery.data?.[projectId] ?? null;
+  const originLabel = origin.label ?? origin.environmentId;
+  return (
+    <SettingsRow
+      id="project-mirror-info"
+      title="Mirrored project"
+      description={`Files live on ${originLabel} at ${origin.rootPath}. Agents run against a synced mirror on this environment.`}
+      control={
+        <span className="text-sm text-muted-foreground">
+          {status === null
+            ? "Status unavailable"
+            : status.originConnected
+              ? mirrorStatusChipLabel(status)
+              : `${originLabel} is offline`}
+        </span>
+      }
+    />
   );
 }

@@ -42,6 +42,7 @@ import {
   CircleDashedIcon,
   ClockIcon,
   FolderIcon,
+  FolderSyncIcon,
   FolderPlusIcon,
   GitBranchIcon,
   MessageSquareIcon,
@@ -256,6 +257,7 @@ function SidebarThreadTooltip({
   projectTitle,
   projectCwd,
   projectFaviconPath,
+  projectOriginLabel,
   environmentLabel,
   providerEntry,
   showInstanceBadge,
@@ -269,6 +271,7 @@ function SidebarThreadTooltip({
   projectTitle: string | null;
   projectCwd: string | null;
   projectFaviconPath: string | null;
+  projectOriginLabel?: string | null;
   environmentLabel: string | null;
   providerEntry: ProviderInstanceEntry | null;
   showInstanceBadge: boolean;
@@ -310,6 +313,14 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <ServerIcon className="size-3 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
+            </div>
+          ) : null}
+          {projectOriginLabel != null ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <FolderSyncIcon className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 truncate text-foreground/75">
+                Files live on {projectOriginLabel}
+              </div>
             </div>
           ) : null}
           {thread.branch ? (
@@ -725,6 +736,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectTitle: string | null;
+  /** Origin machine label for mirrored projects; null for local ones. */
+  projectOriginLabel: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
@@ -945,6 +958,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       projectTitle={props.projectTitle}
       projectCwd={props.projectCwd}
       projectFaviconPath={props.projectFaviconPath}
+      projectOriginLabel={props.projectOriginLabel}
       environmentLabel={props.environmentLabel}
       providerEntry={providerEntry}
       showInstanceBadge={showInstanceBadge}
@@ -1377,11 +1391,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.projectTitle ? (
                 <span
                   className={cn(
-                    "min-w-0 flex-1 truncate text-secondary-label text-xs",
+                    "flex min-w-0 flex-1 items-center gap-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
                   )}
                 >
-                  {props.projectTitle}
+                  <span className="min-w-0 truncate">{props.projectTitle}</span>
+                  {props.projectOriginLabel !== null ? (
+                    <FolderSyncIcon
+                      aria-label={`Mirrored from ${props.projectOriginLabel}`}
+                      role="img"
+                      className="size-3 shrink-0 text-muted-foreground/65"
+                    />
+                  ) : null}
                 </span>
               ) : (
                 <span className="flex-1" />
@@ -1899,6 +1920,19 @@ export default function Sidebar() {
         ),
       ),
     [projectGroups],
+  );
+  // Origin machine label for mirrored projects (project.origin != null);
+  // null for plain local projects. Drives the sidebar mirror glyph and the
+  // "Files live on <machine>" tooltip line.
+  const projectOriginLabelByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [
+          `${project.environmentId}:${project.id}`,
+          project.origin != null ? (project.origin.label ?? project.origin.environmentId) : null,
+        ]),
+      ),
+    [projects],
   );
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
@@ -3704,6 +3738,11 @@ export default function Sidebar() {
                         }
                         projectTitle={
                           projectDisplayNameByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
+                        }
+                        projectOriginLabel={
+                          projectOriginLabelByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }

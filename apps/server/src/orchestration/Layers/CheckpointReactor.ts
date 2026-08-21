@@ -36,6 +36,7 @@ import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import { MirrorService } from "../../mirror/MirrorService.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 
@@ -87,6 +88,7 @@ const make = Effect.gen(function* () {
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const mirrorService = yield* MirrorService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
 
   const appendRevertFailureActivity = (input: {
@@ -221,6 +223,7 @@ const make = Effect.gen(function* () {
   const captureAndDispatchCheckpoint = Effect.fn("captureAndDispatchCheckpoint")(function* (input: {
     readonly threadId: ThreadId;
     readonly turnId: TurnId;
+    readonly projectId: ProjectId;
     readonly thread: {
       readonly messages: ReadonlyArray<{
         readonly id: MessageId;
@@ -323,6 +326,17 @@ const make = Effect.gen(function* () {
       status: input.status,
       createdAt: input.createdAt,
     });
+
+    // Mirrored project: ship the turn's results back to the origin working
+    // copy. `queueApplyBack` snapshots and persists the pending apply under
+    // the project lock synchronously — this must complete *before*
+    // turn.processing.quiesced signals completion, or a fast-following
+    // turn's ensureFresh can acquire the lock first and pull the origin's
+    // state over the mirror before this turn's edits are captured,
+    // permanently losing them. Only the network delivery to the origin is
+    // backgrounded; that can safely wait for the next reconnect.
+    yield* mirrorService.queueApplyBack(input.projectId);
+
     yield* receiptBus.publish({
       type: "turn.processing.quiesced",
       threadId: input.threadId,
@@ -407,6 +421,7 @@ const make = Effect.gen(function* () {
       yield* captureAndDispatchCheckpoint({
         threadId: thread.id,
         turnId,
+        projectId: thread.projectId,
         thread,
         cwd: checkpointCwd,
         turnCount: nextTurnCount,
@@ -470,6 +485,7 @@ const make = Effect.gen(function* () {
     yield* captureAndDispatchCheckpoint({
       threadId,
       turnId,
+      projectId: thread.projectId,
       thread,
       cwd: checkpointCwd,
       turnCount: checkpointTurnCount,

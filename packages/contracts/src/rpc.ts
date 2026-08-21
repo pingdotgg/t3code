@@ -152,6 +152,25 @@ import {
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
+  MirrorAttachInput,
+  MirrorAttachResult,
+  MirrorConnectInput,
+  MirrorCreatePeerCredentialInput,
+  MirrorCreatePeerCredentialResult,
+  MirrorDetachInput,
+  MirrorLinkNotFoundError,
+  MirrorListLinksResult,
+  MirrorNotARepositoryError,
+  MirrorProjectNotMirroredError,
+  MirrorProjectStatus,
+  MirrorRequestSyncInput,
+  MirrorRespondInput,
+  MirrorStreamEvent,
+  MirrorSubscribeStatusInput,
+  MirrorSyncFailedError,
+  MirrorOriginOfflineError,
+} from "./mirror.ts";
+import {
   ServerConfigStreamEvent,
   ServerConfig,
   ServerProviderUpdateError,
@@ -250,6 +269,16 @@ export const WS_METHODS = {
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+
+  // Project mirroring methods
+  mirrorCreatePeerCredential: "mirror.createPeerCredential",
+  mirrorAttach: "mirror.attach",
+  mirrorDetach: "mirror.detach",
+  mirrorListLinks: "mirror.listLinks",
+  mirrorConnect: "mirror.connect",
+  mirrorRespond: "mirror.respond",
+  mirrorRequestSync: "mirror.requestSync",
+  subscribeMirrorStatus: "subscribeMirrorStatus",
 
   // Server meta
   serverProbe: "server.probe",
@@ -849,6 +878,66 @@ export const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutoma
   error: EnvironmentAuthorizationError,
 });
 
+// Project mirroring. `mirror.connect`/`mirror.respond` follow the
+// previewAutomation stream+respond pattern: the origin environment's
+// MirrorAgent holds the connect stream open and answers directives through
+// respond. Bulk bundle bytes travel over signed HTTP URLs, never these RPCs.
+export const WsMirrorCreatePeerCredentialRpc = Rpc.make(WS_METHODS.mirrorCreatePeerCredential, {
+  payload: MirrorCreatePeerCredentialInput,
+  success: MirrorCreatePeerCredentialResult,
+  error: Schema.Union([MirrorProjectNotMirroredError, EnvironmentAuthorizationError]),
+});
+
+export const WsMirrorAttachRpc = Rpc.make(WS_METHODS.mirrorAttach, {
+  payload: MirrorAttachInput,
+  success: MirrorAttachResult,
+  error: Schema.Union([
+    MirrorNotARepositoryError,
+    MirrorSyncFailedError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsMirrorDetachRpc = Rpc.make(WS_METHODS.mirrorDetach, {
+  payload: MirrorDetachInput,
+  error: Schema.Union([MirrorLinkNotFoundError, EnvironmentAuthorizationError]),
+});
+
+export const WsMirrorListLinksRpc = Rpc.make(WS_METHODS.mirrorListLinks, {
+  payload: Schema.Struct({}),
+  success: MirrorListLinksResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsMirrorConnectRpc = Rpc.make(WS_METHODS.mirrorConnect, {
+  payload: MirrorConnectInput,
+  success: MirrorStreamEvent,
+  error: Schema.Union([MirrorProjectNotMirroredError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsMirrorRespondRpc = Rpc.make(WS_METHODS.mirrorRespond, {
+  payload: MirrorRespondInput,
+  error: Schema.Union([MirrorSyncFailedError, EnvironmentAuthorizationError]),
+});
+
+export const WsMirrorRequestSyncRpc = Rpc.make(WS_METHODS.mirrorRequestSync, {
+  payload: MirrorRequestSyncInput,
+  error: Schema.Union([
+    MirrorProjectNotMirroredError,
+    MirrorOriginOfflineError,
+    MirrorSyncFailedError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsSubscribeMirrorStatusRpc = Rpc.make(WS_METHODS.subscribeMirrorStatus, {
+  payload: MirrorSubscribeStatusInput,
+  success: MirrorProjectStatus,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -1067,6 +1156,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsMirrorCreatePeerCredentialRpc,
+  WsMirrorAttachRpc,
+  WsMirrorDetachRpc,
+  WsMirrorListLinksRpc,
+  WsMirrorConnectRpc,
+  WsMirrorRespondRpc,
+  WsMirrorRequestSyncRpc,
+  WsSubscribeMirrorStatusRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,

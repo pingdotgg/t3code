@@ -102,6 +102,9 @@ const collectQueueUntil = Effect.fn("TransferBudget.collectQueueUntil")(function
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
+import * as MirrorServiceModule from "./mirror/MirrorService.ts";
+import * as MirrorAgent from "./mirror/MirrorAgent.ts";
+import * as MirrorBundleTransfer from "./mirror/MirrorBundleTransfer.ts";
 import { isThreadDetailEvent, resolveAvailableEditorsForConfig } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -733,7 +736,14 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.sourceControlRepositoryService,
         }),
       ),
-      Layer.provideMerge(vcsStatusBroadcasterLayer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          vcsStatusBroadcasterLayer,
+          MirrorServiceModule.layerTest,
+          MirrorAgent.layerTest,
+          MirrorBundleTransfer.layerTest,
+        ),
+      ),
       Layer.provide(
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread: () => Effect.succeed({ status: "no-script" as const }),

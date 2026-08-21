@@ -67,6 +67,10 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/mirror": {
+      "types": "./src/state/mirror.ts",
+      "default": "./src/state/mirror.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"

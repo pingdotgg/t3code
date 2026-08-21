@@ -1,5 +1,6 @@
 import {
   AuthAccessReadScope,
+  AuthMirrorSyncScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -118,6 +119,18 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,
+  // Minting a peer credential is part of mirror setup, not access
+  // administration: the issued token is scoped to mirror:sync only, so a
+  // standard-paired client that can already run agents may create it.
+  [WS_METHODS.mirrorCreatePeerCredential]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mirrorAttach]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mirrorDetach]: AuthOrchestrationOperateScope,
+  // Listing this device's shared folders is read-only introspection.
+  [WS_METHODS.mirrorListLinks]: AuthOrchestrationReadScope,
+  [WS_METHODS.mirrorConnect]: AuthMirrorSyncScope,
+  [WS_METHODS.mirrorRespond]: AuthMirrorSyncScope,
+  [WS_METHODS.mirrorRequestSync]: AuthOrchestrationOperateScope,
+  [WS_METHODS.subscribeMirrorStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,

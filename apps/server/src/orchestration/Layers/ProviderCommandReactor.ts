@@ -15,6 +15,7 @@ import {
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -30,6 +31,7 @@ import { increment, orchestrationEventsProcessedTotal } from "../../observabilit
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import { MirrorService } from "../../mirror/MirrorService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -91,6 +93,9 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
+/** How long an offline-gate failure keeps offering the stale-run override. */
+const STALE_RUN_OFFER_WINDOW_MS = Duration.toMillis(Duration.minutes(10));
+const STALE_RUN_OFFER_WINDOW_NANOS = Duration.toNanosUnsafe(Duration.minutes(10));
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
@@ -308,6 +313,19 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const mirrorService = yield* MirrorService;
+  // Offering "run against last-synced files" after an offline gate failure:
+  // the failure records an offer; resending the same failed message within
+  // the window is the user's explicit acceptance. Keyed by messageId (not
+  // just threadId) so a different message on the same thread — from this
+  // user or another client — can't silently ride the open offer into a
+  // stale-run turn.
+  // offeredAt is monotonic-clock nanoseconds, not wall-clock time: a system
+  // clock correction must not extend (or shrink) the acceptance window.
+  const staleRunOffers = new Map<
+    string,
+    { readonly messageId: string; readonly offeredAt: bigint }
+  >();
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -1083,37 +1101,6 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const isFirstUserMessageTurn =
-      thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
-      const project = yield* resolveProject(thread.projectId);
-      const generationCwd =
-        resolveThreadWorkspaceCwd({
-          thread,
-          projects: project ? [project] : [],
-        }) ?? process.cwd();
-      const generationInput = {
-        messageText: message.text,
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-        ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
-      };
-
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-        threadId: event.payload.threadId,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        ...generationInput,
-      }).pipe(Effect.forkScoped);
-
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
-        yield* maybeGenerateThreadTitleForFirstTurn({
-          threadId: event.payload.threadId,
-          cwd: generationCwd,
-          ...generationInput,
-        }).pipe(Effect.forkScoped);
-      }
-    }
-
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
@@ -1149,6 +1136,86 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+
+    // Mirrored project gate: the mirror must match the origin working copy
+    // before the provider sees it. Runs before the pre-turn checkpoint
+    // baseline, which is captured on the provider's turn.started event.
+    const gateProject = yield* resolveProject(thread.projectId);
+    if (gateProject?.origin != null) {
+      const now = yield* Clock.monotonicTimeNanos;
+      const offer = staleRunOffers.get(event.payload.threadId);
+      const staleRunApproved =
+        offer !== undefined &&
+        offer.messageId === event.payload.messageId &&
+        now - offer.offeredAt <= STALE_RUN_OFFER_WINDOW_NANOS;
+      staleRunOffers.delete(event.payload.threadId);
+      if (staleRunApproved) {
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.start.failed",
+          summary: "Running against last-synced files",
+          detail:
+            "The machine holding this project's files is still offline; this turn uses the last-synced state of the mirror.",
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        }).pipe(Effect.ignore);
+      } else {
+        const gate = yield* mirrorService
+          .ensureFresh(thread.projectId, { reason: "turn-start" })
+          .pipe(Effect.result);
+        if (gate._tag === "Failure") {
+          if (gate.failure._tag === "MirrorOriginOfflineError") {
+            staleRunOffers.set(event.payload.threadId, {
+              messageId: event.payload.messageId,
+              offeredAt: now,
+            });
+            yield* appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.turn.start.failed",
+              summary: "Project files are unreachable",
+              detail: `${gate.failure.message} Send the message again within ${Math.round(
+                STALE_RUN_OFFER_WINDOW_MS / 60_000,
+              )} minutes to run against the last-synced files instead.`,
+              turnId: null,
+              createdAt: event.payload.createdAt,
+            });
+            return;
+          }
+          yield* handleTurnStartFailure(Cause.fail(gate.failure));
+          return;
+        }
+      }
+    }
+
+    const isFirstUserMessageTurn =
+      thread.messages.filter((entry) => entry.role === "user").length === 1;
+    if (isFirstUserMessageTurn) {
+      const generationCwd =
+        resolveThreadWorkspaceCwd({
+          thread,
+          projects: gateProject ? [gateProject] : [],
+        }) ?? process.cwd();
+      const generationInput = {
+        messageText: message.text,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
+      };
+
+      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+        threadId: event.payload.threadId,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        ...generationInput,
+      }).pipe(Effect.forkScoped);
+
+      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+        yield* maybeGenerateThreadTitleForFirstTurn({
+          threadId: event.payload.threadId,
+          cwd: generationCwd,
+          ...generationInput,
+        }).pipe(Effect.forkScoped);
+      }
+    }
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,

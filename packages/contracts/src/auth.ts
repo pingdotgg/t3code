@@ -81,6 +81,10 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+/** Held only by mirror peer links (the file-owning environment's
+    MirrorAgent). Never part of the standard or administrative client
+    scope sets. */
+export const AuthMirrorSyncScope = "mirror:sync" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -90,6 +94,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthMirrorSyncScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
