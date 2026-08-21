@@ -323,6 +323,37 @@ describe("getCursorFallbackModels", () => {
 });
 
 describe("buildCursorProviderSnapshot", () => {
+  it("publishes discovered skills for the shared composer picker", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated" },
+        },
+        skills: [
+          {
+            name: "deploy",
+            description: "Deploy the service.",
+            path: "/workspace/.cursor/skills/deploy/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+        ],
+      }).skills,
+    ).toEqual([
+      {
+        name: "deploy",
+        description: "Deploy the service.",
+        path: "/workspace/.cursor/skills/deploy/SKILL.md",
+        enabled: true,
+        scope: "project",
+      },
+    ]);
+  });
+
   it("downgrades ready status to warning when ACP model discovery times out", () => {
     expect(
       buildCursorProviderSnapshot({

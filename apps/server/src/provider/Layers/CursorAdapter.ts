@@ -43,6 +43,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { discoverCursorSkills, renderCursorSkillInvocations } from "../Drivers/CursorSkills.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -133,6 +134,7 @@ interface CursorSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
+  readonly skillNames: ReadonlySet<string>;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -530,6 +532,7 @@ export function makeCursorAdapter(
           const effectiveCursorSettings = options?.resolveSettings
             ? yield* options.resolveSettings
             : cursorSettings;
+          const skills = yield* discoverCursorSkills(cwd, options?.environment);
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
@@ -778,6 +781,7 @@ export function makeCursorAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
+            skillNames: new Set(skills.map((skill) => skill.name)),
             promptsInFlight: 0,
             stopped: false,
           };
@@ -968,7 +972,10 @@ export function makeCursorAdapter(
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
+            promptParts.push({
+              type: "text",
+              text: renderCursorSkillInvocations(input.input.trim(), ctx.skillNames),
+            });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {
