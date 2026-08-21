@@ -179,6 +179,27 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
     }),
   );
 
+  it.effect("keeps user scope when the workspace is the home directory", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+
+      yield* writeSkill(
+        path.join(fixture.userCursor, "home-skill"),
+        frontmatter("home-skill", "Lives in a root shared by both scopes."),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.home, fixture.environment);
+
+      // The shared root is scanned once and keeps its user label; its
+      // duplicate project entry must not win the merge.
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope]),
+        [["home-skill", "user"]],
+      );
+    }),
+  );
+
   /**
    * `cursor-agent` 2026.07.20-8cc9c0b loads every one of these. It names a
    * skill after its directory and derives a missing description from the
@@ -222,9 +243,9 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
           ["mismatched-dir", "Frontmatter name disagrees with the directory."],
           ["no-desc", "No description probe"],
           ["no-frontmatter", "No frontmatter probe"],
+          ["not-a-mapping", "List frontmatter"],
           // An unterminated `---` never opens frontmatter, so the first
           // heading is whatever the body starts with.
-          ["not-a-mapping", "List frontmatter"],
           ["unterminated", "Fallback"],
           ["Weird_Name", "Non-conforming characters still load."],
         ],

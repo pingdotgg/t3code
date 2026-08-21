@@ -37,6 +37,12 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
   });
 
+  it("reads provider skill inventories under the orchestration read scope", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.providersSkillInventory)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {
     // The candidate list is a read like the detail beside it, and asking somebody for a review is
     // a write like every other pull request operation.

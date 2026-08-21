@@ -179,7 +179,8 @@ export function resolveCursorHomeDirectory(
  * The eight roots Cursor reads, lowest precedence first: `.claude`, `.codex`,
  * `.agents`, then `.cursor` within each scope. Later roots overwrite earlier
  * ones by name, and all project roots follow all user roots so project scope
- * wins.
+ * wins. When the workspace is the home directory the two scopes coincide, and
+ * each physical root keeps only its user-scoped entry.
  */
 function buildSkillRoots(input: {
   readonly path: Path.Path;
@@ -188,7 +189,7 @@ function buildSkillRoots(input: {
 }): ReadonlyArray<CursorSkillRoot> {
   const home = input.path.resolve(input.homeDirectory);
   const workspace = input.path.resolve(input.cwd);
-  return [
+  const roots: ReadonlyArray<CursorSkillRoot> = [
     { directory: input.path.join(home, ".claude", "skills"), boundary: home, scope: "user" },
     { directory: input.path.join(home, ".codex", "skills"), boundary: home, scope: "user" },
     { directory: input.path.join(home, ".agents", "skills"), boundary: home, scope: "user" },
@@ -214,6 +215,13 @@ function buildSkillRoots(input: {
       scope: "project",
     },
   ];
+
+  // A thread running in the home directory itself would otherwise scan each
+  // root twice and relabel user skills as "project" when their duplicate
+  // overwrites them in the merge.
+  return roots.filter(
+    (root, index) => roots.findIndex((other) => other.directory === root.directory) === index,
+  );
 }
 
 /**
@@ -241,7 +249,7 @@ const readSkillMetadata = Effect.fn("readSkillMetadata")(function* (
 /**
  * Walk one skills root, collecting every directory that directly contains a
  * `SKILL.md`. Recursion is what makes organizational category directories
- * (`shipping/land-it/SKILL.md`) work, and is confined to the four known roots
+ * (`shipping/land-it/SKILL.md`) work, and is confined to the known roots
  * — this never scans the workspace looking for hidden roots.
  *
  * Symlinked skill directories are followed only while their canonical target
