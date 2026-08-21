@@ -401,7 +401,7 @@ it.effect("proves Bun ownership for its copied Windows global executable", () =>
   );
 });
 
-it.effect("proves Homebrew ownership against the configured formula prefix", () => {
+it.effect("proves Homebrew ownership and fails closed for unresolved shims", () => {
   const brew = "/opt/homebrew/bin/brew";
   const resolve = (version: string) => {
     const formulaPrefix = `/opt/homebrew/Cellar/codex/${version}`;
@@ -446,6 +446,27 @@ it.effect("proves Homebrew ownership against the configured formula prefix", () 
     });
     expect(after.identityKey).toBe(before.identityKey);
     expect(after.lockKey).toBe(before.lockKey);
+
+    const unresolved = yield* resolveInstallation(
+      context({
+        binaryPath: "codex",
+        resolvedCommandPath: "/opt/homebrew/bin/codex",
+        commands: { npm: "/usr/local/bin/npm" },
+        probes: {
+          "/usr/local/bin/npm root -g": {
+            stdout: "/usr/local/lib/node_modules",
+            stderr: "",
+            exitCode: 0,
+          },
+        },
+      }),
+      catalog,
+    );
+    expect(unresolved).toMatchObject({
+      label: "Unknown installation — verification failed",
+      ownershipVerified: false,
+      update: null,
+    });
   });
 });
 

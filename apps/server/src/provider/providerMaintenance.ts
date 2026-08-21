@@ -582,7 +582,11 @@ function deriveVersionAdvisory(input: {
   if (!input.latestVersion) {
     return { status: "unknown", message: null };
   }
-  if (compareMaintenanceVersions(input.currentVersion, input.latestVersion) === -1) {
+  const comparison = compareMaintenanceVersions(input.currentVersion, input.latestVersion);
+  if (comparison === null) {
+    return { status: "unknown", message: null };
+  }
+  if (comparison < 0) {
     return {
       status: "behind_latest",
       message: PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
