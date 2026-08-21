@@ -257,10 +257,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             // borrows the shortcut key's ink rather than the
                             // hairline border token, which fades to ~4% white in
                             // dark mode and disappears.
-                            "border-secondary-label/70 bg-background/35 text-transparent group-hover:border-foreground",
+                            "border-secondary-label/70 bg-background/35 group-hover:border-foreground",
                       )}
                     >
-                      <CheckIcon className="size-3" strokeWidth={3} />
+                      {/* Mounted only when checked, like the shared checkbox and
+                          the mobile pill: a glyph hidden by `text-transparent`
+                          comes back in forced-colors mode, where the OS
+                          overrides both the text and the background, and every
+                          empty box would then read as selected. */}
+                      {isSelected ? <CheckIcon className="size-3" strokeWidth={3} /> : null}
                     </span>
                   ) : null}
                   <div className="min-w-0 flex-1 flex flex-col gap-0.5">
