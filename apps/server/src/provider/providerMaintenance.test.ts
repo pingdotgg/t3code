@@ -147,7 +147,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ),
   );
 
-  it("marks providers with unknown current versions as unknown", () => {
+  it("marks providers with missing or invalid current versions as unknown", () => {
     expect(
       createProviderVersionAdvisory({
         driver: driver("packageTool"),
@@ -157,6 +157,17 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toMatchObject({
       status: "unknown",
       currentVersion: null,
+      latestVersion: "9.9.9",
+    });
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("packageTool"),
+        currentVersion: "development",
+        latestVersion: "9.9.9",
+      }),
+    ).toMatchObject({
+      status: "unknown",
+      currentVersion: "development",
       latestVersion: "9.9.9",
     });
   });

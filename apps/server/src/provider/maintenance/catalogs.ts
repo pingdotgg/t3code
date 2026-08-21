@@ -352,6 +352,14 @@ function stableHomebrewRoot(context: InstallationContext, prefix: string): strin
   return formulaEnd < 0 ? normalized : normalized.slice(0, formulaEnd);
 }
 
+function isHomebrewShimPath(path: string): boolean {
+  return (
+    path.startsWith("/opt/homebrew/bin/") ||
+    path.startsWith("/usr/local/bin/") ||
+    path.includes("/.linuxbrew/bin/")
+  );
+}
+
 function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
   return defineInstallation<{
     executable: string;
@@ -365,7 +373,9 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       const observed = normalize(context, context.realCommandPath ?? context.binaryPath);
       const observedLower = observed.toLowerCase();
       if (!observedLower.includes("/cellar/") && !observedLower.includes("/caskroom/")) {
-        return notMatched;
+        return isHomebrewShimPath(observedLower)
+          ? undetermined("Homebrew shim ownership could not be verified.")
+          : notMatched;
       }
       const executable = yield* context.resolveCommand("brew");
       if (!executable) return undetermined("Homebrew executable is unavailable.");
