@@ -1,12 +1,28 @@
-import { createMemoryHistory } from "@tanstack/react-router";
+import { createMemoryHistory, type RouterHistory } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createNavigationHistory } from "./navigationHistoryStore";
 
+function withoutRouterLocationState(history: RouterHistory): RouterHistory {
+  return {
+    ...history,
+    get location() {
+      return { ...history.location, state: {} as RouterHistory["location"]["state"] };
+    },
+    subscribe: (listener) =>
+      history.subscribe(({ action, location }) =>
+        listener({
+          action,
+          location: { ...location, state: {} as RouterHistory["location"]["state"] },
+        }),
+      ),
+  };
+}
+
 describe("createNavigationHistory", () => {
   it("tracks back and forward availability through navigation", () => {
     const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
-    const history = createNavigationHistory(routerHistory);
+    const history = createNavigationHistory(withoutRouterLocationState(routerHistory));
     history.start();
 
     expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: false });

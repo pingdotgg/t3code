@@ -14,30 +14,40 @@ export interface NavigationHistory {
   readonly subscribe: (listener: () => void) => () => void;
 }
 
-function snapshotFor(history: RouterHistory, maximumIndex: number): NavigationHistorySnapshot {
+function snapshotFor(currentPosition: number, maximumPosition: number): NavigationHistorySnapshot {
   return {
-    canGoBack: history.canGoBack(),
-    canGoForward: history.location.state.__TSR_index < maximumIndex,
+    canGoBack: currentPosition > 0,
+    canGoForward: currentPosition < maximumPosition,
   };
 }
 
 export function createNavigationHistory(history: RouterHistory): NavigationHistory {
-  let maximumIndex = history.location.state.__TSR_index;
-  let snapshot = snapshotFor(history, maximumIndex);
+  let currentPosition = 0;
+  let maximumPosition = 0;
+  let snapshot = snapshotFor(currentPosition, maximumPosition);
   let stopTracking: (() => void) | null = null;
   const listeners = new Set<() => void>();
 
-  const update = ({
-    action,
-    location,
-  }: Parameters<Parameters<RouterHistory["subscribe"]>[0]>[0]) => {
-    if (action.type === "PUSH") {
-      maximumIndex = location.state.__TSR_index;
-    } else {
-      maximumIndex = Math.max(maximumIndex, location.state.__TSR_index);
+  const update = ({ action }: Parameters<Parameters<RouterHistory["subscribe"]>[0]>[0]) => {
+    switch (action.type) {
+      case "PUSH":
+        currentPosition += 1;
+        maximumPosition = currentPosition;
+        break;
+      case "BACK":
+        currentPosition = Math.max(0, currentPosition - 1);
+        break;
+      case "FORWARD":
+        currentPosition = Math.min(maximumPosition, currentPosition + 1);
+        break;
+      case "GO":
+        currentPosition = Math.max(0, Math.min(maximumPosition, currentPosition + action.index));
+        break;
+      case "REPLACE":
+        break;
     }
 
-    const nextSnapshot = snapshotFor(history, maximumIndex);
+    const nextSnapshot = snapshotFor(currentPosition, maximumPosition);
     if (
       nextSnapshot.canGoBack === snapshot.canGoBack &&
       nextSnapshot.canGoForward === snapshot.canGoForward
@@ -69,8 +79,6 @@ export function createNavigationHistory(history: RouterHistory): NavigationHisto
       if (stopTracking) {
         return;
       }
-      maximumIndex = Math.max(maximumIndex, history.location.state.__TSR_index);
-      snapshot = snapshotFor(history, maximumIndex);
       stopTracking = history.subscribe(update);
     },
     subscribe: (listener) => {
