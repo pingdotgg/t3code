@@ -1,11 +1,13 @@
 import type { WorkingCopyStatusResult } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DiffPanelShell } from "../DiffPanelShell";
 import { CommitComposer } from "./CommitComposer";
 import { SourceControlHeader } from "./SourceControlHeader";
 import { SourceControlPanelShell } from "./SourceControlPanelShell";
+
+vi.mock("~/env", () => ({ isElectron: true }));
 
 const noop = () => undefined;
 const status: WorkingCopyStatusResult = {
@@ -45,6 +47,16 @@ function renderHeader(over: Partial<Parameters<typeof SourceControlHeader>[0]> =
     ...over,
   };
   return renderToStaticMarkup(<SourceControlHeader {...props} />);
+}
+
+function classNameFor(markup: string, dataAttribute: string): string {
+  const markerIndex = markup.indexOf(` ${dataAttribute}`);
+  if (markerIndex < 0) throw new Error(`Missing ${dataAttribute}`);
+  const classStart = markup.lastIndexOf('class="', markerIndex);
+  if (classStart < 0) throw new Error(`Missing class before ${dataAttribute}`);
+  const valueStart = classStart + 'class="'.length;
+  const valueEnd = markup.indexOf('"', valueStart);
+  return markup.slice(valueStart, valueEnd);
 }
 
 describe("SourceControlHeader", () => {
@@ -93,8 +105,28 @@ describe("SourceControlPanelShell", () => {
     expect(markup).toContain('data-app-sidebar=""');
     expect(markup).toContain('data-sidebar-version="v2"');
     expect(markup).toContain("bg-sidebar surface-grain text-sidebar-foreground");
+    const titlebarClassName = classNameFor(markup, "data-source-control-panel-titlebar");
+    expect(titlebarClassName).toContain("h-[var(--workspace-topbar-height)]");
+    expect(titlebarClassName).toContain("min-h-[var(--workspace-topbar-height)]");
+    expect(titlebarClassName).toContain("shrink-0 items-center");
+    expect(titlebarClassName).toContain("drag-region");
+    expect(titlebarClassName.split(" ")).not.toContain("workspace-topbar");
     expect(markup).toContain("flex h-full min-w-0 flex-col w-full bg-transparent");
     expect(markup).not.toContain("flex h-full min-w-0 flex-col w-full bg-background");
+  });
+
+  it("keeps sheet mode compact without claiming the desktop drag region", () => {
+    const markup = renderToStaticMarkup(
+      <SourceControlPanelShell mode="sheet">
+        <div>Changes</div>
+      </SourceControlPanelShell>,
+    );
+    const titlebarClassName = classNameFor(markup, "data-source-control-panel-titlebar");
+
+    expect(titlebarClassName).toContain("[--workspace-topbar-height:--spacing(11)]");
+    expect(titlebarClassName).toContain("h-[var(--workspace-topbar-height)]");
+    expect(titlebarClassName).toContain("min-h-[var(--workspace-topbar-height)]");
+    expect(titlebarClassName.split(" ")).not.toContain("drag-region");
   });
 });
 

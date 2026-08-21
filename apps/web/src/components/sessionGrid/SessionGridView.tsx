@@ -33,7 +33,6 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../../logicalProject";
-import { cn } from "../../lib/utils";
 import { useSessionGridFocusStore } from "../../sessionGridFocusStore";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
@@ -44,9 +43,9 @@ import {
   useThreadShells,
 } from "../../state/entities";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../../uiStateStore";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { orderItemsByPreferredIds } from "../Sidebar.logic";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
@@ -715,14 +714,9 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
             <span key={announcement.id}>{announcement.message}</span>
           </span>
 
-          <header
-            className={cn(
-              "workspace-topbar shrink-0 border-border/70 border-b bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
-              isElectron
-                ? "drag-region px-3 sm:px-5 wco:pr-[var(--workspace-native-controls-inset)]"
-                : "pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-            )}
+          <WorkspacePageHeader
+            className="border-border/70 border-b bg-background"
+            electron={isElectron}
           >
             <div className="flex min-w-0 flex-1 items-center gap-2.5">
               <LayoutGridIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -752,7 +746,7 @@ export function SessionGridView({ requestedProjectKey }: SessionGridViewProps) {
                 <span className="hidden sm:inline">New thread</span>
               </Button>
             </div>
-          </header>
+          </WorkspacePageHeader>
 
           <main
             aria-busy={visiblePendingChangeRequestCount > 0}

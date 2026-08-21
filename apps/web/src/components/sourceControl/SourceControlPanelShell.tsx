@@ -29,9 +29,10 @@ export function SourceControlPanelShell(props: {
       >
         <div
           className={cn(
-            "workspace-topbar flex items-center pl-2",
+            "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
             props.mode !== "inline" && "[--workspace-topbar-height:--spacing(11)]",
             props.mode === "inline" ? "pr-32" : "pr-3",
+            ownsDesktopTitleBar && "drag-region",
             ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+8rem)]",
             props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
