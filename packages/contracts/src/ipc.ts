@@ -957,6 +957,21 @@ export const PreviewAnnotationPayloadSchema: Schema.Codec<PreviewAnnotationPaylo
   },
 );
 
+export interface DesktopPreviewDesignChangePayload {
+  html: string;
+  annotation?: PreviewAnnotationPayload;
+}
+
+export const DesktopPreviewDesignChangePayloadSchema: Schema.Codec<DesktopPreviewDesignChangePayload> =
+  Schema.Struct({
+    html: Schema.String,
+    annotation: Schema.optionalKey(PreviewAnnotationPayloadSchema),
+  });
+
+export interface DesktopPreviewDesignChange extends DesktopPreviewDesignChangePayload {
+  tabId: string;
+}
+
 export type PreviewAnnotationSubmission = "attach" | "send";
 export const PreviewAnnotationSubmissionSchema: Schema.Codec<PreviewAnnotationSubmission> =
   Schema.Literals(["attach", "send"]);
@@ -1010,6 +1025,11 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
 export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   colorScheme: DesktopPreviewColorSchemeSchema,
+});
+
+export const DesktopPreviewSetDesignEditingInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  editing: Schema.Boolean,
 });
 
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
@@ -1168,6 +1188,7 @@ export interface DesktopPreviewBridge {
    * override). Persists per tab and is re-applied across webview swaps.
    */
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  setDesignEditing: (tabId: string, editing: boolean) => Promise<void>;
   /**
    * Silence the tab's audio output. Persists per tab and is re-applied across
    * webview swaps, but is dropped when the tab closes. Muting a silent tab is
@@ -1226,6 +1247,7 @@ export interface DesktopPreviewBridge {
   };
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
+  onDesignChange: (listener: (event: DesktopPreviewDesignChange) => void) => () => void;
 }
 
 export type ConfirmDialogVariant = "default" | "destructive";

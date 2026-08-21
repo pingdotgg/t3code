@@ -10,6 +10,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  PreviewAutomationAssetUrlInvalidError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
@@ -242,6 +243,37 @@ describe("previewAutomationRequestConsumer", () => {
         threadId: "thread-1",
         tabId: "tab-1",
         bridgeAvailable: false,
+      },
+    });
+  });
+
+  it("preserves invalid workspace asset context in automation errors", () => {
+    const error = new PreviewAutomationAssetUrlInvalidError({
+      requestId: "request-design-open",
+      operation: "openFile",
+      environmentId,
+      threadId,
+      path: ".t3/designs/thread-1.html",
+    });
+
+    expect(
+      serializePreviewAutomationError(error, {
+        requestId: "request-design-open",
+        operation: "openFile",
+        environmentId,
+        threadId,
+        tabId: null,
+      }),
+    ).toEqual({
+      _tag: "PreviewAutomationExecutionError",
+      message:
+        "Preview automation request request-design-open received an invalid workspace asset URL for .t3/designs/thread-1.html on environment environment-1 thread thread-1.",
+      detail: {
+        requestId: "request-design-open",
+        operation: "openFile",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        path: ".t3/designs/thread-1.html",
       },
     });
   });

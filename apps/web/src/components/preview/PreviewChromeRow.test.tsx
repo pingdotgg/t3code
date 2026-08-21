@@ -22,4 +22,27 @@ describe("PreviewChromeRow", () => {
 
     expect(markup).toContain('value="https://example.com/dashboard?mode=edit&amp;tab=1#notes"');
   });
+
+  it("shows an active edit control for a design", () => {
+    const markup = renderToStaticMarkup(
+      <PreviewChromeRow
+        url="http://127.0.0.1:3773/api/assets/design"
+        loading={false}
+        loadProgress={0}
+        canGoBack={false}
+        canGoForward={false}
+        refreshDisabled={false}
+        onBack={vi.fn()}
+        onForward={vi.fn()}
+        onRefresh={vi.fn()}
+        onSubmit={vi.fn()}
+        onToggleDesignEditing={vi.fn()}
+        designEditing
+      />,
+    );
+
+    expect(markup).toContain(">Edit</button>");
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).not.toContain('aria-label="Close design editor"');
+  });
 });

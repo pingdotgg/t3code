@@ -10,6 +10,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { expandDesignCommand } from "@t3tools/shared/designPrompt";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -304,6 +305,20 @@ export function deriveComposerSendState(options: {
       sendableTerminalContexts.length > 0 ||
       elementContextCount > 0,
   };
+}
+
+export function resolveProviderPromptForSend(options: {
+  isElectron: boolean;
+  prompt: string;
+  trimmedPrompt: string;
+  threadId: string;
+}): string {
+  if (!options.isElectron) return options.prompt;
+  const expanded = expandDesignCommand({
+    prompt: options.trimmedPrompt,
+    threadId: options.threadId,
+  });
+  return expanded === options.trimmedPrompt ? options.prompt : expanded;
 }
 
 export function buildExpiredTerminalContextToastCopy(

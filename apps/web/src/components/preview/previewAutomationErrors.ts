@@ -95,6 +95,25 @@ export class PreviewAutomationTargetUnavailableError extends Schema.TaggedErrorC
   }
 }
 
+export class PreviewAutomationAssetUrlInvalidError extends Schema.TaggedErrorClass<PreviewAutomationAssetUrlInvalidError>()(
+  "PreviewAutomationAssetUrlInvalidError",
+  {
+    requestId: TrimmedNonEmptyString,
+    operation: PreviewAutomationOperation,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    path: TrimmedNonEmptyString,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationExecutionError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation request ${this.requestId} received an invalid workspace asset URL for ${this.path} on environment ${this.environmentId} thread ${this.threadId}.`;
+  }
+}
+
 export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedErrorClass<PreviewAutomationRecordingNotActiveError>()(
   "PreviewAutomationRecordingNotActiveError",
   {
@@ -210,6 +229,7 @@ export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationNavigationTimeoutError,
   PreviewAutomationViewportTimeoutError,
   PreviewAutomationTargetUnavailableError,
+  PreviewAutomationAssetUrlInvalidError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetNotEditableHostError,
   PreviewAutomationOperationError,

@@ -1,14 +1,57 @@
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   acquireBrowserSurface,
   resolveBrowserSurfacePanelRect,
   useBrowserSurfaceStore,
+  waitForBrowserSurfaceReady,
 } from "./browserSurfaceStore";
 
 describe("browserSurfaceStore", () => {
   beforeEach(() => {
     useBrowserSurfaceStore.setState({ byTabId: {} });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns a receipt when the requested surface becomes visible", async () => {
+    const ready = waitForBrowserSurfaceReady("ready-surface", 1_000);
+    const lease = acquireBrowserSurface("ready-surface");
+    const rect = { x: 10, y: 20, width: 900, height: 640 };
+
+    lease.present(rect, true);
+
+    await expect(ready).resolves.toEqual({ tabId: "ready-surface", rect, surface: "right-panel" });
+    lease.release();
+  });
+
+  it("waits for the requested surface owner", async () => {
+    const miniPlayer = acquireBrowserSurface("switching-surface", false, "mini-player");
+    miniPlayer.present({ x: 0, y: 0, width: 320, height: 180 }, true);
+    const ready = waitForBrowserSurfaceReady("switching-surface", 1_000, "right-panel");
+    const rightPanel = acquireBrowserSurface("switching-surface", false, "right-panel");
+    const rect = { x: 20, y: 30, width: 900, height: 640 };
+
+    rightPanel.present(rect, true);
+
+    await expect(ready).resolves.toEqual({
+      tabId: "switching-surface",
+      rect,
+      surface: "right-panel",
+    });
+    miniPlayer.release();
+    rightPanel.release();
+  });
+
+  it("returns no receipt when presentation times out", async () => {
+    vi.useFakeTimers();
+    const ready = waitForBrowserSurfaceReady("missing-surface", 100);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(ready).resolves.toBeNull();
   });
 
   it("freezes the source content dimensions for a fitted presentation", () => {
@@ -23,7 +66,7 @@ describe("browserSurfaceStore", () => {
       scrollLeft: 0,
       scrollTop: 0,
     };
-    useBrowserSurfaceStore.getState().claim(tabId, sourceOwner, false);
+    useBrowserSurfaceStore.getState().claim(tabId, sourceOwner, false, "right-panel");
     useBrowserSurfaceStore.getState().presentContent(tabId, sourceContent);
 
     const fittedLease = acquireBrowserSurface(tabId, true);
@@ -101,6 +144,7 @@ describe("browserSurfaceStore", () => {
             cornerRadius: 0,
             updatedAt: 1,
             owner: null,
+            surface: null,
           },
           active: {
             rect: liveRect,
@@ -111,6 +155,7 @@ describe("browserSurfaceStore", () => {
             cornerRadius: 0,
             updatedAt: 2,
             owner: null,
+            surface: null,
           },
         },
         "hidden",

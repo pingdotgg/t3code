@@ -1,5 +1,5 @@
 import { it as effectIt } from "@effect/vitest";
-import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
+import type { DesktopPreviewDesignChange, DesktopPreviewRecordingFrame } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -330,6 +330,25 @@ describe("PreviewManager", () => {
     webviewSend.mockClear();
   });
 
+  effectIt.effect("sends design editing state to the active guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.alloc(0),
+            getSize: () => ({ width: 1, height: 1 }),
+          })),
+        );
+        yield* manager.createTab("tab_design");
+        yield* manager.registerWebview("tab_design", 42);
+
+        yield* manager.setDesignEditing("tab_design", true);
+
+        expect(webviewSend).toHaveBeenCalledWith("preview:set-design-editing", true);
+      }),
+    ),
+  );
+
   effectIt.effect("reports an unregistered webview as temporarily unavailable", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -353,6 +372,57 @@ describe("PreviewManager", () => {
           loading: false,
         });
         expect(fromId).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("forwards valid design document changes from the registered webview", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const ipcListeners = new Map<string, (_event: unknown, payload: unknown) => void>();
+        fromId.mockReturnValue({
+          ...(makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.from("preview"),
+            getSize: () => ({ width: 800, height: 600 }),
+          })) as unknown as Record<string, unknown>),
+          ipc: {
+            on: vi.fn((channel: string, listener: (_event: unknown, payload: unknown) => void) => {
+              ipcListeners.set(channel, listener);
+            }),
+            off: vi.fn(),
+          },
+        } as never);
+        const changes: DesktopPreviewDesignChange[] = [];
+        yield* manager.subscribeDesignChanges((change) =>
+          Effect.sync(() => {
+            changes.push(change);
+          }),
+        );
+        yield* manager.createTab("tab_design");
+        yield* manager.registerWebview("tab_design", 42);
+
+        const annotation = {
+          id: "design-title",
+          pageUrl: "http://127.0.0.1/design",
+          pageTitle: "Design",
+          comment: "Selected design element",
+          elements: [],
+          regions: [{ id: "title", rect: { x: 10, y: 20, width: 100, height: 30 } }],
+          strokes: [],
+          styleChanges: [],
+          screenshot: null,
+          createdAt: "2026-08-18T00:00:00.000Z",
+        };
+        ipcListeners.get("preview:design-changed")?.(
+          {},
+          { html: "<!doctype html><p>Saved</p>", annotation },
+        );
+        ipcListeners.get("preview:design-changed")?.({}, { html: 42 });
+        yield* settle(() => changes.length === 1);
+
+        expect(changes).toEqual([
+          { tabId: "tab_design", html: "<!doctype html><p>Saved</p>", annotation },
+        ]);
       }),
     ),
   );

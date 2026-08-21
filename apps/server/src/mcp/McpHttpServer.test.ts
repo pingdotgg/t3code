@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PREVIEW_AUTOMATION_OPERATIONS,
+  PreviewTabId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -163,6 +169,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
         environmentId,
+        supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
       });
       yield* Stream.runForEach(events, (event) => {
         if (event.type === "connected") return Effect.void;
@@ -228,6 +235,9 @@ it.effect("registers annotated tools and preserves authenticated request context
       const navigateTool = server.tools.find(({ tool }) => tool.name === "preview_navigate");
       expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
       expect(navigateTool?.tool.annotations?.openWorldHint).toBe(true);
+      const designTool = server.tools.find(({ tool }) => tool.name === "design_open");
+      expect(designTool?.tool.annotations?.destructiveHint).toBe(false);
+      expect(designTool?.tool.annotations?.openWorldHint).toBe(true);
 
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })
@@ -240,6 +250,20 @@ it.effect("registers annotated tools and preserves authenticated request context
         available: true,
         tabId,
       });
+
+      const design = yield* server
+        .callTool({ name: "design_open", arguments: { path: ".t3/designs/thread.html" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(design.isError).toBe(false);
+      expect(routedRequests).toContainEqual(
+        expect.objectContaining({
+          operation: "openFile",
+          input: { path: ".t3/designs/thread.html" },
+        }),
+      );
 
       const malformed = yield* server
         .callTool({ name: "preview_click", arguments: { selector: "" } })

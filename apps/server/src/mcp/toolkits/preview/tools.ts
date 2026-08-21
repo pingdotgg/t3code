@@ -3,6 +3,7 @@ import {
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
   PreviewAutomationNavigateInput,
+  PreviewAutomationOpenFileInput,
   PreviewAutomationOpenInput,
   PreviewAutomationPressInput,
   PreviewAutomationRecordingArtifact,
@@ -66,6 +67,19 @@ export const PreviewOpenTool = browserTool(
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),
+);
+
+export const DesignOpenTool = safeBrowserTool(
+  Tool.make("design_open", {
+    description:
+      "Open or refresh a generated workspace HTML design in the user's right panel. Write the file before calling this tool, then call it after meaningful visual updates so the user can watch the design develop.",
+    parameters: PreviewAutomationOpenFileInput,
+    success: PreviewAutomationStatus,
+    failure: PreviewAutomationError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Open design preview")
+    .annotate(Tool.Idempotent, true),
 );
 
 export const PreviewNavigateTool = safeBrowserTool(
@@ -207,6 +221,7 @@ export const PreviewRecordingStopTool = safeBrowserTool(
 export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
+  DesignOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,
@@ -224,6 +239,7 @@ export const PreviewToolkit = Toolkit.make(
 export const PreviewStandardToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
+  DesignOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,

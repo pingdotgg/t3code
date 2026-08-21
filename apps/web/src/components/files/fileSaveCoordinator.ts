@@ -1,5 +1,7 @@
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
+const MIN_RETRY_DELAY_MS = 250;
+
 export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
   readonly persist: (contents: string) => Promise<AtomCommandResult<A, E>>;
@@ -14,6 +16,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private lastChangeAt = 0;
   private saving = false;
   private disposed = false;
+  private canRetry = true;
 
   constructor(private readonly options: FileSaveCoordinatorOptions<A, E>) {}
 
@@ -21,6 +24,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     this.latestContents = contents;
     this.latestRevision += 1;
     this.lastChangeAt = Date.now();
+    this.canRetry = true;
     this.options.onPendingChange(true);
     this.schedule(this.options.debounceMs);
   }
@@ -59,7 +63,13 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
 
     this.saving = false;
     if (revision === this.latestRevision) {
-      if (succeeded) this.options.onPendingChange(false);
+      if (succeeded) {
+        this.latestRevision = 0;
+        this.options.onPendingChange(false);
+      } else if (this.canRetry) {
+        this.canRetry = false;
+        this.schedule(Math.max(this.options.debounceMs, MIN_RETRY_DELAY_MS));
+      }
       return;
     }
 

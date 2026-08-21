@@ -1,10 +1,11 @@
-import type {
-  AssetCreateUrlResult,
-  AssetResource,
-  EnvironmentId,
-  PreviewOpenInput,
-  PreviewSessionSnapshot,
-  ScopedThreadRef,
+import {
+  type AssetCreateUrlResult,
+  type AssetResource,
+  type EnvironmentId,
+  isWorkspaceHtmlPath,
+  type PreviewOpenInput,
+  type PreviewSessionSnapshot,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   type AtomCommandResult,
@@ -90,9 +91,17 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       Cause.die(new Error("The environment returned an invalid asset URL.")),
     );
   }
+  let previewUrl = assetUrl;
+  const designPath = assetResult.value.sourcePath;
+  if (designPath && isWorkspaceHtmlPath(designPath)) {
+    const designUrl = new URL(assetUrl);
+    designUrl.searchParams.set("t3-design", "1");
+    designUrl.searchParams.set("t3-design-path", designPath);
+    previewUrl = designUrl.toString();
+  }
   return openUrlInPreview({
     threadRef: input.threadRef,
-    url: assetUrl,
+    url: previewUrl,
     openPreview: input.openPreview,
   });
 }

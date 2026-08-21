@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopPreviewDesignChange,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -183,6 +184,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     hardReload: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL, { tabId }),
     setColorScheme: (tabId, colorScheme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
+    setDesignEditing: (tabId, editing) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_DESIGN_EDITING_CHANNEL, { tabId, editing }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
     openDevTools: (tabId) =>
@@ -259,6 +262,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
+    },
+    onDesignChange: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, change: unknown) => {
+        if (typeof change !== "object" || change === null) return;
+        listener(change as DesktopPreviewDesignChange);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_DESIGN_CHANGE_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_DESIGN_CHANGE_CHANNEL, wrappedListener);
     },
     onPointerEvent: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, pointerEvent: unknown) => {

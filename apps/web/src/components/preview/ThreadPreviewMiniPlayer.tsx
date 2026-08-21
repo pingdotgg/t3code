@@ -319,6 +319,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-2xl/35" />
         <BrowserSurfaceSlot
           tabId={runtimeTabId}
+          surface="mini-player"
           visible={Boolean(desktopOverlay?.hasWebContents)}
           cornerRadius={12}
           fitSourceContent

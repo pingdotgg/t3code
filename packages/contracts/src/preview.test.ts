@@ -14,6 +14,7 @@ import {
 import {
   PreviewAutomationHost,
   PreviewAutomationError,
+  PreviewAutomationOpenFileInput,
   PreviewAutomationOpenInput,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
@@ -27,6 +28,7 @@ const decodeServer = Schema.decodeUnknownSync(DiscoveredLocalServer);
 const decodeConfiguredLocalServerUrls = Schema.decodeUnknownSync(ConfiguredLocalServerUrls);
 const decodeViewport = Schema.decodeUnknownSync(PreviewViewportSetting);
 const decodeResizeInput = Schema.decodeUnknownSync(PreviewAutomationResizeInput);
+const decodeOpenFileInput = Schema.decodeUnknownSync(PreviewAutomationOpenFileInput);
 const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
 const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
@@ -40,6 +42,25 @@ describe("PreviewAutomationOpenInput", () => {
 
   it("retains the legacy show visibility alias", () => {
     expect(decodeOpenInput({ show: false })).toEqual({ show: false });
+  });
+});
+
+describe("PreviewAutomationOpenFileInput", () => {
+  it("accepts workspace-relative HTML", () => {
+    expect(decodeOpenFileInput({ path: ".t3/designs/thread.html" })).toEqual({
+      path: ".t3/designs/thread.html",
+    });
+  });
+
+  it.each([
+    "/tmp/thread.html",
+    "C:\\temp\\thread.html",
+    "../thread.html",
+    "index.html",
+    ".t3/other/thread.html",
+    ".t3/designs/thread.js",
+  ])("rejects unsafe or non-HTML path %s", (path) => {
+    expect(() => decodeOpenFileInput({ path })).toThrow();
   });
 });
 

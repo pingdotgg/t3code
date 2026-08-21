@@ -62,15 +62,21 @@ describe("preview automation open readiness", () => {
   });
 
   it("gives newly-created automation tabs a stable desktop viewport", () => {
-    expect(previewAutomationDefaultViewport(false, snapshot({ _tag: "Idle" }))).toEqual(
+    expect(previewAutomationDefaultViewport("open", false, snapshot({ _tag: "Idle" }))).toEqual(
       DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
     );
   });
 
-  it("preserves reused and already-fixed browser viewports", () => {
-    expect(previewAutomationDefaultViewport(true, snapshot({ _tag: "Idle" }))).toBeNull();
+  it("keeps design files sized to the panel", () => {
     expect(
-      previewAutomationDefaultViewport(false, {
+      previewAutomationDefaultViewport("openFile", false, snapshot({ _tag: "Idle" })),
+    ).toBeNull();
+  });
+
+  it("preserves reused and already-fixed browser viewports", () => {
+    expect(previewAutomationDefaultViewport("open", true, snapshot({ _tag: "Idle" }))).toBeNull();
+    expect(
+      previewAutomationDefaultViewport("open", false, {
         ...snapshot({ _tag: "Idle" }),
         viewport: { _tag: "freeform", width: 900, height: 600 },
       }),

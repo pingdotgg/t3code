@@ -171,6 +171,10 @@
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"
     },
+    "./designPrompt": {
+      "types": "./src/designPrompt.ts",
+      "import": "./src/designPrompt.ts"
+    },
     "./composerInlineTokens": {
       "types": "./src/composerInlineTokens.ts",
       "import": "./src/composerInlineTokens.ts"

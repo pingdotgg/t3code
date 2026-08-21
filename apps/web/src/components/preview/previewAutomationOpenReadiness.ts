@@ -1,6 +1,7 @@
 import {
   FILL_PREVIEW_VIEWPORT,
   type PreviewAutomationOpenInput,
+  type PreviewAutomationOperation,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
@@ -44,11 +45,12 @@ export function previewAutomationOpenNeedsOverlay(
  * stated preference, which is where the agent fallback applies.
  */
 export function previewAutomationDefaultViewport(
+  operation: PreviewAutomationOperation,
   reusedExistingTab: boolean,
   snapshot: PreviewSessionSnapshot,
 ): PreviewViewportSetting | null {
   const viewport = snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
-  return !reusedExistingTab && viewport._tag === "fill"
+  return operation === "open" && !reusedExistingTab && viewport._tag === "fill"
     ? DEFAULT_PREVIEW_AUTOMATION_VIEWPORT
     : null;
 }

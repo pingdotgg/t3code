@@ -231,6 +231,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           resource: input.resource,
         });
       }
+      sourcePath = resolved.relativePath;
       const canonicalWorkspaceRoot = yield* fileSystem.realPath(workspaceRoot).pipe(
         Effect.mapError(
           (cause) =>
