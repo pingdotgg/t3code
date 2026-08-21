@@ -244,6 +244,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
   },
   {
+    id: "attach-existing-local-backend",
+    title: "Attach to running server",
+    to: "/settings/connections",
+    desktopOnly: true,
+  },
+  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",

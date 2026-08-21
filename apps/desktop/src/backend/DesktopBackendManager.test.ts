@@ -57,6 +57,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   httpBaseUrl: new URL("http://127.0.0.1:3773"),
   captureOutput: true,
   preflightFailure: Option.none(),
+  manageProcess: true,
 };
 
 const configWithObservability: DesktopBackendBootstrapValue = {
@@ -1474,5 +1475,33 @@ describe("DesktopBackendManager", () => {
         assert.equal((yield* instance.snapshot).desiredRunning, false);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
+  );
+
+  it.effect("attaches to an existing backend without spawning a process", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+      );
+      const instance = yield* makeTestInstance({
+        spawnerLayer,
+        config: {
+          ...baseConfig,
+          manageProcess: false,
+          attachedPid: 473_417,
+        },
+      });
+
+      yield* instance.start;
+      const ready = yield* instance.waitForReady(Duration.seconds(1));
+      const snapshot = yield* instance.snapshot;
+
+      assert.isTrue(ready);
+      assert.isTrue(snapshot.ready);
+      assert.equal(Option.getOrThrow(snapshot.activePid), 473_417);
+
+      yield* instance.stop();
+      assert.isFalse((yield* instance.snapshot).desiredRunning);
+    }),
   );
 });

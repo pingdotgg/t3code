@@ -34,6 +34,7 @@ const DesktopSettingsPatch = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  attachExistingLocalBackend: Schema.optionalKey(Schema.Boolean),
 });
 
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
@@ -116,6 +117,7 @@ describe("DesktopSettings", () => {
         wslBackendEnabled: false,
         wslOnly: false,
         wslDistro: null,
+        attachExistingLocalBackend: true,
       } satisfies DesktopAppSettings.DesktopSettings,
     );
   });
@@ -145,6 +147,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          attachExistingLocalBackend: true,
         } satisfies DesktopAppSettings.DesktopSettings);
 
         const exposure = yield* settings.setServerExposureMode("local-only");
@@ -252,6 +255,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          attachExistingLocalBackend: true,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
@@ -308,6 +312,7 @@ describe("DesktopSettings", () => {
             wslBackendEnabled: false,
             wslOnly: false,
             wslDistro: null,
+            attachExistingLocalBackend: true,
           } satisfies DesktopAppSettings.DesktopSettings);
         }),
       ),
@@ -356,6 +361,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          attachExistingLocalBackend: true,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -384,6 +390,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          attachExistingLocalBackend: true,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -411,6 +418,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          attachExistingLocalBackend: true,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
@@ -502,6 +510,25 @@ describe("DesktopSettings", () => {
         const loaded = yield* settings.load;
         assert.equal(loaded.wslBackendEnabled, true);
         assert.equal(loaded.wslDistro, null);
+      }),
+    ),
+  );
+
+  it.effect("persists attach-existing-local-backend and treats missing as enabled", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        assert.equal((yield* settings.load).attachExistingLocalBackend, true);
+
+        const disabled = yield* settings.setAttachExistingLocalBackend(false);
+        assert.isTrue(disabled.changed);
+        assert.equal(disabled.settings.attachExistingLocalBackend, false);
+        assert.equal((yield* settings.load).attachExistingLocalBackend, false);
+
+        const enabled = yield* settings.setAttachExistingLocalBackend(true);
+        assert.isTrue(enabled.changed);
+        assert.equal(enabled.settings.attachExistingLocalBackend, true);
+        assert.equal((yield* settings.load).attachExistingLocalBackend, true);
       }),
     ),
   );

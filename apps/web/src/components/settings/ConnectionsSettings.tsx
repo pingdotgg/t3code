@@ -6,7 +6,7 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
+import { type ReactNode, memo, useCallback, useEffect, useId, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -26,6 +26,7 @@ import {
   type DesktopSshEnvironmentTarget,
   type DesktopServerExposureState,
   type DesktopWslState,
+  type DesktopExistingLocalBackendState,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
@@ -1745,6 +1746,10 @@ function CloudRemoteEnvironmentRows({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
+  const [existingLocalBackendState, setExistingLocalBackendState] =
+    useState<DesktopExistingLocalBackendState | null>(null);
+  const [isUpdatingAttachExistingLocalBackend, setIsUpdatingAttachExistingLocalBackend] =
+    useState(false);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
@@ -1970,6 +1975,49 @@ export function ConnectionsSettings() {
       return pendingTailscaleServeEndpoint.httpBaseUrl;
     }
   }, [isTailscaleServePortValid, parsedTailscaleServePort, pendingTailscaleServeEndpoint]);
+
+  useEffect(() => {
+    if (!desktopBridge?.getExistingLocalBackendState) {
+      setExistingLocalBackendState(null);
+      return;
+    }
+    let cancelled = false;
+    void desktopBridge.getExistingLocalBackendState().then(
+      (state) => {
+        if (!cancelled) setExistingLocalBackendState(state);
+      },
+      () => {
+        if (!cancelled) setExistingLocalBackendState(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopBridge]);
+
+  const handleAttachExistingLocalBackendChange = useCallback(
+    async (checked: boolean) => {
+      if (!desktopBridge?.setAttachExistingLocalBackend) return;
+      setIsUpdatingAttachExistingLocalBackend(true);
+      try {
+        const next = await desktopBridge.setAttachExistingLocalBackend(checked);
+        setExistingLocalBackendState(next);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to update local backend setting.";
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not update local backend",
+            description: message,
+          }),
+        );
+      } finally {
+        setIsUpdatingAttachExistingLocalBackend(false);
+      }
+    },
+    [desktopBridge],
+  );
 
   const handleDesktopServerExposureChange = useCallback(
     async (checked: boolean) => {
@@ -3062,6 +3110,28 @@ export function ConnectionsSettings() {
             ) : null}
             {desktopBridge ? (
               <>
+                {desktopBridge.getExistingLocalBackendState ? (
+                  <SettingsRow
+                    {...searchableSetting("attach-existing-local-backend")}
+                    description={
+                      existingLocalBackendState?.attached
+                        ? existingLocalBackendState.origin
+                          ? `Connected to the T3 Code server already running at ${existingLocalBackendState.origin}.`
+                          : "Connected to the T3 Code server already running on this machine."
+                        : "Connect to a T3 Code server already running on this machine instead of starting another one."
+                    }
+                    control={
+                      <Switch
+                        checked={existingLocalBackendState?.enabled ?? true}
+                        disabled={isUpdatingAttachExistingLocalBackend}
+                        onCheckedChange={(checked) => {
+                          void handleAttachExistingLocalBackendChange(checked);
+                        }}
+                        aria-label="Attach to running server"
+                      />
+                    }
+                  />
+                ) : null}
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}

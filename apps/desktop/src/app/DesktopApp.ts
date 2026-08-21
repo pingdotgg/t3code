@@ -1,11 +1,13 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as Crypto from "effect/Crypto";
+import { HttpClient } from "effect/unstable/http";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -23,6 +25,7 @@ import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
+import * as DesktopExistingLocalBackend from "../backend/DesktopExistingLocalBackend.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -154,19 +157,37 @@ const bootstrap = Effect.gen(function* () {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
-  const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
-  const backendPort = backendPortSelection.port;
-  yield* logBootstrapInfo(
-    backendPortSelection.selectedByScan
-      ? "selected backend port via sequential scan"
-      : "using configured backend port",
-    {
-      port: backendPort,
-      ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
-    },
-  );
-
   const settings = yield* desktopSettings.get;
+  const existingLocalBackend = settings.attachExistingLocalBackend
+    ? yield* DesktopExistingLocalBackend.discoverExistingLocalBackend({
+        homeDirectory: environment.homeDirectory,
+        desktopBaseDir: environment.baseDir,
+        path: environment.path,
+        fileSystem: yield* FileSystem.FileSystem,
+        httpClient: yield* HttpClient.HttpClient,
+      })
+    : Option.none();
+  const backendPortSelection = Option.isSome(existingLocalBackend)
+    ? ({ port: existingLocalBackend.value.port, selectedByScan: false } as const)
+    : yield* resolveDesktopBackendPort(environment.configuredBackendPort);
+  const backendPort = backendPortSelection.port;
+  if (Option.isSome(existingLocalBackend)) {
+    yield* logBootstrapInfo("attaching to existing local backend", {
+      origin: existingLocalBackend.value.origin,
+      port: existingLocalBackend.value.port,
+      baseDir: existingLocalBackend.value.baseDir,
+    });
+  } else {
+    yield* logBootstrapInfo(
+      backendPortSelection.selectedByScan
+        ? "selected backend port via sequential scan"
+        : "using configured backend port",
+      {
+        port: backendPort,
+        ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
+      },
+    );
+  }
   if (settings.serverExposureMode !== environment.defaultDesktopSettings.serverExposureMode) {
     yield* logBootstrapInfo("bootstrap restoring persisted server exposure mode", {
       mode: settings.serverExposureMode,

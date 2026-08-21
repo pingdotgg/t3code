@@ -8,18 +8,22 @@ import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import serverPackageJson from "../../../server/package.json" with { type: "json" };
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopExistingLocalBackend from "./DesktopExistingLocalBackend.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -415,6 +419,76 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   },
 );
 
+const resolveAttachStartConfig = Effect.fn("desktop.backendConfiguration.resolveAttach")(
+  function* (input: {
+    readonly existing: DesktopExistingLocalBackend.ExistingLocalBackend;
+    readonly observabilitySettings: BackendObservabilitySettings;
+    readonly spawn: DesktopExistingLocalBackend.PairingProcessSpawn;
+  }): Effect.fn.Return<
+    DesktopBackendManager.DesktopBackendStartConfig,
+    never,
+    DesktopEnvironment.DesktopEnvironment
+  > {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const origin = new URL(input.existing.origin);
+    const credential = yield* DesktopExistingLocalBackend.mintExistingLocalBackendCredential({
+      backend: input.existing,
+      executablePath: process.execPath,
+      entryPath: environment.backendEntryPath,
+      spawn: input.spawn,
+    }).pipe(Effect.option);
+
+    const bootstrap = {
+      mode: "desktop" as const,
+      noBrowser: true,
+      port: input.existing.port,
+      t3Home: input.existing.baseDir,
+      host: origin.hostname,
+      desktopBootstrapToken: Option.getOrElse(credential, () => ""),
+      tailscaleServeEnabled: false,
+      tailscaleServePort: 443,
+      ...buildObservabilityFragment(input.observabilitySettings),
+    };
+
+    if (Option.isNone(credential)) {
+      return {
+        executablePath: process.execPath,
+        args: [environment.backendEntryPath, "auth", "pairing", "create"],
+        entryPath: environment.backendEntryPath,
+        cwd: environment.backendCwd,
+        env: backendChildEnvPatch(),
+        extendEnv: true,
+        bootstrap,
+        bootstrapDelivery: "fd3",
+        httpBaseUrl: origin,
+        captureOutput: false,
+        manageProcess: false,
+        attachedPid: input.existing.pid,
+        preflightFailure: Option.some({
+          reason: `Could not pair with the running T3 Code server at ${input.existing.origin}.`,
+          fatal: true,
+        }),
+      } satisfies DesktopBackendManager.DesktopBackendStartConfig;
+    }
+
+    return {
+      executablePath: process.execPath,
+      args: [environment.backendEntryPath, "auth", "pairing", "create"],
+      entryPath: environment.backendEntryPath,
+      cwd: environment.backendCwd,
+      env: backendChildEnvPatch(),
+      extendEnv: true,
+      bootstrap,
+      bootstrapDelivery: "fd3",
+      httpBaseUrl: origin,
+      captureOutput: false,
+      manageProcess: false,
+      attachedPid: input.existing.pid,
+      preflightFailure: Option.none(),
+    } satisfies DesktopBackendManager.DesktopBackendStartConfig;
+  },
+);
+
 const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl")(function* (
   input: SharedBootstrapInput & {
     readonly port: number;
@@ -611,6 +685,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const httpClient = yield* HttpClient.HttpClient;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
@@ -675,7 +752,29 @@ export const make = Effect.gen(function* () {
   });
 
   const buildWindowsPrimaryConfig = Effect.gen(function* () {
+    const persistedSettings = yield* settings.get;
     const shared = yield* sharedInputs;
+    if (persistedSettings.attachExistingLocalBackend) {
+      const existing = yield* DesktopExistingLocalBackend.discoverExistingLocalBackend({
+        homeDirectory: environment.homeDirectory,
+        desktopBaseDir: environment.baseDir,
+        path,
+        fileSystem,
+        httpClient,
+      });
+      if (Option.isSome(existing)) {
+        yield* Effect.logInfo("attaching to existing local T3 Code backend", {
+          origin: existing.value.origin,
+          baseDir: existing.value.baseDir,
+          pid: existing.value.pid,
+        });
+        return yield* resolveAttachStartConfig({
+          existing: existing.value,
+          observabilitySettings: shared.observabilitySettings,
+          spawn: (command) => spawner.spawn(command),
+        }).pipe(Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment));
+      }
+    }
     const resourceMonitorPath = yield* resolveResourceMonitorPath().pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -743,4 +842,6 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopBackendConfiguration, make);
+export const layer = Layer.effect(DesktopBackendConfiguration, make).pipe(
+  Layer.provide(FetchHttpClient.layer),
+);

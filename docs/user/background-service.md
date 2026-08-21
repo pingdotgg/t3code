@@ -64,6 +64,18 @@ A few more macOS notes:
 
 **Windows** is not supported yet.
 
+## Using It with the Desktop App
+
+The desktop app attaches to a server that is already running on this machine instead of
+starting a second backend. That keeps one environment and one T3 Connect device.
+
+This is on by default. Turn it off in **Settings → Connections → Attach to running server**
+if you want the desktop app to spawn its own local backend.
+
+Discovery looks at the desktop data directory, `~/.t3`, any `T3CODE_HOME` set on the
+`t3code.service` user unit, and child directories of `~/.t3` that have a live
+`userdata/server-runtime.json`.
+
 ## Using It with T3 Connect
 
 T3 Connect may offer to install the service during setup so the host stays reachable in the
