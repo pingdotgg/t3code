@@ -1,5 +1,15 @@
 import { describe, assert, it } from "vite-plus/test";
-import { isWindowsPlatform } from "./utils";
+import { getLocalFileManagerName, isWindowsPlatform } from "./utils";
+
+describe("getLocalFileManagerName", () => {
+  it.each([
+    ["MacIntel", "Finder"],
+    ["Win32", "Explorer"],
+    ["Linux", "Files"],
+  ])("uses the %s file manager name", (platform, expected) => {
+    assert.strictEqual(getLocalFileManagerName(platform), expected);
+  });
+});
 
 describe("isWindowsPlatform", () => {
   it("matches Windows platform identifiers", () => {
