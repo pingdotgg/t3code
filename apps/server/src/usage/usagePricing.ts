@@ -98,10 +98,27 @@ const UNPRICEABLE_MODELS = new Set([
   "fable",
 ]);
 
+/**
+ * Known mismatches between the name a provider records and the key LiteLLM
+ * prices it under.
+ *
+ * Codex reports Daybreak usage as `gpt-daybreak-blue-latest` /
+ * `gpt-daybreak-red-latest`, but LiteLLM prices those same models without the
+ * `gpt-` prefix. This is deliberately a two-entry lookup rather than a generic
+ * "strip a leading gpt-" rule: LiteLLM prices real GPT models (`gpt-5`,
+ * `gpt-4`, ...) *with* the prefix intact, so stripping it generically would
+ * send those lookups at the wrong, likely nonexistent, key.
+ */
+const MODEL_NAME_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["gpt-daybreak-blue-latest", "daybreak-blue-latest"],
+  ["gpt-daybreak-red-latest", "daybreak-red-latest"],
+]);
+
 export function lookupRate(table: RateTable, model: string): ModelRate | null {
   const normalized = normalizeModelName(model);
   if (normalized.length === 0 || UNPRICEABLE_MODELS.has(normalized)) return null;
-  return table.get(normalized) ?? null;
+  const aliased = MODEL_NAME_ALIASES.get(normalized) ?? normalized;
+  return table.get(aliased) ?? null;
 }
 
 export interface PricedUsage {
