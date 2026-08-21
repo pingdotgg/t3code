@@ -1,4 +1,14 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+
 export type SidebarDndSection = "pinned" | "regular" | "snoozed" | "settled";
+
+export const SIDEBAR_DND_SECTIONS = [
+  "pinned",
+  "regular",
+  "snoozed",
+  "settled",
+] satisfies ReadonlyArray<SidebarDndSection>;
 
 export type SidebarDndAction =
   | "pin"
@@ -29,6 +39,33 @@ export interface SidebarDndPointerAnchor {
   readonly y: number;
 }
 
+export type SidebarThreadDragPhase =
+  | "dragging"
+  | "awaiting-snooze-choice"
+  | "committing"
+  | "reconciling";
+
+export interface SidebarThreadDragTransaction {
+  readonly phase: SidebarThreadDragPhase;
+  readonly sourceThread: EnvironmentThreadShell;
+  readonly sourceThreadKey: string;
+  readonly sourceSection: SidebarDndSection;
+  readonly sourceIndex: number;
+  readonly sourceRect: SidebarDndRect;
+  readonly pointerAnchor: SidebarDndPointerAnchor;
+  readonly targetSection: SidebarDndSection | null;
+  readonly targetThreadKey: string | null;
+  readonly targetEdge: "before" | "after" | null;
+  readonly destinationSection: SidebarDndSection | null;
+  readonly pinnedOrder: readonly string[] | null;
+  readonly snoozedUntil: string | null;
+  readonly receiptSequencesByEnvironment: ReadonlyMap<
+    EnvironmentThreadShell["environmentId"],
+    number
+  > | null;
+  readonly viewportRailTopBySection: ReadonlyMap<SidebarDndSection, number> | null;
+}
+
 export interface SidebarDndDraggableId {
   readonly kind: "draggable";
   readonly section: SidebarDndSection;
@@ -49,6 +86,12 @@ export interface SidebarDndSectionId {
 export type SidebarDndId = SidebarDndDraggableId | SidebarDndRowId | SidebarDndSectionId;
 
 const DND_ID_PREFIX = "sidebar-thread-dnd";
+
+export function sidebarThreadKey(
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "id">,
+): string {
+  return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+}
 
 export function createSidebarDndDraggableId(input: {
   section: SidebarDndSection;
