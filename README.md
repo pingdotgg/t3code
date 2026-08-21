@@ -1,5 +1,47 @@
 # T3 Code
 
+> [!IMPORTANT]
+> This is a **Grok reliability fork** of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). Upstream Grok Build in T3 hung, cancelled **Always allow**, hid plan cards, skipped usage and skills, and flooded the server with tool output. The rest of this README is upstream's. The list below is what this fork changes.
+
+## What's fixed in this fork
+
+### Turns settle instead of hanging
+
+- **Stalled turns time out.** If Grok goes silent with no content or tool progress, the turn settles instead of spinning forever (10 minutes during reasoning, 30 minutes while a tool is active).
+- **The liveness watchdog stays awake.** A pause could consume a wake signal and leave the watchdog blocked, so a later stall never settled.
+- **Plan mode no longer hangs on exit.** Grok reverse-RPCs the client to approve `exit_plan_mode`. T3 never handled that, so the turn sat there waiting.
+
+### Plan mode shows up as a plan card
+
+- Session `plan.md` writes land in T3's proposed-plan card, which is how you approve or reject the plan. The native Grok gate is abandoned so the card can finish the flow.
+- Only plans under `.grok/sessions` are promoted. A `plan.md` in the repo is just a file.
+- An empty `exit_plan_mode` does not resurrect the previous turn's plan.
+- Re-proposing the same plan text later still shows a new card.
+- Plan path matching works on Windows, with `HOME` / `GROK_HOME` outside the default home, and rejects `..` path traversal.
+- Empty `plan.md` writes (a clear) are accepted. Empty raw content no longer hides a following plan diff.
+
+### Permissions follow the thread, not a hidden CLI flag
+
+- **Always allow this session no longer cancels the turn.** Grok 4.6 often omits ACP `allow_always`. T3 still showed the button, then mapped the missing option to `cancelled`. It now falls back to `allow_once` and remembers the choice for the rest of the session. ([#6502](https://github.com/pingdotgg/t3code/issues/6502))
+- **Supervised actually asks.** If `~/.grok` has `[ui] permission_mode = always-approve`, Supervised threads used to never prompt. They now start with `--permission-mode default` so the T3 thread mode wins. Full access still passes `--always-approve`.
+
+### Tool output no longer freezes every other thread
+
+- Grok's ACP CLI resends the _entire_ accumulated terminal output on every `tool_call_update` (~10/sec, 145 KB+ each). That flooded event ingestion and head-of-line-blocked other threads. Output is now capped to an 8 KB tail; diffs and images are left alone.
+- Whitespace-only (or whitespace-padded) content used to skip that cap. It is bounded too.
+- When a large tail is split across entries, content around images and diffs keeps its original order.
+- Pending → in-progress tool status still emits even when detail and output are unchanged, so the UI does not look stuck.
+- Live command output keeps flowing when the command itself is unchanged but stdout grows.
+
+### Composer, usage, and errors
+
+- **Skills** from `grok inspect --json` appear in the composer `$` picker (user, project, bundled, and plugin skills).
+- **Reasoning levels** advertised by the installed Grok CLI appear next to the model picker.
+- **Usage limit errors** show as "Grok usage limit reached. Try again later." instead of failing silently.
+- **Usage page** includes Grok Build next to Claude and Codex (from `~/.grok/sessions/**/updates.jsonl`).
+
+---
+
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, and OpenCode. If they're set up on your computer, T3 Code can control them.
