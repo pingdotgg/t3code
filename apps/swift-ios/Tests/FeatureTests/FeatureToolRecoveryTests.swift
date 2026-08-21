@@ -185,6 +185,19 @@ struct FeatureToolRecoveryTests {
         #expect(state.retryOperation != completedAction)
     }
 
+    @Test("A successful action refresh consumes a retained load failure", .bug(id: 3826749394))
+    func actionRefreshSuccessRecoversAnEarlierLoadFailure() {
+        let action = FeatureSourceControlOperation.action(.push, message: nil)
+        var state = failedState(.load)
+
+        state.begin(action)
+        state.recordSuccess(action, .load)
+
+        #expect(state.failure == nil)
+        #expect(state.retryOperation == nil)
+        #expect(state.takeRecoveryAnnouncement() == "Repository status loaded.")
+    }
+
     @Test("A cancelled post-action refresh cannot leave the action retryable")
     func cancelledPostActionRefreshDropsTheCompletedActionFailure() {
         let completedAction = FeatureSourceControlOperation.action(.push, message: nil)

@@ -267,7 +267,7 @@ public struct FeatureSourceControlView: View {
                 )
                 do {
                     status = try await client.sourceControlStatus(threadID: threadID)
-                    recovery.recordSuccess(operation)
+                    recovery.recordSuccess(operation, .load)
                 } catch {
                     recovery.recordFollowUpFailure(
                         .load,

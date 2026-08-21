@@ -85,16 +85,20 @@ public struct FeatureToolFailureState<Operation: FeatureRecoverableOperation>: S
         retryOperation = operation
     }
 
-    /// Records a successful attempt. The recovered content replaces the failure rather than
-    /// being stacked underneath it.
-    public mutating func recordSuccess(_ operation: Operation) {
-        guard failure != nil, retryOperation == operation else {
+    /// Records successful work. One completion can satisfy related retained operations, such as
+    /// an action whose explicit follow-up refresh also recovers an earlier load failure.
+    public mutating func recordSuccess(_ operations: Operation...) {
+        guard
+            failure != nil,
+            let recoveredOperation = retryOperation,
+            operations.contains(recoveredOperation)
+        else {
             recoveryAnnouncement = nil
             return
         }
         failure = nil
         retryOperation = nil
-        recoveryAnnouncement = operation.recoveryAnnouncement
+        recoveryAnnouncement = recoveredOperation.recoveryAnnouncement
     }
 
     /// Records a follow-up failure after an operation already completed. A real failure becomes
