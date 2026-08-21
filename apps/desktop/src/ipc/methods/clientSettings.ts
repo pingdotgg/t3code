@@ -25,11 +25,18 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+    const previousSettings = yield* clientSettings.get;
     yield* clientSettings.set(settings);
+    if (
+      Option.isSome(previousSettings) &&
+      ElectronSpellcheck.spellcheckSettingsEqual(previousSettings.value, settings)
+    ) {
+      return;
+    }
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(window)) {
-      yield* ElectronSpellcheck.syncBrowserWindowSpellChecker(window.value);
+      yield* ElectronSpellcheck.syncBrowserWindowSpellChecker(window.value, settings);
     }
   }),
 });

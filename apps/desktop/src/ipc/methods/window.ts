@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopSpellcheckInfoSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -71,6 +72,24 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getSystemLocale")(function* () {
     const electronApp = yield* ElectronApp.ElectronApp;
     return yield* electronApp.systemLocale;
+  }),
+});
+
+export const getSpellcheckInfo = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_SPELLCHECK_INFO_CHANNEL,
+  result: Schema.NullOr(DesktopSpellcheckInfoSchema),
+  handler: Effect.fn("desktop.ipc.window.getSpellcheckInfo")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.currentMainOrFirst;
+    if (Option.isNone(window)) return null;
+    const canSelectLanguages = environment.platform !== "darwin";
+    return {
+      canSelectLanguages,
+      availableLanguages: canSelectLanguages
+        ? [...window.value.webContents.session.availableSpellCheckerLanguages]
+        : [],
+    };
   }),
 });
 

@@ -148,6 +148,7 @@ const desktopClientSettingsLayer = Layer.mock(DesktopClientSettings.DesktopClien
 
 const electronAppLayer = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
+  preferredSystemLanguages: Effect.succeed(["en-US"]),
   systemLocale: Effect.succeed("en-US"),
 });
 
@@ -475,10 +476,7 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
         assert.deepEqual(fakeWindow.setSpellCheckerEnabled.mock.calls, [[true]]);
-        assert.isAtLeast(fakeWindow.setSpellCheckerLanguages.mock.calls.length, 1);
-        const spellcheckLanguages = fakeWindow.setSpellCheckerLanguages.mock.calls[0]?.[0];
-        assert.isTrue(Array.isArray(spellcheckLanguages));
-        assert.isTrue((spellcheckLanguages as string[]).includes("en-US"));
+        assert.equal(fakeWindow.setSpellCheckerLanguages.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

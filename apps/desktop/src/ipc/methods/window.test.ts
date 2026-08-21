@@ -5,10 +5,15 @@ import * as Option from "effect/Option";
 
 import type * as Electron from "electron";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import {
+  getLocalEnvironmentBootstraps,
+  getSpellcheckInfo,
+  getWindowFullscreenState,
+} from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -142,6 +147,66 @@ describe("getWindowFullscreenState", () => {
         Layer.mock(ElectronWindow.ElectronWindow)({
           currentMainOrFirst: Effect.succeed(Option.some(window)),
         }),
+      ),
+    );
+  });
+});
+
+describe("getSpellcheckInfo", () => {
+  it.effect("publishes every dictionary supported by the current Electron session", () => {
+    const window = {
+      webContents: {
+        session: {
+          availableSpellCheckerLanguages: ["en-US", "pt-BR", "fr"],
+        },
+      },
+    } as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* getSpellcheckInfo.handler(), {
+        canSelectLanguages: true,
+        availableLanguages: ["en-US", "pt-BR", "fr"],
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.succeed(
+            DesktopEnvironment.DesktopEnvironment,
+            DesktopEnvironment.DesktopEnvironment.of({
+              platform: "linux",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            currentMainOrFirst: Effect.succeed(Option.some(window)),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("hides language selection for the native macOS checker", () => {
+    const window = {
+      webContents: { session: { availableSpellCheckerLanguages: ["en-US"] } },
+    } as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* getSpellcheckInfo.handler(), {
+        canSelectLanguages: false,
+        availableLanguages: [],
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.succeed(
+            DesktopEnvironment.DesktopEnvironment,
+            DesktopEnvironment.DesktopEnvironment.of({
+              platform: "darwin",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            currentMainOrFirst: Effect.succeed(Option.some(window)),
+          }),
+        ),
       ),
     );
   });
