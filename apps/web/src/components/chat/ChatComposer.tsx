@@ -2565,34 +2565,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   /**
-   * Insert dropped non-image files as filesystem paths. Only the desktop app
-   * can resolve a path from a dropped File, so in a browser tab this reports
-   * why nothing was inserted instead of silently swallowing the drop.
+   * Insert dropped non-image files as filesystem paths, reporting to a toast
+   * rather than the thread error banner: a mixed drop's images own that banner,
+   * and a path failure there would read as though the whole drop failed. Only
+   * the desktop app can resolve a path from a dropped File, so in a browser tab
+   * this says so instead of silently swallowing the drop. Returns whether text
+   * was actually inserted.
    */
-  const insertDroppedFilePaths = (files: File[]) => {
+  const insertDroppedFilePaths = (files: File[], hadImages: boolean): boolean => {
+    const reportFailure = (description: string) => {
+      toastManager.add({ type: "error", title: "Unable to add to chat", description });
+    };
     const resolvePath = window.desktopBridge?.getPathForFile;
     if (!resolvePath) {
-      setThreadError(
-        activeThreadId,
+      reportFailure(
         "Attaching files by path needs the desktop app. Paste an image, or type the path.",
       );
-      return;
+      return false;
     }
     const paths = files
       .map((file) => resolvePath(file))
       .filter((path): path is string => path !== null);
     const text = formatDroppedFilePaths(paths);
     if (text.length === 0) {
-      setThreadError(activeThreadId, "Could not read the location of the dropped file(s).");
-      return;
+      reportFailure("Could not read the location of the dropped file(s).");
+      return false;
     }
     if (!insertComposerTextAtEnd(text, { ensureLeadingBoundary: true })) {
-      toastManager.add({
-        type: "error",
-        title: "Unable to add to chat",
-        description: "The composer is busy; try again once it is ready.",
-      });
+      // This refusal comes from the same composer state that already rejected
+      // the images, so one drop never says it twice.
+      if (!hadImages) {
+        reportFailure("The composer is busy; try again once it is ready.");
+      }
+      return false;
     }
+    return true;
   };
 
   const insertComposerTextAtEnd = (
@@ -2725,17 +2732,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (images.length > 0) {
           void addComposerImages(images);
         }
-        if (nonImages.length > 0) {
-          // Deliberately no focusComposer() on this path. `applyPromptReplacement`
-          // focuses on the next frame, once Lexical has reconciled; focusing
-          // synchronously here makes the not-yet-reconciled editor sync its stale
-          // empty state back over the text we just inserted, so the drop looks
-          // like it silently did nothing. Same footgun the file-tree mention drop
-          // documents in makeComposerMentionDragHandlers.
-          insertDroppedFilePaths(nonImages);
-          return;
+        const insertedPath =
+          nonImages.length > 0 && insertDroppedFilePaths(nonImages, images.length > 0);
+        // Focus unless a path just landed. `applyPromptReplacement` focuses on the
+        // next frame, once Lexical has reconciled; focusing synchronously right
+        // after the insert makes the not-yet-reconciled editor sync its stale empty
+        // state back over the text, so the drop looks like it silently did nothing
+        // — the footgun makeComposerMentionDragHandlers documents for the mention
+        // drop. Nothing inserted means nothing to lose, so focus as before.
+        if (!insertedPath) {
+          focusComposer();
         }
-        focusComposer();
       },
       insertTextAtEnd: insertComposerTextAtEnd,
       openModelPicker: () => {
