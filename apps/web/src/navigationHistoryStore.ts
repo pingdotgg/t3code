@@ -16,7 +16,7 @@ export function createNavigationHistory(history: RouterHistory) {
   let currentPosition = 0;
   let maximumPosition = 0;
   let snapshot = snapshotFor(currentPosition, maximumPosition);
-  let stopTracking: (() => void) | null = null;
+  let started = false;
   const listeners = new Set<() => void>();
 
   const update = ({ action }: Parameters<Parameters<RouterHistory["subscribe"]>[0]>[0]) => {
@@ -63,10 +63,11 @@ export function createNavigationHistory(history: RouterHistory) {
     },
     getSnapshot: () => snapshot,
     start: () => {
-      if (stopTracking) {
+      if (started) {
         return;
       }
-      stopTracking = history.subscribe(update);
+      started = true;
+      history.subscribe(update);
     },
     subscribe: (listener: () => void) => {
       listeners.add(listener);
