@@ -6,6 +6,24 @@ import Foundation
 /// separator when the reader has actually lost their place: it opens the
 /// transcript, it starts a new day, or it follows a quiet gap.
 enum FeatureMessageTimestamps {
+    struct PresentationContext: Equatable {
+        let day: Date
+        let calendarIdentifier: Calendar.Identifier
+        let timeZone: TimeZone
+        let localeIdentifier: String
+
+        init(
+            now: Date = .now,
+            calendar: Calendar = .current,
+            locale: Locale = .current
+        ) {
+            day = calendar.startOfDay(for: now)
+            calendarIdentifier = calendar.identifier
+            timeZone = calendar.timeZone
+            localeIdentifier = locale.identifier
+        }
+    }
+
     /// A pause long enough that "when did this happen" stops being obvious from
     /// the message above.
     static let quietGap: TimeInterval = 15 * 60

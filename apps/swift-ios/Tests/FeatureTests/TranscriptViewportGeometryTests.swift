@@ -6,6 +6,30 @@ import UIKit
 @Suite("Transcript viewport anchoring")
 struct TranscriptViewportGeometryTests {
     @Test
+    func prependAnchorCompensatesWhenTimestampRetirementShrinksTheCell() {
+        let offset = TranscriptViewportGeometry.restoredPrependOffset(
+            itemMinY: 620,
+            itemHeight: 132,
+            previousItemHeight: 160,
+            previousOffsetFromViewportTop: 80
+        )
+
+        #expect(offset == 512)
+    }
+
+    @Test
+    func prependAnchorKeepsItsOriginalOffsetWhenCellHeightIsStable() {
+        let offset = TranscriptViewportGeometry.restoredPrependOffset(
+            itemMinY: 620,
+            itemHeight: 160,
+            previousItemHeight: 160,
+            previousOffsetFromViewportTop: 80
+        )
+
+        #expect(offset == 540)
+    }
+
+    @Test
     func firstLoadedTranscriptAnchorsToLatestMessage() {
         let empty = TranscriptViewportGeometry(
             contentHeight: 0,

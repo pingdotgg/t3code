@@ -241,6 +241,38 @@ struct FeatureMessageTimestampTests {
     }
 
     @Test
+    func presentationContextChangesWithTheDay() {
+        let beforeMidnight = FeatureMessageTimestamps.PresentationContext(
+            now: date(day: 17, hour: 23, minute: 59),
+            calendar: calendar,
+            locale: locale
+        )
+        let afterMidnight = FeatureMessageTimestamps.PresentationContext(
+            now: date(day: 18),
+            calendar: calendar,
+            locale: locale
+        )
+
+        #expect(beforeMidnight != afterMidnight)
+    }
+
+    @Test
+    func presentationContextIsStableWithinTheDay() {
+        let morning = FeatureMessageTimestamps.PresentationContext(
+            now: date(hour: 8),
+            calendar: calendar,
+            locale: locale
+        )
+        let evening = FeatureMessageTimestamps.PresentationContext(
+            now: date(hour: 20),
+            calendar: calendar,
+            locale: locale
+        )
+
+        #expect(morning == evening)
+    }
+
+    @Test
     func eachSeparatorBelongsToAMessageInTheTranscript() {
         let first = date(hour: 8)
         let messages = [

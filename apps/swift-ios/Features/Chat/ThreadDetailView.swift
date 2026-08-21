@@ -716,6 +716,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var messagesByID: [String: FeatureMessage] = [:]
         private var orderedIDs: [String] = []
         private var timestampLabelsByID: [String: String] = [:]
+        private var timestampCreatedAtByID: [String: Date] = [:]
+        private var timestampPresentationContext: FeatureMessageTimestamps.PresentationContext?
         private var currentThreadID: String?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
@@ -871,15 +873,43 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 messagesByID = replacementMessagesByID
             }
             orderedIDs = newIDs
-            // A separator depends on the message above it, so prepends and
-            // reorders can retire one the reader is already looking at.
-            let previousTimestampLabels = timestampLabelsByID
-            timestampLabelsByID = FeatureMessageTimestamps.separatorLabels(
-                for: newIDs.compactMap { messagesByID[$0] }
+            let now = Date.now
+            let calendar = Calendar.current
+            let locale = Locale.current
+            let presentationContext = FeatureMessageTimestamps.PresentationContext(
+                now: now,
+                calendar: calendar,
+                locale: locale
             )
-            let timestampChangedIDs = threadChanged
-                ? []
-                : newIDs.filter { previousTimestampLabels[$0] != timestampLabelsByID[$0] }
+            let timestampDateChanged = changedIDs.contains {
+                timestampCreatedAtByID[$0] != messagesByID[$0]?.createdAt
+            }
+            let shouldRefreshTimestamps = threadChanged || idsChanged || timestampDateChanged
+                || timestampPresentationContext != presentationContext
+            let timestampChangedIDs: [String]
+            if shouldRefreshTimestamps {
+                // A separator depends on the message above it, so prepends and
+                // reorders can retire one the reader is already looking at.
+                let previousTimestampLabels = timestampLabelsByID
+                let orderedMessages = newIDs.compactMap { messagesByID[$0] }
+                timestampLabelsByID = FeatureMessageTimestamps.separatorLabels(
+                    for: orderedMessages,
+                    now: now,
+                    calendar: calendar,
+                    locale: locale
+                )
+                timestampCreatedAtByID = orderedMessages.reduce(into: [:]) {
+                    $0[$1.id] = $1.createdAt
+                }
+                timestampPresentationContext = presentationContext
+                timestampChangedIDs = threadChanged
+                    ? []
+                    : newIDs.filter {
+                        previousTimestampLabels[$0] != timestampLabelsByID[$0]
+                    }
+            } else {
+                timestampChangedIDs = []
+            }
             (collectionView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor =
                 isInitialLoad || wasNearBottom
 
@@ -961,6 +991,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private struct VisibleAnchor {
             let id: String
             let offsetFromViewportTop: CGFloat
+            let itemHeight: CGFloat
         }
 
         private func visibleAnchor(
@@ -976,7 +1007,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 }
                 return VisibleAnchor(
                     id: id,
-                    offsetFromViewportTop: attributes.frame.minY - collectionView.contentOffset.y
+                    offsetFromViewportTop: attributes.frame.minY - collectionView.contentOffset.y,
+                    itemHeight: attributes.frame.height
                 )
             }
             return nil
@@ -1001,7 +1033,15 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             )
             let targetY = min(
                 maximumY,
-                max(minimumY, attributes.frame.minY - anchor.offsetFromViewportTop)
+                max(
+                    minimumY,
+                    TranscriptViewportGeometry.restoredPrependOffset(
+                        itemMinY: attributes.frame.minY,
+                        itemHeight: attributes.frame.height,
+                        previousItemHeight: anchor.itemHeight,
+                        previousOffsetFromViewportTop: anchor.offsetFromViewportTop
+                    )
+                )
             )
             (collectionView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = false
             collectionView.setContentOffset(
@@ -1270,6 +1310,15 @@ struct TranscriptViewportGeometry: Equatable {
 
     var bottomOffset: CGFloat {
         max(-topInset, contentHeight - viewportHeight + bottomInset)
+    }
+
+    static func restoredPrependOffset(
+        itemMinY: CGFloat,
+        itemHeight: CGFloat,
+        previousItemHeight: CGFloat,
+        previousOffsetFromViewportTop: CGFloat
+    ) -> CGFloat {
+        itemMinY - previousOffsetFromViewportTop + (itemHeight - previousItemHeight)
     }
 
     func restoredBottomOffset(
