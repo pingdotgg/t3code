@@ -186,6 +186,19 @@ function serializeChildren(node: Node): string {
   return out;
 }
 
+function serializeKatex(element: Element): string {
+  const annotation =
+    element.querySelector('annotation[encoding="application/x-tex"]') ??
+    element.querySelector("annotation");
+  const tex = annotation?.textContent?.trim() ?? "";
+  if (!tex) return "";
+  const isDisplay =
+    element.classList.contains("katex-display") ||
+    Boolean(element.closest?.(".katex-display")) ||
+    element.querySelector('math[display="block"]') !== null;
+  return isDisplay ? `\n\n$$\n${tex}\n$$\n\n` : `\\(${tex}\\)`;
+}
+
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
@@ -201,6 +214,9 @@ function serializeNode(node: Node): string {
   }
   const markdownCopy = element.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return markdownCopy;
+  if (element.classList.contains("katex-display") || element.classList.contains("katex")) {
+    return serializeKatex(element);
+  }
   if (isSkippedElement(element)) return "";
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
