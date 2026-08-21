@@ -83,6 +83,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
+import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -3312,10 +3313,18 @@ export default function Sidebar() {
   // match a thread-jump binding. Adding Shift (screenshots) or Alt no
   // longer matches ⌘1..9, so the overlay hides for chords like ⌘⇧4.
   const shortcutModifiers = useShortcutModifierState();
+  const terminalFocused = useTerminalFocus();
   const shouldShowJumpHintsNow = shouldShowThreadJumpHintsForModifiers(
     shortcutModifiers,
     keybindings,
-    { platform: navigator.platform },
+    {
+      platform: navigator.platform,
+      context: {
+        terminalFocus: terminalFocused,
+        terminalOpen: routeTerminalOpen,
+        modelPickerOpen: isModelPickerOpen(),
+      },
+    },
   );
   useEffect(() => {
     setShowJumpHints(shouldShowJumpHintsNow);

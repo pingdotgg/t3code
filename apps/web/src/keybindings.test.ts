@@ -451,6 +451,21 @@ describe("thread navigation helpers", () => {
       }),
     );
   });
+
+  it("never shows jump hints while the terminal is focused, even with an unrestricted binding", () => {
+    assert.isFalse(
+      shouldShowThreadJumpHints(event({ metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.isTrue(
+      shouldShowThreadJumpHints(event({ metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+  });
 });
 
 describe("model picker navigation helpers", () => {
