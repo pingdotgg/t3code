@@ -9,10 +9,13 @@ import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../..
 import {
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2SubagentActivation,
+  type OrchestrationV2TurnItemStatus,
   type RunAttemptId,
   type RunId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
+import type { AgentPanelModel } from "@t3tools/client-runtime/state/thread-subagents";
 import { formatPendingBackgroundWorkLabel } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   resolveT3McpToolPresentation,
@@ -171,6 +174,143 @@ export type TimelineLatestRun = Pick<
   ThreadRunSummary,
   "runId" | "status" | "startedAt" | "completedAt"
 >;
+
+export interface AgentSpawnCtaGroup {
+  readonly workflowId: string | null;
+  readonly agentIds: ReadonlyArray<string>;
+  readonly itemStates: ReadonlyArray<AgentSpawnCtaAgentState>;
+}
+
+export interface AgentSpawnCtaAgentState {
+  readonly id: string;
+  readonly status: OrchestrationV2TurnItemStatus;
+  readonly totalTokens: number;
+}
+
+interface AgentSpawnCtaActivationState extends AgentSpawnCtaAgentState {
+  readonly ordinal: number;
+}
+
+export type AgentSpawnCtaActivationIndex = ReadonlyMap<
+  RunId,
+  ReadonlyMap<string, AgentSpawnCtaActivationState>
+>;
+
+export function indexAgentSpawnCtaActivations(
+  activations: ReadonlyArray<OrchestrationV2SubagentActivation>,
+): AgentSpawnCtaActivationIndex {
+  const index = new Map<RunId, Map<string, AgentSpawnCtaActivationState>>();
+  for (const activation of activations) {
+    if (activation.runId === null) {
+      continue;
+    }
+    const runStates = index.get(activation.runId) ?? new Map();
+    const previous = runStates.get(activation.subagentId);
+    runStates.set(activation.subagentId, {
+      id: activation.subagentId,
+      status:
+        previous === undefined || activation.ordinal >= previous.ordinal
+          ? activation.status
+          : previous.status,
+      totalTokens: (previous?.totalTokens ?? 0) + (activation.usage?.totalTokens ?? 0),
+      ordinal: Math.max(previous?.ordinal ?? 0, activation.ordinal),
+    });
+    index.set(activation.runId, runStates);
+  }
+  return index;
+}
+
+/**
+ * Resolves direct-agent CTA state from immutable activation records for the
+ * row's run. Durable agent identities are reusable, so the live roster cannot
+ * truthfully describe an older spawn row.
+ */
+export function resolveDirectAgentSpawnStates(input: {
+  readonly group: AgentSpawnCtaGroup;
+  readonly runId: RunId | null;
+  readonly activationIndex: AgentSpawnCtaActivationIndex;
+}): ReadonlyArray<AgentSpawnCtaAgentState> {
+  if (input.runId === null) {
+    return input.group.itemStates;
+  }
+
+  const activationStateByAgentId = input.activationIndex.get(input.runId);
+  const itemStateByAgentId = new Map(input.group.itemStates.map((state) => [state.id, state]));
+  return input.group.agentIds.flatMap((agentId) => {
+    const activationState = activationStateByAgentId?.get(agentId);
+    if (activationState !== undefined) {
+      const { ordinal: _ordinal, ...state } = activationState;
+      return [state];
+    }
+    const itemState = itemStateByAgentId.get(agentId);
+    return itemState === undefined ? [] : [itemState];
+  });
+}
+
+/**
+ * Replaces the per-subagent V2 lifecycle cards with one stable CTA anchor per
+ * workflow, or one per-run batch for direct spawns. The Agents panel remains
+ * the only roster; timeline rows only retain enough identity to derive their
+ * live summary from that panel model.
+ */
+export function collapseSubagentTimelineEntries(input: {
+  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly agentPanelModel: AgentPanelModel;
+}): {
+  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly ctaByItemId: ReadonlyMap<string, AgentSpawnCtaGroup>;
+} {
+  const workflowIdByAgentId = new Map<string, string>();
+  for (const group of input.agentPanelModel.workflows) {
+    workflowIdByAgentId.set(group.workflow.id, group.workflow.id);
+    for (const member of [
+      ...group.phases.flatMap((phase) => phase.members),
+      ...group.unphasedMembers,
+    ]) {
+      workflowIdByAgentId.set(member.id, group.workflow.id);
+    }
+  }
+
+  const timelineEntries: TimelineEntry[] = [];
+  const anchorItemIdByGroup = new Map<string, string>();
+  const ctaByItemId = new Map<string, AgentSpawnCtaGroup>();
+  for (const entry of input.timelineEntries) {
+    if (entry.kind !== "event" || entry.projectedItem.item.type !== "subagent") {
+      timelineEntries.push(entry);
+      continue;
+    }
+
+    const item = entry.projectedItem.item;
+    const workflowId = workflowIdByAgentId.get(item.subagentId) ?? null;
+    const groupKey =
+      workflowId === null ? `direct:${item.runId ?? item.id}` : `workflow:${workflowId}`;
+    const anchorItemId = anchorItemIdByGroup.get(groupKey);
+    if (anchorItemId === undefined) {
+      anchorItemIdByGroup.set(groupKey, item.id);
+      ctaByItemId.set(item.id, {
+        workflowId,
+        agentIds: [item.subagentId],
+        itemStates: [{ id: item.subagentId, status: item.status, totalTokens: 0 }],
+      });
+      timelineEntries.push(entry);
+      continue;
+    }
+
+    const current = ctaByItemId.get(anchorItemId);
+    if (current !== undefined && !current.agentIds.includes(item.subagentId)) {
+      ctaByItemId.set(anchorItemId, {
+        ...current,
+        agentIds: [...current.agentIds, item.subagentId],
+        itemStates: [
+          ...current.itemStates,
+          { id: item.subagentId, status: item.status, totalTokens: 0 },
+        ],
+      });
+    }
+  }
+
+  return { timelineEntries, ctaByItemId };
+}
 
 export type MessagesTimelineRow =
   | {

@@ -41,12 +41,23 @@ export function assertSubagentV2Output(
   assert.equal(subagent.driver, "codex");
   assert.equal(subagent.title, "/root/hello_agent");
   assert.equal(subagent.prompt, "");
-  assert.equal(subagent.status, "completed");
+  // A subAgentActivity frame carries no model of its own, so the agent is
+  // recorded against the turn's selection rather than left blank.
+  assert.equal(subagent.model, "gpt-5.4");
+  assert.equal(subagent.status, "idle");
   assert.equal(subagent.result, "Hello.");
+  assert.isNull(subagent.currentActivationId);
+  assert.equal(subagent.activationCount, 1);
   assert.isNotNull(subagent.childThreadId);
   assert.isNotNull(subagent.providerThreadId);
   assert.isNotNull(subagent.nativeTaskRef);
   assert.isNotNull(subagent.completedAt);
+  const activation = projection.subagentActivations.find(
+    (candidate) => candidate.subagentId === subagent.id,
+  );
+  assert.isDefined(activation);
+  assert.equal(activation.status, "completed");
+  assert.isNotNull(activation.completedAt);
   const parentItem = projection.turnItems.find(
     (item) => item.type === "subagent" && item.subagentId === subagent.id,
   );
@@ -54,6 +65,7 @@ export function assertSubagentV2Output(
   if (parentItem?.type !== "subagent") {
     throw new Error(`Missing parent lifecycle item for subagent ${subagent.id}`);
   }
+  assert.equal(parentItem.status, "completed");
   assert.equal(parentItem.result, subagent.result);
   if (subagent.childThreadId === null) {
     throw new Error(`Subagent ${subagent.id} is missing its child thread`);

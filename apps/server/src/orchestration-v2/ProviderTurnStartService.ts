@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2SubagentActivation,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
+  canReactivateSubagent,
   canRouteRelatedSubagent,
   RunExecutionServiceV2,
   selectInheritedBackgroundTurnItems,
@@ -142,6 +144,77 @@ export const layer: Layer.Layer<
         .getThreadProjection(projection.thread.id)
         .pipe(Effect.map(selectInheritedBackgroundItems));
       const providerSessionId = providerThread.providerSessionId;
+      const routableSubagents = projection.subagents.filter((subagent) =>
+        canRouteRelatedSubagent(subagent.status),
+      );
+      // Broader than the child-thread list above: an interrupted agent is still
+      // resumable, so it stays re-activatable even though its thread must not
+      // be adopted up front.
+      const reactivatableSubagents = projection.subagents.filter(
+        (subagent) =>
+          canReactivateSubagent(subagent.status) &&
+          subagent.driver === providerThread.driver &&
+          subagent.providerInstanceId === providerThread.providerInstanceId,
+      );
+      // Resolve the persisted registry before opening the provider session or
+      // advancing the run. Operational read failures must leave the run in
+      // `starting` so the durable effect can retry safely.
+      const existingSubagents = yield* Effect.forEach(
+        reactivatableSubagents,
+        (subagent, index) =>
+          Effect.gen(function* () {
+            const childThreadId = subagent.childThreadId;
+            if (childThreadId === null) return [];
+            const latestActivation = (projection.subagentActivations ?? [])
+              .filter((activation) => activation.subagentId === subagent.id)
+              .reduce<OrchestrationV2SubagentActivation | null>(
+                (latest, activation) =>
+                  latest === null || activation.ordinal > latest.ordinal ? activation : latest,
+                null,
+              );
+            const turnItems = projection.turnItems.filter(
+              (item) => item.type === "subagent" && item.subagentId === subagent.id,
+            );
+            const turnItem =
+              turnItems
+                .filter((item) => item.runId === latestActivation?.runId)
+                .toSorted((left, right) => right.ordinal - left.ordinal)[0] ??
+              turnItems.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+            if (turnItem === undefined) return [];
+            const childProjection = yield* projectionStore.getThreadProjection(childThreadId).pipe(
+              Effect.catchTags({
+                ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+              }),
+            );
+            if (childProjection === null) return [];
+            const childProviderThread =
+              subagent.providerThreadId === null
+                ? null
+                : childProjection.providerThreads.find(
+                    (candidate) => candidate.id === subagent.providerThreadId,
+                  );
+            if (childProviderThread === undefined) return [];
+            if (
+              childProviderThread !== null &&
+              (childProviderThread.driver !== providerThread.driver ||
+                childProviderThread.providerInstanceId !== providerThread.providerInstanceId)
+            ) {
+              return [];
+            }
+            return [
+              {
+                subagent,
+                childThread: childProjection.thread,
+                childProviderThread,
+                latestActivation,
+                turnItemId: turnItem.id,
+                turnItemOrdinal: turnItem.ordinal,
+                ordinal: index + 1,
+              },
+            ];
+          }),
+        { concurrency: 8 },
+      ).pipe(Effect.map((entries) => entries.flat()));
       const isCurrentAttemptInStatus = (
         expectedStatus: OrchestrationV2Run["status"],
       ): Effect.Effect<boolean, never> =>
@@ -420,9 +493,6 @@ export const layer: Layer.Layer<
       if (!runningWrite.committed) {
         return;
       }
-      const routableSubagents = projection.subagents.filter((subagent) =>
-        canRouteRelatedSubagent(subagent.status),
-      );
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -445,6 +515,11 @@ export const layer: Layer.Layer<
         relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
         ),
+        reactivatableSubagentSeeds: reactivatableSubagents.map((subagent) => ({
+          id: subagent.id,
+          activationCount: subagent.activationCount,
+        })),
+        existingSubagents,
         providerTurnOrdinal:
           Math.max(
             0,

@@ -55,6 +55,10 @@ export const SUBAGENT_CONTINUE_PROMPT =
 export const SUBAGENT_CONTINUE_PARENT_PROMPT =
   "@hooke have the same subagent reply exactly: continued subagent response";
 export const SUBAGENT_CONTINUE_CHILD_PROMPT = "Reply exactly: continued subagent response";
+export const SUBAGENT_REUSE_AFTER_IDLE_PROMPT =
+  "Spawn one subagent named idle_probe and have it reply exactly: idle probe first response";
+export const SUBAGENT_REUSE_AFTER_IDLE_RESUME_PROMPT =
+  "Send another message to the same idle_probe subagent. Do not spawn a replacement. Have it reply exactly: idle probe resumed response";
 export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =

@@ -27,6 +27,7 @@ import {
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
+  OrchestrationV2SubagentActivationJson as OrchestrationV2SubagentActivationJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   RunId,
   ThreadId,
@@ -126,7 +127,7 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
   "t3/orchestration-v2/ProjectionStore/ProjectionStoreV2",
 ) {}
 
-export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
+export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 3;
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
@@ -168,6 +169,7 @@ export function emptyProjection(
     attempts: [],
     nodes: [],
     subagents: [],
+    subagentActivations: [],
     providerSessions: [],
     providerThreads: [],
     providerTurns: [],
@@ -259,6 +261,11 @@ export function applyToProjection(
             event.payload,
           ),
         ),
+      };
+    case "subagent-activation.updated":
+      return {
+        ...base,
+        subagentActivations: upsertById(base.subagentActivations, event.payload),
       };
     case "provider-session.attached":
     case "provider-session.updated":
@@ -476,6 +483,9 @@ const encodeNodePayload = Schema.encodeEffect(
 const encodeSubagentPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
 );
+const encodeSubagentActivationPayload = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2SubagentActivationJsonSchema),
+);
 const encodeProviderSessionPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
 );
@@ -524,6 +534,9 @@ const decodeNodePayload = Schema.decodeUnknownEffect(
 );
 const decodeSubagentPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
+);
+const decodeSubagentActivationPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2SubagentActivationJsonSchema),
 );
 const decodeProviderSessionPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
@@ -1384,6 +1397,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
             break;
           }
+          case "subagent-activation.updated": {
+            const payloadJson = yield* encodeSubagentActivationPayload(event.payload);
+            const payload = parseEncodedPayload(payloadJson);
+            yield* sql`
+              INSERT INTO orchestration_v2_projection_subagent_activations (
+                activation_id,
+                thread_id,
+                subagent_id,
+                run_id,
+                provider_turn_id,
+                ordinal,
+                status,
+                started_at,
+                completed_at,
+                updated_at,
+                payload_json
+              )
+              VALUES (
+                ${event.payload.id},
+                ${event.payload.threadId},
+                ${event.payload.subagentId},
+                ${event.payload.runId},
+                ${event.payload.providerTurnId},
+                ${event.payload.ordinal},
+                ${event.payload.status},
+                ${nullableStringField(payload, "startedAt")},
+                ${nullableStringField(payload, "completedAt")},
+                ${stringField(payload, "updatedAt")},
+                ${payloadJson}
+              )
+              ON CONFLICT(activation_id)
+              DO UPDATE SET
+                thread_id = excluded.thread_id,
+                subagent_id = excluded.subagent_id,
+                run_id = excluded.run_id,
+                provider_turn_id = excluded.provider_turn_id,
+                ordinal = excluded.ordinal,
+                status = excluded.status,
+                started_at = excluded.started_at,
+                completed_at = excluded.completed_at,
+                updated_at = excluded.updated_at,
+                payload_json = excluded.payload_json
+            `;
+            break;
+          }
           case "provider-session.attached":
           case "provider-session.updated": {
             const payloadJson = yield* encodeProviderSessionPayload(event.payload);
@@ -1963,6 +2021,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           attemptRows,
           nodeRows,
           subagentRows,
+          subagentActivationRows,
           providerSessionRows,
           providerThreadRows,
           providerTurnRows,
@@ -1999,6 +2058,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_subagents
             WHERE thread_id = ${threadId}
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
+          `,
+          sql<PayloadRow>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_subagent_activations
+            WHERE thread_id = ${threadId}
+            ORDER BY subagent_id ASC, ordinal ASC
           `,
           sql<PayloadRow>`
             SELECT sessions.payload_json
@@ -2086,6 +2151,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           attempts,
           nodes,
           subagents,
+          subagentActivations,
           providerSessions,
           providerThreads,
           providerTurns,
@@ -2102,6 +2168,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeRunAttemptPayload, threadId)(attemptRows),
           decodeRows(decodeNodePayload, threadId)(nodeRows),
           decodeRows(decodeSubagentPayload, threadId)(subagentRows),
+          decodeRows(decodeSubagentActivationPayload, threadId)(subagentActivationRows),
           decodeRows(decodeProviderSessionPayload, threadId)(providerSessionRows),
           decodeRows(decodeProviderThreadPayload, threadId)(providerThreadRows),
           decodeRows(decodeProviderTurnPayload, threadId)(providerTurnRows),
@@ -2121,6 +2188,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           attempts,
           nodes,
           subagents,
+          subagentActivations,
           providerSessions,
           providerThreads,
           providerTurns,

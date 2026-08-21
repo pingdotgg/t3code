@@ -190,6 +190,11 @@ interface ClaudeQueryInterruptFrame {
   readonly type: "query.interrupt";
 }
 
+interface ClaudeTaskStopFrame {
+  readonly type: "task.stop";
+  readonly taskId: string;
+}
+
 interface ClaudePermissionRequestFrame {
   readonly type: "permission.request";
   readonly toolName: string;
@@ -231,6 +236,7 @@ type ClaudeOutboundFrame =
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
   | ClaudeQueryInterruptFrame
+  | ClaudeTaskStopFrame
   | ClaudePermissionResponseFrame
   | ClaudeSessionForkFrame;
 

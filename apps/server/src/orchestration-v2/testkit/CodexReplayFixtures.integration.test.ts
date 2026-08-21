@@ -167,6 +167,13 @@ const scenarioExpectations = {
     turnCompletedCount: 0,
     approvalRequestCount: 0,
   },
+  subagent_reuse_after_idle: {
+    outgoing: ["initialize", "initialized", "thread/start", "thread/resume", "turn/start"],
+    incoming: ["thread/started", "thread/resume", "turn/started", "turn/completed"],
+    turnStartCount: 2,
+    turnCompletedCount: 4,
+    approvalRequestCount: 0,
+  },
   subagent_v2: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
     incoming: [

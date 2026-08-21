@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  collapseSubagentTimelineEntries,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
@@ -8,6 +9,171 @@ import {
   resolveTimelineToolPresentation,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
+import {
+  emptyAgentPanelModel,
+  type AgentPanelModel,
+  type AgentPanelSubagent,
+} from "@t3tools/client-runtime/state/thread-subagents";
+import type { TimelineEntry } from "../../session-logic";
+
+function runtimeAgent(id: string, overrides: Partial<AgentPanelSubagent> = {}): AgentPanelSubagent {
+  return {
+    id,
+    kind: "subagent",
+    title: id,
+    role: "reviewer",
+    model: null,
+    status: "running",
+    activationCount: 1,
+    usage: null,
+    progress: null,
+    result: null,
+    parentAgentId: null,
+    agentIndex: null,
+    phaseIndex: null,
+    phaseTitle: null,
+    attempt: null,
+    workflowName: null,
+    phases: [],
+    runHandles: null,
+    firstSeenAt: "2026-08-13T10:00:00.000Z",
+    startedAt: "2026-08-13T10:00:00.000Z",
+    completedAt: null,
+    updatedAt: "2026-08-13T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function subagentTimelineEntry(
+  id: string,
+  runId: string | null,
+  itemId = id,
+  status: "running" | "completed" = "running",
+): TimelineEntry {
+  return {
+    id: `entry:${itemId}`,
+    kind: "event",
+    createdAt: "2026-08-13T10:00:00.000Z",
+    projectedItem: {
+      item: { id: `item:${itemId}`, type: "subagent", subagentId: id, runId, status },
+    } as never,
+  };
+}
+
+describe("collapseSubagentTimelineEntries", () => {
+  it("keeps one CTA anchor per workflow and per-run direct-spawn batch", () => {
+    const coordinator = runtimeAgent("workflow-1", {
+      kind: "workflow",
+      phases: [{ index: 0, title: "Inspect" }],
+    });
+    const memberOne = runtimeAgent("member-1", {
+      kind: "workflow_agent",
+      parentAgentId: coordinator.id,
+      phaseIndex: 0,
+    });
+    const memberTwo = runtimeAgent("member-2", {
+      kind: "workflow_agent",
+      parentAgentId: coordinator.id,
+      phaseIndex: 0,
+    });
+    const directOne = runtimeAgent("direct-1");
+    const directTwo = runtimeAgent("direct-2");
+    const agentPanelModel = {
+      workflows: [
+        {
+          workflow: coordinator,
+          phases: [
+            {
+              index: 0,
+              title: "Inspect",
+              members: [memberOne, memberTwo],
+              state: "running",
+              activeCount: 2,
+              settledCount: 0,
+            },
+          ],
+          unphasedMembers: [],
+        },
+      ],
+      directAgents: [directOne, directTwo],
+      runningCount: 5,
+      waitingCount: 0,
+      idleCount: 0,
+      settledCount: 0,
+      totalTokens: 0,
+      hasAgents: true,
+      liveCount: 5,
+    } satisfies AgentPanelModel;
+    const result = collapseSubagentTimelineEntries({
+      timelineEntries: [
+        subagentTimelineEntry(memberOne.id, "run-1"),
+        subagentTimelineEntry(coordinator.id, "run-1"),
+        subagentTimelineEntry(memberTwo.id, "run-1"),
+        subagentTimelineEntry(directOne.id, "run-1"),
+        subagentTimelineEntry(directTwo.id, "run-1"),
+      ],
+      agentPanelModel,
+    });
+
+    expect(result.timelineEntries.map((entry) => entry.id)).toEqual([
+      "entry:member-1",
+      "entry:direct-1",
+    ]);
+    expect(result.ctaByItemId.get("item:member-1")).toEqual({
+      workflowId: "workflow-1",
+      agentIds: ["member-1", "workflow-1", "member-2"],
+      itemStates: [
+        { id: "member-1", status: "running", totalTokens: 0 },
+        { id: "workflow-1", status: "running", totalTokens: 0 },
+        { id: "member-2", status: "running", totalTokens: 0 },
+      ],
+    });
+    expect(result.ctaByItemId.get("item:direct-1")).toEqual({
+      workflowId: null,
+      agentIds: ["direct-1", "direct-2"],
+      itemStates: [
+        { id: "direct-1", status: "running", totalTokens: 0 },
+        { id: "direct-2", status: "running", totalTokens: 0 },
+      ],
+    });
+  });
+
+  it("does not merge direct spawns from different or unknown runs", () => {
+    const result = collapseSubagentTimelineEntries({
+      timelineEntries: [
+        subagentTimelineEntry("direct-1", "run-1"),
+        subagentTimelineEntry("direct-2", "run-2"),
+        subagentTimelineEntry("direct-3", null),
+        subagentTimelineEntry("direct-4", null),
+      ],
+      agentPanelModel: emptyAgentPanelModel(),
+    });
+
+    expect(result.timelineEntries).toHaveLength(4);
+    expect(result.ctaByItemId.size).toBe(4);
+  });
+
+  it("keeps no-run lifecycle items distinct when they reuse a durable subagent", () => {
+    const result = collapseSubagentTimelineEntries({
+      timelineEntries: [
+        subagentTimelineEntry("reused-agent", null, "reused-agent:first", "completed"),
+        subagentTimelineEntry("reused-agent", null, "reused-agent:second", "running"),
+      ],
+      agentPanelModel: emptyAgentPanelModel(),
+    });
+
+    expect(result.timelineEntries.map((entry) => entry.id)).toEqual([
+      "entry:reused-agent:first",
+      "entry:reused-agent:second",
+    ]);
+    expect(result.ctaByItemId.get("item:reused-agent:first")?.itemStates[0]?.status).toBe(
+      "completed",
+    );
+    expect(result.ctaByItemId.get("item:reused-agent:second")?.itemStates[0]?.status).toBe(
+      "running",
+    );
+  });
+});
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {

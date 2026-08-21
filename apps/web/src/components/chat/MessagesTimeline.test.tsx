@@ -1,8 +1,23 @@
-import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  NodeId,
+  RunId,
+  SubagentActivationId,
+  ThreadId,
+  type OrchestrationV2SubagentActivation,
+} from "@t3tools/contracts";
+import type {
+  AgentPanelModel,
+  AgentPanelSubagent,
+} from "@t3tools/client-runtime/state/thread-subagents";
+import type { TimelineEntry } from "../../session-logic";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+import * as DateTime from "effect/DateTime";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -204,6 +219,83 @@ function buildProps() {
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
+  };
+}
+
+function runtimeAgent(id: string, overrides: Partial<AgentPanelSubagent> = {}): AgentPanelSubagent {
+  return {
+    id,
+    kind: "subagent",
+    title: id,
+    role: "reviewer",
+    model: null,
+    status: "running",
+    activationCount: 1,
+    usage: null,
+    progress: null,
+    result: null,
+    parentAgentId: null,
+    agentIndex: null,
+    phaseIndex: null,
+    phaseTitle: null,
+    attempt: null,
+    workflowName: null,
+    phases: [],
+    runHandles: null,
+    firstSeenAt: MESSAGE_CREATED_AT,
+    startedAt: MESSAGE_CREATED_AT,
+    completedAt: null,
+    updatedAt: MESSAGE_CREATED_AT,
+    ...overrides,
+  };
+}
+
+function subagentTimelineEntry(input: {
+  readonly itemId: string;
+  readonly subagentId: string;
+  readonly runId: string;
+  readonly status: "pending" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly progress?: string | null;
+  readonly result?: string | null;
+  readonly position?: number;
+}): TimelineEntry {
+  return {
+    id: input.itemId,
+    kind: "event",
+    createdAt: MESSAGE_CREATED_AT,
+    projectedItem: {
+      position: input.position ?? 0,
+      visibility: "local",
+      sourceThreadId: "thread-1",
+      sourceItemId: input.itemId,
+      item: {
+        id: input.itemId,
+        threadId: "thread-1",
+        runId: input.runId,
+        nodeId: input.subagentId,
+        providerThreadId: "provider-thread-1",
+        providerTurnId: "provider-turn-1",
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: input.status,
+        title: input.title ?? input.subagentId,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: {},
+        type: "subagent",
+        subagentId: input.subagentId,
+        origin: "provider_native",
+        driver: "codex",
+        providerInstanceId: "codex",
+        childThreadId: null,
+        prompt: input.prompt ?? "",
+        progress: input.progress,
+        result: input.result ?? null,
+      },
+    } as never,
   };
 }
 
@@ -1214,321 +1306,294 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Work Log");
   });
 
-  it("renders live subagent progress on the persistent linked card", async () => {
+  it("renders a live subagent as an Agents-panel CTA", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
-          {
-            id: "subagent-progress",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "subagent-progress",
-              item: {
-                id: "subagent-progress",
-                threadId: "thread-1",
-                runId: "run-1",
-                nodeId: "node-subagent-1",
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "running",
-                title: "Package audit",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "subagent",
-                subagentId: "node-subagent-1",
-                origin: "provider_native",
-                driver: "claudeAgent",
-                providerInstanceId: "claudeAgent",
-                childThreadId: "thread-subagent-1",
-                prompt: "Inspect the package",
-                progress: "Reading src/index.ts",
-                result: null,
-              },
-            } as never,
-          },
+          subagentTimelineEntry({
+            itemId: "subagent-progress",
+            subagentId: "node-subagent-1",
+            runId: "run-1",
+            status: "running",
+            title: "Package audit",
+            prompt: "Inspect the package",
+            progress: "Reading src/index.ts",
+            result: "Partial streamed answer so far",
+          }),
         ]}
       />,
     );
 
     expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain('aria-label="Open Package audit"');
-    expect(markup).toContain("Reading src/index.ts");
+    expect(markup).toContain('data-agent-spawn-cta="true"');
+    expect(markup).not.toContain('aria-label="Open Package audit"');
+    expect(markup).toContain("Kicked off 1 subagent");
+    expect(markup).toContain("1 working");
+    expect(markup).toContain("Open Agents");
+    expect(markup).toContain('src="/apple-touch-icon.png"');
+    expect(markup).not.toContain("Reading src/index.ts");
+    expect(markup).not.toContain("Partial streamed answer so far");
     expect(markup).not.toContain("Inspect the package");
     expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
     expect(markup).not.toContain("Work Log");
   });
 
-  it("discloses the full Codex subagent result without projecting child events", async () => {
+  it("omits completed subagent detail from the timeline CTA", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
-          {
-            id: "codex-subagent-result",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "codex-subagent-result",
-              item: {
-                id: "codex-subagent-result",
-                threadId: "thread-1",
-                runId: "run-1",
-                nodeId: "node-subagent-1",
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "completed",
-                title: "Isolation report",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "subagent",
-                subagentId: "node-subagent-1",
-                origin: "provider_native",
-                driver: "codex",
-                providerInstanceId: "codex",
-                childThreadId: "thread-subagent-1",
-                prompt: "Explain test isolation",
-                result: "Tests should be isolated.\n\nResult: no shared state.",
-              },
-            } as never,
-          },
+          subagentTimelineEntry({
+            itemId: "codex-subagent-result",
+            subagentId: "node-subagent-1",
+            runId: "run-1",
+            status: "completed",
+            title: "Isolation report",
+            prompt: "Explain test isolation",
+            result: "Tests should be isolated.\n\nResult: no shared state.",
+          }),
         ]}
       />,
     );
 
     expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain('data-v2-subagent-result-disclosure="true"');
-    expect(markup).toContain('data-v2-subagent-result="true"');
-    expect(markup).toContain('aria-label="Show full result for Isolation report"');
-    expect(markup).toContain('aria-label="Open Isolation report"');
-    expect(markup).toContain("Tests should be isolated.");
-    expect(markup).toContain("Result: no shared state.");
+    expect(markup).toContain("Ran 1 subagent");
+    expect(markup).toContain("completed");
+    expect(markup).toContain("View");
+    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
+    expect(markup).not.toContain('data-v2-subagent-result="true"');
+    expect(markup).not.toContain('aria-label="Open Isolation report"');
+    expect(markup).not.toContain("Tests should be isolated.");
+    expect(markup).not.toContain("Result: no shared state.");
     expect(markup).not.toContain("Explain test isolation");
   });
 
-  it("keeps live progress when a running subagent streams a partial result", async () => {
+  it("renders a cancelled subagent batch as stopped", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
-          {
-            id: "subagent-partial-result",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "subagent-partial-result",
-              item: {
-                id: "subagent-partial-result",
-                threadId: "thread-1",
-                runId: "run-1",
-                nodeId: "node-subagent-1",
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "running",
-                title: "Package audit",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "subagent",
-                subagentId: "node-subagent-1",
-                origin: "provider_native",
-                driver: "codex",
-                providerInstanceId: "codex",
-                childThreadId: "thread-subagent-1",
-                prompt: "Inspect the package",
-                progress: "Reading src/index.ts",
-                result: "Partial streamed answer so far",
-              },
-            } as never,
-          },
+          subagentTimelineEntry({
+            itemId: "subagent-cancelled-result",
+            subagentId: "node-subagent-1",
+            runId: "run-1",
+            status: "cancelled",
+            title: "Package audit",
+            prompt: "Inspect the package",
+            progress: "Reading src/index.ts",
+            result: "Partial output before cancel",
+          }),
         ]}
       />,
     );
 
     expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain('aria-label="Open Package audit"');
-    expect(markup).toContain("Reading src/index.ts");
-    expect(markup).not.toContain("Partial streamed answer so far");
-    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
-  });
-
-  it("shows the streamed result while a subagent runs without progress", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "subagent-streamed-result",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "subagent-streamed-result",
-              item: {
-                id: "subagent-streamed-result",
-                threadId: "thread-1",
-                runId: "run-1",
-                nodeId: "node-subagent-1",
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "running",
-                title: "Package audit",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "subagent",
-                subagentId: "node-subagent-1",
-                origin: "provider_native",
-                driver: "codex",
-                providerInstanceId: "codex",
-                childThreadId: "thread-subagent-1",
-                prompt: "Inspect the package",
-                progress: null,
-                result: "Streaming answer so far",
-              },
-            } as never,
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain("Streaming answer so far");
-    expect(markup).not.toContain("Inspect the package");
-    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
-  });
-
-  it("treats a cancelled subagent result as partial output", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "subagent-cancelled-result",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "subagent-cancelled-result",
-              item: {
-                id: "subagent-cancelled-result",
-                threadId: "thread-1",
-                runId: "run-1",
-                nodeId: "node-subagent-1",
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "cancelled",
-                title: "Package audit",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "subagent",
-                subagentId: "node-subagent-1",
-                origin: "provider_native",
-                driver: "codex",
-                providerInstanceId: "codex",
-                childThreadId: "thread-subagent-1",
-                prompt: "Inspect the package",
-                progress: "Reading src/index.ts",
-                result: "Partial output before cancel",
-              },
-            } as never,
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain("Partial output before cancel");
+    expect(markup).toContain("Ran 1 subagent");
+    expect(markup).toContain("1 stopped");
+    expect(markup).not.toContain("Partial output before cancel");
     expect(markup).not.toContain("Reading src/index.ts");
     expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
   });
 
-  it("falls back to progress when a completed subagent result is whitespace-only", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
+  it("renders a failed workflow coordinator as failed after its members settle", () => {
+    const coordinator = runtimeAgent("workflow-review", {
+      kind: "workflow",
+      status: "failed",
+      workflowName: "Review",
+      phases: [{ index: 0, title: "Inspect" }],
+    });
+    const member = runtimeAgent("workflow-review:member", {
+      kind: "workflow_agent",
+      status: "completed",
+      parentAgentId: coordinator.id,
+      phaseIndex: 0,
+      completedAt: MESSAGE_CREATED_AT,
+    });
+    const agentPanelModel = {
+      workflows: [
+        {
+          workflow: coordinator,
+          phases: [
+            {
+              index: 0,
+              title: "Inspect",
+              members: [member],
+              state: "done",
+              activeCount: 0,
+              settledCount: 1,
+            },
+          ],
+          unphasedMembers: [],
+        },
+      ],
+      directAgents: [],
+      runningCount: 0,
+      waitingCount: 0,
+      idleCount: 0,
+      settledCount: 2,
+      totalTokens: 0,
+      hasAgents: true,
+      liveCount: 0,
+    } satisfies AgentPanelModel;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        agentPanelModel={agentPanelModel}
         timelineEntries={[
-          {
-            id: "subagent-blank-result",
-            kind: "event",
-            createdAt: MESSAGE_CREATED_AT,
-            projectedItem: {
-              position: 0,
-              visibility: "local",
-              sourceThreadId: "thread-1",
-              sourceItemId: "subagent-blank-result",
-              item: {
-                id: "subagent-blank-result",
-                threadId: "thread-1",
-                runId: "run-1",
-                nodeId: "node-subagent-1",
-                providerThreadId: "provider-thread-1",
-                providerTurnId: "provider-turn-1",
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1,
-                status: "completed",
-                title: "Package audit",
-                startedAt: null,
-                completedAt: null,
-                updatedAt: {},
-                type: "subagent",
-                subagentId: "node-subagent-1",
-                origin: "provider_native",
-                driver: "codex",
-                providerInstanceId: "codex",
-                childThreadId: "thread-subagent-1",
-                prompt: "Inspect the package",
-                progress: "Audited 12 packages",
-                result: "  \n\t  ",
-              },
-            } as never,
-          },
+          subagentTimelineEntry({
+            itemId: "workflow-review-item",
+            subagentId: coordinator.id,
+            runId: "run-workflow-review",
+            status: "failed",
+          }),
         ]}
       />,
     );
 
-    expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain("Audited 12 packages");
-    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
+    expect(markup).toContain("Ran 1 subagent");
+    expect(markup).toContain(">failed</span>");
+    expect(markup).not.toContain("1 failed");
+    expect(markup).not.toContain("✓ completed");
+  });
+
+  it("does not count a failed workflow coordinator as an extra subagent", () => {
+    const coordinator = runtimeAgent("workflow-review", {
+      kind: "workflow",
+      status: "failed",
+      workflowName: "Review",
+      phases: [{ index: 0, title: "Inspect" }],
+    });
+    const members = ["first", "second"].map((suffix) =>
+      runtimeAgent(`workflow-review:${suffix}`, {
+        kind: "workflow_agent",
+        status: "failed",
+        parentAgentId: coordinator.id,
+        phaseIndex: 0,
+        completedAt: MESSAGE_CREATED_AT,
+      }),
+    );
+    const agentPanelModel = {
+      workflows: [
+        {
+          workflow: coordinator,
+          phases: [
+            {
+              index: 0,
+              title: "Inspect",
+              members,
+              state: "done",
+              activeCount: 0,
+              settledCount: 2,
+            },
+          ],
+          unphasedMembers: [],
+        },
+      ],
+      directAgents: [],
+      runningCount: 0,
+      waitingCount: 0,
+      idleCount: 0,
+      settledCount: 3,
+      totalTokens: 0,
+      hasAgents: true,
+      liveCount: 0,
+    } satisfies AgentPanelModel;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={agentPanelModel}
+        timelineEntries={[
+          subagentTimelineEntry({
+            itemId: "workflow-review-item",
+            subagentId: coordinator.id,
+            runId: "run-workflow-review",
+            status: "failed",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran 2 subagents");
+    expect(markup).toContain("2 failed");
+    expect(markup).not.toContain("3 failed");
+  });
+
+  it("keeps separate CTAs when an agent identity is reused in a later run", () => {
+    const now = DateTime.makeUnsafe(MESSAGE_CREATED_AT);
+    const subagentId = NodeId.make("node-subagent-reused");
+    const oldRunId = RunId.make("run-subagent-old");
+    const newRunId = RunId.make("run-subagent-new");
+    const currentAgent = runtimeAgent(subagentId, {
+      status: "running",
+      usage: { totalTokens: 900 },
+      activationCount: 2,
+    });
+    const agentPanelModel = {
+      workflows: [],
+      directAgents: [currentAgent],
+      runningCount: 1,
+      waitingCount: 0,
+      idleCount: 0,
+      settledCount: 0,
+      totalTokens: 900,
+      hasAgents: true,
+      liveCount: 1,
+    } satisfies AgentPanelModel;
+    const activation = (
+      runId: RunId,
+      ordinal: number,
+      status: OrchestrationV2SubagentActivation["status"],
+      totalTokens: number,
+    ) =>
+      ({
+        id: SubagentActivationId.make(`${subagentId}:activation:${ordinal}`),
+        threadId: ThreadId.make("thread-1"),
+        subagentId,
+        runId,
+        providerTurnId: null,
+        ordinal,
+        status,
+        usage: { totalTokens },
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: now,
+      }) satisfies OrchestrationV2SubagentActivation;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={agentPanelModel}
+        subagentActivations={[
+          activation(oldRunId, 1, "completed", 120),
+          activation(newRunId, 2, "running", 900),
+        ]}
+        timelineEntries={[
+          subagentTimelineEntry({
+            itemId: "subagent-old-item",
+            subagentId,
+            runId: oldRunId,
+            status: "completed",
+          }),
+          subagentTimelineEntry({
+            itemId: "subagent-new-item",
+            subagentId,
+            runId: newRunId,
+            status: "running",
+            position: 1,
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran 1 subagent");
+    expect(markup).toContain("Kicked off 1 subagent");
+    expect(markup).toContain("✓ completed");
+    expect(markup).toContain("Σ 120");
+    expect(markup).toContain("Σ 900");
+    expect(markup).toContain("working");
   });
 
   it("renders V2 provider retries in the normal work log", () => {

@@ -1,5 +1,5 @@
 /**
- * Agents right-panel surface: the fleet view over the native subagent fold,
+ * Agents right-panel surface: the fleet view over the V2 subagent projection,
  * and the ONLY place the roster renders (the chat carries one CTA row per
  * spawn batch).
  *
@@ -14,13 +14,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentPanelModel,
+  AgentPanelSubagent,
   AgentPanelWorkflowGroup,
-  RuntimeSubagent,
-} from "@t3tools/client-runtime/state/subagentRuntime";
+} from "@t3tools/client-runtime/state/thread-subagents";
 import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
-} from "@t3tools/client-runtime/state/subagentRuntime";
+} from "@t3tools/client-runtime/state/thread-subagents";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -36,7 +36,7 @@ import { Button } from "~/components/ui/button";
  * stalled/waiting/queued subagent is still the fleet doing its job, not a
  * user problem). Only settled states differentiate.
  */
-const STATUS_VISUALS: Record<RuntimeSubagent["status"], { dotClass: string; label: string }> = {
+const STATUS_VISUALS: Record<AgentPanelSubagent["status"], { dotClass: string; label: string }> = {
   pending: { dotClass: "bg-info", label: "Working" },
   running: { dotClass: "bg-info", label: "Working" },
   waiting: { dotClass: "bg-info", label: "Working" },
@@ -49,7 +49,7 @@ const STATUS_VISUALS: Record<RuntimeSubagent["status"], { dotClass: string; labe
   interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
 };
 
-function StatusDot({ status }: { status: RuntimeSubagent["status"] }) {
+function StatusDot({ status }: { status: AgentPanelSubagent["status"] }) {
   return (
     <span
       aria-hidden
@@ -84,7 +84,7 @@ function elapsedBetween(startedAt: string, endIso: string | null): string {
  * Elapsed time for the current activation. Live agents self-tick via DOM
  * writes (zero React commits per tick); settled agents freeze at completedAt.
  */
-function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
+function AgentElapsed({ agent }: { agent: AgentPanelSubagent }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
@@ -118,30 +118,37 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
  * settled rows lead with the outcome. Errors are the only inline previews on
  * failed rows because they explain a red row at a glance.
  */
-function agentActivityText(agent: RuntimeSubagent): string | null {
+function agentActivityText(agent: AgentPanelSubagent): string | null {
   const live =
     agent.status === "running" || agent.status === "pending" || agent.status === "waiting";
   if (live) {
-    return (
-      agent.progress ??
-      (agent.lastToolName ? `▸ ${agent.lastToolName}` : null) ??
-      agent.result ??
-      agent.error
-    );
+    return agent.progress ?? agent.result;
   }
-  return (
-    agent.error ??
-    agent.result ??
-    agent.progress ??
-    (agent.lastToolName ? `▸ ${agent.lastToolName}` : null)
-  );
+  return agent.result ?? agent.progress;
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+function agentDepth(
+  agent: AgentPanelSubagent,
+  agentsById: ReadonlyMap<string, AgentPanelSubagent>,
+): number {
+  let depth = 0;
+  let parentId = agent.parentAgentId;
+  const seen = new Set([agent.id]);
+  while (parentId !== null && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = agentsById.get(parentId);
+    if (parent === undefined) break;
+    depth += 1;
+    parentId = parent.parentAgentId;
+  }
+  return depth;
+}
+
+/** Non-interactive agent status line. Nested direct agents are indented. */
+function AgentRow({ agent, depth = 0 }: { agent: AgentPanelSubagent; depth?: number }) {
   const visuals = STATUS_VISUALS[agent.status];
   const activity = agentActivityText(agent);
-  const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const modelLabel = formatSubagentModelLabel(agent.model);
   const role =
     agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
       ? null
@@ -154,7 +161,10 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   ].filter((value): value is string => value !== null);
 
   return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+    <div
+      className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1"
+      style={depth === 0 ? undefined : { paddingLeft: `${0.375 + depth * 0.75}rem` }}
+    >
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
@@ -200,7 +210,7 @@ function workflowIsLive(group: AgentPanelWorkflowGroup): boolean {
   );
 }
 
-function workflowMembers(group: AgentPanelWorkflowGroup): ReadonlyArray<RuntimeSubagent> {
+function workflowMembers(group: AgentPanelWorkflowGroup): ReadonlyArray<AgentPanelSubagent> {
   return [...group.phases.flatMap((phase) => phase.members), ...group.unphasedMembers];
 }
 
@@ -542,6 +552,8 @@ export function AgentsPanel({
     );
   }
 
+  const directAgentsById = new Map(model.directAgents.map((agent) => [agent.id, agent]));
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
@@ -557,10 +569,14 @@ export function AgentsPanel({
           {model.directAgents.length > 0 ? (
             <section>
               <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-                Direct spawns
+                Agents
               </div>
               {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
+                <AgentRow
+                  key={agent.id}
+                  agent={agent}
+                  depth={agentDepth(agent, directAgentsById)}
+                />
               ))}
             </section>
           ) : null}

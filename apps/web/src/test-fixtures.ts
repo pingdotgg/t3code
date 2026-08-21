@@ -51,6 +51,7 @@ export function makeThreadProjectionFixture(): OrchestrationV2ThreadProjection {
     attempts: [],
     nodes: [],
     subagents: [],
+    subagentActivations: [],
     providerSessions: [],
     providerThreads: [],
     providerTurns: [],

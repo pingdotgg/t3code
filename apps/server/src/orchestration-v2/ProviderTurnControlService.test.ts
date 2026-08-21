@@ -93,6 +93,7 @@ function makeProjection(input: {
     ],
     nodes: [],
     subagents: [],
+    subagentActivations: [],
     providerSessions: [],
     providerThreads: [input.providerThread],
     providerTurns: [

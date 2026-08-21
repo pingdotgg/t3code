@@ -121,6 +121,7 @@ const THREAD_SNAPSHOT: OrchestrationV2ThreadDetailSnapshot = {
     attempts: [],
     nodes: [],
     subagents: [],
+    subagentActivations: [],
     providerSessions: [],
     providerThreads: [],
     providerTurns: [],

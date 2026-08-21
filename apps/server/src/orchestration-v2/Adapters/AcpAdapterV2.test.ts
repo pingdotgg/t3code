@@ -4290,6 +4290,7 @@ describe("AcpAdapterV2", () => {
 
       let eagerCompletedUpdates = 0;
       let eagerRunningUpdates = 0;
+      let eagerCompletedActivations = 0;
       let polled = yield* Queue.poll(events);
       while (Option.isSome(polled)) {
         const event = polled.value;
@@ -4297,10 +4298,21 @@ describe("AcpAdapterV2", () => {
           if (event.turnItem.status === "completed") eagerCompletedUpdates += 1;
           if (event.turnItem.status === "running") eagerRunningUpdates += 1;
         }
+        if (
+          event.type === "subagent_activation.updated" &&
+          event.activation.status === "completed"
+        ) {
+          eagerCompletedActivations += 1;
+        }
         polled = yield* Queue.poll(events);
       }
       assert.equal(eagerCompletedUpdates, 1, "completed root must project before any attach");
       assert.equal(eagerRunningUpdates, 0);
+      assert.equal(
+        eagerCompletedActivations,
+        1,
+        "the ACP/Grok subagent projection must emit its terminal activation",
+      );
       assert.lengthOf(continuationRequests, 1);
       assert.isTrue(yield* hasPendingBackgroundWork, "buffered spawn ACK still requires a drain");
 

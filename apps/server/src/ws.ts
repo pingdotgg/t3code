@@ -32,6 +32,7 @@ import {
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadProjection,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -95,6 +96,10 @@ import {
   projectDomainEventForWire,
   projectThreadProjectionForWire,
 } from "./orchestration-v2/WireProjection.ts";
+import {
+  mergeSubagentTreeProjection,
+  routeSubagentTreeEvent,
+} from "./orchestration-v2/SubagentTreeProjection.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
@@ -624,27 +629,61 @@ const makeWsRpcLayer = (
             ),
           );
 
-          const eventStreamFrom = (afterSequence: number) =>
-            threadManagement
-              .streamStoredEventsFrom({
-                threadId: input.threadId,
-                afterSequence,
-              })
-              .pipe(
-                Stream.map((stored) => ({
-                  kind: "event" as const,
-                  sequence: stored.sequence,
-                  event: projectDomainEventForWire(stored.event),
-                })),
-                Stream.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetThreadProjectionError({
-                      threadId: input.threadId,
-                      message: `Failed while streaming orchestration V2 thread ${input.threadId}`,
-                      cause,
-                    }),
+          const loadSubagentTree = Effect.fn("ws.orchestrationV2.loadSubagentTree")(function* (
+            root: OrchestrationV2ThreadProjection,
+          ) {
+            const threadIds = new Set<ThreadId>([root.thread.id]);
+            const descendants: OrchestrationV2ThreadProjection[] = [];
+            let frontier = root.subagents.flatMap((subagent) =>
+              subagent.childThreadId === null ? [] : [subagent.childThreadId],
+            );
+
+            while (frontier.length > 0) {
+              const nextIds = [...new Set(frontier)].filter((threadId) => !threadIds.has(threadId));
+              if (nextIds.length === 0) break;
+              for (const threadId of nextIds) threadIds.add(threadId);
+              const projections = yield* Effect.forEach(
+                nextIds,
+                (threadId) => threadManagement.getThreadProjection(threadId),
+                { concurrency: 8 },
+              );
+              descendants.push(...projections);
+              frontier = projections.flatMap((projection) =>
+                projection.subagents.flatMap((subagent) =>
+                  subagent.childThreadId === null ? [] : [subagent.childThreadId],
                 ),
               );
+            }
+
+            return {
+              threadIds,
+              projection: mergeSubagentTreeProjection(root, descendants),
+            };
+          });
+
+          const eventStreamFrom = (
+            afterSequence: number,
+            initialThreadIds: ReadonlySet<ThreadId>,
+          ) =>
+            applicationEvents.streamApplicationEvents({ afterSequence }).pipe(
+              Stream.mapAccum(
+                () => ({ rootThreadId: input.threadId, threadIds: initialThreadIds }),
+                routeSubagentTreeEvent,
+              ),
+              Stream.map((stored) => ({
+                kind: "event" as const,
+                sequence: stored.sequence,
+                event: projectDomainEventForWire(stored.event),
+              })),
+              Stream.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed while streaming orchestration V2 thread ${input.threadId}`,
+                    cause,
+                  }),
+              ),
+            );
 
           const loadReplayThrough = (afterSequence: number, throughSequence: number) =>
             applicationEvents
@@ -679,6 +718,16 @@ const makeWsRpcLayer = (
 
           const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(
             function* () {
+              const snapshotSequence = yield* applicationEvents.latestApplicationSequence.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to prepare orchestration V2 thread ${input.threadId} snapshot`,
+                      cause,
+                    }),
+                ),
+              );
               const snapshot = yield* threadManagement.getThreadSnapshot(input.threadId).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -689,8 +738,17 @@ const makeWsRpcLayer = (
                     }),
                 ),
               );
-              const { snapshotSequence } = snapshot;
-              const projection = projectThreadProjectionForWire(snapshot.projection);
+              const tree = yield* loadSubagentTree(snapshot.projection).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to load nested agents for orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              );
+              const projection = projectThreadProjectionForWire(tree.projection);
               return Stream.concat(
                 Stream.concat(
                   Stream.make({
@@ -700,7 +758,7 @@ const makeWsRpcLayer = (
                   }),
                   completionMarker,
                 ),
-                eventStreamFrom(snapshotSequence),
+                eventStreamFrom(snapshotSequence, tree.threadIds),
               );
             },
           );
@@ -713,7 +771,7 @@ const makeWsRpcLayer = (
           // published during the replay window is lost; overlapping events are
           // deduped by sequence on the client.
           if (input.afterSequence !== undefined) {
-            const highWater = yield* applicationEvents.latestAgentSequence(input.threadId).pipe(
+            const highWater = yield* applicationEvents.latestApplicationSequence.pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationV2GetThreadProjectionError({
@@ -723,6 +781,41 @@ const makeWsRpcLayer = (
                   }),
               ),
             );
+            const currentProjection = yield* threadManagement
+              .getThreadProjection(input.threadId)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to inspect nested agents for orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              );
+            const currentTree = yield* loadSubagentTree(currentProjection).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed to inspect nested agents for orchestration V2 thread ${input.threadId}`,
+                    cause,
+                  }),
+              ),
+            );
+            if (currentTree.threadIds.size > 1) {
+              return Stream.concat(
+                Stream.concat(
+                  Stream.make({
+                    kind: "snapshot" as const,
+                    snapshotSequence: highWater,
+                    projection: projectThreadProjectionForWire(currentTree.projection),
+                  }),
+                  completionMarker,
+                ),
+                eventStreamFrom(highWater, currentTree.threadIds),
+              );
+            }
             const replay = yield* loadReplayThrough(input.afterSequence, highWater);
             const plan = decideThreadResume({
               afterSequence: input.afterSequence,
@@ -735,7 +828,7 @@ const makeWsRpcLayer = (
             }
             return Stream.concat(
               Stream.concat(Stream.fromIterable(replay), completionMarker),
-              eventStreamFrom(highWater),
+              eventStreamFrom(highWater, currentTree.threadIds),
             );
           }
 
@@ -769,7 +862,9 @@ const makeWsRpcLayer = (
             const base = yield* sql.withTransaction(
               Effect.gen(function* () {
                 const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
-                const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+                const threads = yield* threadManagement
+                  .getShellSnapshot({ location: "active" })
+                  .pipe(Effect.map(ThreadManagementService.userFacingShellSnapshot));
                 return buildActiveShellSnapshot({
                   projects,
                   threads,
@@ -825,7 +920,16 @@ const makeWsRpcLayer = (
                     return yield* projectItem(stored);
                   }
                   const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
-                  return shellStreamItemFromThreadShell({ stored, shell });
+                  // An internal subagent thread is not part of the user-facing
+                  // stream; treating its shell as absent emits a removal the
+                  // client reducer absorbs.
+                  return shellStreamItemFromThreadShell({
+                    stored,
+                    shell:
+                      shell !== null && ThreadManagementService.isInternalSubagentThread(shell)
+                        ? null
+                        : shell,
+                  });
                 }),
               { concurrency: 8 },
             );
@@ -962,7 +1066,9 @@ const makeWsRpcLayer = (
         .withTransaction(
           Effect.gen(function* () {
             const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
-            const threads = yield* threadManagement.getShellSnapshot({ location: "archive" });
+            const threads = yield* threadManagement
+              .getShellSnapshot({ location: "archive" })
+              .pipe(Effect.map(ThreadManagementService.userFacingShellSnapshot));
             return {
               schemaVersion: threads.schemaVersion,
               snapshotSequence: yield* applicationEvents.latestApplicationSequence,
@@ -998,13 +1104,17 @@ const makeWsRpcLayer = (
               Effect.forEach(
                 coalesceStoredThreadEvents(Array.from(events)),
                 (stored) =>
-                  threadManagement
-                    .getThreadShell(stored.event.threadId)
-                    .pipe(
-                      Effect.map((shell) =>
-                        archivedShellStreamItemFromThreadShell({ stored, shell }),
-                      ),
+                  threadManagement.getThreadShell(stored.event.threadId).pipe(
+                    Effect.map((shell) =>
+                      archivedShellStreamItemFromThreadShell({
+                        stored,
+                        shell:
+                          shell !== null && ThreadManagementService.isInternalSubagentThread(shell)
+                            ? null
+                            : shell,
+                      }),
                     ),
+                  ),
                 { concurrency: 8 },
               ),
             ),
@@ -1177,6 +1287,20 @@ const makeWsRpcLayer = (
             ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
             getOrchestrationV2ArchivedShellSnapshot,
             { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.listAllThreadRefs]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.listAllThreadRefs,
+            threadManagement.listAllThreadRefs().pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetShellSnapshotError({
+                    message: "Failed to list orchestration V2 thread references",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestrationV2" },
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(

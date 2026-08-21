@@ -211,7 +211,7 @@ export function V2LifecycleRow(props: {
         title={subagentDisplayTitle(item.title ?? "Subagent")}
         detail={detail}
         badge={item.status}
-        threadId={item.childThreadId}
+        threadId={null}
         expandedDetail={finalResult}
         onOpenThread={props.onOpenThread}
       />
@@ -253,7 +253,7 @@ function RelatedThreadCard(props: {
         <details className="group" data-v2-subagent-result-disclosure="true">
           <summary
             aria-label={`Show full result for ${props.title}`}
-            className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 pr-11 text-left transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden"
+            className={`flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden${threadId === null ? "" : " pr-11"}`}
           >
             {content}
             <ChevronDownIcon

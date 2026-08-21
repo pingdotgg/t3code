@@ -188,6 +188,11 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...base, nodes: upsertEntity(base.nodes, event.payload) };
     case "subagent.updated":
       return { ...base, subagents: upsertEntity(base.subagents, event.payload) };
+    case "subagent-activation.updated":
+      return {
+        ...base,
+        subagentActivations: upsertEntity(base.subagentActivations, event.payload),
+      };
     case "provider-session.attached":
     case "provider-session.updated":
       return {

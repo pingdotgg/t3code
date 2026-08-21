@@ -136,8 +136,8 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
               id: eventId,
               type: payloadInput.type,
               threadId,
-              runId: payloadInput.runId ?? input.runId,
-              nodeId: payloadInput.nodeId ?? input.nodeId,
+              runId: "runId" in payloadInput ? (payloadInput.runId ?? undefined) : input.runId,
+              nodeId: "nodeId" in payloadInput ? (payloadInput.nodeId ?? undefined) : input.nodeId,
               driver: input.event.driver,
               providerInstanceId: input.providerInstanceId,
               rawEventId: input.rawEventId,
@@ -200,6 +200,16 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
                   payload: input.event.subagent,
                   runId: input.event.subagent.runId,
                   nodeId: input.event.subagent.id,
+                }),
+              ];
+            case "subagent_activation.updated":
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "subagent-activation.updated",
+                  threadId: input.event.activation.threadId,
+                  payload: input.event.activation,
+                  runId: input.event.activation.runId,
+                  nodeId: input.event.activation.subagentId,
                 }),
               ];
             case "message.updated":

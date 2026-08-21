@@ -1,16 +1,25 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useMemo } from "react";
 import type {
   EnvironmentProject,
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EMPTY_THREAD_HISTORY_META,
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
 } from "@t3tools/client-runtime/state/threads";
-import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem, ThreadId } from "@t3tools/contracts";
+import {
+  isOrchestrationV2UserFacingThread,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  type ServerConfig,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
@@ -28,9 +37,6 @@ const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
 );
 const EMPTY_PROJECT_REFS_ATOM = Atom.make(EMPTY_PROJECT_REFS).pipe(
   Atom.withLabel("web-project-refs:empty"),
-);
-const EMPTY_THREAD_REFS_ATOM = Atom.make(EMPTY_THREAD_REFS).pipe(
-  Atom.withLabel("web-thread-refs:empty"),
 );
 const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).pipe(
   Atom.withLabel("web-thread-shell:empty"),
@@ -70,7 +76,11 @@ export function useProjectRefs(): ReadonlyArray<ScopedProjectRef> {
 }
 
 export function useThreadRefs(): ReadonlyArray<ScopedThreadRef> {
-  return useAtomValue(environmentThreadShells.threadRefsAtom);
+  const threads = useThreadShells();
+  return useMemo(
+    () => threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+    [threads],
+  );
 }
 
 export function useEnvironmentProjectRefs(
@@ -86,10 +96,17 @@ export function useEnvironmentProjectRefs(
 export function useEnvironmentThreadRefs(
   environmentId: EnvironmentId | null,
 ): ReadonlyArray<ScopedThreadRef> {
-  return useAtomValue(
-    environmentId === null
-      ? EMPTY_THREAD_REFS_ATOM
-      : environmentThreadShells.environmentThreadRefsAtom(environmentId),
+  const threads = useThreadShells();
+  return useMemo(
+    () =>
+      environmentId === null
+        ? EMPTY_THREAD_REFS
+        : threads.flatMap((thread) =>
+            thread.environmentId === environmentId
+              ? [scopeThreadRef(thread.environmentId, thread.id)]
+              : [],
+          ),
+    [environmentId, threads],
   );
 }
 
@@ -102,7 +119,8 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
 }
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.threadShellsAtom);
+  const threads = useAtomValue(environmentThreadShells.threadShellsAtom);
+  return useMemo(() => threads.filter(isOrchestrationV2UserFacingThread), [threads]);
 }
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {
@@ -112,7 +130,8 @@ export function useAllEnvironmentShellsBootstrapped(): boolean {
 export function useThreadShellsForProjectRefs(
   refs: ReadonlyArray<ScopedProjectRef>,
 ): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
+  const threads = useAtomValue(environmentThreadShells.threadShellsForProjectRefsAtom(refs));
+  return useMemo(() => threads.filter(isOrchestrationV2UserFacingThread), [threads]);
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {
@@ -244,11 +263,20 @@ export function readEnvironmentSupportsVisitedTracking(environmentId: Environmen
 export function readEnvironmentThreadRefs(
   environmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
-  return appAtomRegistry.get(environmentThreadShells.environmentThreadRefsAtom(environmentId));
+  return appAtomRegistry
+    .get(environmentThreadShells.threadShellsAtom)
+    .filter(
+      (thread) =>
+        thread.environmentId === environmentId && isOrchestrationV2UserFacingThread(thread),
+    )
+    .map((thread) => scopeThreadRef(thread.environmentId, thread.id));
 }
 
 export function readThreadRefs(): ReadonlyArray<ScopedThreadRef> {
-  return appAtomRegistry.get(environmentThreadShells.threadRefsAtom);
+  return appAtomRegistry
+    .get(environmentThreadShells.threadShellsAtom)
+    .filter(isOrchestrationV2UserFacingThread)
+    .map((thread) => scopeThreadRef(thread.environmentId, thread.id));
 }
 
 export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
@@ -256,9 +284,5 @@ export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
 }
 
 export function findThreadRef(threadId: ThreadId): ScopedThreadRef | null {
-  return (
-    appAtomRegistry
-      .get(environmentThreadShells.threadRefsAtom)
-      .find((ref) => ref.threadId === threadId) ?? null
-  );
+  return readThreadRefs().find((ref) => ref.threadId === threadId) ?? null;
 }

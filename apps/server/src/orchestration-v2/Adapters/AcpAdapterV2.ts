@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
+  orchestrationV2SubagentStatusAsTurnItemStatus,
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -70,6 +71,11 @@ import {
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
+import {
+  defaultSubagentRole,
+  subagentActivationFromSubagent,
+  subagentActivationId,
+} from "../SubagentObservability.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -1263,7 +1269,14 @@ interface ActiveAcpSubagent {
   terminalStatusProjected: boolean;
 }
 
-function acpSubagentStatusIsTerminal(status: OrchestrationV2Subagent["status"]): boolean {
+type AcpTerminalSubagentStatus = Extract<
+  OrchestrationV2Subagent["status"],
+  "completed" | "failed" | "interrupted" | "cancelled"
+>;
+
+function acpSubagentStatusIsTerminal(
+  status: OrchestrationV2Subagent["status"],
+): status is AcpTerminalSubagentStatus {
   return (
     status === "completed" ||
     status === "failed" ||
@@ -2134,6 +2147,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const turnItemOrdinal =
             existing?.turnItemOrdinal ?? (yield* resolveItemOrdinal(context, nativeTaskId));
           const taskStatus = update.status;
+          const activationId = subagentActivationId(nodeId, 1);
+          const settled =
+            taskStatus === "completed" ||
+            taskStatus === "failed" ||
+            taskStatus === "cancelled" ||
+            taskStatus === "interrupted";
           const task: OrchestrationV2Subagent = {
             ...(existing?.task ?? {
               id: nodeId,
@@ -2150,12 +2169,23 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               prompt: update.prompt,
               title: update.title,
               model: update.model,
+              kind: "subagent" as const,
+              role: defaultSubagentRole(),
               result: null,
+              usage: null,
+              currentActivationId: activationId,
+              activationCount: 1,
+              workflow: null,
+              workflowMembership: null,
+              recentActivity: [],
               startedAt: now,
             }),
             status: taskStatus,
             result: existing?.assistantText || update.result,
-            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            currentActivationId: settled ? null : activationId,
+            // Keep the first completion time: a duplicate terminal frame is
+            // not a second completion.
+            completedAt: settled ? (existing?.task.completedAt ?? now) : null,
             updatedAt: now,
           };
           const subagent: ActiveAcpSubagent = existing ?? {
@@ -2274,7 +2304,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ...subagent.task,
             status: taskStatus,
             result,
-            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            completedAt: settled ? (subagent.task.completedAt ?? now) : null,
             updatedAt: now,
           };
           const providerThreadId = subagent.task.providerThreadId;
@@ -2321,6 +2351,16 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             },
           });
           yield* emitProviderEvent({ type: "subagent.updated", driver, subagent: subagent.task });
+          yield* emitProviderEvent({
+            type: "subagent_activation.updated",
+            driver,
+            activation: subagentActivationFromSubagent({
+              subagent: subagent.task,
+              providerTurnId: subagent.providerTurnId,
+              ordinal: 1,
+              status: taskStatus,
+            }),
+          });
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver,
@@ -3956,7 +3996,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
          */
         const mutateCarryoverSubagentStatus = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
-          status: OrchestrationV2Subagent["status"],
+          status: AcpTerminalSubagentStatus,
           resultOverride?: string | null,
         ) {
           const now = yield* DateTime.now;
@@ -3969,6 +4009,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ...subagent.task,
             status,
             result,
+            currentActivationId: null,
             completedAt,
             updatedAt: now,
           };
@@ -3981,7 +4022,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
          */
         const projectCarryoverSubagentStatus = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
-          status: OrchestrationV2Subagent["status"],
+          status: AcpTerminalSubagentStatus,
           resultOverride?: string | null,
         ) {
           yield* mutateCarryoverSubagentStatus(subagent, status, resultOverride);
@@ -4005,7 +4046,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               parentNodeId: subagent.task.parentNodeId,
               rootNodeId: subagent.task.parentNodeId,
               kind: "subagent",
-              status,
+              status: orchestrationV2SubagentStatusAsTurnItemStatus[status],
               countsForRun: false,
               providerThreadId: parentProviderThreadId,
               providerTurnId: subagent.providerTurnId,
@@ -4026,7 +4067,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               parentNodeId: null,
               rootNodeId: subagent.childRootNodeId,
               kind: "root_turn",
-              status,
+              status: orchestrationV2SubagentStatusAsTurnItemStatus[status],
               countsForRun: false,
               providerThreadId: subagent.task.providerThreadId,
               providerTurnId: null,
@@ -4043,6 +4084,16 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             subagent: subagent.task,
           });
           yield* emitProviderEvent({
+            type: "subagent_activation.updated",
+            driver,
+            activation: subagentActivationFromSubagent({
+              subagent: subagent.task,
+              providerTurnId: subagent.providerTurnId,
+              ordinal: 1,
+              status,
+            }),
+          });
+          yield* emitProviderEvent({
             type: "turn_item.updated",
             driver,
             turnItem: {
@@ -4055,7 +4106,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               nativeItemRef,
               parentItemId: null,
               ordinal: subagent.turnItemOrdinal,
-              status,
+              status: orchestrationV2SubagentStatusAsTurnItemStatus[status],
               title: subagent.task.title,
               startedAt: subagent.task.startedAt,
               completedAt,
@@ -4086,7 +4137,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
          */
         const updateCarryoverSubagentStatus = Effect.fnUntraced(function* (
           nativeIdOrChildSessionId: string,
-          status: OrchestrationV2Subagent["status"],
+          status: AcpTerminalSubagentStatus,
           result?: string | null,
           options?: { readonly project?: boolean },
         ) {
@@ -4213,8 +4264,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         ) {
           for (const subagent of subagents) {
             if (
-              subagent.task.status === "running" ||
-              subagent.task.status === "pending" ||
+              !acpSubagentStatusIsTerminal(subagent.task.status) ||
               subagent.terminalStatusProjected
             ) {
               continue;

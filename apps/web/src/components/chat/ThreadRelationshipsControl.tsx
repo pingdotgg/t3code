@@ -36,11 +36,13 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   THREAD_DETAILS_PANEL_LINK_ROW_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS,
+  THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
   THREAD_DETAILS_PANEL_MENU_POPUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
@@ -63,10 +65,12 @@ export function resolveThreadLineageWindow<Row>(
 }
 
 export function ThreadLineageRowList(props: {
+  readonly hidden?: boolean;
   readonly hiddenCount: number;
   readonly onShowMore: () => void;
   readonly children: ReactNode;
 }) {
+  if (props.hidden === true) return null;
   return (
     <>
       {/*
@@ -150,7 +154,11 @@ export function ThreadRelationshipsPanel(props: {
     () =>
       orderWebThreadLineageRows({
         graph,
-        rows: immediateThreadRelationships(graph, props.threadId),
+        // Subagent edges point at hidden internal threads; rendering them
+        // would offer navigation to conversations the client never receives.
+        rows: immediateThreadRelationships(graph, props.threadId).filter(
+          (relationship) => relationship.edge.kind !== "subagent",
+        ),
         currentThreadId: props.threadId,
         mergeTargetThreadId,
       }),
@@ -172,7 +180,7 @@ export function ThreadRelationshipsPanel(props: {
   );
   const { visibleRows, hiddenCount } = resolveThreadLineageWindow(relationshipRows, visibleCount);
 
-  if (relationshipRows.length === 0) {
+  if (relationshipRows.length === 0 && !canDetach) {
     return null;
   }
 
@@ -253,7 +261,22 @@ export function ThreadRelationshipsPanel(props: {
         </div>
       </div>
 
-      <ThreadLineageRowList hiddenCount={hiddenCount} onShowMore={showMore}>
+      {visibleRows.length === 0 ? (
+        <div
+          className={cn(
+            THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+            "flex items-center font-normal text-muted-foreground",
+          )}
+        >
+          <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+          <span>Agent session connected</span>
+        </div>
+      ) : null}
+      <ThreadLineageRowList
+        hidden={visibleRows.length === 0}
+        hiddenCount={hiddenCount}
+        onShowMore={showMore}
+      >
         {visibleRows.map(({ threadId, edge }) => {
           const node = graph.nodes.get(threadId);
           const isSubagent = edge.kind === "subagent";

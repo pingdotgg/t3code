@@ -83,7 +83,13 @@ export function ThreadRelationshipsBanner(props: {
   const rows = useMemo(
     () =>
       copySorted(
-        immediateThreadRelationships(graph, props.threadId),
+        // Subagent edges come from the projection, not from thread shells, so
+        // they survive the shell filtering and would point at threads the
+        // client no longer receives — rendering as "Unavailable", and taking
+        // over the banner headline when they sort first.
+        immediateThreadRelationships(graph, props.threadId).filter(
+          (relationship) => relationship.edge.kind !== "subagent",
+        ),
         (left, right) =>
           Number(right.threadId === mergeTargetThreadId) -
           Number(left.threadId === mergeTargetThreadId),

@@ -43,7 +43,7 @@ export function assertSubagentOutput(
   assert.lengthOf(result.shellSnapshot.threads, 3);
   assert.deepEqual(
     projection.subagents.map((subagent) => subagent.status),
-    ["completed", "completed"],
+    ["idle", "idle"],
   );
   assert.isTrue(
     projection.subagents.some(
@@ -76,6 +76,7 @@ export function assertSubagentOutput(
       throw new Error(`Missing parent lifecycle item for subagent ${subagent.id}`);
     }
     assert.equal(parentItem.result, subagent.result);
+    assert.equal(parentItem.status, "completed");
     if (subagent.childThreadId === null) {
       throw new Error(`Subagent ${subagent.id} is missing its child thread`);
     }

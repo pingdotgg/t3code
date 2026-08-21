@@ -1,9 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   CursorProviderCapabilitiesV2,
+  cursorSubagentCompletedAt,
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
   cursorSdkModelSelection,
@@ -13,6 +15,17 @@ import {
 import { isCursorCancellationError, loggedCursorAgentOptions } from "./CursorAgentSdk.ts";
 
 describe("CursorAdapterV2", () => {
+  it("preserves the first subagent completion time on duplicate terminal updates", () => {
+    const first = DateTime.makeUnsafe("2026-08-16T05:00:00.000Z");
+    const duplicate = DateTime.makeUnsafe("2026-08-16T05:01:00.000Z");
+
+    assert.strictEqual(
+      cursorSubagentCompletedAt({ completed: true, previous: first, now: duplicate }),
+      first,
+    );
+    assert.isNull(cursorSubagentCompletedAt({ completed: false, previous: first, now: duplicate }));
+  });
+
   it("maps Cursor auto and model parameters to SDK selections", () => {
     assert.deepEqual(
       cursorSdkModelSelection({

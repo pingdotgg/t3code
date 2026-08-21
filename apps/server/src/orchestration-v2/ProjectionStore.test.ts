@@ -153,6 +153,107 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("keeps a separate timeline item for every durable-agent activation", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:projection-subagent-activation-history");
+      const projectId = ProjectId.make("project:projection-subagent-activation-history");
+      const subagentId = NodeId.make("node:projection-subagent-activation-history");
+      const runIds = [
+        RunId.make("run:projection-subagent-activation-history:1"),
+        RunId.make("run:projection-subagent-activation-history:2"),
+      ] as const;
+      const itemIds = [
+        TurnItemId.make("turn-item:projection-subagent-activation-history:1"),
+        TurnItemId.make("turn-item:projection-subagent-activation-history:2"),
+      ] as const;
+      const thread = {
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId,
+        title: "Subagent activation history",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        snoozedUntil: null,
+        snoozedAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-subagent-activation-history:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: thread,
+      });
+      for (const [index, itemId] of itemIds.entries()) {
+        const runId = runIds[index];
+        if (runId === undefined) continue;
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-subagent-activation-history:item:${index + 1}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId: subagentId,
+          driver,
+          occurredAt: DateTime.add(now, { seconds: index }),
+          payload: {
+            id: itemId,
+            threadId,
+            runId,
+            nodeId: subagentId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: index + 1,
+            status: "completed",
+            title: "Reusable agent",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: DateTime.add(now, { seconds: index }),
+            type: "subagent",
+            subagentId,
+            origin: "provider_native",
+            driver,
+            providerInstanceId,
+            childThreadId: null,
+            prompt: "Inspect the repository",
+            result: `activation ${index + 1}`,
+          },
+        });
+      }
+
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.turnItems.map((item) => [item.id, item.runId, item.type]),
+        [
+          [itemIds[0], runIds[0], "subagent"],
+          [itemIds[1], runIds[1], "subagent"],
+        ],
+      );
+    }),
+  );
+
   it.effect("preserves delegated completion ownership across stale run and task updates", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;
@@ -214,6 +315,14 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       };
       const task = {
         id: taskId,
+        kind: "subagent" as const,
+        role: { name: "general-purpose", source: "app_default" as const },
+        usage: null,
+        currentActivationId: null,
+        activationCount: 1,
+        workflow: null,
+        workflowMembership: null,
+        recentActivity: [],
         threadId,
         runId,
         parentNodeId: rootNodeId,

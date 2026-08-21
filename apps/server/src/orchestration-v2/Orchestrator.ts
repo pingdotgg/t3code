@@ -22,6 +22,7 @@ import {
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   ProviderInstanceId,
@@ -65,6 +66,7 @@ import {
   subagentResultForRun,
   subagentThreadTitle,
 } from "./SubagentProjection.ts";
+import { defaultSubagentRole, subagentActivationId } from "./SubagentObservability.ts";
 import { ThreadForkServiceV2 } from "./ThreadForkService.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedErrorClass<OrchestratorDispatchError>()(
@@ -317,7 +319,10 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
 
 function delegatedTaskTerminalStatus(
   status: OrchestrationV2Run["status"],
-): OrchestrationV2Subagent["status"] | null {
+): Extract<
+  OrchestrationV2Subagent["status"],
+  "completed" | "failed" | "cancelled" | "interrupted"
+> | null {
   switch (status) {
     case "completed":
     case "failed":
@@ -334,6 +339,12 @@ function delegatedTaskTerminalStatus(
       return null;
   }
 }
+
+const isTerminalSubagentActivation = (activation: OrchestrationV2SubagentActivation) =>
+  activation.status === "completed" ||
+  activation.status === "failed" ||
+  activation.status === "cancelled" ||
+  activation.status === "interrupted";
 
 function nextQueuedRun(
   projection: OrchestrationV2ThreadProjection,
@@ -4566,6 +4577,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
       };
+      const activationId = subagentActivationId(taskNodeId, 1);
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
         threadId: command.parentThreadId,
@@ -4582,8 +4594,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         title: command.title ?? null,
         model: command.modelSelection.model,
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
+        kind: "subagent",
+        role: defaultSubagentRole("delegated-worker"),
         status: "running",
         result: null,
+        usage: null,
+        currentActivationId: activationId,
+        activationCount: 1,
+        workflow: null,
+        workflowMembership: null,
+        recentActivity: [],
         startedAt: now,
         completedAt: null,
         updatedAt: now,
@@ -4606,6 +4626,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: null,
       };
       const parentProviderTurn = providerTurnForRun(parentProjection, parentRun);
+      const activation = {
+        id: activationId,
+        threadId: command.parentThreadId,
+        subagentId: taskNodeId,
+        runId: parentRun.id,
+        providerTurnId: parentProviderTurn?.id ?? null,
+        ordinal: 1,
+        status: "running",
+        usage: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      } satisfies OrchestrationV2SubagentActivation;
       const taskTurnItem: OrchestrationV2TurnItem = {
         id: taskTurnItemId,
         threadId: command.parentThreadId,
@@ -4659,6 +4692,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: command.modelSelection.instanceId,
         occurredAt: now,
         payload: task,
+      });
+      yield* emitEvent({
+        type: "subagent-activation.updated",
+        threadId: command.parentThreadId,
+        runId: parentRun.id,
+        nodeId: taskNodeId,
+        driver: targetAdapter.driver,
+        providerInstanceId: command.modelSelection.instanceId,
+        occurredAt: now,
+        payload: activation,
       });
       yield* emitEvent({
         type: "turn-item.updated",
@@ -6396,6 +6439,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,
+        currentActivationId: null,
         completedAt: now,
         updatedAt: now,
       };
@@ -6406,6 +6450,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedTask,
         now,
       });
+      const currentActivation =
+        task.currentActivationId === null
+          ? undefined
+          : parentProjection.subagentActivations.find(
+              (activation) => activation.id === task.currentActivationId,
+            );
+      const terminalActivation =
+        task.currentActivationId === null || currentActivation?.status === terminalStatus
+          ? null
+          : currentActivation === undefined
+            ? ({
+                id: task.currentActivationId,
+                threadId: task.threadId,
+                subagentId: task.id,
+                runId: task.runId,
+                providerTurnId: null,
+                ordinal: Math.max(1, task.activationCount),
+                status: terminalStatus,
+                usage: task.usage,
+                startedAt: task.startedAt,
+                completedAt: now,
+                updatedAt: now,
+              } satisfies OrchestrationV2SubagentActivation)
+            : isTerminalSubagentActivation(currentActivation)
+              ? null
+              : ({
+                  ...currentActivation,
+                  status: terminalStatus,
+                  completedAt: now,
+                  updatedAt: now,
+                } satisfies OrchestrationV2SubagentActivation);
       const resultTransferId = yield* idAllocator.allocate.contextTransfer({
         sourceThreadId: childThreadId,
         targetThreadId: parentThreadId,
@@ -6522,6 +6597,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   parentProjection.thread.providerInstanceId,
                 occurredAt: now,
                 payload: completionPlan.message,
+              },
+            ]),
+        ...(terminalActivation === null
+          ? []
+          : [
+              {
+                type: "subagent-activation.updated" as const,
+                threadId: parentThreadId,
+                ...(task.runId === null ? {} : { runId: task.runId }),
+                nodeId: task.id,
+                driver: task.driver,
+                occurredAt: now,
+                payload: terminalActivation,
               },
             ]),
         ...(parentNode === undefined

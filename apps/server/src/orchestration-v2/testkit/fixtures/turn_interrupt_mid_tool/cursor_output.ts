@@ -48,6 +48,7 @@ export function assertTurnInterruptMidToolCursorOutput(
   assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertTurnItemTypes(projection, [
     "user_message",
+    "subagent",
     "command_execution",
     "run_interrupt_request",
     "run_interrupt_result",
@@ -72,4 +73,10 @@ export function assertTurnInterruptMidToolCursorOutput(
   );
   assert.equal(projection.providerThreads[0]?.status, "idle");
   assert.equal(projection.providerTurns[0]?.status, "interrupted");
+  assert.lengthOf(projection.subagents, 1);
+  assert.equal(projection.subagents[0]?.status, "interrupted");
+  assert.isNull(projection.subagents[0]?.currentActivationId);
+  assert.lengthOf(projection.subagentActivations, 1);
+  assert.equal(projection.subagentActivations[0]?.status, "interrupted");
+  assert.isNotNull(projection.subagentActivations[0]?.completedAt);
 }

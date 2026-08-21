@@ -20,7 +20,9 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  SubagentActivationId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -32,6 +34,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -56,14 +59,17 @@ import {
   CLAUDE_T3_MCP_TOOL_WILDCARD,
   ClaudeProviderCapabilitiesV2,
   ClaudeAgentSdkQueryRunnerError,
+  claudeSubagentStatusPinsSession,
   claudeEffectiveQueryPolicyKey,
   claudeMcpQueryOverrides,
   claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
+  commitClaudeSubagentRegistryEntry,
   loggedClaudeQueryOptions,
   makeClaudeAdapterV2,
   makeClaudeAgentSdkProtocolLogger,
   makeClaudeQueryOptions,
+  shouldReopenClaudeSubagentActivation,
   type ClaudeAgentSdkQueryOptions,
   type ClaudeAgentSdkQueryOpenInput,
 } from "./ClaudeAdapterV2.ts";
@@ -79,6 +85,168 @@ const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
   interactionMode: "default",
   cwd: "/workspace",
+});
+
+type TestClaudeSubagentRegistryEntry = {
+  readonly task: { readonly status: "running" | "waiting" | "completed" };
+  readonly activation: { readonly id: string };
+  readonly resumePending?: boolean;
+};
+
+function testRegistryEntry(
+  status: TestClaudeSubagentRegistryEntry["task"]["status"],
+  activationId: string,
+): TestClaudeSubagentRegistryEntry {
+  return { task: { status }, activation: { id: activationId } };
+}
+
+describe("ClaudeAdapterV2 subagent registry", () => {
+  it.effect("rejects an active update that loses the registry race to a terminal update", () =>
+    Effect.gen(function* () {
+      const observed = testRegistryEntry("running", "activation-1");
+      const terminal = testRegistryEntry("completed", "activation-1");
+      const stale = testRegistryEntry("waiting", "activation-1");
+      const registry = yield* Ref.make(
+        new Map<string, TestClaudeSubagentRegistryEntry>([["task-race", terminal]]),
+      );
+
+      const committed = yield* commitClaudeSubagentRegistryEntry({
+        registry,
+        taskId: "task-race",
+        observed,
+        candidate: stale,
+        activeStart: true,
+        isReopen: false,
+      });
+
+      assert.isFalse(committed);
+      assert.strictEqual((yield* Ref.get(registry)).get("task-race"), terminal);
+    }),
+  );
+
+  it.effect("rejects a stale terminal update after the subagent has resumed", () =>
+    Effect.gen(function* () {
+      const observed = testRegistryEntry("running", "activation-1");
+      const resumed = testRegistryEntry("running", "activation-2");
+      const staleTerminal = testRegistryEntry("completed", "activation-1");
+      const registry = yield* Ref.make(
+        new Map<string, TestClaudeSubagentRegistryEntry>([["task-race", resumed]]),
+      );
+
+      const committed = yield* commitClaudeSubagentRegistryEntry({
+        registry,
+        taskId: "task-race",
+        observed,
+        candidate: staleTerminal,
+        activeStart: false,
+        isReopen: false,
+      });
+
+      assert.isFalse(committed);
+      assert.strictEqual((yield* Ref.get(registry)).get("task-race"), resumed);
+    }),
+  );
+
+  it.effect("accepts a terminal update after same-activation progress wins the race", () =>
+    Effect.gen(function* () {
+      const observed = testRegistryEntry("running", "activation-1");
+      const progressed = testRegistryEntry("running", "activation-1");
+      const terminal = testRegistryEntry("completed", "activation-1");
+      const registry = yield* Ref.make(
+        new Map<string, TestClaudeSubagentRegistryEntry>([["task-race", progressed]]),
+      );
+
+      const committed = yield* commitClaudeSubagentRegistryEntry({
+        registry,
+        taskId: "task-race",
+        observed,
+        candidate: terminal,
+        activeStart: false,
+        isReopen: false,
+      });
+
+      assert.isTrue(committed);
+      assert.strictEqual((yield* Ref.get(registry)).get("task-race"), terminal);
+    }),
+  );
+
+  it.effect("rejects a stale terminal update while a resume is pending activation", () =>
+    Effect.gen(function* () {
+      const observed = testRegistryEntry("running", "activation-1");
+      const resumePending = {
+        ...testRegistryEntry("running", "activation-1"),
+        resumePending: true,
+      };
+      const staleTerminal = testRegistryEntry("completed", "activation-1");
+      const registry = yield* Ref.make(
+        new Map<string, TestClaudeSubagentRegistryEntry>([["task-race", resumePending]]),
+      );
+
+      const committed = yield* commitClaudeSubagentRegistryEntry({
+        registry,
+        taskId: "task-race",
+        observed,
+        candidate: staleTerminal,
+        activeStart: false,
+        isReopen: false,
+      });
+
+      assert.isFalse(committed);
+      assert.strictEqual((yield* Ref.get(registry)).get("task-race"), resumePending);
+    }),
+  );
+});
+
+describe("ClaudeAdapterV2 background-work status", () => {
+  it("pins the session for every live subagent status", () => {
+    assert.deepEqual(
+      [
+        "pending",
+        "running",
+        "waiting",
+        "idle",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+      ].map((status) =>
+        claudeSubagentStatusPinsSession(
+          status as Parameters<typeof claudeSubagentStatusPinsSession>[0],
+        ),
+      ),
+      [true, true, true, false, false, false, false, false],
+    );
+  });
+});
+
+describe("ClaudeAdapterV2 subagent activations", () => {
+  it("reopens settled resumes and active workflow retries, but not duplicate active starts", () => {
+    const base = {
+      requested: true,
+      activeStart: true,
+      wasSettled: false,
+      previousWorkflowAttempt: null,
+      nextWorkflowAttempt: null,
+    };
+
+    assert.isTrue(shouldReopenClaudeSubagentActivation({ ...base, wasSettled: true }));
+    assert.isTrue(
+      shouldReopenClaudeSubagentActivation({
+        ...base,
+        previousWorkflowAttempt: 1,
+        nextWorkflowAttempt: 2,
+      }),
+    );
+    assert.isFalse(shouldReopenClaudeSubagentActivation(base));
+    assert.isFalse(
+      shouldReopenClaudeSubagentActivation({
+        ...base,
+        requested: false,
+        previousWorkflowAttempt: 1,
+        nextWorkflowAttempt: 2,
+      }),
+    );
+  });
 });
 
 function makeClaudeTestAppThread(input: {
@@ -1352,6 +1520,291 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+  const RESTART_TASK_ID = "task-claude-restart-subagent";
+  const RESTART_SUBAGENT_ID = NodeId.make("node-claude-restart-subagent");
+  const RESTART_CHILD_THREAD_ID = ThreadId.make("thread-claude-restart-subagent");
+
+  const makeRestartExistingSubagent = (input: {
+    readonly parentThreadId: ThreadId;
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly now: DateTime.Utc;
+    readonly status: "running" | "completed";
+    readonly taskTokens: number;
+    readonly activationTokens: number;
+  }) => {
+    const activationId = SubagentActivationId.make("activation-claude-restart-subagent-1");
+    const completed = input.status === "completed";
+    const childThread = {
+      ...makeClaudeTestAppThread({
+        threadId: RESTART_CHILD_THREAD_ID,
+        providerThread: input.providerThread,
+        now: input.now,
+      }),
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: input.parentThreadId,
+        relationshipToParent: "subagent" as const,
+        rootThreadId: input.parentThreadId,
+      },
+    };
+    return {
+      subagent: {
+        id: RESTART_SUBAGENT_ID,
+        threadId: input.parentThreadId,
+        runId: RunId.make("run-before-claude-restart"),
+        parentNodeId: NodeId.make("node-before-claude-restart-root"),
+        origin: "provider_native" as const,
+        createdBy: "agent" as const,
+        driver: CLAUDE_PROVIDER,
+        providerInstanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+        providerThreadId: null,
+        childThreadId: RESTART_CHILD_THREAD_ID,
+        nativeTaskRef: {
+          driver: CLAUDE_PROVIDER,
+          nativeId: RESTART_TASK_ID,
+          strength: "strong" as const,
+        },
+        prompt: "Resume the existing Claude agent.",
+        title: "Existing Claude agent",
+        model: "claude-sonnet-4-6",
+        kind: "subagent" as const,
+        role: { name: "general-purpose", source: "app_default" as const },
+        status: input.status,
+        result: completed ? "FIRST_ACTIVATION_DONE" : null,
+        usage: { totalTokens: input.taskTokens },
+        currentActivationId: completed ? null : activationId,
+        activationCount: 1,
+        workflow: null,
+        workflowMembership: null,
+        recentActivity: [],
+        startedAt: input.now,
+        completedAt: completed ? input.now : null,
+        updatedAt: input.now,
+      },
+      childThread,
+      childProviderThread: null,
+      latestActivation: {
+        id: activationId,
+        threadId: input.parentThreadId,
+        subagentId: RESTART_SUBAGENT_ID,
+        runId: RunId.make("run-before-claude-restart"),
+        providerTurnId: null,
+        ordinal: 1,
+        status: input.status,
+        usage: { totalTokens: input.activationTokens },
+        startedAt: input.now,
+        completedAt: completed ? input.now : null,
+        updatedAt: input.now,
+      },
+      turnItemId: TurnItemId.make("turn-item-claude-restart-subagent"),
+      turnItemOrdinal: 2,
+      ordinal: 1,
+    } satisfies NonNullable<ProviderAdapterV2TurnInput["existingSubagents"]>[number];
+  };
+
+  it.effect("rehydrates a projection-known subagent after the session registry is lost", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const taskId = RESTART_TASK_ID;
+        const toolUseId = "toolu-claude-restart-subagent";
+        const subagentId = RESTART_SUBAGENT_ID;
+        const childThreadId = RESTART_CHILD_THREAD_ID;
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const existing = makeRestartExistingSubagent({
+          parentThreadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          status: "completed",
+          taskTokens: 100,
+          activationTokens: 100,
+        });
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        const activationEvents = () =>
+          harness.events.filter(
+            (
+              event,
+            ): event is Extract<ProviderAdapterV2Event, { type: "subagent_activation.updated" }> =>
+              event.type === "subagent_activation.updated",
+          );
+
+        yield* harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-restart-subagent"),
+            text: "Resume the existing agent.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+          existingSubagents: [existing],
+        });
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: "Existing Claude agent",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Resume the existing Claude agent.",
+            uuid: "00000000-0000-4000-8000-000000000081",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            status: "completed",
+            output_file: "/tmp/task-claude-restart-subagent.output",
+            summary: "SECOND_ACTIVATION_DONE",
+            usage: { input_tokens: 50, output_tokens: 25, total_tokens: 75, tool_uses: 2 },
+            uuid: "00000000-0000-4000-8000-000000000082",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000083",
+            result: "Existing agent resumed.",
+          }),
+        );
+        yield* awaitUntil(
+          () => subagentEvents().at(-1)?.subagent.status === "completed",
+          "rehydrated Claude subagent completion",
+        );
+
+        const latest = subagentEvents().at(-1)?.subagent;
+        assert.equal(latest?.id, subagentId);
+        assert.equal(latest?.childThreadId, childThreadId);
+        assert.equal(latest?.activationCount, 2);
+        assert.equal(latest?.result, "SECOND_ACTIVATION_DONE");
+        assert.equal(latest?.usage?.totalTokens, 175);
+        assert.deepEqual(
+          activationEvents().map((event) => [
+            event.activation.ordinal,
+            event.activation.status,
+            event.activation.usage?.totalTokens,
+          ]),
+          [
+            [2, "running", undefined],
+            [2, "completed", 75],
+          ],
+        );
+        assert.lengthOf(
+          harness.events.filter((event) => event.type === "app_thread.created"),
+          0,
+          "rehydration must not create a duplicate child thread",
+        );
+        const subagentTurnItemIds = new Set(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+              ? [event.turnItem.id]
+              : [],
+          ),
+        );
+        assert.lengthOf(subagentTurnItemIds, 1);
+        assert.notInclude(
+          [...subagentTurnItemIds],
+          existing.turnItemId,
+          "a recovered agent's next activation must not overwrite its previous item",
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("uses persisted activation usage for terminal recovery without a new start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const existing = makeRestartExistingSubagent({
+          parentThreadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          status: "running",
+          taskTokens: 100,
+          activationTokens: 80,
+        });
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        const activationEvents = () =>
+          harness.events.filter(
+            (
+              event,
+            ): event is Extract<ProviderAdapterV2Event, { type: "subagent_activation.updated" }> =>
+              event.type === "subagent_activation.updated",
+          );
+
+        yield* harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-restart-terminal-only"),
+            text: "Collect the recovered agent result.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+          existingSubagents: [existing],
+        });
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: RESTART_TASK_ID,
+            status: "completed",
+            output_file: "/tmp/task-claude-restart-terminal-only.output",
+            summary: "RECOVERED_TERMINAL_DONE",
+            usage: { input_tokens: 70, output_tokens: 30, total_tokens: 100, tool_uses: 3 },
+            uuid: "00000000-0000-4000-8000-000000000084",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000085",
+            result: "Recovered agent result collected.",
+          }),
+        );
+        yield* awaitUntil(
+          () => subagentEvents().at(-1)?.subagent.status === "completed",
+          "terminal-only Claude subagent recovery",
+        );
+
+        const latest = subagentEvents().at(-1)?.subagent;
+        assert.equal(latest?.id, RESTART_SUBAGENT_ID);
+        assert.equal(latest?.activationCount, 1);
+        assert.equal(latest?.usage?.totalTokens, 120);
+        assert.equal(latest?.result, "RECOVERED_TERMINAL_DONE");
+        assert.deepEqual(
+          activationEvents().map((event) => [
+            event.activation.ordinal,
+            event.activation.status,
+            event.activation.usage?.totalTokens,
+          ]),
+          [[1, "completed", 100]],
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
 
   it.effect("resolves API retries on resumed assistant activity", () =>
     Effect.scoped(
@@ -2782,6 +3235,175 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("parents nested native agents from Claude's tool-use envelope", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const PARENT_TASK_ID = "task-parent-agent";
+        const PARENT_TOOL_USE_ID = "toolu-parent-agent";
+        const CHILD_TASK_ID = "task-child-agent";
+        const CHILD_TOOL_USE_ID = "toolu-child-agent";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-nested-agent"),
+            text: "Delegate and ask the delegate to verify with another agent.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: PARENT_TASK_ID,
+            tool_use_id: PARENT_TOOL_USE_ID,
+            description: "Parent agent",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Delegate once more.",
+            uuid: "00000000-0000-4000-8000-000000000191",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) => event.subagent.nativeTaskRef?.nativeId === PARENT_TASK_ID,
+            ),
+          "parent subagent created",
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: CHILD_TOOL_USE_ID,
+                  name: "Agent",
+                  input: { prompt: "Verify the result." },
+                },
+              ],
+            },
+            parent_tool_use_id: PARENT_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000192",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: CHILD_TASK_ID,
+            tool_use_id: CHILD_TOOL_USE_ID,
+            description: "Nested verifier",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Verify the result.",
+            uuid: "00000000-0000-4000-8000-000000000193",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().some(
+              (event) => event.subagent.nativeTaskRef?.nativeId === CHILD_TASK_ID,
+            ),
+          "nested subagent created",
+        );
+
+        const parent = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === PARENT_TASK_ID,
+        )?.subagent;
+        const child = subagentEvents().find(
+          (event) => event.subagent.nativeTaskRef?.nativeId === CHILD_TASK_ID,
+        )?.subagent;
+        assert.equal(child?.parentNodeId, parent?.id);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("labels a generic subagent as a workflow coordinator when progress upgrades it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "task-workflow-upgrade";
+        const TOOL_USE_ID = "toolu-workflow-upgrade";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === TASK_ID,
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-workflow-upgrade"),
+            text: "Run the release workflow.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Release coordinator",
+            task_type: "local_agent",
+            prompt: "Coordinate the release workflow.",
+            uuid: "00000000-0000-4000-8000-000000000194",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(() => subagentEvents().length > 0, "generic subagent created");
+        assert.equal(subagentEvents().at(-1)?.subagent.role.name, "general-purpose");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "Planning the release",
+            workflow_progress: [{ type: "workflow_phase", index: 0, title: "Plan" }],
+            uuid: "00000000-0000-4000-8000-000000000195",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => subagentEvents().at(-1)?.subagent.kind === "workflow",
+          "workflow upgrade",
+        );
+
+        assert.deepEqual(subagentEvents().at(-1)?.subagent.role, {
+          name: "workflow-coordinator",
+          source: "app_default",
+        });
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("wakes and hydrates a subagent that completes after the root turn settled", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3359,6 +3981,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             task_id: SUBAGENT_TASK_ID,
             tool_use_id: SUBAGENT_TOOL_USE_ID,
             description: "Stale progress line",
+            workflow_progress: [
+              {
+                type: "workflow_agent",
+                index: 0,
+                label: "Stale worker",
+                state: "active",
+                phaseIndex: 0,
+                attempt: 1,
+              },
+            ],
             uuid: "00000000-0000-4000-8000-000000000409",
             session_id: WAKE_NATIVE_SESSION,
           }),
@@ -3373,6 +4005,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 5, "final turn terminal");
         assert.equal(subagentEvents().at(-1)?.subagent.status, "completed");
         assert.equal(subagentEvents().at(-1)?.subagent.result, SECOND_SUMMARY);
+        assert.lengthOf(
+          new Set(subagentEvents().map((event) => event.subagent.id)),
+          1,
+          "late workflow progress must not create workers under a settled coordinator",
+        );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),

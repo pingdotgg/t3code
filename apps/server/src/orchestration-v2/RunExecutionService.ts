@@ -13,11 +13,13 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
   type ProviderThreadId,
   type ProviderTurnId,
   type RunAttemptId,
+  type SubagentActivationId,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -43,6 +45,7 @@ import {
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2RuntimePolicy,
+  ProviderAdapterV2ExistingSubagent,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
@@ -54,6 +57,20 @@ export interface ProviderEventRoutingState {
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
+  // Subagent identities this run may observe. A reusable subagent keeps the
+  // run id it was spawned under, so a later run that re-activates it cannot
+  // recognise its rows by run or by parent thread; it matches on identity.
+  readonly ownedSubagentIds: ReadonlySet<NodeId>;
+  // The activation count each reactivatable identity had when this run
+  // started. Pre-seeded membership alone is reactivation *potential*; a
+  // genuine re-activation always advances past this baseline, while trailing
+  // traffic from a prior run re-emits at it.
+  readonly reactivatableBaselines: ReadonlyMap<NodeId, number>;
+  // Identities proven driven by this run: a row carried this run's id, or an
+  // activation advanced past the seeded baseline. Identity-only routing
+  // requires this proof, or an interrupted prior run's trailing traffic would
+  // be misattributed here.
+  readonly activatedSubagentIds: ReadonlySet<NodeId>;
   readonly rootProviderTurnId: ProviderTurnId | null;
 }
 
@@ -82,6 +99,7 @@ function isTerminalProviderTurnStatus(status: OrchestrationV2ProviderTurn["statu
 
 function isTerminalSubagentStatus(status: OrchestrationV2Subagent["status"]): boolean {
   return (
+    status === "idle" ||
     status === "completed" ||
     status === "interrupted" ||
     status === "failed" ||
@@ -152,6 +170,7 @@ type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subag
 
 type OpenRunOwnedSubagentProjection = {
   readonly subagents: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
+  readonly activations: ReadonlyMap<SubagentActivationId, OrchestrationV2SubagentActivation>;
   readonly turnItems: ReadonlyMap<NodeId, SubagentTurnItem>;
   readonly childTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>;
   readonly nodes: ReadonlyMap<NodeId, OrchestrationV2ExecutionNode>;
@@ -174,13 +193,48 @@ function isRunOwnedSubagentTerminalStatus(
   return status === "interrupted" || status === "failed" || status === "cancelled";
 }
 
+/**
+ * Whether a later run may pre-emptively own this subagent's child thread.
+ *
+ * Interrupted children are excluded on purpose: their threads can still emit
+ * late events, and adopting them up front lets that stale traffic land in the
+ * next attempt (see "preserve claude/codex post-interrupt recovery state").
+ */
 export function canRouteRelatedSubagent(status: OrchestrationV2Subagent["status"]): boolean {
   return status !== "interrupted" && status !== "failed" && status !== "cancelled";
+}
+
+/**
+ * Whether a later run may re-activate this subagent identity.
+ *
+ * Deliberately broader than {@link canRouteRelatedSubagent}: an interrupted
+ * agent is one the user stopped, not one that died, and its provider thread is
+ * still resumable. Only rows for this exact subagent id are admitted by
+ * identity, and those are emitted solely on a genuine re-activation — so the
+ * child thread is adopted when the agent proves it is live again rather than up
+ * front, and late stale traffic still has no way in.
+ */
+export function canReactivateSubagent(status: OrchestrationV2Subagent["status"]): boolean {
+  return status !== "failed" && status !== "cancelled";
+}
+
+export function isRunOwnedSubagentTurnItem(input: {
+  readonly turnItem: OrchestrationV2TurnItem;
+  readonly runId: OrchestrationV2Run["id"];
+  /** Identities proven driven by this run — not the pre-seeded reactivatable set. */
+  readonly activatedSubagentIds: ReadonlySet<NodeId>;
+}): boolean {
+  return (
+    input.turnItem.runId === input.runId ||
+    (input.turnItem.type === "subagent" &&
+      input.activatedSubagentIds.has(input.turnItem.subagentId))
+  );
 }
 
 function emptyOpenRunOwnedSubagentProjection(): OpenRunOwnedSubagentProjection {
   return {
     subagents: new Map(),
+    activations: new Map(),
     turnItems: new Map(),
     childTurnItems: new Map(),
     nodes: new Map(),
@@ -237,6 +291,7 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
           payload: {
             ...subagent,
             status: input.status,
+            currentActivationId: null,
             completedAt: input.completedAt,
             updatedAt: input.completedAt,
           },
@@ -265,11 +320,7 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
         });
       }
       const turnItem = input.open.turnItems.get(key);
-      if (
-        turnItem !== undefined &&
-        turnItem.runId === input.run.id &&
-        !isTerminalTurnItemStatus(turnItem.status)
-      ) {
+      if (turnItem !== undefined && !isTerminalTurnItemStatus(turnItem.status)) {
         events.push({
           id: yield* input.allocateEventId(),
           type: "turn-item.updated",
@@ -286,6 +337,31 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
           },
         });
       }
+    }
+    for (const activation of input.open.activations.values()) {
+      if (
+        activation.status === "completed" ||
+        activation.status === "interrupted" ||
+        activation.status === "failed" ||
+        activation.status === "cancelled"
+      ) {
+        continue;
+      }
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "subagent-activation.updated",
+        threadId: activation.threadId,
+        runId: activation.runId ?? input.run.id,
+        nodeId: activation.subagentId,
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: {
+          ...activation,
+          status: input.status,
+          completedAt: input.completedAt,
+          updatedAt: input.completedAt,
+        },
+      });
     }
     for (const turnItem of input.open.childTurnItems.values()) {
       if (!childThreadIds.has(turnItem.threadId) || isTerminalTurnItemStatus(turnItem.status)) {
@@ -324,6 +400,10 @@ export function makeProviderEventRoutingState(input: {
   readonly providerTurnId: ProviderTurnId | null;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly reactivatableSubagentSeeds?: ReadonlyArray<{
+    readonly id: NodeId;
+    readonly activationCount: number;
+  }>;
 }): ProviderEventRoutingState {
   return {
     ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
@@ -336,6 +416,11 @@ export function makeProviderEventRoutingState(input: {
     inheritedBackgroundTurnItems: new Map(
       (input.inheritedBackgroundTurnItems ?? []).map((item) => [item.id, item.runId]),
     ),
+    ownedSubagentIds: new Set((input.reactivatableSubagentSeeds ?? []).map((seed) => seed.id)),
+    reactivatableBaselines: new Map(
+      (input.reactivatableSubagentSeeds ?? []).map((seed) => [seed.id, seed.activationCount]),
+    ),
+    activatedSubagentIds: new Set(),
     rootProviderTurnId: input.providerTurnId,
   };
 }
@@ -360,6 +445,33 @@ export function routeProviderEvent(
     ...state,
     ownedProviderTurnIds: new Set([...state.ownedProviderTurnIds, providerTurnId]),
     rootProviderTurnId: root ? providerTurnId : state.rootProviderTurnId,
+  });
+  const drivesSubagent = (subagentId: NodeId): boolean =>
+    state.activatedSubagentIds.has(subagentId);
+  /**
+   * Track the identity so every later row for the same subagent routes.
+   *
+   * The child thread is adopted only while the agent is actually live. A
+   * settled row is also emitted by trailing traffic — a token-usage frame or a
+   * collab state sweep re-emits the last known status — and adopting on those
+   * would hand a later run an interrupted agent's thread, letting exactly the
+   * stale child-thread events that post-interrupt recovery excludes back in.
+   */
+  const addSubagent = (
+    subagentId: NodeId,
+    childThreadId: ThreadId | null,
+    live: boolean,
+    drivenByRun: boolean,
+  ): ProviderEventRoutingState => ({
+    ...state,
+    ownedSubagentIds: new Set([...state.ownedSubagentIds, subagentId]),
+    activatedSubagentIds: drivenByRun
+      ? new Set([...state.activatedSubagentIds, subagentId])
+      : state.activatedSubagentIds,
+    ownedThreadIds:
+      childThreadId === null || !live
+        ? state.ownedThreadIds
+        : new Set([...state.ownedThreadIds, childThreadId]),
   });
 
   switch (event.type) {
@@ -409,12 +521,67 @@ export function routeProviderEvent(
       }
       return [true, addProviderThread(event.node.providerThreadId)];
     }
-    case "subagent.updated":
-      return [ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId), state];
+    case "subagent.updated": {
+      const drivenByRun = ownsRun(event.subagent.runId);
+      const baseline = state.reactivatableBaselines.get(event.subagent.id);
+      // Identity alone is not ownership: a pre-seeded id is admitted only once
+      // this run proves it drives the agent. A genuine re-activation advances
+      // the activation count past the seeded baseline; an interrupted prior
+      // run's trailing rows re-emit at it and stay excluded.
+      const provesReactivation =
+        !drivenByRun &&
+        baseline !== undefined &&
+        !isTerminalSubagentStatus(event.subagent.status) &&
+        event.subagent.activationCount > baseline;
+      const belongs =
+        drivenByRun ||
+        ownsChildThread(event.subagent.threadId) ||
+        drivesSubagent(event.subagent.id) ||
+        provesReactivation;
+      return belongs
+        ? [
+            true,
+            addSubagent(
+              event.subagent.id,
+              event.subagent.childThreadId,
+              !isTerminalSubagentStatus(event.subagent.status),
+              drivenByRun || provesReactivation || drivesSubagent(event.subagent.id),
+            ),
+          ]
+        : [false, state];
+    }
+    case "subagent_activation.updated": {
+      const baseline = state.reactivatableBaselines.get(event.activation.subagentId);
+      const provesReactivation = baseline !== undefined && event.activation.ordinal > baseline;
+      if (ownsRun(event.activation.runId) || provesReactivation) {
+        return [
+          true,
+          {
+            ...state,
+            activatedSubagentIds: new Set([
+              ...state.activatedSubagentIds,
+              event.activation.subagentId,
+            ]),
+          },
+        ];
+      }
+      return [
+        ownsChildThread(event.activation.threadId) || drivesSubagent(event.activation.subagentId),
+        state,
+      ];
+    }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {
-      if (ownsRun(event.turnItem.runId) || ownsChildThread(event.turnItem.threadId)) {
+      if (
+        ownsRun(event.turnItem.runId) ||
+        ownsChildThread(event.turnItem.threadId) ||
+        // A reused subagent's row and its timeline item are emitted together;
+        // routing only the row would advance the agent while its item stayed
+        // frozen on the spawning run. Proof of driving is required for the
+        // same reason as the row route.
+        (event.turnItem.type === "subagent" && drivesSubagent(event.turnItem.subagentId))
+      ) {
         return [true, state];
       }
       const inheritedRunId = state.inheritedBackgroundTurnItems.get(event.turnItem.id);
@@ -504,6 +671,11 @@ export interface RunExecutionServiceV2StartRootRunInput {
   >;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
+  readonly reactivatableSubagentSeeds?: ReadonlyArray<{
+    readonly id: NodeId;
+    readonly activationCount: number;
+  }>;
+  readonly existingSubagents?: ReadonlyArray<ProviderAdapterV2ExistingSubagent>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, never>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
@@ -623,6 +795,7 @@ export const layer: Layer.Layer<
         const open = input.openRunOwnedSubagents ?? emptyOpenRunOwnedSubagentProjection();
         const hasOpenSubagentProjection =
           open.subagents.size > 0 ||
+          open.activations.size > 0 ||
           open.turnItems.size > 0 ||
           open.childTurnItems.size > 0 ||
           open.nodes.size > 0;
@@ -870,6 +1043,9 @@ export const layer: Layer.Layer<
               ...(input.relatedProviderThreadIds === undefined
                 ? {}
                 : { relatedProviderThreadIds: input.relatedProviderThreadIds }),
+              ...(input.reactivatableSubagentSeeds === undefined
+                ? {}
+                : { reactivatableSubagentSeeds: input.reactivatableSubagentSeeds }),
             }),
           );
           const rootTerminalSeen = yield* Ref.make(false);
@@ -935,7 +1111,11 @@ export const layer: Layer.Layer<
                 }
               }
               if (event.type === "subagent.updated") {
-                const belongsToRootRun = event.subagent.runId === input.run.id;
+                // A re-activated subagent is adopted by the current run, so it
+                // holds this run open the same way a freshly spawned one does.
+                const belongsToRootRun =
+                  event.subagent.runId === input.run.id ||
+                  routing.activatedSubagentIds.has(event.subagent.id);
                 const belongsToOwnedChildThread =
                   event.subagent.threadId !== input.run.threadId &&
                   routing.ownedThreadIds.has(event.subagent.threadId);
@@ -967,6 +1147,31 @@ export const layer: Layer.Layer<
                   });
                 }
               }
+              if (event.type === "subagent_activation.updated") {
+                const belongsToRootRun =
+                  event.activation.runId === input.run.id ||
+                  routing.activatedSubagentIds.has(event.activation.subagentId);
+                const belongsToOwnedChildThread =
+                  event.activation.threadId !== input.run.threadId &&
+                  routing.ownedThreadIds.has(event.activation.threadId);
+                if (!belongsToRootRun && !belongsToOwnedChildThread) {
+                  return;
+                }
+                yield* Ref.update(openRunOwnedSubagents, (current) => {
+                  const activations = new Map(current.activations);
+                  if (
+                    event.activation.status === "completed" ||
+                    event.activation.status === "interrupted" ||
+                    event.activation.status === "failed" ||
+                    event.activation.status === "cancelled"
+                  ) {
+                    activations.delete(event.activation.id);
+                  } else {
+                    activations.set(event.activation.id, event.activation);
+                  }
+                  return { ...current, activations };
+                });
+              }
               if (event.type === "node.updated") {
                 const belongsToRootSubagent =
                   event.node.kind === "subagent" && event.node.runId === input.run.id;
@@ -987,7 +1192,11 @@ export const layer: Layer.Layer<
                 });
               }
               if (event.type === "turn_item.updated") {
-                const belongsToRootRun = event.turnItem.runId === input.run.id;
+                const belongsToRootRun = isRunOwnedSubagentTurnItem({
+                  turnItem: event.turnItem,
+                  runId: input.run.id,
+                  activatedSubagentIds: routing.activatedSubagentIds,
+                });
                 const belongsToOwnedChildThread =
                   event.turnItem.threadId !== input.run.threadId &&
                   routing.ownedThreadIds.has(event.turnItem.threadId);
@@ -1270,6 +1479,9 @@ export const layer: Layer.Layer<
               message: input.message,
               modelSelection: input.modelSelection,
               runtimePolicy: input.runtimePolicy,
+              ...(input.existingSubagents === undefined
+                ? {}
+                : { existingSubagents: input.existingSubagents }),
             })
             .pipe(
               Effect.catchCause((cause) =>

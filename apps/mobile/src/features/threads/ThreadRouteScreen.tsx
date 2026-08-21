@@ -71,6 +71,7 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
+import { isOrchestrationV2InternalSubagentThread } from "@t3tools/contracts";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -126,6 +127,58 @@ function ThreadUnavailableScreen() {
   );
 }
 
+function SubagentThreadRedirect({
+  environmentId,
+  parentThreadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly parentThreadId: ThreadId | null;
+}) {
+  const navigation = useNavigation();
+  useEffect(() => {
+    if (parentThreadId === null) {
+      navigation.dispatch(StackActions.replace("Home"));
+      return;
+    }
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId,
+        threadId: parentThreadId,
+      }),
+    );
+  }, [environmentId, navigation, parentThreadId]);
+  return <OpeningThreadLoadingScreen />;
+}
+
+// Thread selection resolves on its own tick after the connection reports
+// available, and a hidden subagent thread's redirect depends on that
+// selection landing. Deciding "unavailable" the instant the connection is
+// ready flashes the error screen over what is actually a redirect (or a
+// late-arriving shell); the decision must wait out this window first.
+const UNAVAILABLE_DECISION_DELAY_MS = 1_500;
+
+function useThreadUnavailableDecision(routeThreadKey: string | null, connectionReady: boolean) {
+  const [decision, setDecision] = useState<{
+    readonly key: string | null;
+    readonly decided: boolean;
+  }>({ key: routeThreadKey, decided: false });
+  // A navigation reuses this mounted screen, and an effect-based reset leaves
+  // the previous route's fired decision visible for one render — exactly the
+  // flash the delay exists to prevent. Reset synchronously during render.
+  if (decision.key !== routeThreadKey) {
+    setDecision({ key: routeThreadKey, decided: false });
+  }
+  useEffect(() => {
+    if (!connectionReady) return;
+    const timer = setTimeout(
+      () => setDecision({ key: routeThreadKey, decided: true }),
+      UNAVAILABLE_DECISION_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [routeThreadKey, connectionReady]);
+  return decision.key === routeThreadKey && decision.decided;
+}
+
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const { state: workspaceState } = useWorkspaceState();
   const { connectionState } = useRemoteConnectionStatus();
@@ -146,6 +199,11 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
+  const stillHydrating =
+    workspaceState.isLoadingConnections ||
+    routeConnectionState === "connecting" ||
+    routeConnectionState === "reconnecting";
+  const unavailableDecided = useThreadUnavailableDecision(routeThreadKey, !stillHydrating);
 
   if (environmentId === null || threadIdRaw === null) {
     return <OpeningThreadLoadingScreen />;
@@ -156,15 +214,21 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   // loading placeholder while messages fetch, and the composer's connection
   // pill reports connecting/reconnecting/syncing status.
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
+    // Internal subagent threads are hidden from user-facing lists; a deep
+    // link or stale selection still lands here, so send it to the parent
+    // thread instead of exposing the hidden transcript.
+    if (isOrchestrationV2InternalSubagentThread(selectedThread)) {
+      return (
+        <SubagentThreadRedirect
+          environmentId={selectedThread.environmentId}
+          parentThreadId={selectedThread.lineage.parentThreadId}
+        />
+      );
+    }
     return <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />;
   }
 
-  const stillHydrating =
-    workspaceState.isLoadingConnections ||
-    routeConnectionState === "connecting" ||
-    routeConnectionState === "reconnecting";
-
-  if (stillHydrating) {
+  if (stillHydrating || !unavailableDecided) {
     return <OpeningThreadLoadingScreen />;
   }
 

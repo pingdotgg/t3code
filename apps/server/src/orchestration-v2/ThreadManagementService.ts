@@ -7,11 +7,13 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2ListAllThreadRefsResult,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
+  isOrchestrationV2InternalSubagentThread,
   ProjectId,
   RunId,
   ThreadId,
@@ -282,6 +284,10 @@ export interface ThreadManagementServiceShape {
   readonly getShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
+  readonly listAllThreadRefs: () => Effect.Effect<
+    OrchestrationV2ListAllThreadRefsResult,
+    OrchestratorV2Error
+  >;
   readonly getThreadShell: OrchestratorV2["Service"]["getThreadShell"];
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
@@ -306,6 +312,16 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementService,
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
+
+export { isOrchestrationV2InternalSubagentThread as isInternalSubagentThread };
+
+export const userFacingShellSnapshot = (snapshot: OrchestrationV2ThreadShellSnapshot) => ({
+  ...snapshot,
+  threads: snapshot.threads.filter((thread) => !isOrchestrationV2InternalSubagentThread(thread)),
+  archivedThreads: snapshot.archivedThreads.filter(
+    (thread) => !isOrchestrationV2InternalSubagentThread(thread),
+  ),
+});
 
 export function isActiveRun(run: OrchestrationV2Run): boolean {
   return (
@@ -452,8 +468,7 @@ const make = Effect.gen(function* () {
         snapshot.threads
           .filter((thread) => thread.projectId === input.projectId)
           .filter(
-            (thread) =>
-              input.includeSubagents || thread.lineage.relationshipToParent !== "subagent",
+            (thread) => input.includeSubagents || !isOrchestrationV2InternalSubagentThread(thread),
           )
           .toSorted(
             (left, right) =>
@@ -461,6 +476,22 @@ const make = Effect.gen(function* () {
               right.id.localeCompare(left.id),
           ),
       ),
+    );
+
+  const listAllThreadRefs: ThreadManagementServiceShape["listAllThreadRefs"] = () =>
+    orchestrator.getShellSnapshot().pipe(
+      Effect.map((snapshot) => ({
+        // Worktree cleanup treats this as the complete set: an archived thread
+        // still holds its worktree, so omitting the archive would classify it
+        // as orphaned and remove it.
+        threadRefs: [...snapshot.threads, ...snapshot.archivedThreads].map(
+          ({ id, projectId, worktreePath }) => ({
+            threadId: id,
+            projectId,
+            worktreePath,
+          }),
+        ),
+      })),
     );
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = (input) =>
@@ -649,6 +680,7 @@ const make = Effect.gen(function* () {
     getThreadSnapshot,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
+    listAllThreadRefs,
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,

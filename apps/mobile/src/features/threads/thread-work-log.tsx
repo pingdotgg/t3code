@@ -18,6 +18,7 @@ import {
   resolveThreadActivityStatus,
 } from "./thread-activity-row-presentation";
 import { threadWorkLogOverflowNoun } from "./thread-work-log-labels";
+import { threadWorkLogItemHasOpenAction } from "./thread-work-log-navigation";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 const WORK_LOG_LAYOUT_ANIMATION = {
@@ -136,18 +137,16 @@ function ThreadActivityThreadRow(props: {
     label = "Open created thread";
     providerInstanceId = item.targetProviderInstanceId;
     model = item.targetModel;
-  } else if (item.type === "subagent") {
-    targetThreadId = support.subagent?.childThreadId ?? item.childThreadId;
-    label = "Open subagent thread";
-    providerDriver = support.subagent?.driver ?? item.driver;
-    providerInstanceId = support.subagent?.providerInstanceId ?? item.providerInstanceId;
-    model = support.subagent?.model ?? model;
   } else if (item.type === "fork") {
     targetThreadId =
       item.targetThreadId === row.sourceThreadId && item.source.type === "run"
         ? item.source.threadId
         : item.targetThreadId;
     label = targetThreadId === item.targetThreadId ? "Open forked thread" : "Open parent thread";
+  } else if (item.type === "subagent") {
+    providerDriver = support.subagent?.driver ?? item.driver;
+    providerInstanceId = support.subagent?.providerInstanceId ?? item.providerInstanceId;
+    model = support.subagent?.model ?? null;
   }
 
   const metadata = resolveThreadActivityMetadata({ providerDriver, providerInstanceId, model });
@@ -175,24 +174,24 @@ function ThreadActivityThreadRow(props: {
         {metadata ? <Text className="text-foreground-muted opacity-60"> · {metadata}</Text> : null}
       </Text>
 
-      <Pressable
-        accessibilityRole="link"
-        accessibilityLabel={label}
-        disabled={targetThreadId === null}
-        hitSlop={10}
-        onPress={() => {
-          if (targetThreadId === null) return;
-          void Haptics.selectionAsync();
-          navigation.navigate("Thread", {
-            environmentId: props.environmentId,
-            threadId: targetThreadId,
-          });
-        }}
-        className="h-8 shrink-0 flex-row items-center gap-1 rounded-lg bg-neutral-950/5 py-1.5 pl-2.5 pr-1.5 active:bg-neutral-950/10 disabled:opacity-40 dark:bg-white/5 dark:active:bg-white/10"
-      >
-        <Text className="font-t3-medium text-sm text-foreground">Open</Text>
-        <SymbolView name="arrow.right" size={11} tintColor={props.iconColor} type="monochrome" />
-      </Pressable>
+      {targetThreadId === null || !threadWorkLogItemHasOpenAction(item.type) ? null : (
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel={label}
+          hitSlop={10}
+          onPress={() => {
+            void Haptics.selectionAsync();
+            navigation.navigate("Thread", {
+              environmentId: props.environmentId,
+              threadId: targetThreadId,
+            });
+          }}
+          className="h-8 shrink-0 flex-row items-center gap-1 rounded-lg bg-neutral-950/5 py-1.5 pl-2.5 pr-1.5 active:bg-neutral-950/10 dark:bg-white/5 dark:active:bg-white/10"
+        >
+          <Text className="font-t3-medium text-sm text-foreground">Open</Text>
+          <SymbolView name="arrow.right" size={11} tintColor={props.iconColor} type="monochrome" />
+        </Pressable>
+      )}
     </View>
   );
 }

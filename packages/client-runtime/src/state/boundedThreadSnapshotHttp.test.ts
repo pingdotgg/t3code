@@ -60,6 +60,7 @@ const FULL_SNAPSHOT_BODY = {
     attempts: [],
     nodes: [],
     subagents: [],
+    subagentActivations: [],
     providerSessions: [],
     providerThreads: [],
     providerTurns: [],
