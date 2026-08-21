@@ -76,11 +76,35 @@ interface ArtifactRule {
   readonly markers: ReadonlyArray<string>;
 }
 
+type ArtifactFileRule = {
+  readonly markers: ReadonlyArray<string>;
+} & ({ readonly name: string } | { readonly suffix: string });
+
 /** Marker files make same-named source directories safe across language ecosystems. */
 const ARTIFACT_RULES: ReadonlyArray<ArtifactRule> = [
   { directory: "node_modules", markers: ["package.json"] },
   { directory: ".next", markers: ["package.json"] },
   { directory: ".turbo", markers: ["package.json", "turbo.json"] },
+  { directory: "dist", markers: ["package.json"] },
+  { directory: "dist-electron", markers: ["package.json"] },
+  { directory: ".output", markers: ["package.json"] },
+  { directory: ".wxt", markers: ["package.json"] },
+  { directory: ".tanstack", markers: ["package.json"] },
+  {
+    directory: ".vite-hooks",
+    markers: [
+      "package.json",
+      "vite.config.js",
+      "vite.config.mjs",
+      "vite.config.mts",
+      "vite.config.ts",
+    ],
+  },
+  { directory: "release", markers: ["package.json"] },
+  {
+    directory: "logs",
+    markers: ["package.json", "pyproject.toml", "requirements.txt"],
+  },
   { directory: "target", markers: ["Cargo.toml"] },
   { directory: "vendor", markers: ["composer.json", "Cargo.toml"] },
   { directory: ".venv", markers: ["pyproject.toml", "requirements.txt"] },
@@ -90,7 +114,16 @@ const ARTIFACT_RULES: ReadonlyArray<ArtifactRule> = [
     directory: ".gradle",
     markers: ["settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"],
   },
+  {
+    directory: ".kotlin",
+    markers: ["settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"],
+  },
   { directory: "build", markers: ["build.gradle", "build.gradle.kts"] },
+];
+
+const ARTIFACT_FILE_RULES: ReadonlyArray<ArtifactFileRule> = [
+  { suffix: ".tsbuildinfo", markers: ["tsconfig.json"] },
+  { name: "next-env.d.ts", markers: ["package.json"] },
 ];
 
 const ARTIFACT_DIRECTORY_NAMES = new Set(ARTIFACT_RULES.map((rule) => rule.directory));
@@ -102,6 +135,16 @@ export function artifactDirectoryNamesForEntries(entries: Iterable<string>): Rea
     (rule) =>
       entryNames.has(rule.directory) && rule.markers.some((marker) => entryNames.has(marker)),
   ).map((rule) => rule.directory);
+}
+
+export function artifactFileNamesForEntries(entries: Iterable<string>): ReadonlyArray<string> {
+  const entryNames = new Set(entries);
+  return ARTIFACT_FILE_RULES.flatMap((rule) => {
+    if (!rule.markers.some((marker) => entryNames.has(marker))) return [];
+    return [...entryNames].filter((entry) =>
+      "name" in rule ? entry === rule.name : entry.endsWith(rule.suffix),
+    );
+  }).toSorted();
 }
 
 interface WorktreeGroup {
@@ -275,7 +318,45 @@ const make = Effect.gen(function* () {
     return isPathWithinRoot(path, realRoot, realCandidate) ? normalizedCandidate : null;
   });
 
-  const findArtifactDirectories = Effect.fn("WorktreeCleanup.findArtifactDirectories")(function* (
+  const ignoredArtifact = Effect.fn("WorktreeCleanup.ignoredArtifact")(function* (
+    root: string,
+    candidate: string,
+  ) {
+    const relativeCandidate = path.relative(root, candidate);
+    const [directResult, trackedResult] = yield* Effect.all([
+      git.execute({
+        operation: "WorktreeCleanup.checkIgnoredArtifact",
+        cwd: root,
+        args: ["check-ignore", "-q", "--", relativeCandidate],
+        allowNonZeroExit: true,
+      }),
+      git.execute({
+        operation: "WorktreeCleanup.checkTrackedArtifactContents",
+        cwd: root,
+        args: ["ls-files", "--", relativeCandidate],
+      }),
+    ]);
+    if (trackedResult.stdout.trim().length > 0) return false;
+    if (directResult.exitCode === 0) return true;
+
+    const statusResult = yield* git.execute({
+      operation: "WorktreeCleanup.checkIgnoredArtifactContents",
+      cwd: root,
+      args: [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "-z",
+        "--",
+        relativeCandidate,
+      ],
+    });
+    const records = statusResult.stdout.split("\0").filter(Boolean);
+    return records.length > 0 && records.every((record) => record.startsWith("!! "));
+  });
+
+  const findArtifacts = Effect.fn("WorktreeCleanup.findArtifacts")(function* (
     worktreePath: string,
   ) {
     const root = yield* managedExistingPath(worktreePath);
@@ -298,19 +379,15 @@ const make = Effect.gen(function* () {
         .pipe(Effect.orElseSucceed(() => []));
       const entryNames = new Set(entries);
 
-      for (const artifactDirectory of artifactDirectoryNamesForEntries(entryNames)) {
-        const candidate = path.join(directory, artifactDirectory);
-        const ignored = yield* git
-          .execute({
-            operation: "WorktreeCleanup.checkIgnoredArtifact",
-            cwd: root,
-            args: ["check-ignore", "-q", "--", path.relative(root, candidate)],
-            allowNonZeroExit: true,
-          })
-          .pipe(
-            Effect.map((result) => result.exitCode === 0),
-            Effect.orElseSucceed(() => false),
-          );
+      const artifactNames = [
+        ...artifactDirectoryNamesForEntries(entryNames),
+        ...artifactFileNamesForEntries(entryNames),
+      ];
+      for (const artifactName of artifactNames) {
+        const candidate = path.join(directory, artifactName);
+        const ignored = yield* ignoredArtifact(root, candidate).pipe(
+          Effect.orElseSucceed(() => false),
+        );
         if (!ignored) continue;
         const realCandidate = yield* fileSystem
           .realPath(candidate)
@@ -338,21 +415,30 @@ const make = Effect.gen(function* () {
   const pruneArtifacts = Effect.fn("WorktreeCleanup.pruneArtifacts")(function* (
     worktreePath: string,
   ) {
-    const artifacts = yield* findArtifactDirectories(worktreePath);
+    const artifacts = yield* findArtifacts(worktreePath);
+    let removedCount = 0;
     for (const artifact of artifacts) {
-      yield* fileSystem.remove(artifact, { recursive: true, force: true }).pipe(
-        Effect.tap(() =>
-          Effect.logInfo("worktree cleanup removed generated artifact", { artifact }),
+      const removed = yield* fileSystem.remove(artifact, { recursive: true, force: true }).pipe(
+        Effect.andThen(fileSystem.exists(artifact)),
+        Effect.flatMap((exists) =>
+          exists
+            ? Effect.logWarning("worktree cleanup generated artifact still exists", {
+                artifact,
+              }).pipe(Effect.as(false))
+            : Effect.logInfo("worktree cleanup removed generated artifact", { artifact }).pipe(
+                Effect.as(true),
+              ),
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning("worktree cleanup could not remove generated artifact", {
             artifact,
             cause,
-          }),
+          }).pipe(Effect.as(false)),
         ),
       );
+      if (removed) removedCount += 1;
     }
-    return artifacts.length;
+    return removedCount;
   });
 
   const localRetirementBlocker = Effect.fn("WorktreeCleanup.localRetirementBlocker")(function* (
@@ -373,7 +459,34 @@ const make = Effect.gen(function* () {
     worktreePath: string,
   ) {
     const status = yield* git.statusDetailsRemote(worktreePath, { refreshUpstream: false });
-    if (!status.hasUpstream || !status.branch) return status;
+    if (!status.branch) return status;
+
+    const verifiedDefaultBranch = Effect.fn("WorktreeCleanup.verifiedDefaultBranch")(function* () {
+      const withoutUpstream = { ...status, upstreamRef: null, hasUpstream: false };
+      if (!status.defaultBranch) return withoutUpstream;
+      yield* git.fetchRemoteTrackingBranch({
+        cwd: worktreePath,
+        remoteName: "origin",
+        remoteBranch: status.defaultBranch,
+      });
+      const upstreamRef = `origin/${status.defaultBranch}`;
+      const containsHead = yield* git.execute({
+        operation: "WorktreeCleanup.verifyDefaultBranchContainsHead",
+        cwd: worktreePath,
+        args: ["merge-base", "--is-ancestor", "HEAD", upstreamRef],
+        allowNonZeroExit: true,
+      });
+      return containsHead.exitCode === 0
+        ? {
+            ...withoutUpstream,
+            upstreamRef,
+            hasUpstream: true,
+            aheadCount: 0,
+          }
+        : withoutUpstream;
+    });
+
+    if (!status.hasUpstream) return yield* verifiedDefaultBranch();
 
     const [remoteResult, mergeResult] = yield* Effect.all([
       git.execute({
@@ -399,7 +512,7 @@ const make = Effect.gen(function* () {
       remoteName === "." ||
       !mergeRef.startsWith(headsPrefix)
     ) {
-      return { ...status, hasUpstream: false, upstreamRef: null };
+      return yield* verifiedDefaultBranch();
     }
 
     yield* git.fetchRemoteTrackingBranch({
@@ -411,7 +524,7 @@ const make = Effect.gen(function* () {
       refreshUpstream: false,
     });
     if (!refreshedStatus.upstreamRef) {
-      return { ...refreshedStatus, hasUpstream: false };
+      return yield* verifiedDefaultBranch();
     }
     const containsHead = yield* git.execute({
       operation: "WorktreeCleanup.verifyPushedHead",
@@ -431,16 +544,14 @@ const make = Effect.gen(function* () {
     previous: ReadonlyMap<string, WorktreeCleanupNotice>,
   ): WorktreeCleanupNotice => {
     const id = noticeId(group.path, reason);
-    return (
-      previous.get(id) ?? {
-        id,
-        worktreePath: group.path,
-        projectTitle: group.project.title,
-        branch: group.threads.find((thread) => thread.branch !== null)?.branch ?? null,
-        reason,
-        createdAt,
-      }
-    );
+    return {
+      id,
+      worktreePath: group.path,
+      projectTitle: group.project.title,
+      branch: group.threads.find((thread) => thread.branch !== null)?.branch ?? null,
+      reason,
+      createdAt: previous.get(id)?.createdAt ?? createdAt,
+    };
   };
 
   const runSweep = lock.withPermits(1)(

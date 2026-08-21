@@ -9,13 +9,15 @@ T3 Code can reclaim space from inactive worktrees without deleting their threads
 
 Cleanup uses the most recent thread update for each worktree. It first removes ignored,
 re-creatable dependencies and build output for detected project types, such as `node_modules`,
-`.next`, Rust `target`, Composer or Rust `vendor`, Python `.venv`, Swift `.build`, CocoaPods, and
-Gradle output. Go `vendor` directories are kept.
+`.next`, `dist`, TypeScript build metadata, framework caches, logs, Rust `target`, Composer or Rust
+`vendor`, Python `.venv`, Swift `.build`, CocoaPods, and Gradle output. Go `vendor` directories are
+kept. Ignored local state and machine configuration stay protected.
 
 After seven days of inactivity, T3 Code removes the worktree directory only when it has no local
-changes, no remaining ignored local files, an upstream branch, and no commits ahead of that
-upstream. If any safety check fails, the worktree stays and T3 Code shows a warning. Returning to
-the thread recreates a retired worktree from its existing branch and runs the project setup script.
+changes, no remaining protected ignored files, and its commit exists on either the configured
+upstream or the remote default branch. If any safety check fails, the worktree stays and T3 Code
+shows a warning. Returning to the thread recreates a retired worktree from its existing branch and
+runs the project setup script.
 
 ## Supported Providers
 
