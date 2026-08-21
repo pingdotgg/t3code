@@ -340,6 +340,11 @@ struct FeatureComposerView: View {
                 }
             } label: {
                 reasoningLevelLabel(control.value, showsChevron: true)
+                    .frame(
+                        minWidth: T3Metrics.minimumTapTarget,
+                        minHeight: T3Metrics.minimumTapTarget
+                    )
+                    .contentShape(Rectangle())
             }
             // The composer sits at the bottom of the screen, so an adaptive menu
             // would flip the descriptor's lowest-first order and put the highest
