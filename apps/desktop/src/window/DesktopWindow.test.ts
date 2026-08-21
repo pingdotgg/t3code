@@ -64,6 +64,8 @@ function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
+  const setSpellCheckerLanguages = vi.fn();
+  const setSpellCheckerEnabled = vi.fn();
   const webContents = {
     copyImageAt: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
@@ -80,6 +82,12 @@ function makeFakeBrowserWindow() {
     reload: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
+    session: {
+      availableSpellCheckerLanguages: ["en-US", "en-GB", "pt-BR", "pt-PT", "es-ES", "fr"],
+      getSpellCheckerLanguages: vi.fn(() => ["en-US"]),
+      setSpellCheckerLanguages,
+      setSpellCheckerEnabled,
+    },
     setBackgroundThrottling: vi.fn(),
     setWindowOpenHandler: vi.fn(),
   };
@@ -127,6 +135,8 @@ function makeFakeBrowserWindow() {
     setZoomLevel: webContents.setZoomLevel,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
     setAutoHideCursor: window.setAutoHideCursor,
+    setSpellCheckerLanguages,
+    setSpellCheckerEnabled,
     webContentsListeners,
     windowListeners,
   };
@@ -138,6 +148,7 @@ const desktopClientSettingsLayer = Layer.mock(DesktopClientSettings.DesktopClien
 
 const electronAppLayer = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
+  systemLocale: Effect.succeed("en-US"),
 });
 
 const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
@@ -262,6 +273,7 @@ function makeTestLayer(input: {
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeServices.layer,
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
@@ -367,6 +379,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
     const layer = DesktopWindow.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          NodeServices.layer,
           desktopAssetsLayer,
           desktopEnvironmentLayer,
           DesktopAppSettings.layerTest(),
@@ -461,6 +474,11 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+        assert.deepEqual(fakeWindow.setSpellCheckerEnabled.mock.calls, [[true]]);
+        assert.isAtLeast(fakeWindow.setSpellCheckerLanguages.mock.calls.length, 1);
+        const spellcheckLanguages = fakeWindow.setSpellCheckerLanguages.mock.calls[0]?.[0];
+        assert.isTrue(Array.isArray(spellcheckLanguages));
+        assert.isTrue((spellcheckLanguages as string[]).includes("en-US"));
       }).pipe(Effect.provide(layer));
     }),
   );

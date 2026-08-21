@@ -84,6 +84,10 @@ describe("searchSettings", () => {
       id: "word-wrap",
       to: "/settings/appearance",
     });
+    expect(searchSettings("check spelling")[0]).toMatchObject({
+      id: "check-spelling",
+      to: "/settings/appearance",
+    });
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",

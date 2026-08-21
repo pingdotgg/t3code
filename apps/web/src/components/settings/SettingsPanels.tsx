@@ -114,6 +114,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Checkbox } from "../ui/checkbox";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -1319,6 +1320,84 @@ function WordWrapRow() {
   );
 }
 
+const SPELLCHECK_LANGUAGE_OPTIONS = [
+  { id: "en-US", label: "English (US)" },
+  { id: "en-GB", label: "English (UK)" },
+  { id: "pt-BR", label: "Portuguese (Brazil)" },
+  { id: "pt-PT", label: "Portuguese (Portugal)" },
+  { id: "es-ES", label: "Spanish" },
+  { id: "es-419", label: "Spanish (Latin America)" },
+  { id: "fr", label: "French" },
+  { id: "de-DE", label: "German" },
+  { id: "it", label: "Italian" },
+  { id: "nl", label: "Dutch" },
+  { id: "pl", label: "Polish" },
+  { id: "ru", label: "Russian" },
+] as const;
+
+function SpellcheckRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const selectedLanguages = new Set(settings.spellcheckLanguages);
+  return (
+    <SettingsRow
+      {...searchableSetting("check-spelling")}
+      description={
+        isElectron
+          ? "Underline misspelled words in the composer. Leave languages unchecked to follow the OS language and keyboard layout."
+          : "Underline misspelled words in the composer. The browser picks the dictionary."
+      }
+      resetAction={
+        settings.spellcheckEnabled !== DEFAULT_UNIFIED_SETTINGS.spellcheckEnabled ||
+        settings.spellcheckLanguages.length > 0 ? (
+          <SettingResetButton
+            label="spelling"
+            onClick={() =>
+              updateSettings({
+                spellcheckEnabled: DEFAULT_UNIFIED_SETTINGS.spellcheckEnabled,
+                spellcheckLanguages: DEFAULT_UNIFIED_SETTINGS.spellcheckLanguages,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.spellcheckEnabled}
+          onCheckedChange={(checked) => updateSettings({ spellcheckEnabled: Boolean(checked) })}
+          aria-label="Check spelling in the composer"
+        />
+      }
+    >
+      {isElectron && settings.spellcheckEnabled ? (
+        <div className="grid grid-cols-1 gap-1 pt-3 sm:grid-cols-2">
+          {SPELLCHECK_LANGUAGE_OPTIONS.map((option) => (
+            <label
+              key={option.id}
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-sm text-foreground hover:bg-muted/40"
+            >
+              <Checkbox
+                checked={selectedLanguages.has(option.id)}
+                onCheckedChange={(checked) => {
+                  const enabled = Boolean(checked);
+                  const spellcheckLanguages = enabled
+                    ? selectedLanguages.has(option.id)
+                      ? settings.spellcheckLanguages
+                      : [...settings.spellcheckLanguages, option.id]
+                    : settings.spellcheckLanguages.filter((language) => language !== option.id);
+                  updateSettings({ spellcheckLanguages });
+                }}
+                aria-label={option.label}
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </SettingsRow>
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -1416,6 +1495,7 @@ function TypographySection() {
     >
       {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <SpellcheckRow />
     </SettingsSection>
   );
 }

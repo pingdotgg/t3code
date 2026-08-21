@@ -18,6 +18,31 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
+describe("ClientSettings spellcheck", () => {
+  it("defaults to enabled with automatic languages", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.spellcheckEnabled).toBe(true);
+    expect(settings.spellcheckLanguages).toEqual([]);
+  });
+
+  it("accepts an explicit Hunspell language list", () => {
+    expect(
+      decodeClientSettings({ spellcheckEnabled: false, spellcheckLanguages: ["pt-BR", "en-US"] }),
+    ).toMatchObject({
+      spellcheckEnabled: false,
+      spellcheckLanguages: ["pt-BR", "en-US"],
+    });
+    expect(
+      decodeClientSettingsPatch({ spellcheckLanguages: ["pt-BR"] }).spellcheckLanguages,
+    ).toEqual(["pt-BR"]);
+  });
+
+  it("rejects an empty language tag", () => {
+    expect(() => decodeClientSettings({ spellcheckLanguages: [""] })).toThrow();
+    expect(() => decodeClientSettingsPatch({ spellcheckLanguages: ["   "] })).toThrow();
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

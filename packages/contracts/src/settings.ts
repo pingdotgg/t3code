@@ -242,6 +242,12 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  // Composer spelling. Empty `spellcheckLanguages` means automatic: OS locale
+  // plus keyboard layout on desktop. An explicit list is Hunspell tags only.
+  spellcheckEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  spellcheckLanguages: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(35))).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -912,6 +918,10 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  spellcheckEnabled: Schema.optionalKey(Schema.Boolean),
+  spellcheckLanguages: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(35))),
+  ),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

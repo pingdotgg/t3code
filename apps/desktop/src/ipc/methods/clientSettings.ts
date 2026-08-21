@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ElectronSpellcheck from "../../electron/ElectronSpellcheck.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -24,5 +26,10 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     yield* clientSettings.set(settings);
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.currentMainOrFirst;
+    if (Option.isSome(window)) {
+      yield* ElectronSpellcheck.syncBrowserWindowSpellChecker(window.value);
+    }
   }),
 });
