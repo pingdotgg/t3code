@@ -16,10 +16,10 @@ function snapshotFor(cursor: number, entryCount: number) {
 }
 export function normalizeMobileNavigationPath(rawPath: string) {
   const url = new URL(rawPath, "t3code://app");
-  for (const [key, value] of Array.from(url.searchParams)) {
-    if (value === "[object Object]") url.searchParams.delete(key);
-  }
-  return `${url.pathname}${url.search}`;
+  const search = new URLSearchParams(
+    Array.from(url.searchParams).filter(([, value]) => value !== "[object Object]"),
+  );
+  return `${url.pathname}${search.size > 0 ? `?${search}` : ""}`;
 }
 
 export function createMobileNavigationHistory(initialLocation: MobileNavigationLocation) {

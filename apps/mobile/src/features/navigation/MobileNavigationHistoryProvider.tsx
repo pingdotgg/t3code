@@ -60,7 +60,7 @@ function useMobileNavigationHistoryCoordinator(
         return;
       }
       const action = buildAction(target.location.pathname);
-      if (!("payload" in action)) return;
+      if (!("payload" in action)) return history.cancelPendingTraversal();
       navigation.dispatch({ ...action, payload: { ...action.payload, pop: true } });
     },
     [buildAction, history, navigation],
