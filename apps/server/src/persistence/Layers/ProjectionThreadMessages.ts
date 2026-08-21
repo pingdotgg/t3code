@@ -40,6 +40,10 @@ function toProjectionThreadMessage(
   };
 }
 
+const LatestUserMessageAtRowSchema = Schema.Struct({
+  createdAt: ProjectionThreadMessage.fields.createdAt,
+});
+
 const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -137,6 +141,20 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const getLatestUserMessageAtRow = SqlSchema.findOneOption({
+    Request: ListProjectionThreadMessagesInput,
+    Result: LatestUserMessageAtRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT created_at AS "createdAt"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+          AND role = 'user'
+        ORDER BY created_at DESC, message_id DESC
+        LIMIT 1
+      `,
+  });
+
   const deleteProjectionThreadMessageRows = SqlSchema.void({
     Request: DeleteProjectionThreadMessagesInput,
     execute: ({ threadId }) =>
@@ -147,9 +165,29 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   });
 
   const upsert: ProjectionThreadMessageRepositoryShape["upsert"] = (row) =>
-    upsertProjectionThreadMessageRow(row).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadMessageRepository.upsert:query")),
-    );
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const previous = yield* getProjectionThreadMessageRow({ messageId: row.messageId });
+          yield* upsertProjectionThreadMessageRow(row);
+
+          const affectedThreadIds = new Set([row.threadId]);
+          if (Option.isSome(previous)) {
+            affectedThreadIds.add(previous.value.threadId);
+          }
+          for (const threadId of affectedThreadIds) {
+            const latest = yield* getLatestUserMessageAtRow({ threadId });
+            yield* sql`
+              UPDATE projection_threads
+              SET latest_user_message_at = ${Option.isSome(latest) ? latest.value.createdAt : null}
+              WHERE thread_id = ${threadId}
+            `;
+          }
+        }),
+      )
+      .pipe(
+        Effect.mapError(toPersistenceSqlError("ProjectionThreadMessageRepository.upsert:query")),
+      );
 
   const getByMessageId: ProjectionThreadMessageRepositoryShape["getByMessageId"] = (input) =>
     getProjectionThreadMessageRow(input).pipe(
@@ -167,17 +205,40 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       Effect.map((rows) => rows.map(toProjectionThreadMessage)),
     );
 
+  const getLatestUserMessageAtByThreadId: ProjectionThreadMessageRepositoryShape["getLatestUserMessageAtByThreadId"] =
+    (input) =>
+      getLatestUserMessageAtRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "ProjectionThreadMessageRepository.getLatestUserMessageAtByThreadId:query",
+          ),
+        ),
+        Effect.map(Option.map((row) => row.createdAt)),
+      );
+
   const deleteByThreadId: ProjectionThreadMessageRepositoryShape["deleteByThreadId"] = (input) =>
-    deleteProjectionThreadMessageRows(input).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionThreadMessageRepository.deleteByThreadId:query"),
-      ),
-    );
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* deleteProjectionThreadMessageRows(input);
+          yield* sql`
+            UPDATE projection_threads
+            SET latest_user_message_at = NULL
+            WHERE thread_id = ${input.threadId}
+          `;
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionThreadMessageRepository.deleteByThreadId:query"),
+        ),
+      );
 
   return {
     upsert,
     getByMessageId,
     listByThreadId,
+    getLatestUserMessageAtByThreadId,
     deleteByThreadId,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });

@@ -24,6 +24,8 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
+import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import {
@@ -240,6 +242,550 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-shell-summary-cost-")))(
+  "OrchestrationProjectionPipeline shell-summary cost",
+  (it) => {
+    it.effect("does not hydrate large activity history for shell-only updates", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const projectId = ProjectId.make("project-shell-summary-cost");
+        const threadId = ThreadId.make("thread-shell-summary-cost");
+        const createdAt = "2026-08-19T00:00:00.000Z";
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+        const readPendingUserInputCount = Effect.gen(function* () {
+          const rows = yield* sql<{ readonly count: number }>`
+          SELECT pending_user_input_count AS "count"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+          return rows[0]?.count;
+        });
+        const readLatestUserMessageAt = Effect.gen(function* () {
+          const rows = yield* sql<{ readonly latestUserMessageAt: string | null }>`
+          SELECT latest_user_message_at AS "latestUserMessageAt"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+          return rows[0]?.latestUserMessageAt;
+        });
+
+        yield* appendAndProject({
+          type: "project.created",
+          eventId: EventId.make("evt-shell-summary-cost-project"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-shell-summary-cost-project"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-cost-project"),
+          metadata: {},
+          payload: {
+            projectId,
+            title: "Shell summary cost",
+            workspaceRoot: "/tmp/project-shell-summary-cost",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.make("evt-shell-summary-cost-thread"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-shell-summary-cost-thread"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-cost-thread"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId,
+            title: "Shell summary cost",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+
+        yield* sql`
+        WITH RECURSIVE history(index_value) AS (
+          SELECT 1
+          UNION ALL
+          SELECT index_value + 1
+          FROM history
+          WHERE index_value < 10000
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at,
+          user_input_request_id,
+          user_input_state
+        )
+        SELECT
+          'activity-shell-summary-history-' || printf('%05d', index_value),
+          ${threadId},
+          NULL,
+          'info',
+          'user-input.resolved',
+          'Historical user input',
+          json_object(
+            'requestId',
+            'request-shell-summary-history-' || printf('%05d', index_value),
+            'blob',
+            replace(hex(zeroblob(2048)), '00', 'x')
+          ),
+          index_value,
+          ${createdAt},
+          'request-shell-summary-history-' || printf('%05d', index_value),
+          'cleared'
+        FROM history
+      `;
+        // If the shell update reads the collection, this sentinel makes the
+        // accidental JSON decode fail instead of hiding behind timing variance.
+        yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        ) VALUES (
+          'activity-shell-summary-invalid-sentinel',
+          ${threadId},
+          NULL,
+          'info',
+          'user-input.requested',
+          'Must not be decoded',
+          '{',
+          NULL,
+          ${createdAt}
+        )
+      `;
+
+        yield* sql`
+          INSERT INTO projection_thread_user_input_summaries (thread_id, pending_count)
+          VALUES (${threadId}, 0)
+          ON CONFLICT (thread_id)
+          DO UPDATE SET pending_count = 0
+        `;
+
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-shell-summary-assistant-message"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:01.000Z",
+          commandId: CommandId.make("cmd-shell-summary-assistant-message"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-assistant-message"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-shell-summary-assistant"),
+            role: "assistant",
+            text: "Still working",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-08-19T00:00:01.000Z",
+            updatedAt: "2026-08-19T00:00:01.000Z",
+          },
+        });
+        assert.equal(yield* readPendingUserInputCount, 0);
+
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-shell-summary-user-message-collision"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:01.100Z",
+          commandId: CommandId.make("cmd-shell-summary-user-message-collision"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-user-message-collision"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-shell-summary-collision"),
+            role: "user",
+            text: "A user message",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-08-19T00:00:01.100Z",
+            updatedAt: "2026-08-19T00:00:01.100Z",
+          },
+        });
+        assert.equal(yield* readLatestUserMessageAt, "2026-08-19T00:00:01.100Z");
+
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-shell-summary-assistant-message-collision"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:01.200Z",
+          commandId: CommandId.make("cmd-shell-summary-assistant-message-collision"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-assistant-message-collision"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-shell-summary-collision"),
+            role: "assistant",
+            text: "The row was replaced",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-08-19T00:00:01.200Z",
+            updatedAt: "2026-08-19T00:00:01.200Z",
+          },
+        });
+        assert.equal(yield* readLatestUserMessageAt, null);
+
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-shell-summary-routine-activity"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:01.000Z",
+          commandId: CommandId.make("cmd-shell-summary-routine-activity"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-routine-activity"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-shell-summary-routine"),
+              tone: "info",
+              kind: "task.progress",
+              summary: "Running tests",
+              payload: { taskId: "task-1", status: "running" },
+              turnId: null,
+              createdAt: "2026-08-19T00:00:01.000Z",
+            },
+          },
+        });
+        assert.equal(yield* readPendingUserInputCount, 0);
+
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-shell-summary-user-input-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:02.000Z",
+          commandId: CommandId.make("cmd-shell-summary-user-input-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-user-input-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-shell-summary-user-input-requested"),
+              tone: "info",
+              kind: "user-input.requested",
+              summary: "User input requested",
+              payload: { requestId: "request-shell-summary-cost" },
+              sequence: 2,
+              turnId: null,
+              createdAt: "2026-08-19T00:00:02.000Z",
+            },
+          },
+        });
+        assert.equal(yield* readPendingUserInputCount, 1);
+
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-shell-summary-user-input-overwritten"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:02.500Z",
+          commandId: CommandId.make("cmd-shell-summary-user-input-overwritten"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-user-input-overwritten"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-shell-summary-user-input-requested"),
+              tone: "info",
+              kind: "task.progress",
+              summary: "Request was replaced",
+              payload: { taskId: "task-2", status: "running" },
+              sequence: 3,
+              turnId: null,
+              createdAt: "2026-08-19T00:00:02.500Z",
+            },
+          },
+        });
+        assert.equal(yield* readPendingUserInputCount, 0);
+
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-shell-summary-user-input-requested-again"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:02.750Z",
+          commandId: CommandId.make("cmd-shell-summary-user-input-requested-again"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-user-input-requested-again"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-shell-summary-user-input-requested"),
+              tone: "info",
+              kind: "user-input.requested",
+              summary: "User input requested again",
+              payload: { requestId: "request-shell-summary-replacement" },
+              sequence: 4,
+              turnId: null,
+              createdAt: "2026-08-19T00:00:02.750Z",
+            },
+          },
+        });
+        assert.equal(yield* readPendingUserInputCount, 1);
+
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-shell-summary-user-input-resolved"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:03.000Z",
+          commandId: CommandId.make("cmd-shell-summary-user-input-resolved"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-user-input-resolved"),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("activity-shell-summary-user-input-resolved"),
+              tone: "info",
+              kind: "user-input.resolved",
+              summary: "User input resolved",
+              payload: { requestId: "request-shell-summary-replacement" },
+              sequence: 1,
+              turnId: null,
+              createdAt: "2026-08-19T00:00:03.000Z",
+            },
+          },
+        });
+        assert.equal(yield* readPendingUserInputCount, 0);
+
+        const recoveryActivity = {
+          id: EventId.make("activity-shell-summary-recovery"),
+          tone: "info" as const,
+          kind: "user-input.requested",
+          summary: "Recovery request",
+          payload: { requestId: "request-shell-summary-recovery" },
+          sequence: 5,
+          turnId: null,
+          createdAt: "2026-08-19T00:00:04.000Z",
+        };
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-shell-summary-recovery-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:04.000Z",
+          commandId: CommandId.make("cmd-shell-summary-recovery-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-recovery-requested"),
+          metadata: {},
+          payload: { threadId, activity: recoveryActivity },
+        });
+        assert.equal(yield* readPendingUserInputCount, 1);
+
+        yield* sql`
+          DELETE FROM projection_thread_user_input_summaries
+          WHERE thread_id = ${threadId}
+        `;
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-shell-summary-recovery-replayed"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-19T00:00:04.500Z",
+          commandId: CommandId.make("cmd-shell-summary-recovery-replayed"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shell-summary-recovery-replayed"),
+          metadata: {},
+          payload: { threadId, activity: recoveryActivity },
+        });
+        assert.equal(yield* readPendingUserInputCount, 1);
+
+        const activityRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS "count"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+      `;
+        assert.deepEqual(activityRows, [{ count: 10005 }]);
+      }),
+    );
+
+    it.effect("refreshes previous owners after cross-thread id replacement", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const messages = yield* ProjectionThreadMessageRepository;
+        const activities = yield* ProjectionThreadActivityRepository;
+        const threadA = ThreadId.make("thread-shell-summary-owner-a");
+        const threadB = ThreadId.make("thread-shell-summary-owner-b");
+
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            branch,
+            worktree_path,
+            latest_turn_id,
+            created_at,
+            updated_at,
+            archived_at,
+            latest_user_message_at,
+            pending_approval_count,
+            pending_user_input_count,
+            has_actionable_proposed_plan,
+            deleted_at
+          ) VALUES
+            (
+              ${threadA},
+              'project-shell-summary-owner',
+              'Owner A',
+              '{"provider":"codex","model":"gpt-5-codex"}',
+              'approval-required',
+              'default',
+              NULL,
+              NULL,
+              NULL,
+              '2026-08-19T00:00:00.000Z',
+              '2026-08-19T00:00:00.000Z',
+              NULL,
+              NULL,
+              0,
+              0,
+              0,
+              NULL
+            ),
+            (
+              ${threadB},
+              'project-shell-summary-owner',
+              'Owner B',
+              '{"provider":"codex","model":"gpt-5-codex"}',
+              'approval-required',
+              'default',
+              NULL,
+              NULL,
+              NULL,
+              '2026-08-19T00:00:00.000Z',
+              '2026-08-19T00:00:00.000Z',
+              NULL,
+              NULL,
+              0,
+              0,
+              0,
+              NULL
+            )
+        `;
+
+        yield* messages.upsert({
+          messageId: MessageId.make("message-shell-summary-owner-move"),
+          threadId: threadA,
+          turnId: null,
+          role: "user",
+          text: "Move me",
+          isStreaming: false,
+          createdAt: "2026-08-19T00:00:01.000Z",
+          updatedAt: "2026-08-19T00:00:01.000Z",
+        });
+        yield* activities.upsert({
+          activityId: EventId.make("activity-shell-summary-owner-move"),
+          threadId: threadA,
+          turnId: null,
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "Move request",
+          payload: { requestId: "request-shell-summary-owner-move" },
+          createdAt: "2026-08-19T00:00:02.000Z",
+        });
+
+        yield* messages.upsert({
+          messageId: MessageId.make("message-shell-summary-owner-move"),
+          threadId: threadB,
+          turnId: null,
+          role: "assistant",
+          text: "Moved",
+          isStreaming: false,
+          createdAt: "2026-08-19T00:00:03.000Z",
+          updatedAt: "2026-08-19T00:00:03.000Z",
+        });
+        yield* activities.upsert({
+          activityId: EventId.make("activity-shell-summary-owner-move"),
+          threadId: threadB,
+          turnId: null,
+          tone: "info",
+          kind: "task.progress",
+          summary: "Moved request",
+          payload: { taskId: "task-owner-move", status: "running" },
+          createdAt: "2026-08-19T00:00:04.000Z",
+        });
+
+        const rows = yield* sql<{
+          readonly threadId: string;
+          readonly latestUserMessageAt: string | null;
+          readonly pendingUserInputCount: number;
+        }>`
+          SELECT
+            thread_id AS "threadId",
+            latest_user_message_at AS "latestUserMessageAt",
+            pending_user_input_count AS "pendingUserInputCount"
+          FROM projection_threads
+          WHERE thread_id IN (${threadA}, ${threadB})
+          ORDER BY thread_id
+        `;
+        assert.deepStrictEqual(rows, [
+          {
+            threadId: threadA,
+            latestUserMessageAt: null,
+            pendingUserInputCount: 0,
+          },
+          {
+            threadId: threadB,
+            latestUserMessageAt: null,
+            pendingUserInputCount: 0,
+          },
+        ]);
+      }),
+    );
+  },
+);
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
@@ -2021,7 +2567,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         payload: {
           threadId: ThreadId.make("thread-stale-user-input"),
           activity: {
-            id: EventId.make("activity-stale-user-input-requested"),
+            id: EventId.make("A"),
             tone: "info",
             kind: "user-input.requested",
             summary: "User input requested",
@@ -2060,7 +2606,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         payload: {
           threadId: ThreadId.make("thread-stale-user-input"),
           activity: {
-            id: EventId.make("activity-stale-user-input-failed"),
+            id: EventId.make("a"),
             tone: "error",
             kind: "provider.user-input.respond.failed",
             summary: "Provider user input response failed",
@@ -2070,7 +2616,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
                 "Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: user-input-request-stale-1",
             },
             turnId: null,
-            createdAt: "2026-02-26T12:35:03.000Z",
+            createdAt: "2026-02-26T12:35:02.000Z",
           },
         },
       });
@@ -2083,6 +2629,31 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         WHERE thread_id = 'thread-stale-user-input'
       `;
       assert.deepEqual(threadRows, [{ pendingUserInputCount: 0 }]);
+
+      yield* appendAndProject({
+        type: "thread.reverted",
+        eventId: EventId.make("evt-stale-user-input-5"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-stale-user-input"),
+        occurredAt: "2026-02-26T12:35:04.000Z",
+        commandId: CommandId.make("cmd-stale-user-input-5"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-stale-user-input-5"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-stale-user-input"),
+          turnCount: 0,
+        },
+      });
+
+      const revertedThreadRows = yield* sql<{
+        readonly pendingUserInputCount: number;
+      }>`
+        SELECT pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = 'thread-stale-user-input'
+      `;
+      assert.deepEqual(revertedThreadRows, [{ pendingUserInputCount: 0 }]);
     }),
   );
 

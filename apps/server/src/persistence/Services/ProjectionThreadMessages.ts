@@ -79,6 +79,16 @@ export interface ProjectionThreadMessageRepositoryShape {
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
 
   /**
+   * Read the latest projected user-message timestamp for a thread.
+   */
+  readonly getLatestUserMessageAtByThreadId: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<
+    Option.Option<ProjectionThreadMessage["createdAt"]>,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Delete projected thread messages by thread.
    */
   readonly deleteByThreadId: (

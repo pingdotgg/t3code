@@ -68,6 +68,16 @@ export interface ProjectionThreadActivityRepositoryShape {
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**
+   * Count pending user-input requests without hydrating activity payloads.
+   *
+   * The aggregate preserves request-id lifecycle semantics while keeping the
+   * repository boundary to one scalar row.
+   */
+  readonly countPendingUserInputsByThreadId: (
+    input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<number, ProjectionRepositoryError>;
+
+  /**
    * Delete projected thread activity rows by thread.
    */
   readonly deleteByThreadId: (
