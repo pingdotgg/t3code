@@ -69,12 +69,21 @@ function parseSkillFrontmatterLeniently(yamlSource: string): SkillFrontmatter {
     if (key !== "name" && key !== "description") {
       continue;
     }
-    const value =
-      rawValue.length >= 2 &&
-      ((rawValue.startsWith('"') && rawValue.endsWith('"')) ||
-        (rawValue.startsWith("'") && rawValue.endsWith("'")))
-        ? rawValue.slice(1, -1)
-        : rawValue;
+    // Parse the value in isolation with the real YAML parser rather than
+    // just trimming it: a plain scalar with a trailing "# comment" or one
+    // quoted with escapes needs real YAML scalar rules to come out right.
+    // The one case this is *for* — an unquoted value with its own embedded
+    // ": " — parses as a one-entry mapping in isolation too, not a string,
+    // so it correctly falls through to the untouched raw text below.
+    let value = rawValue;
+    try {
+      const parsedValue: unknown = parseYamlDocument(rawValue);
+      if (typeof parsedValue === "string") {
+        value = parsedValue;
+      }
+    } catch {
+      // Not parseable in isolation either; keep the raw text.
+    }
     if (value.length > 0) {
       fields[key] = value;
     }

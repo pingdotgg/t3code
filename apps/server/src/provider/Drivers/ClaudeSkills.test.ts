@@ -254,6 +254,43 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       }),
   );
 
+  it.effect("strips a trailing comment from a recovered value instead of keeping it verbatim", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "commented",
+        [
+          "---",
+          "name: demo # display label",
+          // The colon-containing description is what forces the lenient
+          // fallback to run at all — a comment alone wouldn't fail strict
+          // parsing, so this is needed to actually exercise the fallback's
+          // value parsing rather than the strict-YAML path.
+          "description: Browser automation + AI test authoring via kane-cli: run browser objectives, ...",
+          "---",
+        ].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+
+      assert.deepEqual(skills, [
+        {
+          name: "demo",
+          path: path.join(configDir, "skills", "commented", "SKILL.md"),
+          enabled: true,
+          scope: "user",
+          description:
+            "Browser automation + AI test authoring via kane-cli: run browser objectives, ...",
+        },
+      ]);
+    }),
+  );
+
   it.effect("skips the whole skill when a broken field survives alongside a recoverable one", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
