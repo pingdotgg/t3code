@@ -97,10 +97,17 @@ type RawThreadFeedEntry =
       readonly createdAt: string;
       readonly turnId: TurnId | null;
       readonly activity: ThreadFeedActivity;
+    }
+  | {
+      readonly type: "proposed-plan";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly proposedPlan: OrchestrationThread["proposedPlans"][number];
     };
 
 export type ThreadFeedEntry =
   | Extract<RawThreadFeedEntry, { type: "message" }>
+  | Extract<RawThreadFeedEntry, { type: "proposed-plan" }>
   | {
       readonly type: "working";
       readonly id: string;
@@ -1529,6 +1536,22 @@ export function buildThreadFeed(
         createdAt: message.createdAt,
         message,
       })),
+      ...thread.proposedPlans
+        .filter((proposedPlan) => {
+          if (options?.loadedMessages === undefined) {
+            return true;
+          }
+          return (
+            oldestLoadedMessageCreatedAt === null ||
+            proposedPlan.createdAt >= oldestLoadedMessageCreatedAt
+          );
+        })
+        .map<RawThreadFeedEntry>((proposedPlan) => ({
+          type: "proposed-plan",
+          id: proposedPlan.id,
+          createdAt: proposedPlan.createdAt,
+          proposedPlan,
+        })),
       ...workLogEntries
         .filter((entry) => {
           if (options?.loadedMessages === undefined) {
