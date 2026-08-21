@@ -190,6 +190,7 @@ export function PullRequestCodeTab({
   onFixFinding,
   onAddToAgentSelection,
   onRefresh,
+  onReviewNextStep,
   refreshToken = 0,
 }: {
   environmentId: EnvironmentId;
@@ -205,6 +206,7 @@ export function PullRequestCodeTab({
   /** Absent where there is no active agent composer to receive a local comment. */
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
   onRefresh: () => void;
+  onReviewNextStep?: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
 }) {
@@ -951,6 +953,7 @@ export function PullRequestCodeTab({
               environmentId={environmentId}
               reference={reference}
               verdicts={review.verdicts}
+              {...(onReviewNextStep ? { onReviewNextStep } : {})}
               onSubmitted={() => {
                 onRefresh();
                 setReviewOpen(false);

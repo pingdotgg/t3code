@@ -4,6 +4,7 @@ import {
   type PullRequestComment,
   type PullRequestDetailView,
   type PullRequestReviewThread,
+  type PullRequestStackSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -13,6 +14,7 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildPullRequestStackHandoffContext,
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
@@ -35,6 +37,10 @@ import {
   buildPullRequestTimeline,
   describePullRequestState,
   editPullRequestThreadComment,
+  findPullRequestStack,
+  nextOpenPullRequestStackStep,
+  pullRequestsMergedThrough,
+  pullRequestStackMergeCopy,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -134,6 +140,73 @@ describe("pull request state description", () => {
     expect(describePullRequestState("open", false)).toBe("Ready for review");
     expect(describePullRequestState("merged", true)).toBe("Merged");
     expect(describePullRequestState("closed", false)).toBe("Closed");
+  });
+});
+
+const stack: PullRequestStackSummary = {
+  id: 9,
+  number: 3,
+  url: "https://api.github.com/repos/acme/app/stacks/3",
+  baseBranch: "main",
+  open: true,
+  steps: [
+    { position: 1, pullRequestNumber: 10, branch: "auth", state: "merged", draft: false },
+    { position: 2, pullRequestNumber: 11, branch: "api", state: "open", draft: false },
+    { position: 3, pullRequestNumber: 12, branch: "ui", state: "open", draft: true },
+  ],
+};
+
+describe("pull request stack selection", () => {
+  it("finds the stack containing the open pull request", () => {
+    expect(findPullRequestStack([stack], 11)).toBe(stack);
+    expect(findPullRequestStack([stack], 99)).toBeNull();
+  });
+
+  it("returns each open pull request merged through the selected step", () => {
+    expect(pullRequestsMergedThrough(stack, 12).map((step) => step.pullRequestNumber)).toEqual([
+      11, 12,
+    ]);
+    expect(pullRequestsMergedThrough(stack, 11).map((step) => step.pullRequestNumber)).toEqual([
+      11,
+    ]);
+    expect(pullRequestsMergedThrough(stack, 10)).toEqual([]);
+  });
+
+  it("uses PR counts instead of stack step jargon for merge actions", () => {
+    expect([pullRequestStackMergeCopy(1), pullRequestStackMergeCopy(2)]).toEqual([
+      {
+        action: "Merge this PR",
+        pending: "Merging this PR...",
+        confirmation: "Merge this PR?",
+      },
+      {
+        action: "Merge 2 PRs",
+        pending: "Merging 2 PRs...",
+        confirmation: "Merge 2 PRs?",
+      },
+    ]);
+  });
+
+  it("finds the next open step", () => {
+    expect(nextOpenPullRequestStackStep(stack, 10)?.pullRequestNumber).toBe(11);
+    expect(nextOpenPullRequestStackStep(stack, 11)?.pullRequestNumber).toBe(12);
+    expect(nextOpenPullRequestStackStep(stack, 12)).toBeNull();
+  });
+
+  it("gives agents the current step and its nearest neighbors", () => {
+    const context = buildPullRequestStackHandoffContext(stack, 11);
+
+    expect(context).toEqual(
+      expect.objectContaining({
+        id: "pull-request-stack:11",
+        filePath: "Stack 2/3",
+        rangeLabel: "api",
+      }),
+    );
+    expect(context?.text).toContain("targets `main`");
+    expect(context?.text).toContain("Previous step: #10 `auth`");
+    expect(context?.text).toContain("Next step: #12 `ui`");
+    expect(context?.text).toContain("Keep work in this step");
   });
 });
 

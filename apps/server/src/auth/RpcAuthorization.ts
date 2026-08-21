@@ -73,6 +73,10 @@ export const RPC_REQUIRED_SCOPES = {
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRequestReviewers]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pullRequestStacksList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestStacksCurrent]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestStacksRunAction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pullRequestStacksMerge]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthOrchestrationOperateScope,

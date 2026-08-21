@@ -51,11 +51,13 @@ export function PullRequestReviewBar({
   reference,
   verdicts,
   onSubmitted,
+  onReviewNextStep,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   onSubmitted: () => void;
+  onReviewNextStep?: () => void;
 }) {
   const [pending, setPending] = useState(false);
   const comments = usePendingReviewComments(reference);
@@ -102,7 +104,13 @@ export function PullRequestReviewBar({
       submittedComments.map((comment) => comment.id),
     );
     clearSummary(reviewKey, submittedBody);
-    toastManager.add({ type: "success", title: verdict.sent });
+    toastManager.add({
+      type: "success",
+      title: verdict.sent,
+      ...(onReviewNextStep
+        ? { actionProps: { children: "Review next step", onClick: onReviewNextStep } }
+        : {}),
+    });
     onSubmitted();
   };
 

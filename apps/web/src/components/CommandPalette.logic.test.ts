@@ -9,6 +9,7 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  resolveCurrentStackContext,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -168,6 +169,41 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("resolveCurrentStackContext", () => {
+  it("uses the project from the active environment when project ids collide", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const context = resolveCurrentStackContext({
+      projects: [
+        { environmentId: LOCAL_ENVIRONMENT_ID, id: PROJECT_ID, workspaceRoot: "/local/repo" },
+        { environmentId: remoteEnvironmentId, id: PROJECT_ID, workspaceRoot: "/remote/repo" },
+      ],
+      environmentId: remoteEnvironmentId,
+      projectId: PROJECT_ID,
+      threadWorktreePath: null,
+    });
+
+    expect(context.cwd).toBe("/remote/repo");
+    expect(context.project?.environmentId).toBe(remoteEnvironmentId);
+  });
+
+  it("uses the project root when the chat header has no active worktree", () => {
+    const context = resolveCurrentStackContext({
+      projects: [
+        {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          id: PROJECT_ID,
+          workspaceRoot: "/local/repo",
+        },
+      ],
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      projectId: PROJECT_ID,
+      threadWorktreePath: null,
+    });
+
+    expect(context.cwd).toBe("/local/repo");
+  });
+});
 
 describe("buildThreadActionItems", () => {
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {

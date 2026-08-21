@@ -10,6 +10,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Thread timeline](#thread-timeline)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
+- [Source control](#source-control)
 - [Checkpointing](#checkpointing)
 
 ## Concepts
@@ -116,6 +117,20 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
 
+### Source control
+
+#### Pull request stack
+
+An ordered set of GitHub pull requests where each step builds on the step below it. Local stack
+operations use the official `github/gh-stack` GitHub CLI extension in
+[GitHubPullRequestStackService.ts][25]. Remote stack summaries come from GitHub's Stacks API and
+use the contracts in [pullRequestStack.ts][26]. T3 Code calls one item a **stack step**.
+
+#### Submit stack
+
+Push every branch in the current pull request stack and create or update its pull requests. T3
+Code runs `gh stack submit --auto` through [GitHubPullRequestStackService.ts][25].
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -179,3 +194,5 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/pullRequestStack/GitHubPullRequestStackService.ts
+[26]: ../../packages/contracts/src/pullRequestStack.ts

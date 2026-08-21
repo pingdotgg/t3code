@@ -1,6 +1,7 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  PullRequestStackCurrentResult,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -9,6 +10,11 @@ import {
   getChangeRequestTerminology,
   type ChangeRequestTerminology,
 } from "../sourceControlPresentation";
+
+export {
+  prepareGitActionForStackSubmit,
+  shouldSubmitStackAfterGitAction,
+} from "@t3tools/client-runtime/state/vcs";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -29,6 +35,60 @@ export interface GitQuickAction {
   kind: "run_action" | "run_pull" | "open_pr" | "open_publish" | "show_hint";
   action?: GitStackedAction;
   hint?: string;
+}
+
+export function resolveGitControlBusyStates(input: {
+  readonly gitActionRunning: boolean;
+  readonly stackActionPending: boolean;
+  readonly stackQueryPending: boolean;
+  readonly stackQueryFailed: boolean;
+}) {
+  const gitControlsBusy = input.gitActionRunning || input.stackActionPending;
+  return {
+    gitControlsBusy,
+    stackControlsBusy: gitControlsBusy || input.stackQueryPending || input.stackQueryFailed,
+  };
+}
+
+export function canUsePullRequestStackActions(
+  availability: PullRequestStackCurrentResult["availability"] | undefined,
+): boolean {
+  return availability === "available";
+}
+
+export async function runWithPendingState<T>(
+  setPending: (pending: boolean) => void,
+  operation: () => Promise<T>,
+): Promise<T> {
+  setPending(true);
+  try {
+    return await operation();
+  } finally {
+    setPending(false);
+  }
+}
+
+export function adaptMenuItemsForStack(
+  items: ReadonlyArray<GitActionMenuItem>,
+): GitActionMenuItem[] {
+  return items.flatMap((item) => {
+    if (item.kind === "open_pr") return [item];
+    if (item.id === "pr") return [];
+    return [item.id === "push" ? { ...item, label: "Push & submit stack" } : item];
+  });
+}
+
+export function adaptQuickActionForStack(action: GitQuickAction): GitQuickAction {
+  if (action.kind !== "run_action" || action.action === undefined || action.action === "commit") {
+    return action;
+  }
+  return {
+    ...action,
+    label:
+      action.action === "commit_push" || action.action === "commit_push_pr"
+        ? "Commit & submit stack"
+        : "Submit stack",
+  };
 }
 
 export interface DefaultBranchActionDialogCopy {

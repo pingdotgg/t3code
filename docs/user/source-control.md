@@ -35,6 +35,36 @@ T3 Code works with the platforms your team already uses:
 - T3 Code can suggest titles and descriptions based on your commits
 - Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, and Azure DevOps Pull Requests
 
+### Build a Stack of Small Pull Requests
+
+Stacked pull requests are available for GitHub repositories. A stack keeps each small change in
+its own branch and pull request, in order.
+
+1. Install the official GitHub Stack extension on the machine running T3 Code:
+   ```bash
+   gh extension install github/gh-stack
+   ```
+2. On a feature branch, open the Git actions menu and select **Start stack with this branch**.
+3. Select **Add next stack step** when the next change needs its own pull request.
+4. Commit as usual. Push and pull request actions now submit the full stack and update every step
+   together.
+
+Use **Sync stack** when the base branch or an earlier step changes. Use **Unstack pull requests**
+to remove the stack link without deleting branches or pull requests.
+
+On the **Pull requests** page, stacked items show their step number. Open a pull request to see the
+whole stack, move between steps, and review its summary, timeline, commits, and diff as usual.
+**Merge through step N** names and merges the selected step and each open step below it. **Merge
+only this PR** remains available in the extra actions menu. After a review, **Review next step**
+moves to the next open pull request.
+
+The branch toolbar shows the current step. The command palette can view, add, share, or refresh the
+current stack. Source Control settings checks the GitHub Stack extension and repository support.
+Mobile shows every step and the same create, share, refresh, and unstack actions.
+
+When you send a pull request task to an agent, T3 Code also sends the stack step and its nearest
+steps. This helps the agent keep a change in the correct pull request.
+
 **Stay on top of open reviews**
 
 - See if your current branch already has an open PR/MR

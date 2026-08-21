@@ -1,9 +1,11 @@
 import { memo } from "react";
+import { LayersIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
@@ -22,6 +24,7 @@ function PullRequestRowImpl({
   showProvider,
   environmentLabel,
   matchedElsewhere,
+  stackPosition,
   onSelect,
 }: {
   entry: EnvironmentPullRequestEntry;
@@ -36,6 +39,7 @@ function PullRequestRowImpl({
    * commit message. Saying so is the difference between a result and an apparently random row.
    */
   matchedElsewhere?: boolean;
+  stackPosition?: { readonly position: number; readonly total: number } | undefined;
   onSelect: (entry: EnvironmentPullRequestEntry) => void;
 }) {
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
@@ -60,7 +64,16 @@ function PullRequestRowImpl({
         baseBranch={entry.baseBranch}
       />
       <span className="min-w-0">
-        <span className="block truncate text-sm font-medium text-foreground">{entry.title}</span>
+        <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+          <span className="truncate">{entry.title}</span>
+          {stackPosition ? (
+            <Badge size="sm" variant="outline">
+              <LayersIcon aria-hidden />
+              <span className="sr-only">Stack step </span>
+              {stackPosition.position}/{stackPosition.total}
+            </Badge>
+          ) : null}
+        </span>
         <PullRequestMetaLine className="mt-0.5 text-xs text-muted-foreground/70">
           <span className="flex shrink-0 items-center gap-1">
             {showProvider ? (

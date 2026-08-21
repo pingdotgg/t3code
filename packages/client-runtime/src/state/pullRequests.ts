@@ -21,6 +21,40 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
   "EnvironmentHttpConnectionNotReadyError",
 )<{ readonly message: string }> {}
 
+export function createPullRequestStackEnvironmentAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  const commandScheduler = createAtomCommandScheduler();
+  const serialPerEnvironment = {
+    mode: "serial",
+    key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
+  } as const;
+  return {
+    stackList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-request-stacks:list",
+      tag: WS_METHODS.pullRequestStacksList,
+      staleTimeMs: 30_000,
+    }),
+    stackCurrent: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-request-stacks:current",
+      tag: WS_METHODS.pullRequestStacksCurrent,
+      staleTimeMs: 15_000,
+    }),
+    runStackAction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-request-stacks:run-action",
+      tag: WS_METHODS.pullRequestStacksRunAction,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+    mergeStack: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-request-stacks:merge",
+      tag: WS_METHODS.pullRequestStacksMerge,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+  };
+}
+
 /**
  * Every read shells out to the GitHub CLI, so results are reused for a short while and
  * refreshed explicitly. Mutations run serially per environment: `gh` actions on the same
@@ -182,5 +216,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
+    ...createPullRequestStackEnvironmentAtoms(runtime),
   };
 }

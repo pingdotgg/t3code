@@ -98,6 +98,7 @@ import {
   pullRequestEnvironment,
   usePullRequestList,
   usePullRequestListStats,
+  usePullRequestStacks,
   type EnvironmentQueryTarget,
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -624,6 +625,30 @@ function PullRequestsRouteView() {
     ],
   );
   const listQuery = usePullRequestList(listTargets);
+  const stackTargets = useMemo(
+    () =>
+      projects.flatMap((project) =>
+        project.repositoryIdentity?.provider === "github" &&
+        environments.find((environment) => environment.environmentId === project.environmentId)
+          ?.serverConfig?.environment.capabilities.pullRequestStacks === true
+          ? [{ environmentId: project.environmentId, input: { projectId: project.id } }]
+          : [],
+      ),
+    [environments, projects],
+  );
+  const stackQuery = usePullRequestStacks(stackTargets);
+  const stackPositions = useMemo(() => {
+    const positions = new Map<string, { position: number; total: number }>();
+    for (const stack of stackQuery.stacks) {
+      for (const step of stack.steps) {
+        positions.set(`${stack.environmentId}:${stack.projectId}:${step.pullRequestNumber}`, {
+          position: step.position,
+          total: stack.steps.length,
+        });
+      }
+    }
+    return positions;
+  }, [stackQuery.stacks]);
 
   /**
    * The same filters with nothing typed, read whether or not anything is. It is the same atom the
@@ -723,6 +748,7 @@ function PullRequestsRouteView() {
     authoredQuery.refresh();
     reviewingQuery.refresh();
     statsQuery.refresh();
+    stackQuery.refresh();
     setDetailRefreshToken((token) => token + 1);
   };
   const refreshing = invalidating || listQuery.isPending;
@@ -1386,6 +1412,9 @@ function PullRequestsRouteView() {
                     typedParsed.text.length > 0 &&
                     scorePullRequestMatch(entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
                   }
+                  stackPosition={stackPositions.get(
+                    `${entry.environmentId}:${entry.projectId}:${entry.number}`,
+                  )}
                   selected={
                     selected?.environmentId === entry.environmentId &&
                     selected.repository === entry.repository &&
@@ -1607,6 +1636,17 @@ function PullRequestsRouteView() {
                 reviewingQuery.refresh();
               }}
               onStateChange={handlePullRequestTabStatusChange}
+              onNavigatePullRequest={(number) => {
+                if (rightPanelRef === null) return;
+                const target = { ...activePullRequestSurface, number };
+                useRightPanelStore.getState().openPullRequest(rightPanelRef, target);
+                updateSearch({
+                  repository: target.repository,
+                  number,
+                  selectedProjectId: target.projectId as ProjectId,
+                  selectedEnvironmentId: target.environmentId as EnvironmentId,
+                });
+              }}
             />
           </RightPanelTabs>
         ) : null}

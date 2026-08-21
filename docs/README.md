@@ -34,6 +34,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Environment auth](./internals/environment-auth.md)
+- [Stacked pull requests](./internals/stacked-pull-requests.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)
 - [Engineering work artifacts](./internals/work-artifacts.md)

@@ -51,6 +51,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server exposes the pull-request list, detail, activity, diff, and mutation APIs. Absent on
       servers from before the pull-request workspace shipped, so clients must not probe them. */
   pullRequests: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes GitHub pull-request stack reads and mutations. */
+  pullRequestStacks: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.settle / thread.unsettle commands. Absent on
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */

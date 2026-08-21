@@ -97,6 +97,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
+import { PullRequestStackPicker } from "./PullRequestStackPicker";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
   buildAddSelectionToAgentHandoff,
@@ -104,16 +105,21 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildPullRequestStackHandoffContext,
   buildResolveConflictsPrompt,
+  findPullRequestStack,
   handoffPrompt,
   handoffReviewComments,
-  latestPullRequestReviewOutcomes,
   isStackedPullRequestBase,
-  pullRequestActionMenuHasGroup,
+  latestPullRequestReviewOutcomes,
+  nextOpenPullRequestStackStep,
   pullRequestActionNeedsHostRefresh,
+  pullRequestActionMenuHasGroup,
   pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
+  pullRequestsMergedThrough,
+  pullRequestStackMergeCopy,
   readableFailure,
   resolveBaseFreshness,
   type PullRequestFinding,
@@ -367,6 +373,7 @@ export function PullRequestDetailPanel({
   onActed,
   onClose,
   onStateChange,
+  onNavigatePullRequest,
   context = "page",
   composerDraftTarget,
 }: {
@@ -393,6 +400,8 @@ export function PullRequestDetailPanel({
     state: PullRequestState;
     isDraft: boolean;
   }) => void;
+  /** Opens another step without changing how the current pull request is rendered. */
+  onNavigatePullRequest?: (pullRequestNumber: number) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -456,7 +465,7 @@ export function PullRequestDetailPanel({
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>("merge");
   const [confirmation, setConfirmation] = useState<{
     readonly open: boolean;
-    readonly action: "merge" | "close" | "enable-auto-merge";
+    readonly action: "merge" | "merge-stack" | "close" | "enable-auto-merge";
   }>({ open: false, action: "merge" });
   const confirmAction = confirmation.action;
   // Which handoff is preparing, keyed so a per-finding button can say "Preparing..." on itself
@@ -472,8 +481,21 @@ export function PullRequestDetailPanel({
     void loadCodeTab();
   }, []);
 
+  const { environments } = useEnvironments();
+  const supportsStacks =
+    environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
+      ?.environment.capabilities.pullRequestStacks === true;
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
+  );
+  const coreDetail = detailQuery.data;
+  const stackQuery = useEnvironmentQuery(
+    supportsStacks && coreDetail?.provider === "github"
+      ? pullRequestEnvironment.stackList({
+          environmentId,
+          input: { projectId: reference.projectId },
+        })
+      : null,
   );
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
@@ -485,8 +507,15 @@ export function PullRequestDetailPanel({
   const _diffWarmUpQuery = useEnvironmentQuery(
     pullRequestEnvironment.diff({ environmentId, input: { ...reference } }),
   );
-  const coreDetail = detailQuery.data;
   const activity = activityQuery.data;
+  const stack = useMemo(
+    () => findPullRequestStack(stackQuery.data?.stacks ?? [], reference.number),
+    [reference.number, stackQuery.data?.stacks],
+  );
+  const currentStackStep = stack?.steps.find((step) => step.pullRequestNumber === reference.number);
+  const stackMergeSteps = stack ? pullRequestsMergedThrough(stack, reference.number) : [];
+  const stackMergeCopy = pullRequestStackMergeCopy(stackMergeSteps.length);
+  const nextReviewStep = stack ? nextOpenPullRequestStackStep(stack, reference.number) : null;
   const detail = useMemo(
     () =>
       coreDetail === null
@@ -526,7 +555,8 @@ export function PullRequestDetailPanel({
   const refreshDetail = useCallback(() => {
     detailQuery.refresh();
     activityQuery.refresh();
-  }, [activityQuery.refresh, detailQuery.refresh]);
+    stackQuery.refresh();
+  }, [activityQuery.refresh, detailQuery.refresh, stackQuery.refresh]);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
     null,
   );
@@ -574,10 +604,12 @@ export function PullRequestDetailPanel({
     void refreshFromHost();
   }, [forcedRefreshToken, refreshFromHost]);
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
+  const mergeStack = useAtomCommand(pullRequestEnvironment.mergeStack, { reportFailure: false });
   // Which action is in flight, not merely that one is: every control here is disabled while any
   // of them runs, but only the button that was pressed may say what it is doing.
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
-  const actionPending = pendingAction !== null;
+  const [stackMergePending, setStackMergePending] = useState(false);
+  const actionPending = pendingAction !== null || stackMergePending;
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   // Scoped to the pull request it was typed against, since this one panel shows a different one
   // every time it is opened and a half-written title must not follow it there.
@@ -588,7 +620,6 @@ export function PullRequestDetailPanel({
   const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
-  const { environments } = useEnvironments();
   const projects = useProjects();
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
@@ -657,7 +688,16 @@ export function PullRequestDetailPanel({
       });
       return;
     }
-    toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
+    toastManager.add({
+      type: "success",
+      title: ACTION_SUCCESS_LABELS[action],
+      ...(action === "update-branch" &&
+      currentStackStep &&
+      stack &&
+      currentStackStep.position < stack.steps.length
+        ? { description: "Later stack steps may need refresh." }
+        : {}),
+    });
     // A branch update moves the head commit, which leaves the diff atom pointed at a comparison
     // that no longer exists — the same staleness the manual refresh button fixes, so it goes
     // through that path rather than a second one. Every other action here only changes metadata;
@@ -668,6 +708,37 @@ export function PullRequestDetailPanel({
     } else {
       refreshDetail();
     }
+    onActed?.();
+  };
+
+  const performStackMerge = async () => {
+    if (actionPending) return;
+    setStackMergePending(true);
+    const result = await mergeStack({
+      environmentId,
+      input: {
+        projectId: reference.projectId,
+        pullRequestNumber: reference.number,
+        mergeMethod: selectedMergeMethod,
+      },
+    });
+    setStackMergePending(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not merge this stack",
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          "Check that every selected pull request is open, ready, and allowed to merge.",
+        ),
+      });
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: result.value.status === "queued" ? "Stack added to merge queue" : "Stack merged",
+    });
+    refreshDetail();
     onActed?.();
   };
 
@@ -713,6 +784,9 @@ export function PullRequestDetailPanel({
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
     const key = composerTargetKey(target);
+    const stackContext = stack
+      ? buildPullRequestStackHandoffContext(stack, reference.number)
+      : null;
     const prompt = handoffPrompt(
       { prompt: draft?.prompt ?? "", lastHandoffPrompt: lastHandoffPromptByDraft.get(key) },
       task.prompt,
@@ -721,7 +795,10 @@ export function PullRequestDetailPanel({
     store.setPrompt(target, prompt);
     store.setReviewComments(
       target,
-      handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
+      handoffReviewComments(draft?.reviewComments ?? [], [
+        ...(task.reviewComments ?? []),
+        ...(stackContext ? [stackContext] : []),
+      ]),
     );
   };
 
@@ -1218,6 +1295,17 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 min-w-0 flex-nowrap items-center justify-end gap-1">
           {detail ? (
             <>
+              {stack ? (
+                <PullRequestStackPicker
+                  kind="remote"
+                  repository={reference.repository}
+                  stack={stack}
+                  pullRequestNumber={reference.number}
+                  {...(onNavigatePullRequest === undefined
+                    ? {}
+                    : { onSelect: onNavigatePullRequest })}
+                />
+              ) : null}
               {/* Checking a pull request out is the reason to open one here at all, so it is a
                   button of its own rather than a side effect of asking an agent for something.
                   It asks where, because the two answers are not interchangeable: one leaves your
@@ -1303,9 +1391,20 @@ export function PullRequestDetailPanel({
                 <Button
                   size="xs"
                   disabled={actionPending}
-                  onClick={() => setConfirmation({ open: true, action: "merge" })}
+                  onClick={() =>
+                    setConfirmation({
+                      open: true,
+                      action: stack ? "merge-stack" : "merge",
+                    })
+                  }
                 >
-                  {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
+                  {stackMergePending
+                    ? stackMergeCopy.pending
+                    : pendingAction === "merge"
+                      ? "Merging..."
+                      : stack
+                        ? stackMergeCopy.action
+                        : selectedMergeMethodLabel}
                 </Button>
               ) : null}
               <Menu>
@@ -1326,6 +1425,15 @@ export function PullRequestDetailPanel({
                     <RefreshCwIcon className="size-3.5" />
                     Refresh
                   </MenuItem>
+                  {stack && primaryAction === "merge" ? (
+                    <MenuItem
+                      disabled={actionPending}
+                      onClick={() => setConfirmation({ open: true, action: "merge" })}
+                    >
+                      <GitMergeIcon className="size-3.5" />
+                      Merge only this PR
+                    </MenuItem>
+                  ) : null}
                   <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
                     <MessageCircleQuestionIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
                     <span className="flex min-w-0 flex-col">
@@ -1960,6 +2068,12 @@ export function PullRequestDetailPanel({
                     fixFindingLabel={handoffLabels.fixFinding}
                     onFixFinding={startFixFinding}
                     onRefresh={refreshDetail}
+                    {...(nextReviewStep && onNavigatePullRequest
+                      ? {
+                          onReviewNextStep: () =>
+                            onNavigatePullRequest(nextReviewStep.pullRequestNumber),
+                        }
+                      : {})}
                     refreshToken={refreshToken}
                   />
                 </Suspense>
@@ -1979,21 +2093,25 @@ export function PullRequestDetailPanel({
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmAction === "merge"
-                ? "Merge pull request?"
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge?"
-                  : "Close pull request?"}
+              {confirmAction === "merge-stack"
+                ? stackMergeCopy.confirmation
+                : confirmAction === "merge"
+                  ? "Merge pull request?"
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge?"
+                    : "Close pull request?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmAction === "merge"
-                ? `This merges #${reference.number} using ${selectedMergeMethod}.`
-                : confirmAction === "enable-auto-merge"
-                  ? // The host merges this as soon as it considers the pull request ready, which
-                    // may be immediately — there is no telling from here whether anything is
-                    // still outstanding.
-                    `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
-                  : `This closes #${reference.number} without merging it.`}
+              {confirmAction === "merge-stack" && stack
+                ? `This merges ${stackMergeSteps.map((step) => `#${step.pullRequestNumber} ${step.branch}`).join(", ")}, from the bottom up.`
+                : confirmAction === "merge"
+                  ? `This merges #${reference.number} using ${selectedMergeMethod}.${currentStackStep && stack && currentStackStep.position < stack.steps.length ? " Later steps may need refresh." : ""}`
+                  : confirmAction === "enable-auto-merge"
+                    ? // The host merges this as soon as it considers the pull request ready, which
+                      // may be immediately — there is no telling from here whether anything is
+                      // still outstanding.
+                      `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
+                    : `This closes #${reference.number} without merging it.${currentStackStep && stack && currentStackStep.position < stack.steps.length ? " Later steps may need refresh." : ""}`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2007,17 +2125,20 @@ export function PullRequestDetailPanel({
               onClick={() => {
                 const action = confirmAction;
                 setConfirmation((current) => ({ ...current, open: false }));
+                if (action === "merge-stack") void performStackMerge();
                 if (action === "merge") void perform("merge", selectedMergeMethod);
                 if (action === "enable-auto-merge")
                   void perform("enable-auto-merge", selectedMergeMethod);
                 if (action === "close") void perform("close");
               }}
             >
-              {confirmAction === "merge"
-                ? selectedMergeMethodLabel
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge"
-                  : "Close"}
+              {confirmAction === "merge-stack"
+                ? stackMergeCopy.action
+                : confirmAction === "merge"
+                  ? selectedMergeMethodLabel
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge"
+                    : "Close"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

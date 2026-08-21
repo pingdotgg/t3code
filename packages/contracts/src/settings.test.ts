@@ -180,7 +180,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("provider enabled defaults", () => {
-  it("enables only the stable bindings by default", () => {
+  it("enables supported bindings by default", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providers.codex.enabled).toBe(true);
     expect(decoded.providers.claudeAgent.enabled).toBe(true);
