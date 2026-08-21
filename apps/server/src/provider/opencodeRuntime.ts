@@ -196,7 +196,7 @@ function parseServerUrlFromOutput(output: string): string | null {
   return null;
 }
 
-const SLUG_LINE_RE = /^(\S+\/\S+)\s*$/;
+const SLUG_LINE_RE = /^(\S+\/.*\S)\s*$/;
 const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
 
 // Agents that are always hidden in OpenCode but the CLI "agent list" command
