@@ -17,7 +17,6 @@ function createTooltipScrollDismissController(): TooltipScrollDismissController 
     },
     dismissHoveredTooltip() {
       const tooltip = hoveredTooltip;
-      hoveredTooltip = null;
 
       if (
         tooltip === null ||
@@ -26,6 +25,7 @@ function createTooltipScrollDismissController(): TooltipScrollDismissController 
         return;
       }
 
+      hoveredTooltip = null;
       tooltip.dismiss();
     },
   };

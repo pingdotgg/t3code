@@ -95,6 +95,20 @@ describe("tooltip scroll dismissal", () => {
     expect(dismiss).not.toHaveBeenCalled();
   });
 
+  it("dismisses a hovered tooltip on a later scroll after focus leaves", () => {
+    const controller = createTooltipScrollDismissController();
+    const { ownerDocument, trigger } = createFakeTooltipTrigger();
+    const dismiss = vi.fn();
+    ownerDocument.activeElement = trigger;
+
+    controller.setHoveredTooltip({ trigger, dismiss });
+    controller.dismissHoveredTooltip();
+    ownerDocument.activeElement = null;
+    controller.dismissHoveredTooltip();
+
+    expect(dismiss).toHaveBeenCalledOnce();
+  });
+
   it("keeps a tooltip open when focus is within its trigger", () => {
     const controller = createTooltipScrollDismissController();
     const { descendants, ownerDocument, trigger } = createFakeTooltipTrigger();
