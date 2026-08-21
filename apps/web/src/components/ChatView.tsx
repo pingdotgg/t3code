@@ -4860,6 +4860,13 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "rightPanel.openTerminal") {
+        event.preventDefault();
+        event.stopPropagation();
+        addTerminalSurface();
+        return;
+      }
+
       if (command === "terminal.split") {
         event.preventDefault();
         event.stopPropagation();
