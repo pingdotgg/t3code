@@ -56,10 +56,6 @@ export function createNavigationHistory(history: RouterHistory) {
         history.back();
       }
     },
-    dispose: () => {
-      stopTracking?.();
-      stopTracking = null;
-    },
     forward: () => {
       if (snapshot.canGoForward) {
         history.forward();
