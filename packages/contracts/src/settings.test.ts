@@ -35,6 +35,7 @@ describe("ClientSettings spellcheck", () => {
     expect(
       decodeClientSettingsPatch({ spellcheckLanguages: ["pt-BR"] }).spellcheckLanguages,
     ).toEqual(["pt-BR"]);
+    expect(decodeClientSettingsPatch({ spellcheckEnabled: false }).spellcheckEnabled).toBe(false);
   });
 
   it("rejects an empty language tag", () => {

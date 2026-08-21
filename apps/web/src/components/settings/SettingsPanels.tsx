@@ -1330,7 +1330,7 @@ function WordWrapRow() {
 
 const SPELLCHECK_LANGUAGE_DISPLAY_NAMES = new Intl.DisplayNames(["en"], { type: "language" });
 
-function spellcheckLanguageLabel(language: string): string {
+function spellcheckLanguageLabel(language: string) {
   try {
     return SPELLCHECK_LANGUAGE_DISPLAY_NAMES.of(language) ?? language;
   } catch {
@@ -1338,9 +1338,7 @@ function spellcheckLanguageLabel(language: string): string {
   }
 }
 
-function SpellcheckRow() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+function useSpellcheckLanguageModel(configuredLanguages: readonly string[]) {
   const spellcheckInfo = useMemo(
     () =>
       isElectron && typeof window !== "undefined"
@@ -1348,17 +1346,31 @@ function SpellcheckRow() {
         : null,
     [],
   );
-  const canSelectLanguages = spellcheckInfo?.canSelectLanguages === true;
-  const availableLanguages = spellcheckInfo?.availableLanguages ?? [];
-  const availableLanguageSet = new Set(availableLanguages);
-  const selectedLanguages = new Set(settings.spellcheckLanguages);
-  const languageOptions = useMemo(
-    () =>
-      Array.from(new Set([...availableLanguages, ...settings.spellcheckLanguages]))
+
+  return useMemo(() => {
+    const availableLanguages = spellcheckInfo?.availableLanguages ?? [];
+    return {
+      spellcheckInfo,
+      canSelectLanguages: spellcheckInfo?.canSelectLanguages === true,
+      availableLanguageSet: new Set(availableLanguages),
+      selectedLanguages: new Set(configuredLanguages),
+      languageOptions: Array.from(new Set([...availableLanguages, ...configuredLanguages]))
         .map((id) => ({ id, label: spellcheckLanguageLabel(id) }))
         .sort((left, right) => left.label.localeCompare(right.label)),
-    [availableLanguages, settings.spellcheckLanguages],
-  );
+    };
+  }, [configuredLanguages, spellcheckInfo]);
+}
+
+function SpellcheckRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const {
+    spellcheckInfo,
+    canSelectLanguages,
+    availableLanguageSet,
+    selectedLanguages,
+    languageOptions,
+  } = useSpellcheckLanguageModel(settings.spellcheckLanguages);
   const description = !isElectron
     ? "Underline misspelled words in the composer. The browser picks the dictionary."
     : spellcheckInfo?.canSelectLanguages === false

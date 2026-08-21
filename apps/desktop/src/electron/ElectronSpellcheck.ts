@@ -418,11 +418,11 @@ export const syncBrowserWindowSpellChecker = (
     const electronApp = yield* ElectronApp.ElectronApp;
     const fileSystem = yield* FileSystem.FileSystem;
 
-    let settings = settingsOverride;
-    if (settings === undefined) {
+    const settings = yield* Effect.gen(function* () {
+      if (settingsOverride !== undefined) return settingsOverride;
       const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
-      settings = Option.getOrElse(yield* clientSettings.get, () => DEFAULT_CLIENT_SETTINGS);
-    }
+      return Option.getOrElse(yield* clientSettings.get, () => DEFAULT_CLIENT_SETTINGS);
+    });
 
     let systemLocale = "";
     let preferredSystemLanguages: readonly string[] = [];
