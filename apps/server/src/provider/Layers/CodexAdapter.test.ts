@@ -513,6 +513,67 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("does not treat a trailing child interaction as a restart", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+      const childPayload = {
+        agentThreadId: "child-thread-1",
+        agentPath: "/root/researcher",
+        role: "researcher",
+      };
+
+      yield* runtime.emit({
+        id: asEventId("evt-child-turn-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/turnCompleted",
+        payload: {
+          ...childPayload,
+          turn: { id: "child-turn-1", status: "completed" },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-child-interacted"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.001Z",
+        method: "collabAgent/activity",
+        payload: { ...childPayload, activityKind: "interacted" },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-child-turn-started"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.002Z",
+        method: "collabAgent/turnStarted",
+        payload: { ...childPayload, turn: { id: "child-turn-2", status: "inProgress" } },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(events.length, 3);
+      NodeAssert.equal(events[0]?.type, "task.updated");
+      if (events[0]?.type === "task.updated") {
+        NodeAssert.equal(events[0].payload.status, "idle");
+      }
+      NodeAssert.equal(events[1]?.type, "task.progress");
+      if (events[1]?.type === "task.progress") {
+        NodeAssert.equal(events[1].payload.status, undefined);
+        NodeAssert.equal(events[1].payload.description, "researcher");
+      }
+      NodeAssert.equal(events[2]?.type, "task.updated");
+      if (events[2]?.type === "task.updated") {
+        NodeAssert.equal(events[2].payload.status, "running");
+      }
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

@@ -588,12 +588,15 @@ function mapCollabAgentEvent(
           },
         ];
       }
-      // interacted → the child is (again) actively driven.
+      // `interacted` is an activity notification, not a lifecycle transition:
+      // Codex can emit it after turnCompleted. Keep the child's identity and
+      // activity visible without reviving an already-idle task. Real restarts
+      // arrive through turnStarted or statusChanged(active).
       return [
         {
           ...base,
-          type: "task.updated",
-          payload: { taskId, status: "running", ...statusLinkage },
+          type: "task.progress",
+          payload: { taskId, description: title, ...statusLinkage },
         },
       ];
     }
