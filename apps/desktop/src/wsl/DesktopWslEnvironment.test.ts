@@ -138,11 +138,13 @@ describe("WSL runtime cache", () => {
     const script = buildWslRuntimeInstallScript(
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
+      "b".repeat(64),
     );
 
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
     expect(script).toContain('  [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&');
-    expect(script).toContain('  [ -f "$runtime_root/node_modules/node-pty/package.json" ]');
+    expect(script).toContain('  [ -f "$runtime_root/node_modules/node-pty/package.json" ] &&');
+    expect(script).toContain('    node_pty_payload_present "$runtime_root"');
     expect(script).not.toContain("node_modules/effect/package.json");
     expect(script).toContain("if runtime_is_ready; then");
     expect(script).toContain("trap 'exit 1' HUP INT TERM");
@@ -169,6 +171,75 @@ describe("WSL runtime cache", () => {
     expect(existingRuntimeMoved).toBeGreaterThan(readinessAfterLock);
   });
 
+  it("verifies the archive digest before extracting, and only on a cache miss", () => {
+    const script = buildWslRuntimeInstallScript(
+      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
+      "1.2.3-x64",
+      "b".repeat(64),
+    );
+
+    const expected = "b".repeat(64);
+    expect(script).toContain(
+      "archive_sha=$(sha256sum '/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz' | cut -d ' ' -f 1)",
+    );
+    expect(script).toContain(`if [ "$archive_sha" != '${expected}' ]; then`);
+
+    // A warm cache exits before the hash, so reuse never pays for it, and the
+    // mismatch check runs before anything mutates the cache.
+    const readyShortCircuit = script.indexOf("if runtime_is_ready; then");
+    const digestChecked = script.indexOf("archive_sha=$(sha256sum");
+    const existingRuntimeMoved = script.indexOf('mv -T "$runtime_root" "$runtime_stale"');
+    const extracted = script.indexOf("tar -xzf");
+    expect(digestChecked).toBeGreaterThan(readyShortCircuit);
+    expect(existingRuntimeMoved).toBeGreaterThan(digestChecked);
+    expect(extracted).toBeGreaterThan(digestChecked);
+  });
+
+  it("treats a runtime whose native payload went missing as a cache miss", () => {
+    const script = buildWslRuntimeInstallScript(
+      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
+      "1.2.3-x64",
+      "b".repeat(64),
+    );
+
+    // A glob, not a mapped `uname -m`: this is a presence check, and the later
+    // native probe is what judges arch and loadability.
+    expect(script).toContain(
+      '  for candidate in "$1"/node_modules/node-pty/prebuilds/linux-*/pty.node; do',
+    );
+    // The marker the probe reads must sit beside the binary, or the runtime is
+    // just as unusable as one missing pty.node outright.
+    expect(script).toContain('    [ -f "${candidate%/*}/t3code-wsl-node-pty.json" ] || continue');
+
+    // Readiness gates the short-circuit, so a cache missing the payload
+    // reinstalls from the archive instead of being reused forever.
+    const payloadCheckDefined = script.indexOf("node_pty_payload_present() {");
+    const readinessDefined = script.indexOf("runtime_is_ready() {");
+    const readyShortCircuit = script.indexOf("if runtime_is_ready; then");
+    expect(payloadCheckDefined).toBeGreaterThan(-1);
+    expect(payloadCheckDefined).toBeLessThan(readinessDefined);
+    expect(readinessDefined).toBeLessThan(readyShortCircuit);
+  });
+
+  it("refuses to mark an archive without a native payload as ready", () => {
+    const script = buildWslRuntimeInstallScript(
+      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
+      "1.2.3-x64",
+      "b".repeat(64),
+    );
+
+    expect(script).toContain('if ! node_pty_payload_present "$runtime_tmp"; then');
+
+    // The extracted tree is rejected before the ready marker is written, so a
+    // defective archive falls back to the mounted tree instead of caching.
+    const payloadValidated = script.indexOf('node_pty_payload_present "$runtime_tmp"');
+    const markerWritten = script.indexOf(': > "$runtime_tmp/.t3code-wsl-runtime-ready"');
+    const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
+    expect(payloadValidated).toBeGreaterThan(-1);
+    expect(markerWritten).toBeGreaterThan(payloadValidated);
+    expect(promoted).toBeGreaterThan(payloadValidated);
+  });
+
   it("parses only absolute Linux runtime paths", () => {
     expect(parseWslRuntimeRoot("runtimeRoot:/home/josh/.t3/runtime/1.2.3-x64\n")).toBe(
       "/home/josh/.t3/runtime/1.2.3-x64",
@@ -186,6 +257,27 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('[ "$candidate" != "$previous_runtime" ] || continue');
     expect(script).toContain('[ -f "$candidate/.t3code-wsl-runtime-ready" ] || continue');
     expect(script).toContain('rm -rf -- "$candidate"');
+  });
+
+  it("never deletes a runtime another backend is running from", () => {
+    const script = buildWslRuntimePruneScript("1.2.3/x64");
+
+    // The running backend's argv holds `<runtime>/apps/server/dist/bin.mjs`, so
+    // the process itself is the lease and exiting releases it. Nothing has to be
+    // registered up front, which is what makes this cover backends already
+    // running from an older version that knows nothing about pruning.
+    expect(script).toContain('  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null');
+    expect(script).toContain('  ! runtime_in_use "$candidate" || continue');
+
+    // Without visible processes the retention rules cannot tell a live cache
+    // from an abandoned one, so the sweep is skipped rather than guessed at.
+    expect(script).toContain("[ -d /proc/1 ] || exit 0");
+
+    // The guard has to gate the delete, not just exist.
+    const inUseChecked = script.indexOf('! runtime_in_use "$candidate"');
+    const removed = script.indexOf('rm -rf -- "$candidate"');
+    expect(inUseChecked).toBeGreaterThan(-1);
+    expect(removed).toBeGreaterThan(inUseChecked);
   });
 
   it("sweeps orphaned install scratch directories the ready-marker loops cannot see", () => {

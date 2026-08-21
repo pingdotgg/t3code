@@ -250,7 +250,7 @@ export const parseWslRuntimeArchiveHash = (value: string): string | null => {
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
-  readonly runtimeArchive: { readonly windowsPath: string; readonly runtimeId: string } | null;
+  readonly runtimeArchive: DesktopWslEnvironment.WslRuntimeArchive | null;
   readonly allowBuild: boolean;
 }): Effect.fn.Return<
   WslPreflightSuccess | WslPreflightFailure,
@@ -308,11 +308,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   let windowsEntryPath = environment.backendEntryPath;
   let runtimeId: string | undefined;
   if (input.runtimeArchive !== null) {
-    const runtime = yield* wslEnv.prepareRuntime(
-      runningDistro,
-      input.runtimeArchive.windowsPath,
-      input.runtimeArchive.runtimeId,
-    );
+    const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
     if (runtime.ok) {
       linuxAppRoot = runtime.linuxAppRoot;
       runtimeId = input.runtimeArchive.runtimeId;
@@ -547,6 +543,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
         : {
             windowsPath: archivePath,
             runtimeId: `${environment.appVersion}-${environment.processArch}-${archiveHash}`,
+            sha256: archiveHash,
           },
     // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
     // attached to the Windows artifact — see build-desktop-artifact.ts), so the

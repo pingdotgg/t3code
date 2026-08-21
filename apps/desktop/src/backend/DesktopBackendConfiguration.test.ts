@@ -293,7 +293,11 @@ describe("DesktopBackendConfiguration", () => {
       yield* fileSystem.writeFileString(archivePath, "archive");
       yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
 
-      const observedArchives: Array<{ windowsArchivePath: string; runtimeId: string }> = [];
+      const observedArchives: Array<{
+        windowsArchivePath: string;
+        runtimeId: string;
+        sha256: string;
+      }> = [];
       const observedNodePtyRoots: string[] = [];
       const linuxAppRoot = "/home/test/.t3/runtime/1.2.3-x64";
       const config = yield* Effect.gen(function* () {
@@ -317,8 +321,12 @@ describe("DesktopBackendConfiguration", () => {
                 isAvailable: true,
                 distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                 windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
-                prepareRuntime: (_distro, windowsArchivePath, runtimeId) => {
-                  observedArchives.push({ windowsArchivePath, runtimeId });
+                prepareRuntime: (_distro, archive) => {
+                  observedArchives.push({
+                    windowsArchivePath: archive.windowsPath,
+                    runtimeId: archive.runtimeId,
+                    sha256: archive.sha256,
+                  });
                   return { ok: true, linuxAppRoot };
                 },
                 ensureNodePty: (_distro, root) => {
@@ -343,6 +351,7 @@ describe("DesktopBackendConfiguration", () => {
         {
           windowsArchivePath: archivePath,
           runtimeId: `1.2.3-x64-${archiveHash}`,
+          sha256: archiveHash,
         },
       ]);
       assert.deepEqual(observedNodePtyRoots, [linuxAppRoot]);
@@ -394,9 +403,9 @@ describe("DesktopBackendConfiguration", () => {
                 isAvailable: true,
                 distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                 windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
-                prepareRuntime: (_distro, _archivePath, runtimeId) => {
-                  observedRuntimeIds.push(runtimeId);
-                  return { ok: true, linuxAppRoot: `/runtime/${runtimeId}` };
+                prepareRuntime: (_distro, archive) => {
+                  observedRuntimeIds.push(archive.runtimeId);
+                  return { ok: true, linuxAppRoot: `/runtime/${archive.runtimeId}` };
                 },
                 ensureNodePty: () => ({
                   ok: true,

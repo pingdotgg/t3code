@@ -33,6 +33,16 @@ export interface EnsureWslNodePtyOptions {
   readonly nodeEngineRange?: string | null;
 }
 
+// The packaged WSL runtime archive plus the identity the build recorded for
+// it. `sha256` is the digest of the archive bytes; `runtimeId` is the cache
+// key derived from it, and is only trustworthy because the install verifies
+// the bytes against `sha256` before caching under that key.
+export interface WslRuntimeArchive {
+  readonly windowsPath: string;
+  readonly runtimeId: string;
+  readonly sha256: string;
+}
+
 export type PrepareWslRuntimeResult =
   | {
       readonly ok: true;
@@ -93,8 +103,7 @@ export class DesktopWslEnvironment extends Context.Service<
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     readonly prepareRuntime: (
       distro: string | null,
-      windowsArchivePath: string,
-      runtimeId: string,
+      archive: WslRuntimeArchive,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     readonly ensureNodePty: (
@@ -249,9 +258,14 @@ const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
 export const sanitizeWslRuntimeId = (value: string): string =>
   value.replace(/[^A-Za-z0-9._-]/g, "_");
 
+// `archiveSha256` is the digest the build recorded alongside the archive. The
+// install verifies the archive bytes against it before extracting, so an
+// archive can never be promoted into the cache under an identity that does not
+// describe its contents.
 export const buildWslRuntimeInstallScript = (
   linuxArchivePath: string,
   runtimeId: string,
+  archiveSha256: string,
 ): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
@@ -259,10 +273,26 @@ export const buildWslRuntimeInstallScript = (
     'runtime_parent="$HOME/.t3/runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
+    // The native payload is the part of the tree the WSL backend actually
+    // dlopens, and the only part a user can plausibly break by hand. Checking
+    // node-pty's package.json alone let a runtime whose pty.node had gone
+    // missing stay cache-ready forever: every launch reused it and then failed
+    // the native probe, with no reinstall and no fallback. Match on the glob
+    // rather than a mapped `uname -m` so this stays a presence check; the probe
+    // is what decides whether the binary is the right arch and loadable.
+    "node_pty_payload_present() {",
+    '  for candidate in "$1"/node_modules/node-pty/prebuilds/linux-*/pty.node; do',
+    '    [ -f "$candidate" ] || continue',
+    '    [ -f "${candidate%/*}/t3code-wsl-node-pty.json" ] || continue',
+    "    return 0",
+    "  done",
+    "  return 1",
+    "}",
     "runtime_is_ready() {",
     '  [ -f "$ready_marker" ] &&',
     '    [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&',
-    '    [ -f "$runtime_root/node_modules/node-pty/package.json" ]',
+    '    [ -f "$runtime_root/node_modules/node-pty/package.json" ] &&',
+    '    node_pty_payload_present "$runtime_root"',
     "}",
     "if runtime_is_ready; then",
     `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
@@ -277,6 +307,15 @@ export const buildWslRuntimeInstallScript = (
     `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
     "  exit 0",
     "fi",
+    // Hash only on a cache miss: a warm launch already exited above, and a cold
+    // install is about to read the whole archive through tar anyway. `set -eu`
+    // turns a distro without sha256sum into an install failure, which falls back
+    // to the mounted server tree rather than trusting unverified bytes.
+    `archive_sha=$(sha256sum ${shellQuote(linuxArchivePath)} | cut -d ' ' -f 1)`,
+    `if [ "$archive_sha" != ${shellQuote(archiveSha256)} ]; then`,
+    `  printf 'WSL runtime archive does not match its recorded SHA-256 (expected %s, got %s)\\n' ${shellQuote(archiveSha256)} "$archive_sha" >&2`,
+    "  exit 1",
+    "fi",
     'if [ -e "$runtime_root" ]; then',
     `  runtime_stale=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.stale.XXXXXX")`,
     '  rmdir "$runtime_stale"',
@@ -290,6 +329,13 @@ export const buildWslRuntimeInstallScript = (
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp"`,
     'test -f "$runtime_tmp/apps/server/dist/bin.mjs"',
     'test -f "$runtime_tmp/node_modules/node-pty/package.json"',
+    // Never write the ready marker over a tree that is missing the native
+    // payload. Failing here drops out to the mounted-tree fallback, which is
+    // recoverable; promoting it would mark the defect ready and cache it.
+    'if ! node_pty_payload_present "$runtime_tmp"; then',
+    "  printf 'WSL runtime archive is missing its Linux node-pty binary\\n' >&2",
+    "  exit 1",
+    "fi",
     `: > "$runtime_tmp/${WSL_RUNTIME_READY_MARKER}"`,
     'if mv -T "$runtime_tmp" "$runtime_root" 2>/dev/null; then',
     "  :",
@@ -315,6 +361,19 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     'runtime_parent="$HOME/.t3/runtime"',
     `current_runtime="$runtime_parent/${safeRuntimeId}"`,
     '[ -d "$runtime_parent" ] || exit 0',
+    // Without a way to see the distro's processes we cannot tell which caches
+    // are load-bearing, and the retention rules below are not safe on their own.
+    // Skipping the sweep only costs disk; guessing costs another backend its
+    // runtime mid-session.
+    "[ -d /proc/1 ] || exit 0",
+    // A backend launched from a cache has that cache's path in its argv (the
+    // entry is `<runtime>/apps/server/dist/bin.mjs`), so the running process is
+    // itself the lease and it is released by exiting. The trailing slash keeps
+    // one runtime id from matching another that merely starts with it. This
+    // pruner reads its own script from stdin, so it cannot match itself.
+    "runtime_in_use() {",
+    '  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null',
+    "}",
     'previous_runtime=""',
     'for candidate in "$runtime_parent"/*; do',
     '  [ -d "$candidate" ] || continue',
@@ -329,6 +388,10 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     '  [ "$candidate" != "$current_runtime" ] || continue',
     '  [ "$candidate" != "$previous_runtime" ] || continue',
     `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || continue`,
+    // The newest-previous rule alone picks the wrong survivor whenever two
+    // versions run at once: the other live backend loses its slot to any newer
+    // idle cache, and each side then deletes the other.
+    '  ! runtime_in_use "$candidate" || continue',
     '  rm -rf -- "$candidate"',
     "done",
     // Both loops skip dot entries and require the ready marker, so scratch
@@ -706,24 +769,23 @@ const ensureNodePtyImpl = (
 
 const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(function* (
   distro: string | null,
-  windowsArchivePath: string,
-  runtimeId: string,
+  archive: WslRuntimeArchive,
   windowsToWslPath: (
     distro: string | null,
     windowsPath: string,
   ) => Effect.Effect<Option.Option<string>>,
 ): Effect.fn.Return<PrepareWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
-  const linuxArchivePath = yield* windowsToWslPath(distro, windowsArchivePath);
+  const linuxArchivePath = yield* windowsToWslPath(distro, archive.windowsPath);
   if (Option.isNone(linuxArchivePath)) {
     return {
       ok: false,
-      reason: `wslpath conversion failed for ${windowsArchivePath}`,
+      reason: `wslpath conversion failed for ${archive.windowsPath}`,
     } as const;
   }
 
   const install = yield* runWslShell(
     distro,
-    buildWslRuntimeInstallScript(linuxArchivePath.value, runtimeId),
+    buildWslRuntimeInstallScript(linuxArchivePath.value, archive.runtimeId, archive.sha256),
     RUNTIME_INSTALL_TIMEOUT,
     { resolveNode: false },
   );
@@ -969,8 +1031,7 @@ export interface DesktopWslEnvironmentTestStub {
   readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
   readonly prepareRuntime?: (
     distro: string | null,
-    windowsArchivePath: string,
-    runtimeId: string,
+    archive: WslRuntimeArchive,
   ) => PrepareWslRuntimeResult;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
   readonly ensureNodePty?: (
@@ -995,9 +1056,9 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
       getDistroIp: (distro) => Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>()),
-      prepareRuntime: (distro, windowsArchivePath, runtimeId) =>
+      prepareRuntime: (distro, archive) =>
         Effect.succeed(
-          stub.prepareRuntime?.(distro, windowsArchivePath, runtimeId) ?? {
+          stub.prepareRuntime?.(distro, archive) ?? {
             ok: false,
             reason: "prepareRuntime stub not configured",
           },
@@ -1085,10 +1146,10 @@ export const layer = Layer.effect(
       windowsToWslPath,
       getUserHome,
       getDistroIp,
-      prepareRuntime: (distro, windowsArchivePath, runtimeId) =>
-        provideSpawner(
-          prepareWslRuntimeImpl(distro, windowsArchivePath, runtimeId, windowsToWslPath),
-        ).pipe(Effect.withSpan("desktop.wsl.prepareRuntime")),
+      prepareRuntime: (distro, archive) =>
+        provideSpawner(prepareWslRuntimeImpl(distro, archive, windowsToWslPath)).pipe(
+          Effect.withSpan("desktop.wsl.prepareRuntime"),
+        ),
       pruneRuntimes: (distro, runtimeId) =>
         provideSpawner(pruneWslRuntimesImpl(distro, runtimeId)).pipe(
           Effect.withSpan("desktop.wsl.pruneRuntimes"),
