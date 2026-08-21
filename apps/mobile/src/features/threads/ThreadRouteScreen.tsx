@@ -640,7 +640,7 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
-  const compactNavigationHeaderItems = useMemo<NativeHeaderItems>(
+  const compactNavigationHeaderItems = useMemo(
     () =>
       createNativeNavigationHistoryItems({
         canGoBack: navigationHistory.canGoBack,
