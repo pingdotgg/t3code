@@ -300,6 +300,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
+  const projectNameEditedRef = useRef(false);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });
@@ -379,7 +380,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   const renameGroup = useCallback(
-    async (nextTitle: string) => {
+    async (nextTitle: string, wasEdited: boolean) => {
       const title = nextTitle.trim();
       if (!title) {
         toastManager.add({ type: "warning", title: "Project title cannot be empty" });
@@ -389,6 +390,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         !projectGroupTitleNeedsUpdate(
           group.memberProjects.map((member) => member.title),
           title,
+          wasEdited,
         )
       ) {
         return;
@@ -759,8 +761,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 className="w-full sm:w-64"
                 aria-label="Project name"
                 defaultValue={group.displayName}
+                onChange={() => {
+                  projectNameEditedRef.current = true;
+                }}
                 onBlur={(event) => {
-                  void renameGroup(event.currentTarget.value);
+                  const wasEdited = projectNameEditedRef.current;
+                  projectNameEditedRef.current = false;
+                  void renameGroup(event.currentTarget.value, wasEdited);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") event.currentTarget.blur();
