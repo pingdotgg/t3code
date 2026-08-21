@@ -39,13 +39,15 @@ describe("createMobileNavigationHistory", () => {
     expect(history.requestForward()).toBeNull();
   });
 
-  it("recognizes native back navigation", () => {
-    const history = createMobileNavigationHistory(location("/"));
-    history.visit(location("/threads/env/thread-a", "thread-a"));
-    history.visit(location("/settings"));
-    history.visit(location("/threads/env/thread-a", "thread-a"));
-    expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
-    expect(history.requestForward()?.location.pathname).toBe("/settings");
+  it("refreshes recreated nested host keys across forward entries", () => {
+    const thread = location("/threads/env/thread-a", "thread-a");
+    const history = createMobileNavigationHistory(thread);
+    history.visit(location("/settings", "settings-old/content-old/settings-old"));
+    history.visit(location("/settings/appearance", "settings-old/content-old/appearance-old"));
+    history.visit(thread);
+    const forward = history.requestForward()!;
+    history.visit(location(forward.location.pathname, "settings-new/content-new/settings-new"));
+    expect(history.requestForward()?.location.transitionKey).toMatch(/^settings-new\//);
   });
 
   it("reconciles non-adjacent native back navigation without adding a duplicate", () => {

@@ -42,9 +42,7 @@ function NavigationButton(props: {
               props.className,
             )}
             onClick={() => {
-              if (props.available) {
-                props.onPress();
-              }
+              if (props.available) props.onPress();
             }}
             size="icon"
             variant="ghost"
@@ -89,12 +87,8 @@ function useNavigationHistoryShortcuts(input: {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
-      if (
-        event.target instanceof HTMLElement &&
-        event.target.closest("[data-keybinding-capture]")
-      ) {
+      if (event.target instanceof HTMLElement && event.target.closest("[data-keybinding-capture]"))
         return;
-      }
       const command = resolveShortcutCommand(event, input.keybindings, {
         context: {
           previewFocus: isPreviewFocused(),
@@ -106,11 +100,8 @@ function useNavigationHistoryShortcuts(input: {
       }
       event.preventDefault();
       event.stopPropagation();
-      if (command === "navigation.back") {
-        input.back();
-      } else {
-        input.forward();
-      }
+      const navigate = command === "navigation.back" ? input.back : input.forward;
+      navigate();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
