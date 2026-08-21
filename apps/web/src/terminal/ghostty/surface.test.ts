@@ -17,6 +17,7 @@ import {
   loadTerminalFontFamily,
   primeTerminalCopyInput,
   resolveTerminalMouseData,
+  resolveTerminalMouseTrackingState,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
@@ -416,6 +417,25 @@ describe("application mouse reporting", () => {
     expect(resolveTerminalMouseData("motion", "\u001b[<35;8;4M", press.nextMotionData)).toEqual({
       send: true,
       nextMotionData: "\u001b[<35;8;4M",
+    });
+  });
+
+  it("clears the motion baseline when application mouse tracking changes", () => {
+    expect(resolveTerminalMouseTrackingState(true, false, "\u001b[<35;8;4M")).toEqual({
+      tracking: false,
+      motionData: "",
+    });
+    expect(resolveTerminalMouseTrackingState(false, true, "\u001b[<35;8;4M")).toEqual({
+      tracking: true,
+      motionData: "",
+    });
+    expect(resolveTerminalMouseTrackingState(true, true, "\u001b[<35;8;4M")).toEqual({
+      tracking: true,
+      motionData: "\u001b[<35;8;4M",
+    });
+    expect(resolveTerminalMouseTrackingState(false, false, "\u001b[<35;8;4M")).toEqual({
+      tracking: false,
+      motionData: "\u001b[<35;8;4M",
     });
   });
 
