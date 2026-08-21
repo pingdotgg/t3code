@@ -562,8 +562,8 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       if (events[0]?.type === "task.updated") {
         NodeAssert.equal(events[0].payload.status, "idle");
       }
-      NodeAssert.equal(events[1]?.type, "task.progress");
-      if (events[1]?.type === "task.progress") {
+      NodeAssert.equal(events[1]?.type, "task.updated");
+      if (events[1]?.type === "task.updated") {
         NodeAssert.equal(events[1].payload.status, undefined);
         NodeAssert.equal(events[1].payload.description, "researcher");
       }

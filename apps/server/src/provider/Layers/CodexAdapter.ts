@@ -588,14 +588,15 @@ function mapCollabAgentEvent(
           },
         ];
       }
-      // `interacted` is an activity notification, not a lifecycle transition:
-      // Codex can emit it after turnCompleted. Keep the child's identity and
-      // activity visible without reviving an already-idle task. Real restarts
-      // arrive through turnStarted or statusChanged(active).
+      // `interacted` is an identity/activity notification, not a lifecycle
+      // transition: Codex can emit it after turnCompleted. A status-free
+      // update preserves discovery without replacing the child's last
+      // meaningful progress row or reviving an already-idle task. Real
+      // restarts arrive through turnStarted or statusChanged(active).
       return [
         {
           ...base,
-          type: "task.progress",
+          type: "task.updated",
           payload: { taskId, description: title, ...statusLinkage },
         },
       ];
