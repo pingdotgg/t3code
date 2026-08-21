@@ -1,5 +1,5 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
-import { createRef, type ReactNode, type Ref } from "react";
+import { type ComponentProps, createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
@@ -130,23 +130,10 @@ vi.mock("../ui/tooltip", async (importOriginal) => {
 
   return {
     ...actual,
-    TooltipLayerProvider: ({
+    TooltipScrollDismissProvider: ({
       children,
-      layer,
-      onTriggerHoverChange,
-    }: {
-      children: ReactNode;
-      layer: string;
-      onTriggerHoverChange?: (
-        tooltip: { trigger: HTMLElement; dismiss: () => void } | null,
-      ) => void;
-    }) => (
-      <div
-        data-tooltip-layer={layer}
-        data-tooltip-scroll-dismiss={onTriggerHoverChange ? "enabled" : undefined}
-      >
-        {children}
-      </div>
+    }: ComponentProps<typeof actual.TooltipScrollDismissProvider>) => (
+      <div data-tooltip-scroll-dismiss="enabled">{children}</div>
     ),
   };
 });
@@ -262,7 +249,7 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("renders timeline tooltips in the content layer", () => {
+  it("enables tooltip scroll dismissal in the timeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -270,7 +257,6 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('data-tooltip-layer="content"');
     expect(markup).toContain('data-tooltip-scroll-dismiss="enabled"');
   });
 

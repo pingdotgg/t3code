@@ -90,7 +90,7 @@ import {
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
-import { Tooltip, TooltipLayerProvider, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipScrollDismissProvider, TooltipTrigger } from "../ui/tooltip";
 import { createTooltipScrollDismissController } from "../ui/tooltipScrollDismiss";
 import {
   deriveDisplayedUserMessageState,
@@ -572,68 +572,71 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }
 
+  const timeline = (
+    <TimelineRowCtx value={sharedState}>
+      <TimelineRowActivityCtx value={activityState}>
+        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+          <LegendList<MessagesTimelineRow>
+            ref={listRef}
+            data={rows}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            renderItem={renderItem}
+            estimatedItemSize={90}
+            initialScrollAtEnd
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={contentInsetEndAdjustment}
+            maintainScrollAtEnd={
+              anchoredEndSpace || !liveFollowEnabled || disclosureToggleSettling
+                ? false
+                : TIMELINE_MAINTAIN_SCROLL_AT_END
+            }
+            maintainVisibleContentPosition={maintainVisibleContentPosition}
+            onScroll={handleScroll}
+            className={cn(
+              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              topFadeEnabled && "topbar-scroll-fade",
+            )}
+            ListHeaderComponent={
+              loadEarlier !== null ? (
+                <TimelineLoadEarlierHeader
+                  loading={loadEarlier.loading}
+                  onLoadEarlier={loadEarlier.onLoadEarlier}
+                  fade={topFadeEnabled}
+                />
+              ) : topFadeEnabled ? (
+                TIMELINE_LIST_FADE_HEADER
+              ) : (
+                TIMELINE_LIST_HEADER
+              )
+            }
+            ListFooterComponent={TIMELINE_LIST_FOOTER}
+          />
+          <TimelineMinimap
+            items={minimapItems}
+            hasPersistentGutter={minimapHasPersistentGutter}
+            hitStripWidth={minimapHitStripWidth}
+            stripMap={minimapStripMap}
+            onSelect={(item) => {
+              onManualNavigation();
+              void listRef.current?.scrollToIndex({
+                index: item.rowIndex,
+                animated: true,
+                viewOffset: 24,
+              });
+            }}
+          />
+        </div>
+      </TimelineRowActivityCtx>
+    </TimelineRowCtx>
+  );
+
   return (
-    <TooltipLayerProvider
-      layer="content"
+    <TooltipScrollDismissProvider
       onTriggerHoverChange={tooltipScrollDismissController.setHoveredTooltip}
     >
-      <TimelineRowCtx value={sharedState}>
-        <TimelineRowActivityCtx value={activityState}>
-          <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
-            <LegendList<MessagesTimelineRow>
-              ref={listRef}
-              data={rows}
-              keyExtractor={keyExtractor}
-              getItemType={getItemType}
-              renderItem={renderItem}
-              estimatedItemSize={90}
-              initialScrollAtEnd
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={contentInsetEndAdjustment}
-              maintainScrollAtEnd={
-                anchoredEndSpace || !liveFollowEnabled || disclosureToggleSettling
-                  ? false
-                  : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
-              maintainVisibleContentPosition={maintainVisibleContentPosition}
-              onScroll={handleScroll}
-              className={cn(
-                "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
-                topFadeEnabled && "topbar-scroll-fade",
-              )}
-              ListHeaderComponent={
-                loadEarlier !== null ? (
-                  <TimelineLoadEarlierHeader
-                    loading={loadEarlier.loading}
-                    onLoadEarlier={loadEarlier.onLoadEarlier}
-                    fade={topFadeEnabled}
-                  />
-                ) : topFadeEnabled ? (
-                  TIMELINE_LIST_FADE_HEADER
-                ) : (
-                  TIMELINE_LIST_HEADER
-                )
-              }
-              ListFooterComponent={TIMELINE_LIST_FOOTER}
-            />
-            <TimelineMinimap
-              items={minimapItems}
-              hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
-              stripMap={minimapStripMap}
-              onSelect={(item) => {
-                onManualNavigation();
-                void listRef.current?.scrollToIndex({
-                  index: item.rowIndex,
-                  animated: true,
-                  viewOffset: 24,
-                });
-              }}
-            />
-          </div>
-        </TimelineRowActivityCtx>
-      </TimelineRowCtx>
-    </TooltipLayerProvider>
+      {timeline}
+    </TooltipScrollDismissProvider>
   );
 });
 

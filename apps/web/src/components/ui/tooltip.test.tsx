@@ -33,7 +33,7 @@ vi.mock("@base-ui/react/tooltip", () => {
   };
 });
 
-import { TooltipLayerProvider, TooltipPopup } from "./tooltip";
+import { TooltipPopup, TooltipScrollDismissProvider } from "./tooltip";
 import { createTooltipScrollDismissController } from "./tooltipScrollDismiss";
 
 function createFakeTooltipTrigger() {
@@ -58,15 +58,15 @@ describe("tooltip layering", () => {
     expect(html).toContain("z-[140]");
   });
 
-  it("keeps content tooltips below the chat composer", () => {
+  it("keeps timeline tooltips above chat chrome", () => {
     const html = renderToStaticMarkup(
-      <TooltipLayerProvider layer="content">
+      <TooltipScrollDismissProvider onTriggerHoverChange={() => {}}>
         <TooltipPopup>Timeline tooltip</TooltipPopup>
-      </TooltipLayerProvider>,
+      </TooltipScrollDismissProvider>,
     );
 
-    expect(html).toContain("z-[15]");
-    expect(html).not.toContain("z-[140]");
+    expect(html).toContain("z-[140]");
+    expect(html).not.toContain("z-[15]");
   });
 });
 
