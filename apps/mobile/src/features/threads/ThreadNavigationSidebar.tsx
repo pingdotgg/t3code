@@ -194,7 +194,7 @@ function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
   const insets = useSafeAreaInsets();
-  const { themeAppearance: colorScheme } = useAppearancePreferences();
+  const { themeAppearance: colorScheme, materialYouStyleLayoutActive } = useAppearancePreferences();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -773,10 +773,13 @@ function ThreadNavigationSidebarPane(
   );
 
   const backgroundColor = useThemeColor("--color-drawer");
+  const headerColor = useThemeColor("--color-header");
+  const screenColor = useThemeColor("--color-screen");
   const borderColor = useThemeColor("--color-border");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const placeholderColor = useThemeColor("--color-placeholder");
-  const headerFadeColor = String(backgroundColor);
+  const sidebarBackgroundColor = materialYouStyleLayoutActive ? headerColor : backgroundColor;
+  const headerFadeColor = String(sidebarBackgroundColor);
   const headerWashOpacity = SIDEBAR_HEADER_WASH_OPACITY[colorScheme];
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
   // The sticky header (title row, search field, optional connection status)
@@ -927,7 +930,7 @@ function ThreadNavigationSidebarPane(
                       ?.environmentLabel ?? null)
                   : null
               }
-              pane="sidebar"
+              pane={materialYouStyleLayoutActive ? "screen" : "sidebar"}
               showPendingDivider={item.showPendingDivider}
               onSelectPendingTask={openPendingTask}
               onDeletePendingTask={confirmDeletePendingTask}
@@ -968,7 +971,7 @@ function ThreadNavigationSidebarPane(
                 }),
               )}
               searchQuery={props.searchQuery}
-              pane="sidebar"
+              pane={materialYouStyleLayoutActive ? "screen" : "sidebar"}
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
               }
@@ -1010,7 +1013,7 @@ function ThreadNavigationSidebarPane(
               count={item.count}
               expanded={item.expanded}
               onToggle={toggleSnoozedShelf}
-              pane="sidebar"
+              pane={materialYouStyleLayoutActive ? "screen" : "sidebar"}
             />
           );
         case "v2-settled-shelf":
@@ -1019,7 +1022,7 @@ function ThreadNavigationSidebarPane(
               count={item.count}
               expanded={item.expanded}
               onToggle={toggleSettledShelf}
-              pane="sidebar"
+              pane={materialYouStyleLayoutActive ? "screen" : "sidebar"}
             />
           );
         case "v2-show-more":
@@ -1039,7 +1042,7 @@ function ThreadNavigationSidebarPane(
         case "header":
           return (
             <ThreadListGroupHeader
-              variant="sidebar"
+              variant={materialYouStyleLayoutActive ? "compact" : "sidebar"}
               collapsed={item.collapsed}
               isFirst={item.isFirst}
               groupKey={item.group.key}
@@ -1057,7 +1060,7 @@ function ThreadNavigationSidebarPane(
         case "pending-task":
           return (
             <PendingTaskListRow
-              variant="sidebar"
+              variant={materialYouStyleLayoutActive ? "compact" : "sidebar"}
               pendingTask={item.pendingTask}
               environmentLabel={
                 savedConnectionsById[item.pendingTask.message.environmentId]?.environmentLabel ??
@@ -1072,7 +1075,7 @@ function ThreadNavigationSidebarPane(
           const thread = item.thread;
           return (
             <ThreadListRow
-              variant="sidebar"
+              variant={materialYouStyleLayoutActive ? "compact" : "sidebar"}
               thread={thread}
               environmentLabel={
                 savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
@@ -1107,7 +1110,7 @@ function ThreadNavigationSidebarPane(
         case "show-more":
           return (
             <ThreadListShowMoreRow
-              variant="sidebar"
+              variant={materialYouStyleLayoutActive ? "compact" : "sidebar"}
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
               groupKey={item.groupKey}
@@ -1125,6 +1128,7 @@ function ThreadNavigationSidebarPane(
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      materialYouStyleLayoutActive,
       movePinnedThread,
       openPendingTask,
       pinReorderEnvironmentIds,
@@ -1267,6 +1271,7 @@ function ThreadNavigationSidebarPane(
                 }
                 contentContainerStyle={[
                   styles.threadListContent,
+                  materialYouStyleLayoutActive ? { paddingHorizontal: 0 } : null,
                   {
                     paddingBottom: Math.max(insets.bottom, 16) + 16,
                     paddingTop: 6,
@@ -1294,12 +1299,26 @@ function ThreadNavigationSidebarPane(
       className="flex-1"
       style={{
         width: props.width,
-        backgroundColor,
+        backgroundColor: sidebarBackgroundColor,
         borderRightColor: borderColor,
-        borderRightWidth: StyleSheet.hairlineWidth,
+        borderRightWidth: materialYouStyleLayoutActive ? 0 : StyleSheet.hairlineWidth,
       }}
     >
-      <View className="flex-1" style={{ paddingBottom: insets.bottom }}>
+      <View
+        className="flex-1"
+        style={
+          materialYouStyleLayoutActive
+            ? {
+                marginTop: stickyHeaderHeight,
+                paddingBottom: insets.bottom,
+                backgroundColor: screenColor,
+                borderTopLeftRadius: 28,
+                borderTopRightRadius: 28,
+                overflow: "hidden",
+              }
+            : { paddingBottom: insets.bottom }
+        }
+      >
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <GestureDetector gesture={sidebarScrollGesture}>
             <LegendList
@@ -1313,9 +1332,10 @@ function ThreadNavigationSidebarPane(
               renderItem={renderListItem}
               contentContainerStyle={[
                 styles.threadListContent,
+                materialYouStyleLayoutActive ? { paddingHorizontal: 0 } : null,
                 {
                   paddingBottom: 16 + insets.bottom,
-                  paddingTop: topListInset,
+                  paddingTop: materialYouStyleLayoutActive ? 6 : topListInset,
                 },
               ]}
               keyboardDismissMode="on-drag"
@@ -1335,7 +1355,10 @@ function ThreadNavigationSidebarPane(
         className="absolute inset-x-0 top-0 z-[4]"
         onLayout={handleStickyHeaderLayout}
         pointerEvents="box-none"
-        style={{ paddingTop: insets.top }}
+        style={{
+          paddingBottom: materialYouStyleLayoutActive ? 12 : 0,
+          paddingTop: insets.top,
+        }}
       >
         <View
           className="absolute inset-x-0 top-0"
@@ -1350,17 +1373,23 @@ function ThreadNavigationSidebarPane(
                 <Stop
                   offset="0%"
                   stopColor={headerFadeColor}
-                  stopOpacity={headerIsOverContent ? headerWashOpacity[0] : 0}
+                  stopOpacity={
+                    headerIsOverContent && !materialYouStyleLayoutActive ? headerWashOpacity[0] : 0
+                  }
                 />
                 <Stop
                   offset="58%"
                   stopColor={headerFadeColor}
-                  stopOpacity={headerIsOverContent ? headerWashOpacity[1] : 0}
+                  stopOpacity={
+                    headerIsOverContent && !materialYouStyleLayoutActive ? headerWashOpacity[1] : 0
+                  }
                 />
                 <Stop
                   offset="88%"
                   stopColor={headerFadeColor}
-                  stopOpacity={headerIsOverContent ? headerWashOpacity[2] : 0}
+                  stopOpacity={
+                    headerIsOverContent && !materialYouStyleLayoutActive ? headerWashOpacity[2] : 0
+                  }
                 />
                 <Stop offset="100%" stopColor={headerFadeColor} stopOpacity={0} />
               </LinearGradient>
@@ -1394,21 +1423,50 @@ function ThreadNavigationSidebarPane(
           </SidebarHeaderButtonGroup>
         </View>
 
-        <View className="mx-4 mt-[9px] h-[38px] flex-row items-center gap-1.5 rounded-xl bg-sidebar-search pr-2.5 pl-[11px]">
-          <SymbolView name="magnifyingglass" size={15} tintColor={mutedColor} type="monochrome" />
+        <View
+          className={
+            materialYouStyleLayoutActive
+              ? "mx-4 mt-[9px] min-h-12 flex-row items-center gap-2.5 rounded-full border border-input-border bg-input px-3.5"
+              : "mx-4 mt-[9px] h-[38px] flex-row items-center gap-1.5 rounded-xl bg-sidebar-search pr-2.5 pl-[11px]"
+          }
+        >
+          <SymbolView
+            name="magnifyingglass"
+            size={materialYouStyleLayoutActive ? 17 : 15}
+            tintColor={mutedColor}
+            type="monochrome"
+          />
           <TextInput
             ref={searchInputRef}
             accessibilityLabel="Search threads"
             autoCapitalize="none"
             autoCorrect={false}
-            clearButtonMode="while-editing"
+            clearButtonMode={materialYouStyleLayoutActive ? "never" : "while-editing"}
             onChangeText={props.onSearchQueryChange}
-            placeholder="Search"
+            placeholder={materialYouStyleLayoutActive ? "Search threads" : "Search"}
             placeholderTextColor={placeholderColor}
             returnKeyType="search"
-            className="h-[34px] flex-1 px-0 py-0 font-sans text-base text-foreground"
+            className={
+              materialYouStyleLayoutActive
+                ? "flex-1 px-0 py-2.5 font-sans text-base text-foreground"
+                : "h-[34px] flex-1 px-0 py-0 font-sans text-base text-foreground"
+            }
             value={props.searchQuery}
           />
+          {materialYouStyleLayoutActive && props.searchQuery.length > 0 ? (
+            <Pressable
+              accessibilityLabel="Clear search"
+              hitSlop={10}
+              onPress={() => props.onSearchQueryChange("")}
+            >
+              <SymbolView
+                name="xmark.circle.fill"
+                size={17}
+                tintColor={mutedColor}
+                type="monochrome"
+              />
+            </Pressable>
+          ) : null}
         </View>
       </View>
     </View>

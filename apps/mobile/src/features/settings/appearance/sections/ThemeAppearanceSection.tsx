@@ -323,8 +323,10 @@ export function ThemeAppearanceSection() {
     setThemeIdForBothAppearances,
     setThemeMode,
     setSystemColorsEnabled,
+    setMaterialYouStyleLayoutEnabled,
     systemColorsAvailable,
     systemColorsEnabled,
+    materialYouStyleLayoutEnabled,
     themeIds,
     themeMode,
   } = useAppearancePreferences();
@@ -379,6 +381,15 @@ export function ThemeAppearanceSection() {
                 : "Requires Android 12 or newer."
             }
             value={systemColorsAvailable && systemColorsEnabled}
+          />
+          <View className="mx-4 h-px bg-separator" />
+          <SettingsSwitchRow
+            disabled={!isReady}
+            icon="rectangle.3.group"
+            label="Material You Style Layout"
+            onValueChange={setMaterialYouStyleLayoutEnabled}
+            subtitle="Use Material You surfaces, shapes, and component styling."
+            value={materialYouStyleLayoutEnabled}
           />
         </SettingsSection>
       ) : null}

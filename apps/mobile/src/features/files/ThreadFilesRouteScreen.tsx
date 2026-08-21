@@ -244,9 +244,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const isAndroid = Platform.OS === "android";
-  const { themeAppearance: highlightTheme } = useAppearancePreferences();
+  const { materialYouStyleLayoutActive, themeAppearance: highlightTheme } =
+    useAppearancePreferences();
   const iconColor = String(useThemeColor("--color-icon-muted"));
   const sheetSurfaceColor = String(useThemeColor("--color-sheet-solid"));
+  const screenColor = String(useThemeColor("--color-screen"));
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
@@ -361,14 +363,16 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const usesCompactMailToolbar =
     Platform.OS === "ios" && !layout.usesSplitView && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
 
-  return (
+  const content = (
     <>
       {/* Static header config (glass preset and title) lives in Stack.tsx. The
           live sheet color stays dynamic here so the FlatList can remain the
           direct scene child for native scroll-edge sampling. */}
       <NativeStackScreenOptions
         options={{
-          contentStyle: { backgroundColor: sheetSurfaceColor },
+          contentStyle: {
+            backgroundColor: materialYouStyleLayoutActive ? screenColor : sheetSurfaceColor,
+          },
           headerShown: !isAndroid,
           unstable_headerSubtitle:
             Platform.OS === "ios" && projectName.length > 0 ? projectName : undefined,
@@ -404,6 +408,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
             title="Files"
             subtitle={projectName}
             onBack={handleReturnToThread}
+            hideBottomBorder={materialYouStyleLayoutActive}
             actions={[
               {
                 accessibilityLabel: "Refresh files",
@@ -412,13 +417,23 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
               },
             ]}
           />
-          <View className="flex-row items-center gap-2 border-b border-border px-3 py-2">
+          <View
+            className={
+              materialYouStyleLayoutActive
+                ? "mx-4 my-2 min-h-12 flex-row items-center gap-2 rounded-full border border-input-border bg-input px-3.5"
+                : "flex-row items-center gap-2 border-b border-border px-3 py-2"
+            }
+          >
             <SymbolView name="magnifyingglass" size={17} tintColor={iconColor} type="monochrome" />
             <TextInput
               accessibilityLabel="Search files"
               autoCapitalize="none"
               autoCorrect={false}
-              className="min-h-10 flex-1 rounded-xl py-2 text-sm"
+              className={
+                materialYouStyleLayoutActive
+                  ? "min-h-10 flex-1 py-2 text-sm text-foreground"
+                  : "min-h-10 flex-1 rounded-xl py-2 text-sm"
+              }
               placeholder="Search files"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -460,6 +475,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       />
       <FilesToolbarBottomFade />
     </>
+  );
+
+  return materialYouStyleLayoutActive ? (
+    <View className="flex-1" style={{ backgroundColor: screenColor }}>
+      {content}
+    </View>
+  ) : (
+    content
   );
 }
 

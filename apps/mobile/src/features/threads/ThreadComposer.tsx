@@ -146,18 +146,23 @@ export function ComposerSurface(props: {
   /** Existing thread composers morph between pill and card layouts. */
   readonly animateLayout?: boolean;
 }) {
-  const cardColor = useThemeColor("--color-card-translucent");
-  const borderColor = useThemeColor("--color-border");
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
+  const authoredCardColor = useThemeColor("--color-card-translucent");
+  const authoredBorderColor = useThemeColor("--color-border");
+  const materialCardColor = useThemeColor("--color-composer-surface");
+  const materialBorderColor = useThemeColor("--color-composer-border");
+  const cardColor = materialYouStyleLayoutActive ? materialCardColor : authoredCardColor;
+  const borderColor = materialYouStyleLayoutActive ? materialBorderColor : authoredBorderColor;
   const shadowColor = useThemeColor("--color-primary-shadow");
   // Drop shadow lives on a wrapper: `overflow: "hidden"` on the surface itself
   // (needed to clip content to the pill shape) would clip the shadow on iOS.
   const shadowStyle: ViewStyle = {
     borderRadius: props.style.borderRadius,
     shadowColor,
-    shadowOpacity: props.isDarkMode ? 0.35 : 0.12,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 10,
+    shadowOpacity: materialYouStyleLayoutActive ? 0 : props.isDarkMode ? 0.35 : 0.12,
+    shadowRadius: materialYouStyleLayoutActive ? 0 : 14,
+    shadowOffset: { width: 0, height: materialYouStyleLayoutActive ? 0 : 6 },
+    elevation: materialYouStyleLayoutActive ? 0 : 10,
   };
 
   return (
@@ -272,7 +277,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const navigation = useNavigation();
-  const { themeAppearance } = useAppearancePreferences();
+  const { themeAppearance, materialYouStyleLayoutActive } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
   const bodyText = useScaledTextRole("body");
@@ -344,6 +349,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   });
   const toolbarSurface = String(useThemeColor("--color-card"));
   const backdropSurface = String(useThemeColor("--color-screen"));
+  const composerPanel = useThemeColor("--color-composer-panel");
   const toolbarFadeOpaque = themeColorWithAlpha(toolbarSurface, 0.95);
   const toolbarFadeTransparent = themeColorWithAlpha(toolbarSurface, 0);
   const backdropGradient = `linear-gradient(to bottom, ${themeColorWithAlpha(backdropSurface, 0)} 0%, ${themeColorWithAlpha(backdropSurface, 0.6)} 55%, ${themeColorWithAlpha(backdropSurface, 0.9)} 100%)`;
@@ -714,20 +720,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       style={{
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
+        backgroundColor: materialYouStyleLayoutActive ? composerPanel : undefined,
       }}
     >
       {/* The backdrop gradient lives on a plain View: Reanimated's Animated.View
           silently drops experimental_backgroundImage on Android, which left this
           strip fully transparent and the feed text legible through the composer. */}
-      <View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            experimental_backgroundImage: backdropGradient,
-          },
-        ]}
-      />
+      {materialYouStyleLayoutActive ? null : (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              experimental_backgroundImage: backdropGradient,
+            },
+          ]}
+        />
+      )}
       <Animated.View
         className="relative w-full self-center"
         layout={COMPOSER_LAYOUT_TRANSITION}

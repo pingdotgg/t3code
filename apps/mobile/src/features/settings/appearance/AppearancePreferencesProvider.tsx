@@ -52,6 +52,8 @@ interface AppearancePreferencesContextValue {
   readonly systemColorsAvailable: boolean;
   readonly systemColorsEnabled: boolean;
   readonly systemColorsActive: boolean;
+  readonly materialYouStyleLayoutEnabled: boolean;
+  readonly materialYouStyleLayoutActive: boolean;
   readonly isReady: boolean;
   readonly setThemeIdForAppearance: (
     appearance: MobileThemeAppearance,
@@ -60,6 +62,7 @@ interface AppearancePreferencesContextValue {
   readonly setThemeIdForBothAppearances: (value: MobileThemeId) => void;
   readonly setThemeMode: (value: MobileThemeMode) => void;
   readonly setSystemColorsEnabled: (value: boolean) => void;
+  readonly setMaterialYouStyleLayoutEnabled: (value: boolean) => void;
   readonly setBaseFontSize: (value: number) => void;
   /** Pass null to clear the override and follow the base font size. */
   readonly setTerminalFontSize: (value: number | null) => void;
@@ -135,6 +138,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const isReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const systemColorsEnabled = storedPreferences?.systemColorsEnabled ?? false;
   const systemColorsActive = systemColorsEnabled && isSystemColorsAvailable;
+  const materialYouStyleLayoutEnabled = storedPreferences?.materialYouStyleLayoutEnabled ?? false;
+  const materialYouStyleLayoutActive = Platform.OS === "android" && materialYouStyleLayoutEnabled;
   const systemColorPalettes = useMemo(
     () => (systemColorsActive ? readSystemColorPalettes() : null),
     [systemColorsActive, systemColorsRefreshKey],
@@ -197,6 +202,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [updatePreferences],
   );
 
+  const setMaterialYouStyleLayoutEnabled = useCallback(
+    (value: boolean) => {
+      updatePreferences({ materialYouStyleLayoutEnabled: value });
+    },
+    [updatePreferences],
+  );
+
   const setBaseFontSize = useCallback(
     (value: number) => {
       updatePreferences({ baseFontSize: value });
@@ -235,11 +247,14 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       systemColorsAvailable: isSystemColorsAvailable,
       systemColorsEnabled,
       systemColorsActive,
+      materialYouStyleLayoutEnabled,
+      materialYouStyleLayoutActive,
       isReady,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
       setSystemColorsEnabled,
+      setMaterialYouStyleLayoutEnabled,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,
@@ -253,11 +268,14 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeAppearance,
       systemColorsEnabled,
       systemColorsActive,
+      materialYouStyleLayoutEnabled,
+      materialYouStyleLayoutActive,
       isReady,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
       setSystemColorsEnabled,
+      setMaterialYouStyleLayoutEnabled,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,

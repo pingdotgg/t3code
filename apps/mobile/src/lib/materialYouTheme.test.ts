@@ -39,6 +39,8 @@ describe("Material You system colors", () => {
 
     expect(base).toEqual(snapshot);
     expect(variables["--color-screen"]).toBe(palette.surface);
+    expect(variables["--color-thread-canvas"]).toBe(palette.surfaceContainerLow);
+    expect(variables["--color-thread-selected"]).toBe(palette.surfaceContainer);
     expect(variables["--color-header"]).toBe(palette.surfaceContainerHigh);
     expect(variables["--color-primary"]).toBe(palette.primary);
     expect(variables["--color-placeholder"]).toBe("#1C1B1F9E");

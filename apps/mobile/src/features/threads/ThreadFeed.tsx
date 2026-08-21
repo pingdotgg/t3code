@@ -238,12 +238,14 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
   readonly color: string;
   readonly host: string;
   readonly href: string;
+  readonly selectionColor?: ColorValue;
 }) {
   const [failed, setFailed] = useState(() => failedMarkdownFaviconHosts.has(props.host));
 
   return (
     <NativeText
       className="font-sans"
+      selectionColor={props.selectionColor}
       onPress={() => {
         void tryOpenExternalUrl(props.href, "markdown-link");
       }}
@@ -409,7 +411,7 @@ function useReviewCommentColors(): ReviewCommentColors {
 }
 
 function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
-  const { appearance, themeAppearance } = useAppearancePreferences();
+  const { appearance, systemColorsActive, themeAppearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),
     [appearance.baseFontSize],
@@ -428,6 +430,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
   const markdownCodeText = String(useThemeColor("--color-md-code-text"));
   const markdownInlineCodeText = String(useThemeColor("--color-foreground-secondary"));
   const markdownHrColor = String(useThemeColor("--color-md-hr"));
+  const primaryColor = useThemeColor("--color-primary");
   const markdownUserBodyColor = String(useThemeColor("--color-user-bubble-foreground"));
   const markdownUserCodeBg = String(useThemeColor("--color-md-user-code-bg"));
   const markdownUserCodeText = String(useThemeColor("--color-md-user-code-text"));
@@ -442,6 +445,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
   const boldFontFamily = useFontFamily("bold");
 
   return useMemo(() => {
+    const selectionColor = systemColorsActive ? primaryColor : undefined;
     const baseTheme: PartialMarkdownTheme = {
       colors: {
         text: markdownBodyColor,
@@ -453,9 +457,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         surfaceLight: markdownBlockquoteBg,
         accent: markdownLinkColor,
         tableBorder: markdownHrColor,
-        tableHeader: markdownBlockquoteBg,
+        tableHeader: markdownCodeBg,
         tableHeaderText: markdownStrongColor,
-        tableRowOdd: "transparent",
+        tableRowOdd: markdownBlockquoteBg,
         tableRowEven: "transparent",
       },
       spacing: {
@@ -528,7 +532,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     };
 
     const createMarkdownRenderers = (
-      inlineTextColor: string,
+      bodyTextColor: string,
       inlineCodeTextColor: string,
       blockBackgroundColor: string,
       blockTextColor: string,
@@ -536,14 +540,33 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
     ): CustomRenderers => ({
+      paragraph: ({ children }) => (
+        <NativeText
+          selectable
+          selectionColor={selectionColor}
+          style={{
+            color: bodyTextColor,
+            fontFamily: regularFontFamily,
+            fontSize: markdownFontSizes.m,
+            lineHeight: markdownFontSizes.bodyLineHeight,
+            marginBottom: preserveSoftBreaks ? 0 : 10,
+          }}
+        >
+          {children}
+        </NativeText>
+      ),
+      text: ({ node }) => (
+        <NativeText selectionColor={selectionColor}>{node.content ?? ""}</NativeText>
+      ),
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
           return (
             <NativeText
               className="font-t3-bold"
+              selectionColor={selectionColor}
               onPress={() => onLinkPress(href)}
-              style={{ color: inlineTextColor }}
+              style={{ color: bodyTextColor }}
             >
               <Image
                 source={markdownFileIconSource(presentation.icon)}
@@ -559,6 +582,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               href={presentation.href}
               host={presentation.host}
               color={markdownLinkColor}
+              selectionColor={selectionColor}
             >
               {children}
             </MarkdownExternalLink>
@@ -568,6 +592,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         return (
           <NativeText
             className="underline"
+            selectionColor={selectionColor}
             onPress={
               linkHref
                 ? () => {
@@ -594,10 +619,11 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               <View className="mb-[3px] flex-row items-start" key={childKey}>
                 <NativeText
                   className="font-sans"
+                  selectionColor={selectionColor}
                   style={{
                     width: ordered ? 22 : 12,
                     marginRight: 5,
-                    color: inlineTextColor,
+                    color: bodyTextColor,
                     fontSize: markdownFontSizes.m,
                     lineHeight: markdownFontSizes.bodyLineHeight,
                     textAlign: ordered ? "right" : "center",
@@ -618,6 +644,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         return (
           <NativeText
             className="font-mono"
+            selectionColor={selectionColor}
             style={{
               color: inlineCodeTextColor,
               fontSize: markdownFontSizes.codeBlockFontSize,
@@ -630,7 +657,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       },
       ...(preserveSoftBreaks
         ? {
-            soft_break: () => <NativeText>{"\n"}</NativeText>,
+            soft_break: () => <NativeText selectionColor={selectionColor}>{"\n"}</NativeText>,
           }
         : {}),
       code_block: ({ content = "", language }) => (
@@ -660,6 +687,11 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         code: markdownUserCodeText,
         codeBackground: markdownUserCodeBg,
         border: markdownUserFenceBg,
+        tableBorder: markdownUserCodeBg,
+        tableHeader: markdownUserFenceBg,
+        tableHeaderText: markdownUserBodyColor,
+        tableRowOdd: markdownUserCodeBg,
+        tableRowEven: "transparent",
       },
     };
     const userStyles: NodeStyleOverrides = {
@@ -700,7 +732,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         theme: userTheme,
         styles: userStyles,
         renderers: createMarkdownRenderers(
-          markdownUserCodeText,
+          markdownUserBodyColor,
           markdownUserInlineCodeText,
           markdownUserFenceBg,
           markdownUserFenceText,
@@ -733,7 +765,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         theme: assistantTheme,
         styles: assistantStyles,
         renderers: createMarkdownRenderers(
-          markdownCodeText,
+          markdownBodyColor,
           markdownInlineCodeText,
           markdownCodeBg,
           markdownCodeText,
@@ -785,7 +817,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     markdownUserInlineCodeText,
     nativeMarkdownTypography,
     onLinkPress,
+    primaryColor,
     regularFontFamily,
+    systemColorsActive,
     themeMode,
     userBubbleForegroundMuted,
     userBubbleSkillForeground,

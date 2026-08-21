@@ -3,12 +3,20 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export function WorkspaceEmptyDetail(props: { readonly onStartNewTask?: () => void }) {
   const iconColor = useThemeColor("--color-icon-subtle");
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
 
   return (
-    <View className="flex-1 items-center justify-center bg-screen px-10">
+    <View
+      className={
+        materialYouStyleLayoutActive
+          ? "flex-1 items-center justify-center px-10"
+          : "flex-1 items-center justify-center bg-screen px-10"
+      }
+    >
       <View className="max-w-[360px] items-center gap-3">
         <SymbolView name="sidebar.left" size={34} tintColor={iconColor} type="hierarchical" />
         <Text className="text-center text-xl font-t3-bold">Select a thread</Text>
