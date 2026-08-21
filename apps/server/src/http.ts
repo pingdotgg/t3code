@@ -49,10 +49,14 @@ export function assetResponseHeaders(
   filePath: string,
   cacheControl = "private, max-age=3600",
 ): Record<string, string> {
+  const lowerPath = filePath.toLowerCase();
   return {
     "Cache-Control": cacheControl,
     "X-Content-Type-Options": "nosniff",
-    ...(filePath.toLowerCase().endsWith(".svg")
+    ...(lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+      ? { "Content-Type": "text/html; charset=utf-8" }
+      : {}),
+    ...(lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
