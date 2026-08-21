@@ -201,6 +201,33 @@ export function deriveProviderInstanceEntries(
 }
 
 /**
+ * Project several environments' `ServerProvider[]` into a nested
+ * `environmentId → instanceId → entry` lookup.
+ *
+ * Instance ids are per-environment routing keys, and `defaultInstanceIdForDriver`
+ * makes the default id literally the driver slug, so every environment running
+ * the same driver reports the same id. Flattening across environments would
+ * clobber entries and mis-resolve accent colors; lookups must stay scoped to
+ * the thread's own environment.
+ */
+export function deriveProviderEntriesByEnvironment(
+  providersByEnvironment: Iterable<readonly [string, ReadonlyArray<ServerProvider>]>,
+): ReadonlyMap<string, ReadonlyMap<string, ProviderInstanceEntry>> {
+  const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
+  for (const [environmentId, providers] of providersByEnvironment) {
+    byEnvironment.set(
+      environmentId,
+      new Map(
+        deriveProviderInstanceEntries(providers).map(
+          (entry) => [entry.instanceId as string, entry] as const,
+        ),
+      ),
+    );
+  }
+  return byEnvironment;
+}
+
+/**
  * Overlay the current settings configuration onto streamed provider snapshots.
  * Provider probes can briefly retain their previous `enabled` value after a
  * settings write, so picker visibility must follow settings rather than waiting

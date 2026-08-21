@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
+  deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
@@ -17,6 +18,7 @@ function provider(input: {
   enabled?: boolean;
   availability?: ServerProvider["availability"];
   displayName?: string;
+  accentColor?: string;
   status?: ServerProvider["status"];
   models?: ServerProvider["models"];
 }): ServerProvider {
@@ -24,6 +26,7 @@ function provider(input: {
     instanceId: ProviderInstanceId.make(input.instanceId),
     driver: input.provider,
     ...(input.displayName ? { displayName: input.displayName } : {}),
+    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     enabled: input.enabled ?? true,
     installed: true,
     version: null,
@@ -129,6 +132,52 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.instanceId).toBe("codex_personal");
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
+  });
+});
+
+describe("deriveProviderEntriesByEnvironment", () => {
+  it("keeps same-id default instances distinct per environment", () => {
+    const byEnvironment = deriveProviderEntriesByEnvironment([
+      [
+        "local",
+        [
+          provider({
+            provider: ProviderDriverKind.make("claude"),
+            instanceId: "claude",
+            displayName: "Claude Local",
+            accentColor: "#112233",
+          }),
+        ],
+      ],
+      [
+        "remote",
+        [
+          provider({
+            provider: ProviderDriverKind.make("claude"),
+            instanceId: "claude",
+            displayName: "Claude Remote",
+            accentColor: "#445566",
+          }),
+        ],
+      ],
+    ]);
+
+    expect(byEnvironment.get("local")?.get("claude")?.displayName).toBe("Claude Local");
+    expect(byEnvironment.get("local")?.get("claude")?.accentColor).toBe("#112233");
+    expect(byEnvironment.get("remote")?.get("claude")?.displayName).toBe("Claude Remote");
+    expect(byEnvironment.get("remote")?.get("claude")?.accentColor).toBe("#445566");
+  });
+
+  it("never falls back to another environment's instances", () => {
+    const byEnvironment = deriveProviderEntriesByEnvironment([
+      ["local", [provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" })]],
+      ["empty", []],
+    ]);
+
+    expect(byEnvironment.get("empty")?.get("codex")).toBeUndefined();
+    // Every environment gets its own bucket, so an absent lookup is a real
+    // "this environment has no such instance", not a missing key.
+    expect(byEnvironment.get("empty")?.size).toBe(0);
   });
 });
 
