@@ -2108,6 +2108,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    // Pin the static AppImage toolset. electron-builder's default for
+    // `toolsets.appimage` is the legacy "0.0.0" bundle, whose type-2 runtime
+    // is dynamically linked against libfuse.so.2; distros that ship only
+    // FUSE 3 (Ubuntu 24.04+, Debian trixie/forky) can no longer mount it and
+    // the AppImage dies with `dlopen(): error loading libfuse.so.2` before
+    // Electron starts. The 1.0.3 bundle uses runtime 20251108, which is
+    // statically linked and needs no FUSE at all.
+    buildConfig.toolsets = { appimage: "1.0.3" };
     buildConfig.linux = {
       target: [target],
       executableName: "t3code",
