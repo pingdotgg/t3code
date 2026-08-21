@@ -25,6 +25,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { sanitizeTerminalValue } from "@t3tools/shared/stripTerminalEscapes";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -1472,12 +1473,14 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
-      const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
+      const rawAgent = getModelSelectionStringOptionValue(modelSelection, "agent");
+      const rawVariant = getModelSelectionStringOptionValue(modelSelection, "variant");
+      const agent = rawAgent ? sanitizeTerminalValue(rawAgent) : undefined;
+      const variant = rawVariant ? sanitizeTerminalValue(rawVariant) : undefined;
 
       context.activeTurnId = turnId;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
-      context.activeVariant = variant;
+      context.activeVariant = variant || undefined;
       yield* updateProviderSession(
         context,
         {

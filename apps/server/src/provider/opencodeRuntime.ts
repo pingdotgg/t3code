@@ -34,6 +34,7 @@ import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { sanitizeTerminalValue, stripTerminalEscapes } from "@t3tools/shared/stripTerminalEscapes";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
@@ -216,7 +217,7 @@ export function parseModelsCliOutput(stdout: string): {
     string,
     { id: string; name: string; models: { [key: string]: Model } }
   >();
-  const lines = stdout.split("\n");
+  const lines = stripTerminalEscapes(stdout).split("\n");
   let currentSlug: string | null = null;
   const jsonLines: Array<string> = [];
 
@@ -269,7 +270,7 @@ export function parseModelsCliOutput(stdout: string): {
 /** @internal */
 export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
   const agents: Array<Agent> = [];
-  const lines = stdout.split("\n");
+  const lines = stripTerminalEscapes(stdout).split("\n");
   let currentHeader: { name: string; mode: string } | null = null;
   const blockLines: Array<string> = [];
 
@@ -311,7 +312,8 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
 
 /** @internal */
 export function parseSkillsCliOutput(stdout: string): ReadonlyArray<OpenCodeSkill> {
-  const result = decodeOpenCodeSkillsCliOutputExit(stdout);
+  const clean = stripTerminalEscapes(stdout);
+  const result = decodeOpenCodeSkillsCliOutputExit(clean);
   return Exit.isSuccess(result) ? result.value : [];
 }
 
