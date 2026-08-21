@@ -14,18 +14,25 @@
  * boundary for the reader, not shell-injection safety.
  */
 export function quoteDroppedFilePath(path: string): string {
-  return /\s/.test(path) ? `"${path}"` : path;
+  if (!/\s/.test(path)) {
+    return path;
+  }
+  // A double quote is legal in a POSIX filename, so escape any before wrapping —
+  // otherwise the first inner quote reads as the closing delimiter.
+  return `"${path.replace(/"/g, '\\"')}"`;
 }
 
 /**
- * The text inserted into the composer for a set of dropped paths. Empty and
- * whitespace-only paths are dropped (a bridge that can't resolve a file
+ * The text inserted into the composer for a set of dropped paths. Entries that
+ * are empty or all whitespace are skipped (a bridge that can't resolve a file
  * returns null, which the caller filters, but be defensive about "" too).
+ * A path that survives is never altered: leading and trailing spaces are legal
+ * in a filename, so trimming one would point the agent at a file that does not
+ * exist. Quoting keeps such a path readable instead.
  */
 export function formatDroppedFilePaths(paths: ReadonlyArray<string>): string {
   return paths
-    .map((path) => path.trim())
-    .filter((path) => path.length > 0)
+    .filter((path) => path.trim().length > 0)
     .map(quoteDroppedFilePath)
     .join(" ");
 }
