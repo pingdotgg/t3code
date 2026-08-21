@@ -52,9 +52,7 @@ successful pick; its hover glow and badge preview the element and color family t
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Keybindings** if you want to use it.
 
-`navigation.back` and `navigation.forward` move through visited T3 Code locations. Their defaults are
-`mod+[` and `mod+]`. Web and desktop also show arrow buttons beside the sidebar toggle and commands
-in the palette. Mobile shows the buttons in app headers and supports the shortcuts on a keyboard.
+`navigation.back` and `navigation.forward` move through visited locations using `mod+[` and `mod+]`.
 
 `thread.settle` settles the active thread or restores it when it is already settled. Its default
 shortcut is `mod+shift+s`, and it does not run while the terminal has focus.

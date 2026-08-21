@@ -61,7 +61,8 @@ function useMobileNavigationHistoryCoordinator(
         return;
       }
       const action = buildAction(target.location.pathname);
-      navigation.dispatch({ ...action, type: "REPLACE" });
+      if (!("payload" in action)) return;
+      navigation.dispatch({ ...action, payload: { ...action.payload, pop: true } });
     },
     [buildAction, history, navigation],
   );
