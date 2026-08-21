@@ -5,10 +5,8 @@ import {
   useSensor,
   useSensors,
   type CollisionDetection,
-  type DragCancelEvent,
   type DragEndEvent,
   type DragMoveEvent,
-  type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { getEventCoordinates } from "@dnd-kit/utilities";
@@ -29,14 +27,14 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSnapshotAtom } from "../state/shell";
 import { buildSidebarDndBoardSections } from "../components/Sidebar.dnd.board";
 import {
-  captureSidebarDndPointerAnchor,
-  parseSidebarDndId,
+  parseSidebarDndSectionId,
   resolveSidebarDndAction,
   resolveSidebarDndPreviewVariant,
   sidebarThreadKey,
   SIDEBAR_DND_SECTIONS,
   type SidebarDndAction,
   type SidebarDndSection,
+  type SidebarThreadDropTarget,
   type SidebarThreadDragTransaction,
 } from "../components/Sidebar.dnd.logic";
 import {
@@ -48,12 +46,6 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useSidebarDndLayout } from "./useSidebarDndLayout";
 import { useSidebarPinnedDnd, type SidebarPinnedInsertionPlan } from "./useSidebarPinnedDnd";
 import type { useThreadActions } from "./useThreadActions";
-
-interface SidebarThreadDropTarget {
-  readonly targetSection: SidebarDndSection;
-  readonly targetThreadKey: string | null;
-  readonly targetEdge: "before" | "after" | null;
-}
 
 interface SidebarThreadDndCapabilities {
   readonly threadPinning?: boolean;
@@ -76,15 +68,6 @@ type SidebarSnoozeOutcome =
   | { readonly status: "skipped" | "interrupted" }
   | { readonly status: "failure"; readonly error: unknown }
   | { readonly status: "success"; readonly sequence: number };
-
-function sectionIndex(
-  section: SidebarDndSection,
-  threadKey: string,
-  sections: Readonly<Record<SidebarDndSection, readonly EnvironmentThreadShell[]>>,
-): number {
-  const index = sections[section].findIndex((thread) => sidebarThreadKey(thread) === threadKey);
-  return Math.max(0, index);
-}
 
 export function useSidebarThreadDnd(input: {
   threads: readonly EnvironmentThreadShell[];
@@ -201,23 +184,14 @@ export function useSidebarThreadDnd(input: {
     handlePinnedReorder,
     planPinnedInsertion,
   } = pinnedDnd;
-  const sectionThreadCounts = useMemo(
-    () => ({
-      pinned: input.pinnedThreads.length,
-      regular: input.activeThreads.length,
-      snoozed: input.snoozedThreads.length,
-      settled: input.settledThreads.length,
-    }),
-    [
-      input.activeThreads.length,
-      input.pinnedThreads.length,
-      input.settledThreads.length,
-      input.snoozedThreads.length,
-    ],
-  );
+  const sectionThreadCounts = {
+    pinned: input.pinnedThreads.length,
+    regular: input.activeThreads.length,
+    snoozed: input.snoozedThreads.length,
+    settled: input.settledThreads.length,
+  };
   const layout = useSidebarDndLayout({
     transaction,
-    transactionRef,
     setTransaction,
     pinnedReorderInFlightRef,
     sectionThreadCounts,
@@ -226,10 +200,8 @@ export function useSidebarThreadDnd(input: {
   const {
     viewportRef,
     viewportOverlayRef,
-    viewportRailSectionsRef,
     getThreadRowNode,
     pauseLayoutMotion,
-    holdScrollRange,
     retainLayoutAnchor,
   } = layout;
 
@@ -249,10 +221,14 @@ export function useSidebarThreadDnd(input: {
         void readLocalApi()?.contextMenu.close();
       }
       pointerCoordinatesRef.current = null;
-      retainLayoutAnchor(
-        options.excludeSource || current === null
+      const preferredThreadKey =
+        current === null
           ? null
-          : getThreadRowNode(current.sourceThreadKey),
+          : options.excludeSource
+            ? (current.target?.threadKey ?? null)
+            : current.sourceThreadKey;
+      retainLayoutAnchor(
+        preferredThreadKey === null ? null : getThreadRowNode(preferredThreadKey),
         options.excludeSource && current !== null ? current.sourceThreadKey : null,
       );
       setTransaction(null);
@@ -262,19 +238,12 @@ export function useSidebarThreadDnd(input: {
   const beginReconciliation = useCallback(
     (reconciliation: {
       transaction: SidebarThreadDragTransaction;
-      destinationSection: SidebarDndSection;
       receiptSequencesByEnvironment: ReadonlyMap<EnvironmentThreadShell["environmentId"], number>;
-      pinnedOrder?: readonly string[] | null;
-      snoozedUntil?: string | null;
     }) => {
       retainLayoutAnchor(null, reconciliation.transaction.sourceThreadKey);
       setTransaction({
         ...reconciliation.transaction,
         phase: "reconciling",
-        targetSection: reconciliation.destinationSection,
-        destinationSection: reconciliation.destinationSection,
-        pinnedOrder: reconciliation.pinnedOrder ?? null,
-        snoozedUntil: reconciliation.snoozedUntil ?? null,
         receiptSequencesByEnvironment: reconciliation.receiptSequencesByEnvironment,
       });
     },
@@ -300,7 +269,6 @@ export function useSidebarThreadDnd(input: {
   const commitLifecycleDrop = useCallback(
     (
       current: SidebarThreadDragTransaction,
-      destinationSection: SidebarDndSection,
       action: Exclude<SidebarDndAction, "noop" | "reorder-pinned" | "snooze">,
       pinnedPlan: SidebarPinnedInsertionPlan | null,
     ) => {
@@ -312,10 +280,6 @@ export function useSidebarThreadDnd(input: {
         setTransaction({
           ...current,
           phase: "committing",
-          targetSection: destinationSection,
-          destinationSection,
-          pinnedOrder: pinnedPlan?.order ?? null,
-          snoozedUntil: null,
           receiptSequencesByEnvironment: null,
         });
         const threadRef = scopeThreadRef(
@@ -323,29 +287,15 @@ export function useSidebarThreadDnd(input: {
           current.sourceThread.id,
         );
         const receiptSequences = new Map<EnvironmentThreadShell["environmentId"], number>();
-        const recordReceipt = (
-          environmentId: EnvironmentThreadShell["environmentId"],
-          sequence: number,
-        ) => {
-          receiptSequences.set(
-            environmentId,
-            Math.max(receiptSequences.get(environmentId) ?? 0, sequence),
-          );
-        };
         if (action === "pin") {
           if (pinnedPlan === null) {
             finishTransaction();
             return;
           }
           for (const assignment of pinnedPlan.assignments) {
-            if (assignment.id === current.sourceThreadKey) continue;
-            const thread = pinnedPlan.threadByKey.get(assignment.id);
-            if (thread === undefined) {
-              finishTransaction();
-              return;
-            }
+            if (assignment.threadKey === current.sourceThreadKey) continue;
             const result = await input.actions.reorderPinnedThread(
-              scopeThreadRef(thread.environmentId, thread.id),
+              scopeThreadRef(assignment.thread.environmentId, assignment.thread.id),
               assignment.orderKey,
             );
             if (result._tag === "Failure") {
@@ -353,10 +303,10 @@ export function useSidebarThreadDnd(input: {
               reportDropFailure("Failed to prepare pinned order", result);
               return;
             }
-            recordReceipt(thread.environmentId, result.value.sequence);
+            receiptSequences.set(assignment.thread.environmentId, result.value.sequence);
           }
           const sourceAssignment = pinnedPlan.assignments.find(
-            (assignment) => assignment.id === current.sourceThreadKey,
+            (assignment) => assignment.threadKey === current.sourceThreadKey,
           );
           if (sourceAssignment === undefined) {
             finishTransaction();
@@ -370,12 +320,10 @@ export function useSidebarThreadDnd(input: {
             reportDropFailure("Failed to pin thread", result);
             return;
           }
-          recordReceipt(current.sourceThread.environmentId, result.value.sequence);
+          receiptSequences.set(current.sourceThread.environmentId, result.value.sequence);
           beginReconciliation({
             transaction: current,
-            destinationSection,
             receiptSequencesByEnvironment: receiptSequences,
-            pinnedOrder: pinnedPlan.order,
           });
           return;
         }
@@ -407,10 +355,9 @@ export function useSidebarThreadDnd(input: {
         if (action === "settle" && input.isRouteThread(current.sourceThreadKey)) {
           navigateAfterSettle?.();
         }
-        recordReceipt(current.sourceThread.environmentId, result.value.sequence);
+        receiptSequences.set(current.sourceThread.environmentId, result.value.sequence);
         beginReconciliation({
           transaction: current,
-          destinationSection,
           receiptSequencesByEnvironment: receiptSequences,
         });
       })();
@@ -433,10 +380,7 @@ export function useSidebarThreadDnd(input: {
       setTransaction({
         ...current,
         phase: "awaiting-snooze-choice",
-        targetSection: "snoozed",
-        destinationSection: "snoozed",
-        pinnedOrder: null,
-        snoozedUntil: null,
+        target: { section: "snoozed", threadKey: null, edge: null },
         receiptSequencesByEnvironment: null,
       });
       void (async () => {
@@ -460,12 +404,7 @@ export function useSidebarThreadDnd(input: {
           finishTransaction();
           return;
         }
-        const selectedId = selected.value.startsWith("snooze:")
-          ? selected.value.slice("snooze:".length)
-          : null;
-        const preset = resolveSnoozePresets(new Date(), input.timestampFormat).find(
-          (candidate) => candidate.id === selectedId,
-        );
+        const preset = menuPresets.find((candidate) => `snooze:${candidate.id}` === selected.value);
         if (preset === undefined || !sourceStillMatchesDragStart(current)) {
           finishTransaction();
           return;
@@ -473,10 +412,6 @@ export function useSidebarThreadDnd(input: {
         setTransaction({
           ...current,
           phase: "committing",
-          targetSection: "snoozed",
-          destinationSection: "snoozed",
-          pinnedOrder: null,
-          snoozedUntil: preset.snoozedUntil,
           receiptSequencesByEnvironment: null,
         });
         const threadRef = scopeThreadRef(
@@ -513,11 +448,9 @@ export function useSidebarThreadDnd(input: {
         );
         beginReconciliation({
           transaction: current,
-          destinationSection: "snoozed",
           receiptSequencesByEnvironment: new Map([
             [current.sourceThread.environmentId, outcome.sequence],
           ]),
-          snoozedUntil: preset.snoozedUntil,
         });
       })();
     },
@@ -532,33 +465,31 @@ export function useSidebarThreadDnd(input: {
     ],
   );
 
-  const collisionDetection = useCallback<CollisionDetection>(
-    (args) => {
-      if (args.pointerCoordinates !== null) pointerCoordinatesRef.current = args.pointerCoordinates;
-      const pointerCollisions = pointerWithin(args);
-      if (pointerCollisions.length > 0) {
-        const viewportRailSections = viewportRailSectionsRef.current;
-        return pointerCollisions.toSorted((left, right) => {
-          const priority = (id: ReturnType<typeof parseSidebarDndId>) => {
-            if (id?.kind === "section" && viewportRailSections.has(id.section)) return 0;
-            return id?.kind === "section" ? 2 : 1;
-          };
-          return priority(parseSidebarDndId(left.id)) - priority(parseSidebarDndId(right.id));
-        });
-      }
-      return closestCenter(args);
-    },
-    [viewportRailSectionsRef],
-  );
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    if (args.pointerCoordinates !== null) pointerCoordinatesRef.current = args.pointerCoordinates;
+    const pointerCollisions = pointerWithin(args);
+    if (pointerCollisions.length > 0) {
+      const viewportRailSections = transactionRef.current?.viewportRailTopBySection;
+      return pointerCollisions.toSorted((left, right) => {
+        const priority = (id: unknown) => {
+          const section = parseSidebarDndSectionId(id);
+          if (section !== null && viewportRailSections?.has(section) === true) return 0;
+          return section === null ? 1 : 2;
+        };
+        return priority(left.id) - priority(right.id);
+      });
+    }
+    return closestCenter(args);
+  }, []);
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
       if (pinnedReorderInFlightRef.current) return;
-      const id = parseSidebarDndId(event.active.id);
-      if (id === null || id.kind !== "draggable") return;
-      const sourceThread = allThreadByKeyRef.current.get(id.threadKey);
-      const sourceNode = getThreadRowNode(id.threadKey);
+      if (typeof event.active.id !== "string") return;
+      const threadKey = event.active.id;
+      const sourceThread = allThreadByKeyRef.current.get(threadKey);
+      const sourceNode = getThreadRowNode(threadKey);
       if (sourceThread === undefined || sourceNode === null) return;
-      const sourceSection = canonicalSectionByThreadKeyRef.current.get(id.threadKey);
+      const sourceSection = canonicalSectionByThreadKeyRef.current.get(threadKey);
       if (sourceSection === undefined || !canDragThread(sourceThread, sourceSection)) return;
       const sourceRect = sourceNode.getBoundingClientRect();
       const pointer = getEventCoordinates(event.activatorEvent) ?? {
@@ -573,27 +504,31 @@ export function useSidebarThreadDnd(input: {
         settled: input.renderedSettledThreads,
       } satisfies Readonly<Record<SidebarDndSection, readonly EnvironmentThreadShell[]>>;
       pauseLayoutMotion();
-      holdScrollRange();
       retainLayoutAnchor(sourceNode);
       setTransaction({
         phase: "dragging",
         sourceThread,
-        sourceThreadKey: id.threadKey,
+        sourceThreadKey: threadKey,
         sourceSection,
-        sourceIndex: sectionIndex(sourceSection, id.threadKey, sections),
+        sourceIndex: Math.max(
+          0,
+          sections[sourceSection].findIndex((thread) => sidebarThreadKey(thread) === threadKey),
+        ),
         sourceRect: {
-          left: sourceRect.left,
-          top: sourceRect.top,
           width: sourceRect.width,
           height: sourceRect.height,
         },
-        pointerAnchor: captureSidebarDndPointerAnchor({ pointer, sourceRect }),
-        targetSection: sourceSection,
-        targetThreadKey: id.threadKey,
-        targetEdge: null,
-        destinationSection: null,
-        pinnedOrder: null,
-        snoozedUntil: null,
+        pointerAnchor: {
+          x:
+            sourceRect.width === 0
+              ? 0.5
+              : Math.min(1, Math.max(0, (pointer.x - sourceRect.left) / sourceRect.width)),
+          y:
+            sourceRect.height === 0
+              ? 0.5
+              : Math.min(1, Math.max(0, (pointer.y - sourceRect.top) / sourceRect.height)),
+        },
+        target: { section: sourceSection, threadKey, edge: null },
         receiptSequencesByEnvironment: null,
         viewportRailTopBySection: null,
       });
@@ -601,7 +536,6 @@ export function useSidebarThreadDnd(input: {
     [
       canDragThread,
       getThreadRowNode,
-      holdScrollRange,
       input.activeThreads,
       input.renderedSettledThreads,
       input.visibleSnoozedThreads,
@@ -618,17 +552,22 @@ export function useSidebarThreadDnd(input: {
       over: DragMoveEvent["over"],
     ): SidebarThreadDropTarget | null => {
       if (over === null) return null;
-      const overId = parseSidebarDndId(over.id);
-      if (overId === null) return null;
-      const destination = overId.section;
+      const sectionDrop = parseSidebarDndSectionId(over.id);
+      const targetThreadKey = sectionDrop === null && typeof over.id === "string" ? over.id : null;
+      const destination =
+        sectionDrop ??
+        (targetThreadKey === null
+          ? undefined
+          : canonicalSectionByThreadKeyRef.current.get(targetThreadKey));
+      if (destination === undefined) return null;
       if (!canDropThreadInSection(current.sourceThread, current.sourceSection, destination)) {
         return null;
       }
-      let targetThreadKey = overId.kind === "section" ? null : overId.threadKey;
+      let resolvedThreadKey = targetThreadKey;
       let targetEdge: "before" | "after" | null = null;
       const pointerY = pointerCoordinatesRef.current?.y ?? over.rect.top + over.rect.height / 2;
-      if (targetThreadKey !== null) {
-        if (destination === "pinned" && !input.reorderablePinnedKeys.has(targetThreadKey)) {
+      if (resolvedThreadKey !== null) {
+        if (destination === "pinned" && !input.reorderablePinnedKeys.has(resolvedThreadKey)) {
           return null;
         }
         targetEdge = pointerY < over.rect.top + over.rect.height / 2 ? "before" : "after";
@@ -636,72 +575,39 @@ export function useSidebarThreadDnd(input: {
         const before = pointerY < over.rect.top + over.rect.height / 2;
         const target = before ? orderedPinnedThreads[0] : orderedPinnedThreads.at(-1);
         if (target !== undefined) {
-          targetThreadKey = sidebarThreadKey(target);
+          resolvedThreadKey = sidebarThreadKey(target);
           targetEdge = before ? "before" : "after";
         }
       }
-      return { targetSection: destination, targetThreadKey, targetEdge };
+      return { section: destination, threadKey: resolvedThreadKey, edge: targetEdge };
     },
     [canDropThreadInSection, input.reorderablePinnedKeys, orderedPinnedThreads],
   );
-  const capturePointerFromDragEvent = useCallback((event: DragMoveEvent) => {
-    const activationCoordinates = getEventCoordinates(event.activatorEvent);
-    if (activationCoordinates === null) return pointerCoordinatesRef.current;
-    const pointer = {
-      x: activationCoordinates.x + event.delta.x,
-      y: activationCoordinates.y + event.delta.y,
-    };
-    pointerCoordinatesRef.current = pointer;
-    return pointer;
-  }, []);
   const updateDragTarget = useCallback(
     (over: DragMoveEvent["over"]) => {
       const current = transactionRef.current;
       if (current === null || current.phase !== "dragging") return;
       const target = resolveDropTarget(current, over);
       if (target === null) {
-        if (current.targetSection === null) return;
-        setTransaction({
-          ...current,
-          targetSection: null,
-          targetThreadKey: null,
-          targetEdge: null,
-        });
+        if (current.target === null) return;
+        setTransaction({ ...current, target: null });
         return;
       }
       if (
-        current.targetSection === target.targetSection &&
-        current.targetThreadKey === target.targetThreadKey &&
-        current.targetEdge === target.targetEdge
+        current.target?.section === target.section &&
+        current.target.threadKey === target.threadKey &&
+        current.target.edge === target.edge
       ) {
         return;
       }
-      setTransaction({ ...current, ...target });
+      setTransaction({ ...current, target });
     },
     [resolveDropTarget, setTransaction],
-  );
-  const handleDragMove = useCallback(
-    (event: DragMoveEvent) => {
-      capturePointerFromDragEvent(event);
-      updateDragTarget(event.over);
-    },
-    [capturePointerFromDragEvent, updateDragTarget],
-  );
-  const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
-      capturePointerFromDragEvent(event);
-      updateDragTarget(event.over);
-    },
-    [capturePointerFromDragEvent, updateDragTarget],
-  );
-  const handleDragCancel = useCallback(
-    (_event: DragCancelEvent) => finishTransaction(),
-    [finishTransaction],
   );
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const current = transactionRef.current;
-      const releasePoint = capturePointerFromDragEvent(event);
+      const releasePoint = pointerCoordinatesRef.current;
       const target =
         current !== null && current.phase === "dragging"
           ? resolveDropTarget(current, event.over)
@@ -711,10 +617,10 @@ export function useSidebarThreadDnd(input: {
         finishTransaction();
         return;
       }
-      const finalized = { ...current, ...target };
+      const finalized = { ...current, target };
       const action = resolveSidebarDndAction({
         source: finalized.sourceSection,
-        destination: finalized.targetSection,
+        destination: finalized.target.section,
       });
       if (action === "noop") {
         finishTransaction();
@@ -723,20 +629,15 @@ export function useSidebarThreadDnd(input: {
       if (action === "reorder-pinned") {
         handlePinnedReorder(
           finalized.sourceThreadKey,
-          finalized.targetThreadKey,
-          finalized.targetEdge,
+          finalized.target.threadKey,
+          finalized.target.edge,
         );
         finishTransaction();
         return;
       }
       if (action === "snooze") {
-        openSnoozeDropMenu(
-          finalized,
-          releasePoint ?? {
-            x: finalized.sourceRect.left + finalized.sourceRect.width / 2,
-            y: finalized.sourceRect.top + finalized.sourceRect.height / 2,
-          },
-        );
+        if (releasePoint === null) finishTransaction();
+        else openSnoozeDropMenu(finalized, releasePoint);
         return;
       }
       const pinnedPlan = action === "pin" ? planPinnedInsertion(finalized) : null;
@@ -744,10 +645,9 @@ export function useSidebarThreadDnd(input: {
         finishTransaction();
         return;
       }
-      commitLifecycleDrop(finalized, finalized.targetSection, action, pinnedPlan);
+      commitLifecycleDrop(finalized, action, pinnedPlan);
     },
     [
-      capturePointerFromDragEvent,
       commitLifecycleDrop,
       finishTransaction,
       handlePinnedReorder,
@@ -807,19 +707,14 @@ export function useSidebarThreadDnd(input: {
       transaction,
     ],
   );
-  const dropIndicatorByThreadKey = useMemo(() => {
-    const indicators = new Map<string, "before" | "after">();
-    if (
-      transaction === null ||
-      transaction.phase === "reconciling" ||
-      transaction.targetThreadKey === null ||
-      transaction.targetEdge === null
-    ) {
-      return indicators;
-    }
-    indicators.set(transaction.targetThreadKey, transaction.targetEdge);
-    return indicators;
-  }, [transaction]);
+  const dropIndicator =
+    transaction !== null &&
+    transaction.phase !== "reconciling" &&
+    transaction.target?.threadKey !== null &&
+    transaction.target?.threadKey !== undefined &&
+    transaction.target.edge !== null
+      ? { threadKey: transaction.target.threadKey, edge: transaction.target.edge }
+      : null;
   const isTemporarySectionRailVisible = useCallback(
     (section: SidebarDndSection) => {
       if (transaction === null || transaction.phase === "reconciling") return false;
@@ -844,7 +739,7 @@ export function useSidebarThreadDnd(input: {
     transaction?.phase === "dragging"
       ? resolveSidebarDndPreviewVariant({
           source: transaction.sourceSection,
-          destination: transaction.targetSection,
+          destination: transaction.target?.section ?? null,
         })
       : null;
 
@@ -857,9 +752,8 @@ export function useSidebarThreadDnd(input: {
         sensors,
         collisionDetection,
         onDragStart: handleDragStart,
-        onDragMove: handleDragMove,
-        onDragOver: handleDragOver,
-        onDragCancel: handleDragCancel,
+        onDragMove: (event: DragMoveEvent) => updateDragTarget(event.over),
+        onDragCancel: () => finishTransaction(),
         onDragEnd: handleDragEnd,
       },
       layout,
@@ -868,7 +762,7 @@ export function useSidebarThreadDnd(input: {
       reorderablePinnedKeys: input.reorderablePinnedKeys,
       pinnedSortingStrategy,
       optimisticPinnedOrderActive: optimisticPinnedOrder !== null,
-      dropIndicatorByThreadKey,
+      dropIndicator,
       dragPreviewVariant,
       canDragThread,
       canDropThreadInSection,

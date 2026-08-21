@@ -16,10 +16,14 @@ import { orderItemsByPreferredIds, planPinnedReorder } from "../components/Sideb
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import type { useThreadActions } from "./useThreadActions";
 
+interface SidebarPinnedAssignment {
+  readonly thread: EnvironmentThreadShell;
+  readonly threadKey: string;
+  readonly orderKey: string;
+}
+
 export interface SidebarPinnedInsertionPlan {
-  readonly order: readonly string[];
-  readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
-  readonly threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
+  readonly assignments: readonly SidebarPinnedAssignment[];
 }
 
 interface OptimisticPinnedOrder {
@@ -74,9 +78,9 @@ export function useSidebarPinnedDnd(input: {
       transaction === null ||
       transaction.phase !== "dragging" ||
       transaction.sourceSection !== "pinned" ||
-      transaction.targetSection !== "pinned" ||
-      transaction.targetThreadKey === null ||
-      transaction.targetEdge === null
+      transaction.target?.section !== "pinned" ||
+      transaction.target.threadKey === null ||
+      transaction.target.edge === null
     ) {
       return null;
     }
@@ -86,8 +90,8 @@ export function useSidebarPinnedDnd(input: {
     const previewOrder = movePinnedThreadAtEdge({
       keys,
       activeKey: transaction.sourceThreadKey,
-      overKey: transaction.targetThreadKey,
-      edge: transaction.targetEdge,
+      overKey: transaction.target.threadKey,
+      edge: transaction.target.edge,
     });
     return previewOrder?.indexOf(transaction.sourceThreadKey) ?? null;
   }, [input.reorderablePinnedKeys, input.transaction, orderedPinnedThreads]);
@@ -204,15 +208,15 @@ export function useSidebarPinnedDnd(input: {
   );
   const planPinnedInsertion = useCallback(
     (transaction: SidebarThreadDragTransaction): SidebarPinnedInsertionPlan | null => {
-      if (transaction.sourceSection === "pinned" || transaction.targetSection !== "pinned") {
+      if (transaction.sourceSection === "pinned" || transaction.target?.section !== "pinned") {
         return null;
       }
       const existingKeys = input.allPinnedThreads.map(sidebarThreadKey);
       let insertionIndex = existingKeys.length;
-      if (transaction.targetThreadKey !== null) {
-        const targetIndex = existingKeys.indexOf(transaction.targetThreadKey);
+      if (transaction.target.threadKey !== null) {
+        const targetIndex = existingKeys.indexOf(transaction.target.threadKey);
         if (targetIndex !== -1) {
-          insertionIndex = targetIndex + (transaction.targetEdge === "after" ? 1 : 0);
+          insertionIndex = targetIndex + (transaction.target.edge === "after" ? 1 : 0);
         }
       } else if (existingKeys.length === 0) {
         insertionIndex = 0;
@@ -236,6 +240,7 @@ export function useSidebarPinnedDnd(input: {
         movedId: transaction.sourceThreadKey,
       });
       if (assignments.length === 0) return null;
+      const resolvedAssignments: SidebarPinnedAssignment[] = [];
       for (const assignment of assignments) {
         const thread = threadByKey.get(assignment.id);
         if (thread === undefined) return null;
@@ -244,8 +249,13 @@ export function useSidebarPinnedDnd(input: {
         } else if (!input.canReorder(thread)) {
           return null;
         }
+        resolvedAssignments.push({
+          thread,
+          threadKey: assignment.id,
+          orderKey: assignment.orderKey,
+        });
       }
-      return { order, assignments, threadByKey };
+      return { assignments: resolvedAssignments };
     },
     [input.allPinnedThreads, input.canPinWithOrder, input.canReorder],
   );

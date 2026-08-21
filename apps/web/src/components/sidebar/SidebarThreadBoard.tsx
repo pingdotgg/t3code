@@ -10,31 +10,21 @@ import { cn } from "~/lib/utils";
 import type { SidebarDndLayout } from "../../hooks/useSidebarDndLayout";
 import type { SidebarThreadBoardSections } from "../Sidebar.dnd.board";
 import {
-  createSidebarDndDraggableId,
   sidebarThreadKey,
-  SIDEBAR_DND_SECTIONS,
   type SidebarDndPreviewVariant,
   type SidebarDndSection,
   type SidebarThreadDragTransaction,
 } from "../Sidebar.dnd.logic";
 import {
-  DraggableSidebarThreadRow,
+  SidebarThreadDndRow,
   SidebarThreadDragOverlayContent,
   SidebarThreadSectionDropZone,
-  SidebarThreadViewportDropRail,
-  SortableSidebarThreadRow,
   type SidebarThreadDndRowBag,
 } from "./SidebarThreadDnd";
 
 type SidebarThreadDndContextProps = Pick<
   DndContextProps,
-  | "sensors"
-  | "collisionDetection"
-  | "onDragStart"
-  | "onDragMove"
-  | "onDragOver"
-  | "onDragCancel"
-  | "onDragEnd"
+  "sensors" | "collisionDetection" | "onDragStart" | "onDragMove" | "onDragCancel" | "onDragEnd"
 >;
 
 export interface SidebarThreadRenderState {
@@ -52,7 +42,10 @@ export interface SidebarThreadBoardDnd {
   readonly reorderablePinnedKeys: ReadonlySet<string>;
   readonly pinnedSortingStrategy: SortingStrategy;
   readonly optimisticPinnedOrderActive: boolean;
-  readonly dropIndicatorByThreadKey: ReadonlyMap<string, "before" | "after">;
+  readonly dropIndicator: {
+    readonly threadKey: string;
+    readonly edge: "before" | "after";
+  } | null;
   readonly dragPreviewVariant: SidebarDndPreviewVariant | null;
   readonly canDragThread: (thread: EnvironmentThreadShell, source: SidebarDndSection) => boolean;
   readonly canDropThreadInSection: (
@@ -61,6 +54,53 @@ export interface SidebarThreadBoardDnd {
     destination: SidebarDndSection,
   ) => boolean;
   readonly isTemporarySectionRailVisible: (section: SidebarDndSection) => boolean;
+}
+
+function SidebarThreadShelfHeader(props: {
+  section: "snoozed" | "settled";
+  count: number;
+  expanded: boolean;
+  isDropOver: boolean;
+  onToggle: () => void;
+}) {
+  if (props.count === 0) return null;
+  const snoozed = props.section === "snoozed";
+  const label = snoozed ? "Snoozed" : "Settled";
+  const color = snoozed ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground/50";
+  const divider = snoozed ? "bg-blue-500/20 dark:bg-blue-400/15" : "bg-sidebar-border/60";
+  return (
+    <div data-thread-selection-safe>
+      <button
+        type="button"
+        onClick={props.onToggle}
+        aria-expanded={props.expanded}
+        data-testid={`sidebar-${props.section}-shelf-toggle`}
+        className={cn(
+          "mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left transition-colors",
+          props.isDropOver &&
+            "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-ring/50",
+        )}
+      >
+        <span
+          className={cn(
+            "text-xs font-medium",
+            props.isDropOver ? "text-sidebar-accent-foreground" : color,
+          )}
+        >
+          {props.expanded ? label : `${label} (${props.count})`}
+        </span>
+        <span className={cn("h-px flex-1", props.isDropOver ? "bg-sidebar-ring/50" : divider)} />
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 transition-transform",
+            props.expanded && "rotate-180",
+            props.isDropOver ? "text-sidebar-accent-foreground" : color,
+          )}
+        />
+      </button>
+    </div>
+  );
 }
 
 export function SidebarThreadBoard(props: {
@@ -109,34 +149,23 @@ export function SidebarThreadBoard(props: {
     const renderVisualRow = (rowDnd: SidebarThreadDndRowBag) =>
       props.renderThread(thread, section, {
         dnd: rowDnd,
-        dimmed:
-          dnd.transaction?.sourceThreadKey === threadKey && dnd.transaction.phase !== "reconciling",
+        dimmed: dnd.transaction?.sourceThreadKey === threadKey,
         inert:
           dnd.transaction?.sourceThreadKey === threadKey && dnd.transaction.phase !== "dragging",
-        dropIndicator: dnd.dropIndicatorByThreadKey.get(threadKey) ?? null,
+        dropIndicator: dnd.dropIndicator?.threadKey === threadKey ? dnd.dropIndicator.edge : null,
       });
     const rowKey = `${threadKey}:${rowVariant}`;
-    return section === "pinned" && dnd.reorderablePinnedKeys.has(threadKey) ? (
-      <SortableSidebarThreadRow
+    return (
+      <SidebarThreadDndRow
         key={rowKey}
         threadKey={threadKey}
-        section={section}
-        disabled={dragDisabled}
-        onNodeChange={dnd.layout.handleThreadRowNodeChange}
-      >
-        {renderVisualRow}
-      </SortableSidebarThreadRow>
-    ) : (
-      <DraggableSidebarThreadRow
-        key={rowKey}
-        threadKey={threadKey}
-        section={section}
         dragDisabled={dragDisabled}
         dropDisabled={sectionDropDisabled(section)}
+        sortable={section === "pinned" && dnd.reorderablePinnedKeys.has(threadKey)}
         onNodeChange={dnd.layout.handleThreadRowNodeChange}
       >
         {renderVisualRow}
-      </DraggableSidebarThreadRow>
+      </SidebarThreadDndRow>
     );
   };
   const rail = (section: SidebarDndSection, label: string, isOver: boolean) => (
@@ -151,19 +180,12 @@ export function SidebarThreadBoard(props: {
       </div>
     </div>
   );
-  const visibleRailBySection = new Map<SidebarDndSection, boolean>(
-    SIDEBAR_DND_SECTIONS.map((section) => [section, dnd.isTemporarySectionRailVisible(section)]),
-  );
   const viewportRailTopBySection = dnd.transaction?.viewportRailTopBySection;
   const viewportOverlayHost = dnd.layout.viewportOverlayRef.current;
-  const viewportRailSections = new Set<SidebarDndSection>();
-  if (viewportRailTopBySection !== null && viewportRailTopBySection !== undefined) {
-    for (const section of viewportRailTopBySection.keys()) {
-      if (visibleRailBySection.get(section) === true && viewportOverlayHost !== null) {
-        viewportRailSections.add(section);
-      }
-    }
-  }
+  const isViewportRail = (section: SidebarDndSection) =>
+    viewportOverlayHost !== null &&
+    dnd.isTemporarySectionRailVisible(section) &&
+    viewportRailTopBySection?.has(section) === true;
   const renderViewportRail = (
     section: SidebarDndSection,
     label: string,
@@ -171,22 +193,38 @@ export function SidebarThreadBoard(props: {
     setNodeRef: (node: HTMLElement | null) => void,
   ) => {
     const top = viewportRailTopBySection?.get(section);
-    if (top === undefined || viewportOverlayHost === null || !viewportRailSections.has(section)) {
+    if (top === undefined || viewportOverlayHost === null || !isViewportRail(section)) {
       return null;
     }
     return createPortal(
-      <SidebarThreadViewportDropRail
-        section={section}
-        top={top}
-        setDropNodeRef={setNodeRef}
-        onNodeChange={dnd.layout.handleViewportRailNodeChange}
-      >
+      <div ref={setNodeRef} className="pointer-events-auto absolute inset-x-0 z-30" style={{ top }}>
         {rail(section, label, isOver)}
-      </SidebarThreadViewportDropRail>,
+      </div>,
       viewportOverlayHost,
       `sidebar-${section}-viewport-drop-rail`,
     );
   };
+  const renderSection = (
+    section: SidebarDndSection,
+    label: string,
+    content: (isOver: boolean) => ReactNode,
+  ) => (
+    <SidebarThreadSectionDropZone section={section} disabled={sectionDropDisabled(section)}>
+      {({ setNodeRef, isOver }) => {
+        const showRail = dnd.isTemporarySectionRailVisible(section);
+        const viewportRail = showRail
+          ? renderViewportRail(section, label, isOver, setNodeRef)
+          : null;
+        if (viewportRail !== null) return viewportRail;
+        return (
+          <li ref={setNodeRef} className="relative list-none">
+            {content(isOver)}
+            {showRail ? rail(section, label, isOver) : null}
+          </li>
+        );
+      }}
+    </SidebarThreadSectionDropZone>
+  );
 
   return (
     <DndContext
@@ -200,194 +238,69 @@ export function SidebarThreadBoard(props: {
     >
       <ul ref={dnd.layout.attachListRef} role="list" className="flex flex-col gap-px">
         {props.drafts}
-        <SidebarThreadSectionDropZone section="pinned" disabled={sectionDropDisabled("pinned")}>
-          {({ setNodeRef, isOver }) => {
-            const showRail = visibleRailBySection.get("pinned") === true;
-            const viewportRail = showRail
-              ? renderViewportRail("pinned", "Pinned", isOver, setNodeRef)
-              : null;
-            if (viewportRail !== null) return viewportRail;
-            return (
-              <li ref={setNodeRef} className="relative list-none">
-                <SortableContext
-                  items={dnd.sections.pinned
-                    .map(sidebarThreadKey)
-                    .filter((threadKey) => dnd.reorderablePinnedKeys.has(threadKey))
-                    .map((threadKey) =>
-                      createSidebarDndDraggableId({ section: "pinned", threadKey }),
-                    )}
-                  strategy={dnd.pinnedSortingStrategy}
-                >
-                  <ul role="list" aria-label="Pinned threads" className="flex flex-col gap-px">
-                    {dnd.sections.pinned.map((thread) => renderThread(thread, "pinned"))}
-                  </ul>
-                </SortableContext>
-                {showRail ? rail("pinned", "Pinned", isOver) : null}
-              </li>
-            );
-          }}
-        </SidebarThreadSectionDropZone>
-        {(dnd.sections.pinned.length > 0 || visibleRailBySection.get("pinned") === true) &&
-        !viewportRailSections.has("pinned") ? (
+        {renderSection("pinned", "Pinned", () => (
+          <SortableContext
+            items={dnd.sections.pinned
+              .map(sidebarThreadKey)
+              .filter((threadKey) => dnd.reorderablePinnedKeys.has(threadKey))}
+            strategy={dnd.pinnedSortingStrategy}
+          >
+            <ul role="list" aria-label="Pinned threads" className="flex flex-col gap-px">
+              {dnd.sections.pinned.map((thread) => renderThread(thread, "pinned"))}
+            </ul>
+          </SortableContext>
+        ))}
+        {(dnd.sections.pinned.length > 0 || dnd.isTemporarySectionRailVisible("pinned")) &&
+        !isViewportRail("pinned") ? (
           <li
             aria-hidden
             data-testid="sidebar-pinned-divider"
             className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
           />
         ) : null}
-        <SidebarThreadSectionDropZone section="regular" disabled={sectionDropDisabled("regular")}>
-          {({ setNodeRef, isOver }) => {
-            const showRail = visibleRailBySection.get("regular") === true;
-            const viewportRail = showRail
-              ? renderViewportRail("regular", "Regular", isOver, setNodeRef)
-              : null;
-            if (viewportRail !== null) return viewportRail;
-            return (
-              <li ref={setNodeRef} className="relative list-none">
-                <ul role="list" aria-label="Regular threads" className="flex flex-col gap-px">
-                  {dnd.sections.regular.map((thread) => renderThread(thread, "regular"))}
-                </ul>
-                {showRail ? rail("regular", "Regular", isOver) : null}
-              </li>
-            );
-          }}
-        </SidebarThreadSectionDropZone>
-        <SidebarThreadSectionDropZone section="snoozed" disabled={sectionDropDisabled("snoozed")}>
-          {({ setNodeRef, isOver }) => {
-            const collapsedHeaderDropOver = isOver && !props.snoozedShelf.expanded;
-            const showRail = visibleRailBySection.get("snoozed") === true;
-            const viewportRail = showRail
-              ? renderViewportRail("snoozed", "Snooze", isOver, setNodeRef)
-              : null;
-            if (viewportRail !== null) return viewportRail;
-            return (
-              <li ref={setNodeRef} className="relative list-none">
-                {props.snoozedShelf.threadCount > 0 ? (
-                  <div data-thread-selection-safe>
-                    <button
-                      type="button"
-                      onClick={props.snoozedShelf.onToggle}
-                      aria-expanded={props.snoozedShelf.expanded}
-                      data-testid="sidebar-snoozed-shelf-toggle"
-                      className={cn(
-                        "mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left transition-colors",
-                        collapsedHeaderDropOver &&
-                          "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-ring/50",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "text-xs font-medium",
-                          collapsedHeaderDropOver
-                            ? "text-sidebar-accent-foreground"
-                            : "text-blue-600 dark:text-blue-400",
-                        )}
-                      >
-                        {props.snoozedShelf.expanded
-                          ? "Snoozed"
-                          : `Snoozed (${props.snoozedShelf.threadCount})`}
-                      </span>
-                      <span
-                        className={cn(
-                          "h-px flex-1",
-                          collapsedHeaderDropOver
-                            ? "bg-sidebar-ring/50"
-                            : "bg-blue-500/20 dark:bg-blue-400/15",
-                        )}
-                      />
-                      <ChevronDownIcon
-                        aria-hidden
-                        className={cn(
-                          "size-3 transition-transform",
-                          props.snoozedShelf.expanded && "rotate-180",
-                          collapsedHeaderDropOver
-                            ? "text-sidebar-accent-foreground"
-                            : "text-blue-600 dark:text-blue-400",
-                        )}
-                      />
-                    </button>
-                  </div>
-                ) : null}
-                <ul role="list" aria-label="Snoozed threads" className="flex flex-col gap-px">
-                  {dnd.sections.snoozed.map((thread) => renderThread(thread, "snoozed"))}
-                </ul>
-                {showRail ? rail("snoozed", "Snooze", isOver) : null}
-              </li>
-            );
-          }}
-        </SidebarThreadSectionDropZone>
-        <SidebarThreadSectionDropZone section="settled" disabled={sectionDropDisabled("settled")}>
-          {({ setNodeRef, isOver }) => {
-            const collapsedHeaderDropOver = isOver && !props.settledShelf.expanded;
-            const showRail = visibleRailBySection.get("settled") === true;
-            const viewportRail = showRail
-              ? renderViewportRail("settled", "Settled", isOver, setNodeRef)
-              : null;
-            if (viewportRail !== null) return viewportRail;
-            return (
-              <li ref={setNodeRef} className="relative list-none">
-                {props.settledShelf.threadCount > 0 ? (
-                  <div data-thread-selection-safe>
-                    <button
-                      type="button"
-                      onClick={props.settledShelf.onToggle}
-                      aria-expanded={props.settledShelf.expanded}
-                      data-testid="sidebar-settled-shelf-toggle"
-                      className={cn(
-                        "mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left transition-colors",
-                        collapsedHeaderDropOver &&
-                          "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-ring/50",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "text-xs font-medium",
-                          collapsedHeaderDropOver
-                            ? "text-sidebar-accent-foreground"
-                            : "text-muted-foreground/50",
-                        )}
-                      >
-                        {props.settledShelf.expanded
-                          ? "Settled"
-                          : `Settled (${props.settledShelf.threadCount})`}
-                      </span>
-                      <span
-                        className={cn(
-                          "h-px flex-1",
-                          collapsedHeaderDropOver ? "bg-sidebar-ring/50" : "bg-sidebar-border/60",
-                        )}
-                      />
-                      <ChevronDownIcon
-                        aria-hidden
-                        className={cn(
-                          "size-3 transition-transform",
-                          props.settledShelf.expanded && "rotate-180",
-                          collapsedHeaderDropOver
-                            ? "text-sidebar-accent-foreground"
-                            : "text-muted-foreground/50",
-                        )}
-                      />
-                    </button>
-                  </div>
-                ) : null}
-                <ul role="list" aria-label="Settled threads" className="flex flex-col gap-px">
-                  {dnd.sections.settled.map((thread) => renderThread(thread, "settled"))}
-                </ul>
-                {showRail ? rail("settled", "Settled", isOver) : null}
-                {props.settledShelf.expanded && props.settledShelf.hiddenCount > 0 ? (
-                  <button
-                    type="button"
-                    onClick={props.settledShelf.onShowMore}
-                    className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
-                    <PlusIcon aria-hidden className="size-4 shrink-0" />
-                    Show {props.settledShelf.showMoreCount} more
-                  </button>
-                ) : null}
-              </li>
-            );
-          }}
-        </SidebarThreadSectionDropZone>
+        {renderSection("regular", "Regular", () => (
+          <ul role="list" aria-label="Regular threads" className="flex flex-col gap-px">
+            {dnd.sections.regular.map((thread) => renderThread(thread, "regular"))}
+          </ul>
+        ))}
+        {renderSection("snoozed", "Snooze", (isOver) => (
+          <>
+            <SidebarThreadShelfHeader
+              section="snoozed"
+              count={props.snoozedShelf.threadCount}
+              expanded={props.snoozedShelf.expanded}
+              isDropOver={isOver && !props.snoozedShelf.expanded}
+              onToggle={props.snoozedShelf.onToggle}
+            />
+            <ul role="list" aria-label="Snoozed threads" className="flex flex-col gap-px">
+              {dnd.sections.snoozed.map((thread) => renderThread(thread, "snoozed"))}
+            </ul>
+          </>
+        ))}
+        {renderSection("settled", "Settled", (isOver) => (
+          <>
+            <SidebarThreadShelfHeader
+              section="settled"
+              count={props.settledShelf.threadCount}
+              expanded={props.settledShelf.expanded}
+              isDropOver={isOver && !props.settledShelf.expanded}
+              onToggle={props.settledShelf.onToggle}
+            />
+            <ul role="list" aria-label="Settled threads" className="flex flex-col gap-px">
+              {dnd.sections.settled.map((thread) => renderThread(thread, "settled"))}
+            </ul>
+            {props.settledShelf.expanded && props.settledShelf.hiddenCount > 0 ? (
+              <button
+                type="button"
+                onClick={props.settledShelf.onShowMore}
+                className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              >
+                <PlusIcon aria-hidden className="size-4 shrink-0" />
+                Show {props.settledShelf.showMoreCount} more
+              </button>
+            ) : null}
+          </>
+        ))}
       </ul>
       <DragOverlay adjustScale={false} dropAnimation={null}>
         {dnd.transaction?.phase === "dragging" &&

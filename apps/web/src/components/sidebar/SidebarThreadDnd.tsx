@@ -1,12 +1,10 @@
-import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useDroppable } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import {
-  createSidebarDndDraggableId,
-  createSidebarDndRowId,
   createSidebarDndSectionId,
   type SidebarDndPreviewVariant,
   type SidebarDndSection,
@@ -15,27 +13,26 @@ import { animatePinnedLayoutChanges } from "../Sidebar.logic";
 import { SidebarThreadDragPreview } from "./SidebarThreadDragPreview";
 
 export type SidebarThreadDndRowBag = {
-  readonly listeners: ReturnType<typeof useDraggable>["listeners"];
+  readonly listeners: ReturnType<typeof useSortable>["listeners"];
   readonly setNodeRef: (node: HTMLElement | null) => void;
-  readonly transform: ReturnType<typeof useDraggable>["transform"];
+  readonly transform: ReturnType<typeof useSortable>["transform"];
   readonly transition: string | undefined;
   readonly isDragging: boolean;
   readonly isSortable: boolean;
 };
 
-export function SortableSidebarThreadRow(props: {
+export function SidebarThreadDndRow(props: {
   threadKey: string;
-  section: SidebarDndSection;
-  disabled: boolean;
+  dragDisabled: boolean;
+  dropDisabled: boolean;
+  sortable: boolean;
   onNodeChange: (threadKey: string, node: HTMLElement | null) => void;
   children: (bag: SidebarThreadDndRowBag) => ReactNode;
 }) {
-  const id = createSidebarDndDraggableId({ section: props.section, threadKey: props.threadKey });
   const sortable = useSortable({
-    id,
-    disabled: props.disabled,
-    animateLayoutChanges: animatePinnedLayoutChanges,
-    data: { section: props.section, threadKey: props.threadKey },
+    id: props.threadKey,
+    disabled: { draggable: props.dragDisabled, droppable: props.dropDisabled },
+    ...(props.sortable ? { animateLayoutChanges: animatePinnedLayoutChanges } : {}),
   });
   const setNodeRef = useCallback(
     (node: HTMLElement | null) => {
@@ -53,56 +50,10 @@ export function SortableSidebarThreadRow(props: {
   return props.children({
     listeners: sortable.listeners,
     setNodeRef,
-    transform: sortable.transform,
-    transition: sortable.transition,
+    transform: props.sortable ? sortable.transform : null,
+    transition: props.sortable ? sortable.transition : undefined,
     isDragging: sortable.isDragging,
-    isSortable: true,
-  });
-}
-
-export function DraggableSidebarThreadRow(props: {
-  threadKey: string;
-  section: SidebarDndSection;
-  dragDisabled: boolean;
-  dropDisabled: boolean;
-  onNodeChange: (threadKey: string, node: HTMLElement | null) => void;
-  children: (bag: SidebarThreadDndRowBag) => ReactNode;
-}) {
-  const draggable = useDraggable({
-    id: createSidebarDndDraggableId({
-      section: props.section,
-      threadKey: props.threadKey,
-    }),
-    disabled: props.dragDisabled,
-    data: { section: props.section, threadKey: props.threadKey },
-  });
-  const droppable = useDroppable({
-    id: createSidebarDndRowId({ section: props.section, threadKey: props.threadKey }),
-    disabled: props.dropDisabled,
-    data: { section: props.section, threadKey: props.threadKey },
-  });
-  const setNodeRef = useCallback(
-    (node: HTMLElement | null) => {
-      draggable.setNodeRef(node);
-      droppable.setNodeRef(node);
-      props.onNodeChange(props.threadKey, node);
-    },
-    [draggable.setNodeRef, droppable.setNodeRef, props.onNodeChange, props.threadKey],
-  );
-  useEffect(
-    () => () => {
-      props.onNodeChange(props.threadKey, null);
-    },
-    [props.onNodeChange, props.threadKey],
-  );
-  return props.children({
-    listeners: draggable.listeners,
-    setNodeRef,
-    // Sorted lists never apply the draggable transform to their source row.
-    transform: null,
-    transition: undefined,
-    isDragging: draggable.isDragging,
-    isSortable: false,
+    isSortable: props.sortable,
   });
 }
 
@@ -120,32 +71,6 @@ export function SidebarThreadSectionDropZone(props: {
     data: { section: props.section },
   });
   return props.children({ setNodeRef: droppable.setNodeRef, isOver: droppable.isOver });
-}
-
-export function SidebarThreadViewportDropRail(props: {
-  section: SidebarDndSection;
-  top: number;
-  setDropNodeRef: (node: HTMLElement | null) => void;
-  onNodeChange: (section: SidebarDndSection, node: HTMLElement | null) => void;
-  children: ReactNode;
-}) {
-  const setNodeRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      props.setDropNodeRef(node);
-      props.onNodeChange(props.section, node);
-    },
-    [props.onNodeChange, props.section, props.setDropNodeRef],
-  );
-
-  return (
-    <div
-      ref={setNodeRef}
-      className="pointer-events-auto absolute inset-x-0 z-30"
-      style={{ top: props.top }}
-    >
-      {props.children}
-    </div>
-  );
 }
 
 export function SidebarThreadDropIndicator(props: { edge: "before" | "after" }) {
