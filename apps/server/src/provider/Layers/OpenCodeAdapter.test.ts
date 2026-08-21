@@ -1438,7 +1438,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("uses an exact cached dynamic tool part without fetching the message", () =>
+  it.effect("prefers populated cached tool input", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-opencode-cached-dynamic-approval");
@@ -1446,6 +1446,26 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const messageID = "msg-cached-dynamic";
       const callID = "call-cached-dynamic";
       runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: "part-cached-dynamic-pending",
+              sessionID,
+              messageID,
+              type: "tool",
+              callID,
+              tool: "gh_grep_searchGitHub",
+              state: {
+                status: "pending",
+                input: {},
+                raw: "",
+              },
+            },
+            time: 0,
+          },
+        },
         {
           type: "message.part.updated",
           properties: {

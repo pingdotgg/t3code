@@ -216,6 +216,8 @@ function findCachedOpenCodeToolPart(
   messageID: string,
   callID: string,
 ): Extract<Part, { type: "tool" }> | undefined {
+  let latestExact: Extract<Part, { type: "tool" }> | undefined;
+  let latestPopulated: Extract<Part, { type: "tool" }> | undefined;
   for (const part of parts) {
     if (
       part.type === "tool" &&
@@ -223,10 +225,13 @@ function findCachedOpenCodeToolPart(
       part.messageID === messageID &&
       part.callID === callID
     ) {
-      return part;
+      latestExact = part;
+      if (hasOpenCodeToolInput(part)) {
+        latestPopulated = part;
+      }
     }
   }
-  return undefined;
+  return latestPopulated ?? latestExact;
 }
 
 function openCodeEventSessionId(event: OpenCodeSubscribedEvent): string | undefined {
