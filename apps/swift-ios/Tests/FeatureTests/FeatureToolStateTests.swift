@@ -3,6 +3,24 @@ import Testing
 
 @Suite("Thread tool state")
 struct FeatureToolStateTests {
+    @MainActor
+    @Test("A failed source-control action stops progress before recovery")
+    func failedSourceControlActionStopsProgressBeforeRecovery() async {
+        var phases: [String] = []
+
+        let result: Result<Void, Error> = await runFeatureSourceControlAction(
+            setRunning: { phases.append($0 ? "running" : "stopped") }
+        ) {
+            throw FeatureCapabilityUnavailable("Source control")
+        }
+
+        if case .failure = result {
+            phases.append("recovery")
+        }
+
+        #expect(phases == ["running", "stopped", "recovery"])
+    }
+
     private static func vcsLocal(
         isRepo: Bool = true,
         hasPrimaryRemote: Bool = true,

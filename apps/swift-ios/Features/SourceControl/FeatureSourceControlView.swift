@@ -1,5 +1,20 @@
 import SwiftUI
 
+@MainActor
+func runFeatureSourceControlAction<Value>(
+    setRunning: (Bool) -> Void,
+    operation: () async throws -> Value
+) async -> Result<Value, Error> {
+    setRunning(true)
+    defer { setRunning(false) }
+
+    do {
+        return .success(try await operation())
+    } catch {
+        return .failure(error)
+    }
+}
+
 public struct FeatureSourceControlView: View {
     let client: any FeatureClient
     let threadID: String
@@ -238,20 +253,24 @@ public struct FeatureSourceControlView: View {
         // stream error would mask this action's failure message.
         statusGeneration += 1
         let statusID = statusGeneration
-        isRunningAction = true
-        defer { isRunningAction = false }
-        do {
-            let result = try await client.performSourceControlAction(
+        let actionResult = await runFeatureSourceControlAction(
+            setRunning: { isRunningAction = $0 }
+        ) {
+            try await client.performSourceControlAction(
                 threadID: threadID,
                 action: action,
                 message: message?.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+        }
+
+        switch actionResult {
+        case let .success(result):
             // Guarded like a load's: pull-to-refresh is not gated on a running
             // action, so a refresh started after this one must win.
             guard statusID == statusGeneration else { return }
             status = result
             errorMessage = nil
-        } catch {
+        case let .failure(error):
             guard statusID == statusGeneration else { return }
             errorMessage = error.localizedDescription
             // This action superseded an in-flight stream, so the remote half it
