@@ -13,14 +13,15 @@ describe("createMobileNavigationHistory", () => {
     history.visit(location("/threads/env/thread-a", "thread-a"));
     history.visit(location("/threads/env/thread-b", "thread-b"));
     history.visit(location("/threads/env/thread-b", "thread-b-remount"));
-
     const backTarget = history.requestBack();
     expect(backTarget?.location.pathname).toBe("/threads/env/thread-a");
+    expect(history.requestBack()).toBeNull();
     history.visit(location(backTarget!.location.pathname, "thread-a"));
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
 
     const forwardTarget = history.requestForward();
     expect(forwardTarget?.location.pathname).toBe("/threads/env/thread-b");
+    expect(forwardTarget?.location.transitionKey).toBe("thread-b-remount");
     history.visit(location(forwardTarget!.location.pathname, "thread-b"));
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
   });
@@ -30,9 +31,7 @@ describe("createMobileNavigationHistory", () => {
     history.visit(location("/threads/env/thread-a", "thread-a"));
     history.visit(location("/threads/env/thread-b", "thread-b"));
     history.visit(history.requestBack()!.location);
-
     history.visit(location("/settings"));
-
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
     expect(history.requestForward()).toBeNull();
   });
@@ -41,9 +40,7 @@ describe("createMobileNavigationHistory", () => {
     const history = createMobileNavigationHistory(location("/"));
     history.visit(location("/threads/env/thread-a", "thread-a"));
     history.visit(location("/settings"));
-
     history.visit(location("/threads/env/thread-a", "thread-a"));
-
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
     expect(history.requestForward()?.location.pathname).toBe("/settings");
   });
@@ -52,9 +49,7 @@ describe("createMobileNavigationHistory", () => {
     const history = createMobileNavigationHistory(location("/"));
     history.visit(location("/threads/env/thread-a", "thread-a"));
     history.visit(location("/threads/env/thread-b", "thread-b"));
-
     history.visit(location("/"));
-
     expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: true });
     expect(history.requestForward()?.location.pathname).toBe("/threads/env/thread-a");
   });
@@ -64,9 +59,7 @@ describe("createMobileNavigationHistory", () => {
     history.visit(location("/threads/env/thread/terminal?terminalId=a", "thread"));
     history.visit(location("/threads/env/thread/terminal?terminalId=b", "thread"));
     history.visit(location("/threads/env/thread/terminal?terminalId=c", "thread"));
-
     history.visit(location("/threads/env/thread/terminal?terminalId=a", "thread"));
-
     expect(history.requestBack()?.location.pathname).toContain("terminalId=c");
     expect(history.requestForward()).toBeNull();
   });
@@ -76,7 +69,6 @@ describe("createMobileNavigationHistory", () => {
     history.visit(location("/threads/env/thread-b", "b"));
     history.visit(location("/threads/env/thread-a", "a-2"));
     history.visit(history.requestBack()!.location);
-
     const forward = history.requestForward();
     expect(forward).toEqual({
       index: 2,
@@ -95,7 +87,6 @@ describe("createMobileNavigationHistory", () => {
     history.requestBack();
     history.cancelPendingTraversal();
     history.visit(location("/threads/env/thread-b", "thread"));
-
     expect(history.requestBack()?.location.pathname).toBe("/threads/env/thread-c");
     expect(history.requestForward()).toBeNull();
   });

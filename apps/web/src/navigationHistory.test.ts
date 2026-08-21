@@ -26,13 +26,11 @@ describe("createNavigationHistory", () => {
     const snapshots: Array<ReturnType<typeof history.getSnapshot>> = [];
     history.subscribe(() => snapshots.push(history.getSnapshot()));
     history.start();
-
     expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: false });
 
     routerHistory.push("/thread-a");
     routerHistory.push("/thread-b");
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
-
     history.back();
     expect(routerHistory.location.pathname).toBe("/thread-a");
     expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
@@ -53,5 +51,10 @@ describe("createNavigationHistory", () => {
       { canGoBack: true, canGoForward: true },
       { canGoBack: true, canGoForward: false },
     ]);
+
+    const restored = createNavigationHistory(
+      createMemoryHistory({ initialEntries: ["/", "/thread-a"] }),
+    );
+    expect(restored.getSnapshot().canGoBack).toBe(true);
   });
 });

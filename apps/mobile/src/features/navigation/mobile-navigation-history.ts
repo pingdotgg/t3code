@@ -40,12 +40,14 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
     },
     getSnapshot: () => snapshot,
     requestBack: () => {
+      if (pendingTarget) return null;
       const index = cursor - 1;
       const location = entries[index];
       pendingTarget = location ? { index, location } : null;
       return pendingTarget;
     },
     requestForward: () => {
+      if (pendingTarget) return null;
       const index = cursor + 1;
       const location = entries[index];
       pendingTarget = location ? { index, location } : null;
@@ -58,6 +60,7 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
     visit: (location: MobileNavigationLocation) => {
       const current = entries[cursor];
       if (location.pathname === current?.pathname) {
+        entries = entries.map((entry, index) => (index === cursor ? location : entry));
         return;
       }
 

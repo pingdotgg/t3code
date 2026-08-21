@@ -10,6 +10,7 @@ import { cn } from "../lib/utils";
 import { useNavigationHistory } from "../navigationHistory";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { Button } from "./ui/button";
+import { WORKSPACE_TITLEBAR_CONTROL_CLASS } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface NavigationHistoryButtonsProps {
@@ -20,10 +21,6 @@ interface NavigationHistoryButtonsProps {
   readonly forwardShortcut: string | null;
   readonly onBack: () => void;
   readonly onForward: () => void;
-}
-
-function tooltipLabel(label: string, shortcut: string | null): string {
-  return shortcut ? `${label} (${shortcut})` : label;
 }
 
 function NavigationButton(props: {
@@ -42,7 +39,8 @@ function NavigationButton(props: {
             aria-disabled={!props.available}
             aria-label={props.label}
             className={cn(
-              "size-[var(--workspace-titlebar-control-size)]! aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent [-webkit-app-region:no-drag]",
+              WORKSPACE_TITLEBAR_CONTROL_CLASS,
+              "aria-disabled:cursor-default aria-disabled:opacity-64 aria-disabled:hover:bg-transparent",
               props.className,
             )}
             onClick={() => {
@@ -57,7 +55,9 @@ function NavigationButton(props: {
           </Button>
         }
       />
-      <TooltipPopup side="bottom">{tooltipLabel(props.label, props.shortcut)}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {props.shortcut ? `${props.label} (${props.shortcut})` : props.label}
+      </TooltipPopup>
     </Tooltip>
   );
 }
