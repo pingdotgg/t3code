@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type ContextMenuItem,
   type EditorId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
@@ -42,6 +43,8 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { readLocalApi } from "~/localApi";
+import { type HeaderControlsVisibility, useHeaderControlsStore } from "~/headerControlsStore";
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
@@ -86,6 +89,25 @@ export function resolveRenameCommit(input: {
   if (trimmed.length === 0) return { action: "reject-empty" };
   if (trimmed === input.originalTitle) return { action: "noop" };
   return { action: "commit", title: trimmed };
+}
+
+export function buildHeaderControlsContextMenuItems(
+  visibility: HeaderControlsVisibility,
+): readonly ContextMenuItem<keyof HeaderControlsVisibility>[] {
+  return [
+    {
+      id: "scripts",
+      label: `${visibility.scripts ? "✓\u00A0" : "\u00A0\u00A0"}Action scripts`,
+    },
+    {
+      id: "openIn",
+      label: `${visibility.openIn ? "✓\u00A0" : "\u00A0\u00A0"}Open in editor`,
+    },
+    {
+      id: "git",
+      label: `${visibility.git ? "✓\u00A0" : "\u00A0\u00A0"}Git source control`,
+    },
+  ];
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -200,16 +222,39 @@ export const ChatHeader = memo(function ChatHeader({
     if (!rect) return;
     openMenu({ x: rect.left, y: rect.bottom + 4 });
   }, [openMenu]);
+  const visibility = useHeaderControlsStore((state) => state.visibility);
+
+  const handleHeaderActionsContextMenu = useCallback(async (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const api = readLocalApi();
+    if (!api) return;
+
+    const currentVisibility = useHeaderControlsStore.getState().visibility;
+    const items = buildHeaderControlsContextMenuItems(currentVisibility);
+
+    const selected = await api.contextMenu.show(items, {
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    if (selected) {
+      useHeaderControlsStore.getState().toggleControl(selected);
+    }
+  }, []);
+
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
+      if ((event.target as HTMLElement).closest("[data-chat-header-actions]")) {
+        void handleHeaderActionsContextMenu(event);
+        return;
+      }
       if (!isServerThread || renamingTitle !== null) return;
-      // The right-side controls (git, scripts, open-in) keep their own
-      // behavior; only the breadcrumb area opens the thread menu.
-      if ((event.target as HTMLElement).closest("[data-chat-header-actions]")) return;
       event.preventDefault();
       openMenu({ x: event.clientX, y: event.clientY });
     },
-    [isServerThread, openMenu, renamingTitle],
+    [handleHeaderActionsContextMenu, isServerThread, openMenu, renamingTitle],
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -282,6 +327,7 @@ export const ChatHeader = memo(function ChatHeader({
                   <button
                     ref={titleButtonRef}
                     type="button"
+                    data-thread-title-anchor=""
                     aria-label={`Thread actions for ${activeThreadTitle}`}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
@@ -313,38 +359,45 @@ export const ChatHeader = memo(function ChatHeader({
       </WorkspaceBreadcrumb>
       <div
         data-chat-header-actions
+        onContextMenu={handleHeaderActionsContextMenu}
         className={cn(
-          "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
+          "flex h-full min-w-6 shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
         {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            fileScripts={fileScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
+          <div className={cn(!visibility.scripts && "hidden")}>
+            <ProjectScriptsControl
+              scripts={activeProjectScripts}
+              fileScripts={fileScripts}
+              keybindings={keybindings}
+              preferredScriptId={preferredScriptId}
+              onRunScript={onRunProjectScript}
+              onAddScript={onAddProjectScript}
+              onUpdateScript={onUpdateProjectScript}
+              onDeleteScript={onDeleteProjectScript}
+            />
+          </div>
         )}
         {showOpenInPicker && (
-          <OpenInPicker
-            environmentId={activeThreadEnvironmentId}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
+          <div className={cn(!visibility.openIn && "hidden")}>
+            <OpenInPicker
+              environmentId={activeThreadEnvironmentId}
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              openInCwd={openInCwd}
+            />
+          </div>
         )}
         {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            onOpenPullRequest={onOpenPullRequest}
-            {...(draftId ? { draftId } : {})}
-          />
+          <div className={cn(!visibility.git && "hidden")}>
+            <GitActionsControl
+              gitCwd={gitCwd}
+              activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+              onOpenPullRequest={onOpenPullRequest}
+              {...(draftId ? { draftId } : {})}
+            />
+          </div>
         )}
       </div>
     </div>
