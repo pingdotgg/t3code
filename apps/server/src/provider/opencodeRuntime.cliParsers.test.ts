@@ -62,6 +62,25 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(Object.keys(result.providers.get("openai")!.models).length, 1);
   });
 
+  it("parses model IDs with spaces without dropping the preceding model", () => {
+    const stdout = [
+      "custom/model-one",
+      JSON.stringify({
+        id: "model-one",
+        providerID: "custom",
+        name: "Model One",
+      }),
+      "custom/Model Two",
+      JSON.stringify({ id: "Model Two", providerID: "custom", name: "Model Two" }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    const provider = result.providers.get("custom")!;
+
+    NodeAssert.ok(provider.models["model-one"]);
+    NodeAssert.ok(provider.models["Model Two"]);
+  });
+
   it("handles empty input", () => {
     const result = parseModelsCliOutput("");
     NodeAssert.equal(result.providers.size, 0);
