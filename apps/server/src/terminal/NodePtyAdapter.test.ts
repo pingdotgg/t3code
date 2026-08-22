@@ -53,7 +53,7 @@ it.effect("spawns through the public adapter with the provided host references",
         cwd: "C:\\workspace",
         cols: 120,
         rows: 40,
-        env: { TERM: "xterm-256color" },
+        env: { TERM: "xterm-256color", COLORTERM: "truecolor" },
         name: "xterm-256color",
       },
     ]);
@@ -80,7 +80,61 @@ it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
         cwd: "C:\\workspace",
         cols: 80,
         rows: 24,
-        env: { TERM: "xterm-direct" },
+        env: { TERM: "xterm-direct", COLORTERM: "truecolor" },
+        name: "xterm-256color",
+      },
+    ]);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("defaults COLORTERM to truecolor when it is missing or empty", () =>
+  Effect.gen(function* () {
+    spawn.mockClear();
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    yield* adapter.spawn({
+      shell: "powershell.exe",
+      cwd: "C:\\workspace",
+      cols: 80,
+      rows: 24,
+      env: { COLORTERM: "" },
+    });
+
+    assert.equal(spawn.mock.calls.length, 1);
+    assert.deepEqual(spawn.mock.calls[0], [
+      "powershell.exe",
+      [],
+      {
+        cwd: "C:\\workspace",
+        cols: 80,
+        rows: 24,
+        env: { COLORTERM: "truecolor", TERM: "xterm-256color" },
+        name: "xterm-256color",
+      },
+    ]);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("preserves a caller-provided COLORTERM in the spawn env", () =>
+  Effect.gen(function* () {
+    spawn.mockClear();
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    yield* adapter.spawn({
+      shell: "powershell.exe",
+      cwd: "C:\\workspace",
+      cols: 80,
+      rows: 24,
+      env: { COLORTERM: "24bit" },
+    });
+
+    assert.equal(spawn.mock.calls.length, 1);
+    assert.deepEqual(spawn.mock.calls[0], [
+      "powershell.exe",
+      [],
+      {
+        cwd: "C:\\workspace",
+        cols: 80,
+        rows: 24,
+        env: { COLORTERM: "24bit", TERM: "xterm-256color" },
         name: "xterm-256color",
       },
     ]);
