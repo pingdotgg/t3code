@@ -261,11 +261,12 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
     const credential = yield* credentials.get(target.connectionId);
     if (Option.isSome(credential) && isBearerCredential(credential.value)) {
       return yield* prepareAndAuthorize(credential.value.token).pipe(
-        Effect.catch((error) =>
-          error._tag === "ConnectionBlockedError" && error.reason === "authentication"
-            ? credentials.remove(target.connectionId).pipe(Effect.andThen(prepareAndAuthorize()))
-            : Effect.fail(error),
-        ),
+        Effect.catchTags({
+          ConnectionBlockedError: (error) =>
+            error.reason === "authentication"
+              ? credentials.remove(target.connectionId).pipe(Effect.andThen(prepareAndAuthorize()))
+              : Effect.fail(error),
+        }),
       );
     }
     return yield* prepareAndAuthorize();

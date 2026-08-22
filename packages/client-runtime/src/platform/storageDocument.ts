@@ -103,6 +103,12 @@ export function registerConnectionInCatalog(
   const previous = routes.find(
     (candidate) => connectionRouteId(candidate) === connectionRouteId(target),
   );
+  const previousCredential =
+    registration._tag === "SshConnectionRegistration" && registration.credential === undefined
+      ? document.credentials.find(
+          (value) => value.connectionId === registration.target.connectionId,
+        )
+      : undefined;
   const cleaned = previous === undefined ? document : removeRouteMetadata(document, previous);
   const next: ConnectionCatalogDocument = {
     ...cleaned,
@@ -136,7 +142,13 @@ export function registerConnectionInCatalog(
         ),
         credentials:
           registration.credential === undefined
-            ? next.credentials
+            ? previousCredential === undefined
+              ? next.credentials
+              : replaceCatalogValue(
+                  next.credentials,
+                  (value) => value.connectionId,
+                  previousCredential,
+                )
             : replaceCatalogValue(next.credentials, (value) => value.connectionId, {
                 connectionId: registration.target.connectionId,
                 credential: registration.credential,
