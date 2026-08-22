@@ -68,7 +68,8 @@ export function useSettingsSearchTargetId(): string | null {
   return useContext(SettingsSearchTargetContext).targetId;
 }
 
-function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
+/** Return a ref callback that focuses the matching settings-search target after it mounts. */
+export function useSettingsSearchTargetRef<T extends HTMLElement>(id: string | undefined) {
   const { targetId, onTargetHandled } = useContext(SettingsSearchTargetContext);
   const isSearchTarget = id !== undefined && id === targetId;
   const targetRef = useCallback(
@@ -126,7 +127,7 @@ export function SettingsSection({
   headerAction?: ReactNode;
   children: ReactNode;
 }) {
-  const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+  const targetRef = useSettingsSearchTargetRef<HTMLElement>(sectionProps.id);
 
   return (
     <section
@@ -164,7 +165,7 @@ export function SettingsRow({
   control?: ReactNode;
   children?: ReactNode;
 }) {
-  const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const targetRef = useSettingsSearchTargetRef<HTMLDivElement>(rowProps.id);
 
   return (
     <div

@@ -7,7 +7,15 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type ComponentType,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -46,6 +54,11 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import {
+  SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE,
+  type SettingsMode,
+  type SharedSettingsTailSectionId,
+} from "./settingsContract";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
@@ -125,17 +138,7 @@ function LocalSettingsRouteScreen() {
           />
         </SettingsSection>
 
-        <GeneralSettingsSection />
-
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
-        </SettingsSection>
-
-        <LegacySettingsSection />
-
-        <ArchivedThreadsSettingsSection />
-
-        <AppSettingsSection />
+        <SharedSettingsTail mode="local" />
       </ScrollView>
     </View>
   );
@@ -511,19 +514,28 @@ function ConfiguredSettingsRouteScreen() {
           />
         </SettingsSection>
 
-        <GeneralSettingsSection />
-
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
-        </SettingsSection>
-
-        <LegacySettingsSection />
-
-        <ArchivedThreadsSettingsSection />
-
-        <AppSettingsSection />
+        <SharedSettingsTail mode="configured" />
       </ScrollView>
     </View>
+  );
+}
+
+const SHARED_SETTINGS_TAIL_COMPONENTS = {
+  general: GeneralSettingsSection,
+  appearance: AppearanceSettingsSection,
+  legacy: LegacySettingsSection,
+  archive: ArchivedThreadsSettingsSection,
+  app: AppSettingsSection,
+} satisfies Record<SharedSettingsTailSectionId, ComponentType>;
+
+function SharedSettingsTail({ mode }: { mode: SettingsMode }) {
+  return (
+    <>
+      {SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE[mode].map((sectionId) => {
+        const Section = SHARED_SETTINGS_TAIL_COMPONENTS[sectionId];
+        return <Section key={sectionId} />;
+      })}
+    </>
   );
 }
 
@@ -544,6 +556,14 @@ function GeneralSettingsSection() {
         onValueChange={(value) => savePreferences({ autoSettleOnMerge: value })}
       />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
+    </SettingsSection>
+  );
+}
+
+function AppearanceSettingsSection() {
+  return (
+    <SettingsSection title="Appearance">
+      <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
     </SettingsSection>
   );
 }

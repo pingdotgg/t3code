@@ -157,6 +157,10 @@ class FakeDocument {
     return new FakeElement(tagName);
   }
 
+  createElementNS(_namespace: string, tagName: string) {
+    return new FakeElement(tagName);
+  }
+
   addEventListener(type: string, listener: FakeListener) {
     const existing = this.listeners.get(type) ?? [];
     existing.push(listener);
@@ -219,6 +223,19 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
+  it("renders the archive restore icon used by archived-thread menus", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "unarchive", label: "Unarchive", icon: "archive-restore" },
+    ]);
+
+    const unarchiveButton = findButton("Unarchive");
+    expect(unarchiveButton?.querySelectorAll("svg")).toHaveLength(1);
+    expect(unarchiveButton?.querySelectorAll("rect")).toHaveLength(1);
+    expect(unarchiveButton?.querySelectorAll("path")).toHaveLength(4);
+    dismissContextMenu();
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
   it("renders one separator between menu sections", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename" },

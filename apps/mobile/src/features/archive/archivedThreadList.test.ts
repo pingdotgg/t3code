@@ -3,9 +3,24 @@ import type { OrchestrationProjectShell, OrchestrationThreadShell } from "@t3too
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildArchivedThreadGroups } from "./archivedThreadList";
+import {
+  archivedThreadActionExceptionDescription,
+  ArchivedThreadActionError,
+  archivedThreadActionKey,
+  archivedThreadActionSummaryDescription,
+  archivedThreadTimestampValue,
+  buildArchivedThreadGroups,
+  formatArchivedThreadRelativeTime,
+  nextArchivedThreadSortState,
+  parseArchivedThreadSearchInput,
+  releaseArchivedThreadActionLock,
+  runArchivedThreadActions,
+  tryAcquireArchivedThreadActionLock,
+  type ArchivedThreadSortState,
+} from "./archivedThreadList";
 
 const environmentId = EnvironmentId.make("environment-1");
+const defaultSort: ArchivedThreadSortState = { field: "archivedAt", direction: "desc" };
 
 function makeProject(
   input: Partial<OrchestrationProjectShell> & Pick<OrchestrationProjectShell, "id" | "title">,
@@ -62,8 +77,22 @@ function makeSnapshot(
   };
 }
 
+function buildGroups(input: {
+  readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
+  readonly query?: string;
+  readonly environmentId?: EnvironmentId | null;
+  readonly sort?: ArchivedThreadSortState;
+}) {
+  return buildArchivedThreadGroups({
+    snapshots: input.snapshots,
+    environmentId: input.environmentId ?? null,
+    search: parseArchivedThreadSearchInput(input.query ?? ""),
+    sort: input.sort ?? defaultSort,
+  });
+}
+
 describe("buildArchivedThreadGroups", () => {
-  it("groups archived threads by project and sorts newest first", () => {
+  it("groups archived threads by project and sorts archived newest first", () => {
     const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const older = makeThread({
       id: ThreadId.make("thread-older"),
@@ -77,51 +106,231 @@ describe("buildArchivedThreadGroups", () => {
       title: "Newer",
     });
 
-    const result = buildArchivedThreadGroups({
-      snapshots: [makeSnapshot([project], [older, newer])],
-      environmentLabels: { [environmentId]: "Julius's MacBook Pro" },
-      environmentId: null,
-      searchQuery: "",
-      sortOrder: "newest",
-    });
+    const result = buildGroups({ snapshots: [makeSnapshot([project], [older, newer])] });
 
     expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-newer", "thread-older"]);
   });
 
-  it("filters by environment and matches project, thread, and branch text", () => {
+  it("sorts by created date independently of archived date", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const olderCreated = makeThread({
+      archivedAt: "2026-06-04T00:00:00.000Z",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      id: ThreadId.make("thread-older-created"),
+      projectId: project.id,
+      title: "Older created",
+    });
+    const newerCreated = makeThread({
+      archivedAt: "2026-06-02T00:00:00.000Z",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("thread-newer-created"),
+      projectId: project.id,
+      title: "Newer created",
+    });
+
+    const result = buildGroups({
+      snapshots: [makeSnapshot([project], [olderCreated, newerCreated])],
+      sort: { field: "createdAt", direction: "asc" },
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-older-created",
+      "thread-newer-created",
+    ]);
+  });
+
+  it("orders project sections by the selected field and direction", () => {
+    const mixedProject = makeProject({ id: ProjectId.make("project-mixed"), title: "Mixed" });
+    const middleProject = makeProject({ id: ProjectId.make("project-middle"), title: "Middle" });
+    const oldestCreated = makeThread({
+      archivedAt: "2026-06-02T00:00:00.000Z",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      id: ThreadId.make("thread-older-created"),
+      projectId: mixedProject.id,
+      title: "Oldest created",
+    });
+    const newestCreated = makeThread({
+      archivedAt: "2026-06-04T00:00:00.000Z",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      id: ThreadId.make("thread-newer-created"),
+      projectId: mixedProject.id,
+      title: "Newest created",
+    });
+    const middleCreated = makeThread({
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("thread-middle-created"),
+      projectId: middleProject.id,
+      title: "Middle created",
+    });
+
+    const snapshots = [
+      makeSnapshot([middleProject, mixedProject], [middleCreated, newestCreated, oldestCreated]),
+    ];
+    const ascending = buildGroups({
+      snapshots,
+      sort: { field: "createdAt", direction: "asc" },
+    });
+    const descending = buildGroups({
+      snapshots,
+      sort: { field: "createdAt", direction: "desc" },
+    });
+
+    expect(ascending.map((group) => group.project.id)).toEqual(["project-mixed", "project-middle"]);
+    expect(descending.map((group) => group.project.id)).toEqual([
+      "project-mixed",
+      "project-middle",
+    ]);
+  });
+
+  it("falls back to created time when an archived timestamp is invalid", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const invalidArchivedAt = makeThread({
+      archivedAt: "not-a-timestamp",
+      createdAt: "2026-06-05T00:00:00.000Z",
+      id: ThreadId.make("thread-invalid-archive"),
+      projectId: project.id,
+      title: "Invalid archived time",
+    });
+    const validArchivedAt = makeThread({
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("thread-valid-archive"),
+      projectId: project.id,
+      title: "Valid archived time",
+    });
+
+    const result = buildGroups({
+      snapshots: [makeSnapshot([project], [validArchivedAt, invalidArchivedAt])],
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-invalid-archive",
+      "thread-valid-archive",
+    ]);
+    expect(archivedThreadTimestampValue(invalidArchivedAt, "archivedAt")).toBe(
+      invalidArchivedAt.createdAt,
+    );
+  });
+
+  it("ranks phrase and all-token title matches ahead of partial token matches", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const partial = makeThread({
+      id: ThreadId.make("thread-partial"),
+      projectId: project.id,
+      title: "Archive cleanup",
+    });
+    const allTokens = makeThread({
+      id: ThreadId.make("thread-all"),
+      projectId: project.id,
+      title: "Settings for the archive",
+    });
+    const phrase = makeThread({
+      id: ThreadId.make("thread-phrase"),
+      projectId: project.id,
+      title: "Archive settings screen",
+    });
+
+    const result = buildGroups({
+      snapshots: [makeSnapshot([project], [partial, allTokens, phrase])],
+      query: "archive settings",
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-phrase",
+      "thread-all",
+      "thread-partial",
+    ]);
+  });
+
+  it("preserves search ranking tiers for matches late in long titles", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const latePhrase = makeThread({
+      id: ThreadId.make("thread-late-phrase"),
+      projectId: project.id,
+      title: `${"x".repeat(600)} archive settings`,
+    });
+    const earlyAllTokens = makeThread({
+      id: ThreadId.make("thread-early-all"),
+      projectId: project.id,
+      title: "Archive tools Settings",
+    });
+    const lateAllTokens = makeThread({
+      id: ThreadId.make("thread-late-all"),
+      projectId: project.id,
+      title: `Archive ${"x".repeat(3_000)} Settings`,
+    });
+    const earlyPartial = makeThread({
+      id: ThreadId.make("thread-early-partial"),
+      projectId: project.id,
+      title: "Archive only",
+    });
+
+    const result = buildGroups({
+      snapshots: [
+        makeSnapshot([project], [earlyPartial, lateAllTokens, earlyAllTokens, latePhrase]),
+      ],
+      query: "archive settings",
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-late-phrase",
+      "thread-early-all",
+      "thread-late-all",
+      "thread-early-partial",
+    ]);
+  });
+
+  it("ranks partial matches with more query tokens ahead of weaker matches", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const fewerTokens = makeThread({
+      id: ThreadId.make("thread-fewer-tokens"),
+      projectId: project.id,
+      title: "Alpha only",
+    });
+    const moreTokens = makeThread({
+      id: ThreadId.make("thread-more-tokens"),
+      projectId: project.id,
+      title: `${"x".repeat(1_200)} Alpha Beta`,
+    });
+
+    const result = buildGroups({
+      snapshots: [makeSnapshot([project], [fewerTokens, moreTokens])],
+      query: "alpha beta gamma",
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
+      "thread-more-tokens",
+      "thread-fewer-tokens",
+    ]);
+  });
+
+  it("filters archived title matches by environment", () => {
     const secondEnvironmentId = EnvironmentId.make("environment-2");
     const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const secondProject = makeProject({ id: ProjectId.make("project-2"), title: "Website" });
     const firstThread = makeThread({
-      branch: "fix/archive-screen",
       id: ThreadId.make("thread-1"),
       projectId: firstProject.id,
-      title: "Build settings route",
+      title: "Build archive settings route",
     });
     const secondThread = makeThread({
       id: ThreadId.make("thread-2"),
       projectId: secondProject.id,
-      title: "Unrelated",
+      title: "Build archive settings route remotely",
     });
-    const snapshots = [
-      makeSnapshot([firstProject], [firstThread]),
-      makeSnapshot([secondProject], [secondThread], secondEnvironmentId),
-    ];
 
-    const result = buildArchivedThreadGroups({
-      snapshots,
-      environmentLabels: {
-        [environmentId]: "Local",
-        [secondEnvironmentId]: "Remote",
-      },
+    const result = buildGroups({
+      snapshots: [
+        makeSnapshot([firstProject], [firstThread]),
+        makeSnapshot([secondProject], [secondThread], secondEnvironmentId),
+      ],
       environmentId,
-      searchQuery: "archive-screen",
-      sortOrder: "oldest",
+      query: "archive settings",
     });
 
     expect(result).toHaveLength(1);
     expect(result[0]?.project.environmentId).toBe(environmentId);
-    expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-1"]);
   });
 
   it("ignores non-archived entries returned in a snapshot", () => {
@@ -133,14 +342,161 @@ describe("buildArchivedThreadGroups", () => {
       title: "Active",
     });
 
-    const result = buildArchivedThreadGroups({
-      snapshots: [makeSnapshot([project], [active])],
-      environmentLabels: {},
-      environmentId: null,
-      searchQuery: "",
-      sortOrder: "newest",
+    expect(buildGroups({ snapshots: [makeSnapshot([project], [active])] })).toEqual([]);
+  });
+
+  it("keeps archive group keys distinct when scoped ids contain colons", () => {
+    const firstEnvironmentId = EnvironmentId.make("environment:one");
+    const secondEnvironmentId = EnvironmentId.make("environment");
+    const firstProject = makeProject({ id: ProjectId.make("project"), title: "First" });
+    const secondProject = makeProject({ id: ProjectId.make("one:project"), title: "Second" });
+    const firstThread = makeThread({
+      id: ThreadId.make("thread-first"),
+      projectId: firstProject.id,
+      title: "First thread",
+    });
+    const secondThread = makeThread({
+      id: ThreadId.make("thread-second"),
+      projectId: secondProject.id,
+      title: "Second thread",
     });
 
-    expect(result).toEqual([]);
+    const result = buildGroups({
+      snapshots: [
+        makeSnapshot([firstProject], [firstThread], firstEnvironmentId),
+        makeSnapshot([secondProject], [secondThread], secondEnvironmentId),
+      ],
+    });
+
+    expect(result.map((group) => group.key)).toEqual([
+      '["environment:one","project"]',
+      '["environment","one:project"]',
+    ]);
+  });
+});
+
+describe("archive list controls", () => {
+  it("toggles a selected sort field and defaults a new field to descending", () => {
+    expect(nextArchivedThreadSortState(defaultSort, "archivedAt")).toEqual({
+      field: "archivedAt",
+      direction: "asc",
+    });
+    expect(nextArchivedThreadSortState(defaultSort, "createdAt")).toEqual({
+      field: "createdAt",
+      direction: "desc",
+    });
+  });
+
+  it("runs bulk actions with bounded concurrency and reports partial failures", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const summary = await runArchivedThreadActions(
+      [1, 2, 3, 4, 5],
+      async (value) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await Promise.resolve();
+        active -= 1;
+        if (value === 3) return "failed";
+        if (value === 4) return "skipped";
+        return "succeeded";
+      },
+      { concurrency: 2 },
+    );
+
+    expect(maximumActive).toBe(2);
+    expect(summary).toEqual({ succeeded: 3, failed: 1, skipped: 1 });
+    expect(archivedThreadActionSummaryDescription(summary)).toBe(
+      "3 succeeded, 1 failed, and 1 skipped because already in progress.",
+    );
+  });
+
+  it("surfaces distinct underlying bulk action exceptions", () => {
+    const error = new AggregateError([
+      new Error("Connection failed"),
+      new Error("Connection failed"),
+      "unknown failure",
+      new Error("Permission denied"),
+      new Error("Session expired"),
+    ]);
+
+    expect(archivedThreadActionExceptionDescription(error)).toBe(
+      "One or more archived thread actions failed unexpectedly. Failures: Connection failed; An error occurred.; Permission denied; 1 more",
+    );
+  });
+
+  it("preserves completed bulk action counts when an action throws", async () => {
+    let caughtError: unknown;
+
+    try {
+      await runArchivedThreadActions(
+        [1, 2, 3, 4, 5, 6],
+        async (value) => {
+          await Promise.resolve();
+          if (value === 1) throw new Error("Connection failed");
+          if (value === 3) return "failed";
+          if (value === 4) return "skipped";
+          return "succeeded";
+        },
+        { concurrency: 4 },
+      );
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(ArchivedThreadActionError);
+    expect((caughtError as ArchivedThreadActionError).summary).toEqual({
+      succeeded: 1,
+      failed: 1,
+      skipped: 1,
+    });
+    expect(archivedThreadActionExceptionDescription(caughtError)).toBe(
+      "Partial outcome: 1 succeeded, 1 failed, 1 skipped because already in progress, 1 failed unexpectedly, 2 not attempted. Connection failed",
+    );
+  });
+});
+
+describe("archived thread action locks", () => {
+  const firstThread = {
+    environmentId,
+    id: ThreadId.make("thread-1"),
+  };
+  const secondThread = {
+    environmentId,
+    id: ThreadId.make("thread-2"),
+  };
+
+  it("blocks overlapping row and bulk actions until the original lock is released", () => {
+    const reservedThreadKeys = new Set<string>();
+    const bulkLock = tryAcquireArchivedThreadActionLock(reservedThreadKeys, [
+      firstThread,
+      secondThread,
+    ]);
+
+    expect(bulkLock).not.toBeNull();
+    expect(tryAcquireArchivedThreadActionLock(reservedThreadKeys, [firstThread])).toBeNull();
+
+    releaseArchivedThreadActionLock(reservedThreadKeys, bulkLock!);
+
+    expect(tryAcquireArchivedThreadActionLock(reservedThreadKeys, [firstThread])).not.toBeNull();
+  });
+
+  it("uses collision-safe environment and thread identity", () => {
+    const firstKey = archivedThreadActionKey({
+      environmentId: EnvironmentId.make("environment:a"),
+      id: ThreadId.make("thread"),
+    });
+    const secondKey = archivedThreadActionKey({
+      environmentId: EnvironmentId.make("environment"),
+      id: ThreadId.make("a:thread"),
+    });
+
+    expect(firstKey).not.toBe(secondKey);
+  });
+});
+
+describe("formatArchivedThreadRelativeTime", () => {
+  it("omits invalid archive timestamps instead of presenting them as recent", () => {
+    expect(formatArchivedThreadRelativeTime("not-a-timestamp")).toBeNull();
   });
 });

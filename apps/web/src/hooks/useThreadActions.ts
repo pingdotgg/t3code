@@ -256,12 +256,12 @@ export function useThreadActions() {
   );
 
   const unarchiveThread = useCallback(
-    async (target: ScopedThreadRef) => {
+    async (target: ScopedThreadRef, opts: { readonly refreshArchivedThreads?: boolean } = {}) => {
       const result = await unarchiveThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
-      if (result._tag === "Success") {
+      if (result._tag === "Success" && opts.refreshArchivedThreads !== false) {
         refreshArchivedThreadsForEnvironment(target.environmentId);
       }
       return result;
@@ -270,7 +270,13 @@ export function useThreadActions() {
   );
 
   const deleteThread = useCallback(
-    async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
+    async (
+      target: ScopedThreadRef,
+      opts: {
+        readonly deletedThreadKeys?: ReadonlySet<string>;
+        readonly refreshArchivedThreads?: boolean;
+      } = {},
+    ) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) {
         // Thread not in main store (e.g. archived thread) — dispatch delete directly.
@@ -278,7 +284,7 @@ export function useThreadActions() {
           environmentId: target.environmentId,
           input: { threadId: target.threadId },
         });
-        if (result._tag === "Success") {
+        if (result._tag === "Success" && opts.refreshArchivedThreads !== false) {
           refreshArchivedThreadsForEnvironment(target.environmentId);
         }
         return result;
@@ -363,7 +369,9 @@ export function useThreadActions() {
       if (deleteResult._tag === "Failure") {
         return deleteResult;
       }
-      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      if (opts.refreshArchivedThreads !== false) {
+        refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      }
       clearComposerDraftForThread(threadRef);
       clearProjectDraftThreadById(
         scopeProjectRef(threadRef.environmentId, thread.projectId),

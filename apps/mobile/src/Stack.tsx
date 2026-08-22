@@ -16,7 +16,6 @@ import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
 import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
-import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
@@ -58,6 +57,7 @@ import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRoute
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import { SETTINGS_CUSTOM_ROUTE_SCREENS_BY_STACK } from "./features/settings/settingsRouteScreens";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -163,13 +163,6 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Add Environment",
       },
     }),
-    SettingsArchive: createNativeStackScreen({
-      screen: ArchivedThreadsRouteScreen,
-      linking: "archive",
-      options: {
-        title: "Archived Threads",
-      },
-    }),
     SettingsAppearance: createNativeStackScreen({
       screen: SettingsAppearanceRouteScreen,
       linking: "appearance",
@@ -198,6 +191,7 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Usage",
       },
     }),
+    ...SETTINGS_CUSTOM_ROUTE_SCREENS_BY_STACK.content,
   },
 });
 
@@ -218,11 +212,7 @@ const SettingsSheetStack = createNativeStackNavigator({
       screen: SettingsAuthRouteScreen,
       linking: "auth",
     }),
-    SettingsWaitlist: createNativeStackScreen({
-      // Keep the old deep link working after the Connect GA launch.
-      screen: SettingsAuthRouteScreen,
-      linking: "waitlist",
-    }),
+    ...SETTINGS_CUSTOM_ROUTE_SCREENS_BY_STACK.auth,
   },
 });
 

@@ -6,7 +6,6 @@ import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import {
   pinOrderKeyBetween,
@@ -58,6 +57,12 @@ function environmentSupportsTitleRegeneration(
 }
 
 type ThreadListAction = "archive" | "unarchive" | "delete" | "settle" | "unsettle";
+export type ThreadListActionResult = "succeeded" | "failed" | "skipped";
+
+interface ThreadActionOptions {
+  readonly reportFailure?: boolean;
+  readonly refreshArchivedThreads?: boolean;
+}
 
 const ACTION_VERBS: Record<ThreadListAction, string> = {
   archive: "archived",
@@ -87,10 +92,12 @@ function actionFailureTitle(action: ThreadListAction): string {
   return "Could not delete thread";
 }
 
-/** Resolves to true iff the action was dispatched and succeeded. */
-function useThreadActionExecutor(
-  onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
-) {
+function threadActionKey(thread: Pick<EnvironmentThreadShell, "environmentId" | "id">): string {
+  return JSON.stringify([thread.environmentId, thread.id]);
+}
+
+/** Distinguishes successful, failed, and already-in-flight actions for bulk-action summaries. */
+function useThreadActionExecutor() {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
   const unarchiveMutation = useAtomCommand(threadEnvironment.unarchive, { reportFailure: false });
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
@@ -99,10 +106,14 @@ function useThreadActionExecutor(
   const inFlightThreadKeys = useRef(new Set<string>());
 
   const executeAction = useCallback(
-    async (action: ThreadListAction, thread: EnvironmentThreadShell) => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+    async (
+      action: ThreadListAction,
+      thread: EnvironmentThreadShell,
+      options: ThreadActionOptions = {},
+    ): Promise<ThreadListActionResult> => {
+      const key = threadActionKey(thread);
       if (inFlightThreadKeys.current.has(key)) {
-        return false;
+        return "skipped";
       }
 
       inFlightThreadKeys.current.add(key);
@@ -112,21 +123,25 @@ function useThreadActionExecutor(
           (action === "settle" || action === "unsettle") &&
           !environmentSupportsSettlement(thread.environmentId)
         ) {
-          Alert.alert(
-            actionFailureTitle(action),
-            "This environment's server does not support settling yet. Update the server to use Settle.",
-          );
-          return false;
+          if (options.reportFailure !== false) {
+            Alert.alert(
+              actionFailureTitle(action),
+              "This environment's server does not support settling yet. Update the server to use Settle.",
+            );
+          }
+          return "failed";
         }
         // Settle may only target what effectiveSettled could classify as
         // settled: not starting/running sessions, not threads waiting on
         // approvals or user input. Anything else would hide live work.
         if (action === "settle" && !canSettle(thread, { now: new Date().toISOString() })) {
-          Alert.alert(
-            actionFailureTitle(action),
-            "This thread still needs attention. Resolve or interrupt it first, then try again.",
-          );
-          return false;
+          if (options.reportFailure !== false) {
+            Alert.alert(
+              actionFailureTitle(action),
+              "This thread still needs attention. Resolve or interrupt it first, then try again.",
+            );
+          }
+          return "failed";
         }
         // Archive keeps its original, narrower guard: never interrupt a
         // thread mid-turn.
@@ -135,11 +150,13 @@ function useThreadActionExecutor(
           thread.session?.status === "running" &&
           thread.session.activeTurnId != null
         ) {
-          Alert.alert(
-            actionFailureTitle(action),
-            "This thread is working. Interrupt it first, then try again.",
-          );
-          return false;
+          if (options.reportFailure !== false) {
+            Alert.alert(
+              actionFailureTitle(action),
+              "This thread is working. Interrupt it first, then try again.",
+            );
+          }
+          return "failed";
         }
         const result =
           action === "unsettle"
@@ -162,35 +179,36 @@ function useThreadActionExecutor(
                 input: { threadId: thread.id },
               });
         if (result._tag === "Failure") {
-          Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
-          return false;
+          if (options.reportFailure !== false) {
+            Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
+          }
+          return "failed";
         }
         // Settled threads stay in the live shell stream; only the archive
         // lifecycle still feeds the archived-snapshot surface.
-        if (action === "archive" || action === "unarchive" || action === "delete") {
+        if (
+          options.refreshArchivedThreads !== false &&
+          (action === "archive" || action === "unarchive" || action === "delete")
+        ) {
           refreshArchivedThreadsForEnvironment(thread.environmentId);
         }
-        onCompleted?.(action, thread);
-        return true;
+        return "succeeded";
       } finally {
         inFlightThreadKeys.current.delete(key);
       }
     },
-    [
-      archiveMutation,
-      deleteMutation,
-      onCompleted,
-      settleMutation,
-      unarchiveMutation,
-      unsettleMutation,
-    ],
+    [archiveMutation, deleteMutation, settleMutation, unarchiveMutation, unsettleMutation],
   );
 
   return executeAction;
 }
 
 function useConfirmDeleteThread(
-  executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<boolean>,
+  executeAction: (
+    action: ThreadListAction,
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<ThreadListActionResult>,
 ) {
   return useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -256,12 +274,13 @@ export function useThreadListActions(): {
     [executeAction],
   );
   const settleThread = useCallback(
-    async (thread: EnvironmentThreadShell) => (await executeAction("settle", thread)) === true,
+    async (thread: EnvironmentThreadShell) =>
+      (await executeAction("settle", thread)) === "succeeded",
     [executeAction],
   );
   const snoozeThread = useCallback(
     async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const key = threadActionKey(thread);
       if (snoozeInFlightThreadKeys.current.has(key)) {
         return false;
       }
@@ -311,7 +330,7 @@ export function useThreadListActions(): {
   );
   const unsnoozeThread = useCallback(
     async (thread: EnvironmentThreadShell) => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const key = threadActionKey(thread);
       if (snoozeInFlightThreadKeys.current.has(key)) {
         return false;
       }
@@ -348,7 +367,8 @@ export function useThreadListActions(): {
     [unsnoozeMutation],
   );
   const unsettleThread = useCallback(
-    async (thread: EnvironmentThreadShell) => (await executeAction("unsettle", thread)) === true,
+    async (thread: EnvironmentThreadShell) =>
+      (await executeAction("unsettle", thread)) === "succeeded",
     [executeAction],
   );
   const pinThread = useCallback(
@@ -421,7 +441,7 @@ export function useThreadListActions(): {
   );
   const regenerateThreadTitle = useCallback(
     async (thread: EnvironmentThreadShell) => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const key = threadActionKey(thread);
       if (
         thread.titleRegeneration != null ||
         titleRegenerationInFlightThreadKeys.current.has(key)
@@ -492,22 +512,17 @@ export function useThreadListActions(): {
             environmentSupportsPinReorder(shell.environmentId),
         ),
       );
-      const orderedIds = pinned.map((shell) => scopedThreadKey(shell.environmentId, shell.id));
+      const orderedIds = pinned.map(threadActionKey);
       const assignments = planPinnedMove({
         orderedIds,
         keysById: new Map(
-          pinned.map((shell) => [
-            scopedThreadKey(shell.environmentId, shell.id),
-            shell.pinOrderKey ?? null,
-          ]),
+          pinned.map((shell) => [threadActionKey(shell), shell.pinOrderKey ?? null]),
         ),
-        movedId: scopedThreadKey(thread.environmentId, thread.id),
+        movedId: threadActionKey(thread),
         direction,
       });
       if (assignments === null || assignments.length === 0) return false;
-      const shellByKey = new Map(
-        pinned.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
-      );
+      const shellByKey = new Map(pinned.map((shell) => [threadActionKey(shell), shell]));
       selectionHaptic();
       movePinnedInFlightRef.current = true;
       try {
@@ -556,26 +571,29 @@ export function useThreadListActions(): {
   };
 }
 
-export function useArchivedThreadListActions(
-  onCompleted: (thread: EnvironmentThreadShell) => void,
-): {
-  readonly unarchiveThread: (thread: EnvironmentThreadShell) => void;
+export function useArchivedThreadListActions(): {
+  readonly unarchiveThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<ThreadListActionResult>;
+  readonly deleteThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<ThreadListActionResult>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
-  const handleCompleted = useCallback(
-    (_action: ThreadListAction, thread: EnvironmentThreadShell) => {
-      onCompleted(thread);
-    },
-    [onCompleted],
-  );
-  const executeAction = useThreadActionExecutor(handleCompleted);
+  const executeAction = useThreadActionExecutor();
   const unarchiveThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      void executeAction("unarchive", thread);
-    },
+    (thread: EnvironmentThreadShell, options?: ThreadActionOptions) =>
+      executeAction("unarchive", thread, options),
+    [executeAction],
+  );
+  const deleteThread = useCallback(
+    (thread: EnvironmentThreadShell, options?: ThreadActionOptions) =>
+      executeAction("delete", thread, options),
     [executeAction],
   );
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
-  return { unarchiveThread, confirmDeleteThread };
+  return { unarchiveThread, deleteThread, confirmDeleteThread };
 }

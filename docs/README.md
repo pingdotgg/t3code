@@ -3,6 +3,7 @@
 ## Using T3 Code
 
 - [Install and first run](./user/install.md)
+- [Archive threads](./user/archive.md)
 - [Permission modes](./user/permission-modes.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Organizing threads](./user/thread-sidebar.md)
