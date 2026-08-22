@@ -105,6 +105,7 @@ export function useCopyToClipboard<TContext = void>({
 } = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
+  const operationIdRef = React.useRef(0);
   const onCopyRef = React.useRef(onCopy);
   const onErrorRef = React.useRef(onError);
   const targetRef = React.useRef(target);
@@ -116,24 +117,31 @@ export function useCopyToClipboard<TContext = void>({
   timeoutRef.current = timeout;
 
   const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
+    const operationId = ++operationIdRef.current;
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = null;
+    }
+    setIsCopied(false);
+
     void writeTextToClipboard(value, targetRef.current).then(
       (didCopy) => {
-        if (!didCopy) return;
-        if (timeoutIdRef.current) {
-          clearTimeout(timeoutIdRef.current);
-        }
+        if (!didCopy || operationId !== operationIdRef.current) return;
         setIsCopied(true);
-
-        onCopyRef.current?.(ctx);
 
         if (timeoutRef.current !== 0) {
           timeoutIdRef.current = setTimeout(() => {
+            if (operationId !== operationIdRef.current) return;
             setIsCopied(false);
             timeoutIdRef.current = null;
           }, timeoutRef.current);
         }
+
+        onCopyRef.current?.(ctx);
       },
       (error) => {
+        if (operationId !== operationIdRef.current) return;
+        setIsCopied(false);
         console.error(error);
         onErrorRef.current?.(error, ctx);
       },
@@ -143,8 +151,10 @@ export function useCopyToClipboard<TContext = void>({
   // Cleanup timeout on unmount
   React.useEffect(() => {
     return (): void => {
+      operationIdRef.current += 1;
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = null;
       }
     };
   }, []);
