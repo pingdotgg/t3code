@@ -522,10 +522,53 @@ try {
 }
 NODE
 }
+ensure_systemd_user_environment() {
+  if ! command -v systemctl >/dev/null 2>&1 || ! command -v id >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -z "\${XDG_RUNTIME_DIR:-}" ]; then
+    XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    export XDG_RUNTIME_DIR
+  fi
+  if [ -z "\${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+    export DBUS_SESSION_BUS_ADDRESS
+  fi
+}
+service_is_installed() {
+  ensure_systemd_user_environment
+  command -v systemctl >/dev/null 2>&1 && systemctl --user cat t3code.service >/dev/null 2>&1
+}
+start_and_resolve_installed_service() {
+  if ! systemctl --user start t3code.service; then
+    printf 'Failed to start installed t3code.service; refusing to start a competing SSH server.\n' >&2
+    exit 1
+  fi
+  SERVICE_WAIT_COUNT=0
+  SERVICE_RUNTIME_INFO=""
+  while [ "$SERVICE_WAIT_COUNT" -lt 150 ]; do
+    SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    if [ -n "$SERVICE_RUNTIME_INFO" ]; then
+      break
+    fi
+    SERVICE_WAIT_COUNT=$((SERVICE_WAIT_COUNT + 1))
+    sleep 0.1
+  done
+  if [ -z "$SERVICE_RUNTIME_INFO" ]; then
+    printf 'Installed t3code.service did not advertise a live runtime; refusing to start a competing SSH server.\n' >&2
+    exit 1
+  fi
+  printf '%s' "$SERVICE_RUNTIME_INFO"
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+INSTALLED_SERVICE_SELECTED=0
+if [ -z "$DEFAULT_RUNTIME_INFO" ] && service_is_installed; then
+  INSTALLED_SERVICE_SELECTED=1
+  DEFAULT_RUNTIME_INFO="$(start_and_resolve_installed_service)"
+fi
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
@@ -554,6 +597,10 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_MANAGED="external"
     fi
   else
+    if [ "$INSTALLED_SERVICE_SELECTED" -eq 1 ]; then
+      printf 'Installed t3code.service did not become ready; refusing to start a competing SSH server.\n' >&2
+      exit 1
+    fi
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
     REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -561,6 +608,10 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
   if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    if [ "$INSTALLED_SERVICE_SELECTED" -eq 1 ]; then
+      printf 'Installed t3code.service stopped responding; refusing to start a competing SSH server.\n' >&2
+      exit 1
+    fi
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""

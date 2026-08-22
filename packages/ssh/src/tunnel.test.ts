@@ -1,17 +1,20 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-
 import { SshPasswordPrompt } from "./auth.ts";
 import {
   buildRemoteLaunchScript,
@@ -27,6 +30,9 @@ import {
 } from "./tunnel.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
+const TestRuntimeState = Schema.fromJsonString(
+  Schema.Struct({ pid: Schema.Number, port: Schema.Number }),
+);
 
 const makeSuccessfulProcess = (stdout: string) => {
   const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
@@ -94,6 +100,65 @@ const testNetService = NetService.NetService.of({
   reserveLoopbackPort: () => Effect.succeed(41_773),
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
+
+const installedServiceSource = `const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const runtimePath = process.argv[2];
+const server = http.createServer((_request, response) => {
+  response.writeHead(200);
+  response.end("service");
+});
+function stop() {
+  try { fs.unlinkSync(runtimePath); } catch {}
+  if (server.listening) {
+    server.close(() => process.exit(0));
+  } else {
+    process.exit(0);
+  }
+}
+process.once("SIGTERM", stop);
+if (process.env.FAKE_SERVICE_UNREADY === "1") {
+  fs.mkdirSync(path.dirname(runtimePath), { recursive: true });
+  fs.writeFileSync(runtimePath, JSON.stringify({
+    version: 1,
+    pid: process.pid,
+    port: 1,
+    origin: "http://127.0.0.1:1",
+    startedAt: "2026-08-10T19:16:45.000Z",
+  }) + "\\n");
+  setInterval(() => {}, 1_000);
+  return;
+}
+server.listen(0, "127.0.0.1", () => {
+  const port = server.address().port;
+  fs.mkdirSync(path.dirname(runtimePath), { recursive: true });
+  fs.writeFileSync(runtimePath, JSON.stringify({
+    version: 1,
+    pid: process.pid,
+    port,
+    origin: "http://127.0.0.1:" + port,
+    startedAt: "2026-08-10T19:16:45.000Z",
+  }) + "\\n");
+});`;
+
+const fakeSystemctlSource = `#!/bin/sh
+set -eu
+[ "\${1:-}" = "--user" ] || exit 1
+printf '%s\\n%s\\n' "\${XDG_RUNTIME_DIR:-}" "\${DBUS_SESSION_BUS_ADDRESS:-}" >"$FAKE_SYSTEMD_ENV_LOG"
+case "\${2:-}:\${3:-}" in
+  cat:t3code.service)
+    exit 0
+    ;;
+  start:t3code.service)
+    printf 'start\\n' >>"$FAKE_SERVICE_START_LOG"
+    nohup "$FAKE_NODE" "$FAKE_SERVICE_SCRIPT" "$FAKE_RUNTIME_FILE" >>"$FAKE_SERVICE_LOG" 2>&1 < /dev/null &
+    printf '%s\\n' "$!" >"$FAKE_SERVICE_PID_FILE"
+    exit 0
+    ;;
+esac
+exit 1
+`;
 
 function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args : [];
@@ -213,6 +278,22 @@ describe("ssh tunnel scripts", () => {
       'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
     );
     assert.include(buildRemoteLaunchScript(), "resolve_default_runtime_port()");
+    assert.include(buildRemoteLaunchScript(), "ensure_systemd_user_environment()");
+    assert.include(buildRemoteLaunchScript(), 'XDG_RUNTIME_DIR="/run/user/$(id -u)"');
+    assert.include(
+      buildRemoteLaunchScript(),
+      'DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"',
+    );
+    assert.include(buildRemoteLaunchScript(), "systemctl --user cat t3code.service");
+    assert.include(buildRemoteLaunchScript(), "systemctl --user start t3code.service");
+    assert.include(
+      buildRemoteLaunchScript(),
+      'if [ -z "$DEFAULT_RUNTIME_INFO" ] && service_is_installed; then',
+    );
+    assert.isBelow(
+      buildRemoteLaunchScript().indexOf("start_and_resolve_installed_service"),
+      buildRemoteLaunchScript().indexOf('REMOTE_PORT="$(pick_port)"'),
+    );
     assert.include(
       buildRemoteLaunchScript(),
       'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port',
@@ -235,6 +316,165 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
   });
+
+  it.effect(
+    "adopts an installed service when an SSH session omits the user systemd environment",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          if ((yield* HostProcessPlatform) === "win32") return;
+
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const executablePath = yield* HostProcessExecutablePath;
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-ssh-systemd-adoption-test-",
+          });
+          const stateKey = "systemd-adoption";
+          const stateDir = path.join(home, ".t3", "ssh-launch", stateKey);
+          const runtimePath = path.join(home, ".t3", "userdata", "server-runtime.json");
+          const fakeBin = path.join(home, "fake-bin");
+          const serviceScriptPath = path.join(home, "fake-t3-service.cjs");
+          const servicePidPath = path.join(home, "fake-t3-service.pid");
+          const serviceLogPath = path.join(home, "fake-t3-service.log");
+          const serviceStartLogPath = path.join(home, "fake-t3-service-starts.log");
+          const systemdEnvironmentLogPath = path.join(home, "fake-systemd-environment.log");
+          const expectedRuntimeDir = `/run/user/${process.getuid?.() ?? 0}`;
+
+          yield* fileSystem.makeDirectory(fakeBin, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(fakeBin, "systemctl"), fakeSystemctlSource);
+          yield* fileSystem.chmod(path.join(fakeBin, "systemctl"), 0o755);
+          yield* fileSystem.writeFileString(serviceScriptPath, installedServiceSource);
+
+          const shell = yield* spawner.spawn(
+            ChildProcess.make("sh", ["-s", "--", stateKey], {
+              detached: false,
+              env: {
+                HOME: home,
+                PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+                XDG_RUNTIME_DIR: "",
+                DBUS_SESSION_BUS_ADDRESS: "",
+                FAKE_NODE: executablePath,
+                FAKE_SERVICE_SCRIPT: serviceScriptPath,
+                FAKE_RUNTIME_FILE: runtimePath,
+                FAKE_SERVICE_PID_FILE: servicePidPath,
+                FAKE_SERVICE_LOG: serviceLogPath,
+                FAKE_SERVICE_START_LOG: serviceStartLogPath,
+                FAKE_SYSTEMD_ENV_LOG: systemdEnvironmentLogPath,
+              },
+              extendEnv: true,
+              stdin: Stream.make(new TextEncoder().encode(buildRemoteLaunchScript())),
+            }),
+          );
+          const [stdout, stderr, exitCode] = yield* Effect.all(
+            [
+              Stream.mkString(Stream.decodeText(shell.stdout)),
+              Stream.mkString(Stream.decodeText(shell.stderr)),
+              shell.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+
+          assert.equal(exitCode, 0, stderr);
+          const runtime = yield* Schema.decodeUnknownEffect(TestRuntimeState)(
+            yield* fileSystem.readFileString(runtimePath),
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              try {
+                process.kill(runtime.pid, "SIGTERM");
+              } catch {}
+            }),
+          );
+          assert.include(stdout, `{"remotePort":${runtime.port},"serverKind":"external"}`);
+          assert.equal(yield* fileSystem.readFileString(serviceStartLogPath), "start\n");
+          assert.equal(
+            yield* fileSystem.readFileString(systemdEnvironmentLogPath),
+            `${expectedRuntimeDir}\nunix:path=${expectedRuntimeDir}/bus\n`,
+          );
+          assert.equal(
+            yield* fileSystem.readFileString(path.join(stateDir, "managed")),
+            "external\n",
+          );
+          assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "pid")));
+          assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "server.log")));
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
+  );
+
+  it.effect("refuses to spawn a competing server when the installed service is not ready", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const executablePath = yield* HostProcessExecutablePath;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ssh-systemd-unready-test-",
+        });
+        const stateKey = "systemd-unready";
+        const stateDir = path.join(home, ".t3", "ssh-launch", stateKey);
+        const runtimePath = path.join(home, ".t3", "userdata", "server-runtime.json");
+        const fakeBin = path.join(home, "fake-bin");
+        const serviceScriptPath = path.join(home, "fake-t3-service.cjs");
+        const servicePidPath = path.join(home, "fake-t3-service.pid");
+        const serviceLogPath = path.join(home, "fake-t3-service.log");
+        const serviceStartLogPath = path.join(home, "fake-t3-service-starts.log");
+        const systemdEnvironmentLogPath = path.join(home, "fake-systemd-environment.log");
+
+        yield* fileSystem.makeDirectory(fakeBin, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(fakeBin, "systemctl"), fakeSystemctlSource);
+        yield* fileSystem.chmod(path.join(fakeBin, "systemctl"), 0o755);
+        yield* fileSystem.writeFileString(serviceScriptPath, installedServiceSource);
+
+        const shell = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-s", "--", stateKey], {
+            detached: false,
+            env: {
+              HOME: home,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+              FAKE_NODE: executablePath,
+              FAKE_SERVICE_SCRIPT: serviceScriptPath,
+              FAKE_RUNTIME_FILE: runtimePath,
+              FAKE_SERVICE_PID_FILE: servicePidPath,
+              FAKE_SERVICE_LOG: serviceLogPath,
+              FAKE_SERVICE_START_LOG: serviceStartLogPath,
+              FAKE_SYSTEMD_ENV_LOG: systemdEnvironmentLogPath,
+              FAKE_SERVICE_UNREADY: "1",
+            },
+            extendEnv: true,
+            stdin: Stream.make(new TextEncoder().encode(buildRemoteLaunchScript())),
+          }),
+        );
+        const [stderr, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(shell.stderr)), shell.exitCode],
+          { concurrency: "unbounded" },
+        );
+        const runtime = yield* Schema.decodeUnknownEffect(TestRuntimeState)(
+          yield* fileSystem.readFileString(runtimePath),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              process.kill(runtime.pid, "SIGTERM");
+            } catch {}
+          }),
+        );
+
+        assert.notEqual(exitCode, 0);
+        assert.include(
+          stderr,
+          "Installed t3code.service did not become ready; refusing to start a competing SSH server.",
+        );
+        assert.equal(yield* fileSystem.readFileString(serviceStartLogPath), "start\n");
+        assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "pid")));
+        assert.isFalse(yield* fileSystem.exists(path.join(stateDir, "server.log")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
