@@ -1,10 +1,19 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, type DesktopPortForwardAuthorizationRequest } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  TCP_PORT_FORWARD_FRAME_ACK,
+  TCP_PORT_FORWARD_FRAME_DATA,
+  TCP_PORT_FORWARD_FRAME_WRITE_END,
+  TCP_PORT_FORWARD_INITIAL_CREDIT,
+  type DesktopPortForwardAuthorizationRequest,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as NodeNet from "node:net";
 import * as Queue from "effect/Queue";
+import { EventEmitter } from "node:events";
 
 import * as DesktopPortForwardManager from "./DesktopPortForwardManager.ts";
 
@@ -35,11 +44,60 @@ const awaitSocketClose = (socket: NodeNet.Socket) =>
         socket.once("close", () => resume(Effect.void));
       });
 
+const makeAckFrame = (bytes: number) => {
+  const frame = new Uint8Array(5);
+  frame[0] = TCP_PORT_FORWARD_FRAME_ACK;
+  new DataView(frame.buffer).setUint32(1, bytes, false);
+  return frame;
+};
+
+const makeConnectionSocket = () => {
+  const emitter = new EventEmitter();
+  const socket = Object.assign(emitter, {
+    destroy: () => socket,
+    end: () => socket,
+    pause: () => socket,
+    resume: () => socket,
+    setTimeout: () => socket,
+    write: (_payload: Uint8Array, callback: (error?: Error | null) => void) => {
+      callback();
+      return true;
+    },
+  });
+  return socket as unknown as NodeNet.Socket;
+};
+
+const makeConnectionWebSocket = () => {
+  const listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+  const sent: Array<Uint8Array> = [];
+  const webSocket = {
+    readyState: WebSocket.OPEN,
+    send: (data: ArrayBuffer) => sent.push(new Uint8Array(data)),
+    close: () => undefined,
+    addEventListener: (type: string, listener: (event: MessageEvent) => void) => {
+      const current = listeners.get(type) ?? new Set();
+      current.add(listener);
+      listeners.set(type, current);
+    },
+    removeEventListener: (type: string, listener: (event: MessageEvent) => void) => {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  return {
+    webSocket: webSocket as unknown as WebSocket,
+    sent,
+    receive: (frame: Uint8Array) => {
+      for (const listener of listeners.get("message") ?? []) {
+        listener({ data: frame.slice().buffer } as MessageEvent);
+      }
+    },
+  };
+};
+
 it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
   it("preserves renderer authorization failures for the forward status", () => {
     const error = new DesktopPortForwardManager.DesktopPortForwardError({
       operation: "authorize",
-      cause: "Remote environment returned 404.",
       detail: "Remote environment returned 404",
     });
 
@@ -47,6 +105,31 @@ it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
       "Desktop port forward authorize failed: Remote environment returned 404.",
     );
   });
+
+  it.effect("flushes credit-blocked local data before sending write end", () =>
+    Effect.gen(function* () {
+      const socket = makeConnectionSocket();
+      const webSocket = makeConnectionWebSocket();
+      const connection = yield* DesktopPortForwardManager.runConnection(
+        socket,
+        webSocket.webSocket,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+
+      socket.emit("data", Buffer.alloc(TCP_PORT_FORWARD_INITIAL_CREDIT + 1));
+      socket.emit("end");
+      expect(webSocket.sent.some((frame) => frame[0] === TCP_PORT_FORWARD_FRAME_WRITE_END)).toBe(
+        false,
+      );
+
+      webSocket.receive(makeAckFrame(TCP_PORT_FORWARD_INITIAL_CREDIT));
+      const dataBytes = webSocket.sent
+        .filter((frame) => frame[0] === TCP_PORT_FORWARD_FRAME_DATA)
+        .reduce((total, frame) => total + frame.byteLength - 1, 0);
+      expect(dataBytes).toBe(TCP_PORT_FORWARD_INITIAL_CREDIT + 1);
+      expect(webSocket.sent.at(-1)?.[0]).toBe(TCP_PORT_FORWARD_FRAME_WRITE_END);
+      yield* Fiber.interrupt(connection);
+    }),
+  );
 
   it.effect("atomically allocates and stops a desktop loopback listener", () =>
     Effect.gen(function* () {

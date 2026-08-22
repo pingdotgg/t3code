@@ -1,24 +1,14 @@
-import type {
-  DesktopPortForwardId,
-  DesktopPortForwardSnapshot,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { CableIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
-import { useEnvironments } from "../../state/environments";
-import { useServerConfigs } from "../../state/entities";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { portForwardConnectionSummary } from "./desktopPortForwardPresentation";
-
-function parsePort(value: string): number | null {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65_535 ? parsed : null;
-}
+import { parseDesktopPortForwardPort, useDesktopPortForwards } from "./useDesktopPortForwards";
 
 interface EnvironmentSelection {
   readonly contextEnvironmentId: EnvironmentId;
@@ -48,39 +38,24 @@ export function DesktopPortForwardControl({
 }: {
   preferredEnvironmentId: EnvironmentId;
 }) {
-  const bridge = window.desktopBridge?.portForward;
-  const { environments } = useEnvironments();
-  const serverConfigs = useServerConfigs();
-  const connectedEnvironments = useMemo(
-    () => environments.filter((environment) => environment.connection.phase === "connected"),
-    [environments],
-  );
-  const forwardableEnvironments = useMemo(
-    () =>
-      connectedEnvironments.filter(
-        (environment) =>
-          serverConfigs.get(environment.environmentId)?.environment.capabilities
-            .tcpPortForwarding === true,
-      ),
-    [connectedEnvironments, serverConfigs],
-  );
-  const environmentLabels = useMemo(
-    () =>
-      new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
-      ),
-    [environments],
-  );
+  const {
+    available,
+    connectedEnvironments,
+    create: createForward,
+    creating,
+    environmentLabels,
+    error,
+    forwardableEnvironments,
+    forwards,
+    stop,
+    stoppingId,
+  } = useDesktopPortForwards();
   const [environmentSelection, setEnvironmentSelection] = useState<EnvironmentSelection>(() => ({
     contextEnvironmentId: preferredEnvironmentId,
     environmentId: preferredEnvironmentId,
   }));
   const [remotePort, setRemotePort] = useState("3000");
   const [localPort, setLocalPort] = useState("");
-  const [forwards, setForwards] = useState<ReadonlyArray<DesktopPortForwardSnapshot>>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [stoppingId, setStoppingId] = useState<DesktopPortForwardId | null>(null);
 
   const selectedEnvironmentId = resolvePortForwardEnvironmentId({
     connectedEnvironmentIds: forwardableEnvironments.map(
@@ -90,28 +65,11 @@ export function DesktopPortForwardControl({
     selection: environmentSelection,
   });
 
-  useEffect(() => {
-    if (bridge === undefined) return;
-    let disposed = false;
-    void bridge.list().then(
-      (next) => {
-        if (!disposed) setForwards(next);
-      },
-      () => undefined,
-    );
-    const unsubscribe = bridge.onStateChange((next) => {
-      setForwards(next);
-    });
-    return () => {
-      disposed = true;
-      unsubscribe();
-    };
-  }, [bridge]);
+  if (!available) return null;
 
-  if (bridge === undefined) return null;
-
-  const parsedRemotePort = parsePort(remotePort);
-  const parsedLocalPort = localPort.trim() === "" ? undefined : parsePort(localPort);
+  const parsedRemotePort = parseDesktopPortForwardPort(remotePort);
+  const parsedLocalPort =
+    localPort.trim() === "" ? undefined : parseDesktopPortForwardPort(localPort);
   const canCreate =
     selectedEnvironmentId !== null &&
     parsedRemotePort !== null &&
@@ -120,36 +78,14 @@ export function DesktopPortForwardControl({
 
   const create = async () => {
     if (!canCreate || selectedEnvironmentId === null || parsedRemotePort === null) return;
-    setCreating(true);
-    setError(null);
-    try {
-      const created = await bridge.create({
-        environmentId: selectedEnvironmentId,
-        remoteHost: "127.0.0.1",
-        remotePort: parsedRemotePort,
-        ...(parsedLocalPort === undefined ? {} : { localPort: parsedLocalPort }),
-      });
-      setForwards((current) =>
-        current.some((forward) => forward.id === created.id) ? current : [...current, created],
-      );
+    const created = await createForward({
+      environmentId: selectedEnvironmentId,
+      remoteHost: "127.0.0.1",
+      remotePort: parsedRemotePort,
+      ...(parsedLocalPort === undefined ? {} : { localPort: parsedLocalPort }),
+    });
+    if (created) {
       setLocalPort("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const stop = async (id: DesktopPortForwardId) => {
-    setStoppingId(id);
-    setError(null);
-    try {
-      await bridge.stop(id);
-      setForwards((current) => current.filter((forward) => forward.id !== id));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setStoppingId(null);
     }
   };
 
@@ -161,14 +97,18 @@ export function DesktopPortForwardControl({
             <PopoverTrigger
               render={
                 <Button
-                  aria-label="Port forwarding"
+                  aria-label={
+                    forwards.length > 0
+                      ? `Port forwarding, ${forwards.length} active`
+                      : "Port forwarding"
+                  }
                   className="relative shrink-0 [--control-icon-color:var(--foreground)]"
                   size="icon-xs"
                   variant="outline"
                 />
               }
             >
-              <CableIcon aria-hidden className="size-3.5 text-foreground" />
+              <CableIcon aria-hidden className="size-3.5" />
               {forwards.length > 0 ? (
                 <span
                   aria-hidden
@@ -219,7 +159,7 @@ export function DesktopPortForwardControl({
                     : (environmentLabels.get(selectedEnvironmentId) ?? selectedEnvironmentId)}
                 </SelectValue>
               </SelectTrigger>
-              <SelectPopup alignItemWithTrigger={false} positionerClassName="z-70">
+              <SelectPopup alignItemWithTrigger={false}>
                 {forwardableEnvironments.map((environment) => (
                   <SelectItem
                     hideIndicator
@@ -266,10 +206,13 @@ export function DesktopPortForwardControl({
                 className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-2 py-1.5"
               >
                 <div className="min-w-0 text-xs">
-                  <p className="truncate font-medium tabular-nums">127.0.0.1:{forward.localPort}</p>
+                  <p className="truncate font-medium tabular-nums">
+                    {forward.localHost}:{forward.localPort}
+                  </p>
                   <p className="truncate text-muted-foreground tabular-nums">
                     {environmentLabels.get(forward.environmentId) ?? "Unknown environment"} · →
-                    127.0.0.1:{forward.remotePort} · {portForwardConnectionSummary(forward)}
+                    {forward.remoteHost}:{forward.remotePort} ·{" "}
+                    {portForwardConnectionSummary(forward)}
                   </p>
                   {forward.lastError === null ? null : (
                     <p className="truncate text-destructive">{forward.lastError}</p>

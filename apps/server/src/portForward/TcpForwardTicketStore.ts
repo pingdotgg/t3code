@@ -27,8 +27,15 @@ export class TcpForwardTicketIssueError extends Schema.TaggedErrorClass<TcpForwa
 
 export class TcpForwardTicketInvalidError extends Schema.TaggedErrorClass<TcpForwardTicketInvalidError>()(
   "TcpForwardTicketInvalidError",
-  {},
-) {}
+  {
+    reason: Schema.Literals(["unknown", "expired", "token-rejected", "scope-missing"]),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `TCP forward ticket rejected: ${this.reason}.`;
+  }
+}
 
 export class TcpForwardTicketStore extends Context.Service<
   TcpForwardTicketStore,
@@ -95,17 +102,21 @@ export const make = Effect.gen(function* () {
       return [Option.fromUndefinedOr(found), next] as const;
     });
     if (Option.isNone(record)) {
-      return yield* new TcpForwardTicketInvalidError({});
+      return yield* new TcpForwardTicketInvalidError({ reason: "unknown" });
     }
     const now = yield* DateTime.now;
     if (record.value.expiresAtEpochMs <= now.epochMilliseconds) {
-      return yield* new TcpForwardTicketInvalidError({});
+      return yield* new TcpForwardTicketInvalidError({ reason: "expired" });
     }
     const session = yield* sessions
       .verifyWebSocketToken(record.value.webSocketToken)
-      .pipe(Effect.mapError(() => new TcpForwardTicketInvalidError({})));
+      .pipe(
+        Effect.mapError(
+          (cause) => new TcpForwardTicketInvalidError({ reason: "token-rejected", cause }),
+        ),
+      );
     if (!session.scopes.includes(AuthTerminalOperateScope)) {
-      return yield* new TcpForwardTicketInvalidError({});
+      return yield* new TcpForwardTicketInvalidError({ reason: "scope-missing" });
     }
     return {
       session,

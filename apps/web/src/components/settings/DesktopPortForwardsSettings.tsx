@@ -1,48 +1,34 @@
-import type {
-  DesktopPortForwardId,
-  DesktopPortForwardSnapshot,
-  EnvironmentId,
-} from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 
-import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
-import { useServerConfigs } from "../../state/entities";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { portForwardConnectionSummary } from "../desktop/desktopPortForwardPresentation";
+import {
+  parseDesktopPortForwardPort,
+  useDesktopPortForwards,
+} from "../desktop/useDesktopPortForwards";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
-function parsePort(value: string): number | null {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65_535 ? parsed : null;
-}
-
 export function DesktopPortForwardsSettings() {
-  const bridge = window.desktopBridge?.portForward;
-  const { environments } = useEnvironments();
-  const serverConfigs = useServerConfigs();
+  const {
+    available,
+    connectedEnvironments,
+    create: createForward,
+    creating,
+    environmentLabels,
+    error,
+    forwardableEnvironments,
+    forwards,
+    stop,
+    stoppingId,
+  } = useDesktopPortForwards();
   const primaryEnvironment = usePrimaryEnvironment();
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | null>(null);
   const [remotePort, setRemotePort] = useState("3000");
   const [localPort, setLocalPort] = useState("");
-  const [forwards, setForwards] = useState<ReadonlyArray<DesktopPortForwardSnapshot>>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [stoppingId, setStoppingId] = useState<DesktopPortForwardId | null>(null);
-  const connectedEnvironments = useMemo(
-    () => environments.filter((environment) => environment.connection.phase === "connected"),
-    [environments],
-  );
-  const forwardableEnvironments = useMemo(
-    () =>
-      connectedEnvironments.filter(
-        (environment) =>
-          serverConfigs.get(environment.environmentId)?.environment.capabilities
-            .tcpPortForwarding === true,
-      ),
-    [connectedEnvironments, serverConfigs],
-  );
 
   useEffect(() => {
     if (
@@ -60,68 +46,24 @@ export function DesktopPortForwardsSettings() {
     setEnvironmentId(fallback);
   }, [environmentId, forwardableEnvironments, primaryEnvironment?.environmentId]);
 
-  useEffect(() => {
-    if (bridge === undefined) return;
-    let disposed = false;
-    void bridge.list().then(
-      (next) => {
-        if (!disposed) setForwards(next);
-      },
-      (cause) => {
-        if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
-      },
-    );
-    const unsubscribe = bridge.onStateChange((next) => setForwards(next));
-    return () => {
-      disposed = true;
-      unsubscribe();
-    };
-  }, [bridge]);
+  if (!available) return null;
 
-  const labels = useMemo(
-    () =>
-      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
-    [environments],
-  );
-  if (bridge === undefined) return null;
-
-  const parsedRemotePort = parsePort(remotePort);
-  const parsedLocalPort = localPort.trim() === "" ? undefined : parsePort(localPort);
+  const parsedRemotePort = parseDesktopPortForwardPort(remotePort);
+  const parsedLocalPort =
+    localPort.trim() === "" ? undefined : parseDesktopPortForwardPort(localPort);
   const canCreate =
     environmentId !== null && parsedRemotePort !== null && parsedLocalPort !== null && !creating;
 
   const create = async () => {
     if (!canCreate || environmentId === null || parsedRemotePort === null) return;
-    setCreating(true);
-    setError(null);
-    try {
-      const created = await bridge.create({
-        environmentId,
-        remoteHost: "127.0.0.1",
-        remotePort: parsedRemotePort,
-        ...(parsedLocalPort === undefined ? {} : { localPort: parsedLocalPort }),
-      });
-      setForwards((current) =>
-        current.some((forward) => forward.id === created.id) ? current : [...current, created],
-      );
+    const created = await createForward({
+      environmentId,
+      remoteHost: "127.0.0.1",
+      remotePort: parsedRemotePort,
+      ...(parsedLocalPort === undefined ? {} : { localPort: parsedLocalPort }),
+    });
+    if (created) {
       setLocalPort("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const stop = async (id: DesktopPortForwardId) => {
-    setStoppingId(id);
-    setError(null);
-    try {
-      await bridge.stop(id);
-      setForwards((current) => current.filter((forward) => forward.id !== id));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setStoppingId(null);
     }
   };
 
@@ -145,7 +87,9 @@ export function DesktopPortForwardsSettings() {
             >
               <SelectTrigger className="w-full" aria-label="Forward environment">
                 <SelectValue>
-                  {environmentId === null ? "Select" : (labels.get(environmentId) ?? environmentId)}
+                  {environmentId === null
+                    ? "Select"
+                    : (environmentLabels.get(environmentId) ?? environmentId)}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup alignItemWithTrigger={false}>
@@ -198,7 +142,7 @@ export function DesktopPortForwardsSettings() {
         <SettingsRow
           key={forward.id}
           title={`${forward.localHost}:${forward.localPort}`}
-          description={`${labels.get(forward.environmentId) ?? forward.environmentId} · ${forward.remoteHost}:${forward.remotePort}`}
+          description={`${environmentLabels.get(forward.environmentId) ?? forward.environmentId} · ${forward.remoteHost}:${forward.remotePort}`}
           status={
             <span className="flex flex-col items-end gap-0.5">
               <span>{portForwardConnectionSummary(forward)}</span>
