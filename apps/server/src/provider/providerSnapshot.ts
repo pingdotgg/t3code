@@ -44,6 +44,34 @@ export class ProviderCommandNotFoundError extends Schema.TaggedErrorClass<Provid
 
 const isProviderCommandNotFoundError = Schema.is(ProviderCommandNotFoundError);
 
+/**
+ * Raised when a provider status probe misses its deadline.
+ *
+ * A timeout means the host was too busy to answer in time, which is not the
+ * same as the provider being broken. Status checks fail with this instead of
+ * reporting an `error` snapshot so `makeManagedServerProvider` can keep the
+ * last known snapshot rather than overwriting it with a guess.
+ */
+export class ProviderProbeTimeoutError extends Schema.TaggedErrorClass<ProviderProbeTimeoutError>()(
+  "ProviderProbeTimeoutError",
+  {
+    provider: Schema.String,
+    probe: Schema.String,
+    timeoutMs: Schema.Number,
+    /**
+     * What the probe had established about the CLI before it ran out of time.
+     * Only consulted when there is no earlier status to fall back on, so the
+     * first-ever check still reports everything it did manage to learn.
+     */
+    installed: Schema.Boolean,
+    version: Schema.optionalKey(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `${this.provider} ${this.probe} probe timed out after ${this.timeoutMs}ms.`;
+  }
+}
+
 export interface ProviderProbeResult {
   readonly installed: boolean;
   readonly version: string | null;

@@ -24,6 +24,7 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
+  ProviderProbeTimeoutError,
 } from "../providerSnapshot.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -163,7 +164,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<
   ServerProviderDraft,
-  never,
+  ProviderProbeTimeoutError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -213,18 +214,11 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but timed out while running `grok --version`.",
-      },
+    return yield* new ProviderProbeTimeoutError({
+      provider: "Grok",
+      probe: "grok --version",
+      timeoutMs: VERSION_PROBE_TIMEOUT_MS,
+      installed: true,
     });
   }
 
@@ -274,21 +268,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
   if (Option.isNone(discoveryExit.value)) {
-    yield* Effect.logWarning(
-      `Grok ACP model discovery timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-    );
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `Grok CLI is installed but ACP startup timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-      },
+    return yield* new ProviderProbeTimeoutError({
+      provider: "Grok",
+      probe: "ACP model discovery",
+      timeoutMs: GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS,
+      installed: true,
+      // `grok --version` already answered, so keep what it told us.
+      ...(version ? { version } : {}),
     });
   }
   const discoveredModels = discoveryExit.value.value;

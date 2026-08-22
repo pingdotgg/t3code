@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -506,6 +507,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const killCalls = yield* Ref.make(0);
           const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
             Effect.provide(hangingScopedSpawnerLayer(killCalls)),
+            Effect.result,
             Effect.forkChild,
           );
 
@@ -513,11 +515,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* TestClock.adjust("11 seconds");
           yield* Effect.yieldNow;
 
+          // A timeout is reported as a failure rather than an `error` snapshot,
+          // so the caller can keep the last known status instead of publishing
+          // a verdict the probe never reached. The spawned child is still
+          // killed on the way out.
           const status = yield* Fiber.join(statusFiber);
-          assert.strictEqual(status.status, "error");
+          assert.strictEqual(Result.isFailure(status), true);
           assert.strictEqual(
-            status.message,
-            "Timed out while checking Codex app-server provider status.",
+            Result.isFailure(status) ? status.failure._tag : null,
+            "ProviderProbeTimeoutError",
           );
           assert.strictEqual(yield* Ref.get(killCalls), 1);
         }),

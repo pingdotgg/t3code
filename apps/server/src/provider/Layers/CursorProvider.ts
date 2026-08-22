@@ -39,6 +39,7 @@ import {
   providerModelsFromSettings,
   type CommandResult,
   type ServerProviderDraft,
+  ProviderProbeTimeoutError,
 } from "../providerSnapshot.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -989,7 +990,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<
   ServerProviderDraft,
-  never,
+  ProviderProbeTimeoutError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -1040,18 +1041,11 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   if (Option.isNone(aboutProbe.success)) {
-    return buildServerProvider({
-      presentation: CURSOR_PRESENTATION,
-      enabled: cursorSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Cursor Agent CLI is installed but timed out while running `agent about`.",
-      },
+    return yield* new ProviderProbeTimeoutError({
+      provider: "Cursor Agent",
+      probe: "agent about",
+      timeoutMs: ABOUT_TIMEOUT_MS,
+      installed: true,
     });
   }
 
