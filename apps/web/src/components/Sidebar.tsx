@@ -3337,9 +3337,28 @@ export default function Sidebar() {
     setShowJumpHints(shouldShowJumpHintsNow);
   }, [shouldShowJumpHintsNow]);
 
+  const listAutoAnimateControllerRef = useRef<ReturnType<typeof autoAnimate> | null>(null);
+  const listAutoAnimateAttachFrameRef = useRef<number | null>(null);
   const attachListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
+    if (listAutoAnimateAttachFrameRef.current !== null) {
+      window.cancelAnimationFrame(listAutoAnimateAttachFrameRef.current);
+      listAutoAnimateAttachFrameRef.current = null;
+    }
+    listAutoAnimateControllerRef.current?.destroy?.();
+    listAutoAnimateControllerRef.current = null;
     if (!node) return;
-    autoAnimate(node, { duration: 150, easing: "ease-out" });
+
+    // DndContext installs its accessibility nodes just after this list mounts.
+    // Attach one frame later so those setup mutations are ignored without
+    // canceling auto-animate's initial coordinate tracking.
+    listAutoAnimateAttachFrameRef.current = window.requestAnimationFrame(() => {
+      listAutoAnimateAttachFrameRef.current = null;
+      if (!node.isConnected) return;
+      listAutoAnimateControllerRef.current = autoAnimate(node, {
+        duration: 150,
+        easing: "ease-out",
+      });
+    });
   }, []);
 
   // New thread defaults to the project you're in (active thread's project,

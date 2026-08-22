@@ -23,7 +23,7 @@ import {
   resolveSidebarStageFocusRingOffsetClass,
   useSidebarStageBackdropVariant,
 } from "./SidebarStageBackdrop";
-import { useProjects } from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import {
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
@@ -128,11 +128,12 @@ function SidebarControl() {
   );
 }
 
-// Settings swaps the thread sidebar out of the tree. Keep the lightweight
-// project projection subscribed so returning to a draft never renders the
-// zero-project state while the environment snapshot reconnects.
-function ProjectProjectionRetention() {
+// Settings swaps the thread sidebar out of the tree. Keep its lightweight
+// projections subscribed so returning never briefly renders empty project or
+// thread lists while the environment snapshot reconnects.
+function SidebarProjectionRetention() {
   useProjects();
+  useThreadShells();
   return null;
 }
 
@@ -210,7 +211,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
-      <ProjectProjectionRetention />
+      <SidebarProjectionRetention />
       <Sidebar
         side="left"
         collapsible="offcanvas"
