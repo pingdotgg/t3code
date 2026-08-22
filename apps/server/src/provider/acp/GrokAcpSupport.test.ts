@@ -37,11 +37,17 @@ describe("buildGrokAcpSpawnInput", () => {
 
 describe("applyGrokAcpModelSelection", () => {
   const makeRecordingRuntime = (failure?: EffectAcpErrors.AcpError) => {
-    const modelCalls: Array<string> = [];
+    const modelCalls: Array<{
+      modelId: string;
+      options?: { readonly _meta?: { readonly [x: string]: unknown } | null };
+    }> = [];
     const runtime = {
-      setSessionModel: (modelId: string) =>
+      setSessionModel: (
+        modelId: string,
+        options?: { readonly _meta?: { readonly [x: string]: unknown } | null },
+      ) =>
         Effect.gen(function* () {
-          modelCalls.push(modelId);
+          modelCalls.push({ modelId, ...(options ? { options } : {}) });
           if (failure) return yield* failure;
           return {};
         }),
@@ -54,40 +60,80 @@ describe("applyGrokAcpModelSelection", () => {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
-        requestedModelId: "grok-mock-alt",
+        currentModelId: "model-a",
+        requestedModelId: "model-b",
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual(["grok-mock-alt"]);
-      expect(result).toBe("grok-mock-alt");
+      expect(modelCalls).toEqual([{ modelId: "model-b" }]);
+      expect(result).toBe("model-b");
     }),
   );
 
-  it.effect("skips set_model when requested matches current", () =>
+  it.effect("skips set_model when requested matches current and no effort is selected", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
-        requestedModelId: "grok-build",
+        currentModelId: "model-a",
+        requestedModelId: "model-a",
         mapError: (cause) => cause.message,
       });
       expect(modelCalls).toEqual([]);
-      expect(result).toBe("grok-build");
+      expect(result).toBe("model-a");
     }),
   );
 
-  it.effect("skips set_model when no model is requested", () =>
+  it.effect("skips set_model when no model is requested and no effort is selected", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
+        currentModelId: "model-a",
         requestedModelId: undefined,
         mapError: (cause) => cause.message,
       });
       expect(modelCalls).toEqual([]);
-      expect(result).toBe("grok-build");
+      expect(result).toBe("model-a");
+    }),
+  );
+
+  it.effect("applies reasoning effort via set_model _meta without changing model id", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "model-a",
+        requestedModelId: "model-a",
+        selections: [{ id: "reasoningEffort", value: "effort-c" }],
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([
+        {
+          modelId: "model-a",
+          options: { _meta: { reasoningEffort: "effort-c" } },
+        },
+      ]);
+      expect(result).toBe("model-a");
+    }),
+  );
+
+  it.effect("applies model switch and effort together", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "model-a",
+        requestedModelId: "model-b",
+        selections: [{ id: "reasoningEffort", value: "only" }],
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([
+        {
+          modelId: "model-b",
+          options: { _meta: { reasoningEffort: "only" } },
+        },
+      ]);
+      expect(result).toBe("model-b");
     }),
   );
 
@@ -98,8 +144,8 @@ describe("applyGrokAcpModelSelection", () => {
       const error = yield* Effect.flip(
         applyGrokAcpModelSelection({
           runtime,
-          currentModelId: "grok-build",
-          requestedModelId: "grok-mock-alt",
+          currentModelId: "model-a",
+          requestedModelId: "model-b",
           mapError: (cause) => cause.message,
         }),
       );

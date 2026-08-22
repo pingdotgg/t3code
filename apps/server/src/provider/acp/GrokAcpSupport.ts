@@ -1,4 +1,8 @@
-import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type GrokSettings,
+  type ProviderOptionSelection,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,10 +10,13 @@ import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { getProviderOptionStringSelectionValue, normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
+
+/** Option id for Grok reasoning effort — matches ACP `session/set_model` `_meta.reasoningEffort`. */
+export const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
@@ -91,18 +98,42 @@ export function currentGrokModelIdFromSessionSetup(
   return sessionSetupResult.models?.currentModelId?.trim() || undefined;
 }
 
+export function resolveGrokReasoningEffortSelection(
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): string | undefined {
+  const value = getProviderOptionStringSelectionValue(selections, GROK_REASONING_EFFORT_OPTION_ID);
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Apply model and/or reasoning effort via Grok ACP `session/set_model`.
+ * Effort is sent as `_meta.reasoningEffort` (Grok private extension).
+ * Calls set_model when the model changes or when an effort selection is present
+ * (effort can change without a model id change).
+ */
 export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly selections?: ReadonlyArray<ProviderOptionSelection> | null;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
+  const targetModelId = input.requestedModelId ?? input.currentModelId;
+  const reasoningEffort = resolveGrokReasoningEffortSelection(input.selections);
   const shouldSwitchModel =
     input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  if (!shouldSwitchModel) {
+  const shouldApplyEffort = reasoningEffort !== undefined;
+
+  if (!targetModelId || (!shouldSwitchModel && !shouldApplyEffort)) {
     return Effect.succeed(input.currentModelId);
   }
+
+  const setOptions = shouldApplyEffort
+    ? { _meta: { reasoningEffort } satisfies { readonly [x: string]: unknown } }
+    : undefined;
+
   return input.runtime
-    .setSessionModel(input.requestedModelId)
-    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+    .setSessionModel(targetModelId, setOptions)
+    .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));
 }

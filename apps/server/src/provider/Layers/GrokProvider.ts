@@ -18,6 +18,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
+  buildSelectOptionDescriptor,
   buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -29,7 +30,11 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  GROK_REASONING_EFFORT_OPTION_ID,
+  makeGrokAcpRuntime,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -52,6 +57,74 @@ const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: EMPTY_CAPABILITIES,
   },
 ];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Build model capabilities from Grok ACP model `_meta`.
+ * Effort menus are per-model (built-in and custom) via `reasoningEfforts`.
+ */
+export function buildGrokCapabilitiesFromModelMeta(meta: unknown): ModelCapabilities {
+  if (!isRecord(meta)) {
+    return EMPTY_CAPABILITIES;
+  }
+
+  const effortsRaw = meta.reasoningEfforts;
+  if (!Array.isArray(effortsRaw) || effortsRaw.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+
+  const currentEffort =
+    typeof meta.reasoningEffort === "string" ? meta.reasoningEffort.trim() : undefined;
+
+  const parsed = effortsRaw.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+    const valueRaw =
+      typeof entry.value === "string" ? entry.value : typeof entry.id === "string" ? entry.id : "";
+    const value = valueRaw.trim();
+    if (!value) {
+      return [];
+    }
+    const label =
+      typeof entry.label === "string" && entry.label.trim().length > 0 ? entry.label.trim() : value;
+    return [
+      {
+        value,
+        label,
+        markedDefault: entry.default === true,
+      },
+    ];
+  });
+
+  if (parsed.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+
+  const preferredDefault =
+    (currentEffort && parsed.some((option) => option.value === currentEffort)
+      ? currentEffort
+      : undefined) ??
+    parsed.find((option) => option.markedDefault)?.value ??
+    parsed[0]?.value;
+
+  return createModelCapabilities({
+    optionDescriptors: [
+      buildSelectOptionDescriptor({
+        id: GROK_REASONING_EFFORT_OPTION_ID,
+        label: "Reasoning",
+        options: parsed.map((option) => ({
+          value: option.value,
+          label: option.label,
+          ...(option.value === preferredDefault ? { isDefault: true as const } : {}),
+        })),
+      }),
+    ],
+  });
+}
 
 export function buildInitialGrokProviderSnapshot(
   grokSettings: GrokSettings,
@@ -99,7 +172,7 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
@@ -117,7 +190,7 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities: buildGrokCapabilitiesFromModelMeta(model._meta),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
