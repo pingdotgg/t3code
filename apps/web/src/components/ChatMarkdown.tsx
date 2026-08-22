@@ -1767,11 +1767,14 @@ function ChatMarkdown({
         if (threadRef && typeof localSrc === "string") {
           const workspacePath = resolveMarkdownImagePath(localSrc, imageBaseDir ?? cwd);
           if (workspacePath !== null) {
+            // The DOM src becomes an expiring signed URL (or is absent while
+            // loading); give the clipboard serializer the authored source.
             return (
               <MarkdownWorkspaceImage
                 threadRef={threadRef}
                 absolutePath={workspacePath}
                 src={localSrc}
+                data-markdown-copy={`![${typeof props.alt === "string" ? props.alt : ""}](${localSrc})`}
                 {...props}
               />
             );
