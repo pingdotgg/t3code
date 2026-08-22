@@ -20,7 +20,10 @@ import { resolveClerkSignInProps } from "../components/clerk/authRedirect";
 import { PrimaryEnvironmentHttpClient } from "../environments/primary/httpClient";
 import { runPrimaryHttp } from "../lib/runtime";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
-import { shouldRetryDesktopConnectAuthState } from "./connectAuthState";
+import {
+  isDesktopConnectAuthIdentityPending,
+  shouldRetryDesktopConnectAuthState,
+} from "./connectAuthState";
 
 /**
  * One T3 Connect session surface across auth backends. The hosted web app
@@ -30,6 +33,8 @@ import { shouldRetryDesktopConnectAuthState } from "./connectAuthState";
  */
 export interface T3ConnectAuth {
   readonly isLoaded: boolean;
+  /** A legacy desktop credential is waiting for its account id backfill. */
+  readonly isIdentityPending: boolean;
   readonly isSignedIn: boolean;
   readonly userId: string | null;
   /** Account label for display (desktop; web renders Clerk's UserButton). */
@@ -53,6 +58,7 @@ export interface T3ConnectAuth {
 // gates itself on hasCloudPublicConfig, so this is just a safe floor.
 const signedOutAuth: T3ConnectAuth = {
   isLoaded: true,
+  isIdentityPending: false,
   isSignedIn: false,
   userId: null,
   identity: null,
@@ -78,6 +84,7 @@ export function ClerkConnectAuthProvider({ children }: { readonly children: Reac
   const value = useMemo<T3ConnectAuth>(
     () => ({
       isLoaded,
+      isIdentityPending: false,
       isSignedIn: isSignedIn === true,
       userId: userId ?? null,
       identity: null,
@@ -268,6 +275,7 @@ export function DesktopConnectAuthProvider({ children }: { readonly children: Re
   const value = useMemo<T3ConnectAuth>(
     () => ({
       isLoaded,
+      isIdentityPending: isDesktopConnectAuthIdentityPending(state),
       // accountId can lag behind authorization for legacy `t3 connect`
       // credentials while the server backfills it; relay features need the
       // account id, so hold "signed in" until it resolves.

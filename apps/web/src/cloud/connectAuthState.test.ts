@@ -1,7 +1,10 @@
 import type { EnvironmentConnectAuthState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { shouldRetryDesktopConnectAuthState } from "./connectAuthState";
+import {
+  isDesktopConnectAuthIdentityPending,
+  shouldRetryDesktopConnectAuthState,
+} from "./connectAuthState";
 
 const authState = (
   overrides: Partial<EnvironmentConnectAuthState> = {},
@@ -21,6 +24,14 @@ describe("desktop Connect auth state retry", () => {
 
   it("retries an authorized legacy credential until its account id is backfilled", () => {
     expect(shouldRetryDesktopConnectAuthState(authState({ authorized: true }))).toBe(true);
+  });
+
+  it("marks legacy identity backfill without changing stable load states", () => {
+    expect(isDesktopConnectAuthIdentityPending(authState({ authorized: true }))).toBe(true);
+    expect(isDesktopConnectAuthIdentityPending(authState())).toBe(false);
+    expect(
+      isDesktopConnectAuthIdentityPending(authState({ authorized: true, accountId: "user-123" })),
+    ).toBe(false);
   });
 
   it("stops retrying once the state is stable", () => {
