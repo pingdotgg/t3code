@@ -3137,6 +3137,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
+  const resolveHeadPath: GitVcsDriver.GitVcsDriver["Service"]["resolveHeadPath"] = (cwd) =>
+    runGitStdoutWithOptions(
+      "GitVcsDriver.resolveHeadPath",
+      cwd,
+      ["rev-parse", "--git-path", "HEAD"],
+      {
+        timeoutMs: 5_000,
+        maxOutputBytes: 16 * 1024,
+      },
+    ).pipe(
+      Effect.map((stdout) => {
+        const headPath = stdout.trim();
+        return headPath.length > 0 ? headPath : null;
+      }),
+    );
+
   const withListRefsInvalidation = <A, E>(
     cwd: string,
     effect: Effect.Effect<A, E>,
@@ -3169,6 +3185,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    resolveHeadPath,
     prepareCommitContext,
     commit: (cwd, subject, body, options) =>
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
