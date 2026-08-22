@@ -1,5 +1,5 @@
 import { TriangleAlertIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
@@ -19,6 +19,7 @@ import {
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Separator } from "../ui/separator";
 import { SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -64,19 +65,15 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
   });
 }
 
-function SidebarUpdateReleaseNotesTooltip({
+function SidebarUpdateReleaseNotes({
   state,
   tooltip,
 }: {
   readonly state: NonNullable<ReturnType<typeof useDesktopUpdateState>>;
   readonly tooltip: string;
 }) {
-  if (state.channel !== "nightly" || state.releaseNotes.length === 0) {
-    return <>{tooltip}</>;
-  }
-
   return (
-    <div className="w-fit max-w-[min(24rem,calc(100vw-2rem))] text-left">
+    <div className="text-left">
       <div className="px-1">
         {state.status === "available" ? (
           <div>
@@ -93,7 +90,7 @@ function SidebarUpdateReleaseNotesTooltip({
           <div className="text-sm leading-5 font-medium">{tooltip}</div>
         )}
       </div>
-      <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+      <div className="px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => (
           <div key={releaseNote.version}>
             {index > 0 && <Separator className="my-3 bg-border/60" />}
@@ -113,6 +110,42 @@ function SidebarUpdateReleaseNotesTooltip({
         ))}
       </div>
     </div>
+  );
+}
+
+function SidebarUpdateReleaseNotesPopover({
+  disabled,
+  renderTrigger,
+  state,
+  tooltip,
+}: {
+  readonly disabled: boolean;
+  readonly renderTrigger: (setOpen: (open: boolean) => void) => ReactElement;
+  readonly state: NonNullable<ReturnType<typeof useDesktopUpdateState>>;
+  readonly tooltip: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger
+        closeDelay={120}
+        delay={150}
+        disabled={disabled}
+        openOnHover
+        render={renderTrigger(setOpen)}
+      />
+      <PopoverPopup
+        align="center"
+        className="max-w-[min(24rem,calc(100vw-2rem))]"
+        initialFocus={false}
+        side="top"
+        viewportClassName="max-h-[min(28rem,var(--available-height))] py-3"
+      >
+        <PopoverTitle className="sr-only">{tooltip}</PopoverTitle>
+        <SidebarUpdateReleaseNotes state={state} tooltip={tooltip} />
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -304,63 +337,85 @@ function SidebarUpdateControl() {
     );
   }, [prefersReducedMotion, state?.status]);
 
+  const showReleaseNotesPopover =
+    showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0;
+  const renderTrigger = (setReleaseNotesOpen?: (open: boolean) => void) => (
+    <button
+      type="button"
+      aria-label={tooltip}
+      aria-disabled={disabled || isActionPending || undefined}
+      disabled={disabled || isActionPending}
+      className={cn(
+        "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors enabled:cursor-pointer focus-visible:ring-2 disabled:cursor-not-allowed",
+        showUpdateIconState
+          ? "bg-update-surface text-update-foreground enabled:hover:bg-update/12"
+          : "text-[var(--sidebar-icon-color)] enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground",
+        disabled && !showUpdateIconState && "opacity-60",
+      )}
+      onBlur={
+        setReleaseNotesOpen
+          ? (event) => {
+              const popupId = event.currentTarget.getAttribute("aria-controls");
+              const popup = popupId ? document.getElementById(popupId) : null;
+              const focusMovedIntoPopup =
+                event.relatedTarget !== null && popup?.contains(event.relatedTarget as Node);
+
+              if (popup?.matches(":hover") || focusMovedIntoPopup) return;
+              setReleaseNotesOpen(false);
+            }
+          : undefined
+      }
+      onFocus={setReleaseNotesOpen ? () => setReleaseNotesOpen(true) : undefined}
+      onClick={(event) => {
+        (
+          event as typeof event & {
+            preventBaseUIHandler?: () => void;
+          }
+        ).preventBaseUIHandler?.();
+        setReleaseNotesOpen?.(false);
+        void handleAction();
+      }}
+    >
+      <DesktopUpdateStatusIcon
+        key={showCheckIcon ? checkAnimationKey : iconStatus}
+        downloadPercent={state?.downloadPercent ?? null}
+        isCheckAnimating={showCheckIcon && !prefersReducedMotion}
+        onCheckAnimationIteration={handleCheckAnimationIteration}
+        status={iconStatus}
+      />
+    </button>
+  );
+
   return (
     <SidebarMenuItem className="ml-auto shrink-0">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label={tooltip}
-              aria-disabled={disabled || isActionPending || undefined}
-              disabled={disabled || isActionPending}
-              className={cn(
-                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors enabled:cursor-pointer focus-visible:ring-2 disabled:cursor-not-allowed",
-                showUpdateIconState
-                  ? "bg-update-surface text-update-foreground enabled:hover:bg-update/12"
-                  : "text-[var(--sidebar-icon-color)] enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground",
-                disabled && !showUpdateIconState && "opacity-60",
-              )}
-              onClick={handleAction}
-            >
-              <DesktopUpdateStatusIcon
-                key={showCheckIcon ? checkAnimationKey : iconStatus}
-                downloadPercent={state?.downloadPercent ?? null}
-                isCheckAnimating={showCheckIcon && !prefersReducedMotion}
-                onCheckAnimationIteration={handleCheckAnimationIteration}
-                status={iconStatus}
-              />
-            </button>
-          }
+      {showReleaseNotesPopover && state ? (
+        <SidebarUpdateReleaseNotesPopover
+          disabled={disabled || isActionPending}
+          renderTrigger={renderTrigger}
+          state={state}
+          tooltip={tooltip}
         />
-        <TooltipPopup
-          align="center"
-          className={
-            showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0
-              ? // pointer-events-auto overrides the positioner's pointer-events-none so the
-                // release notes stay open (and scrollable) when the cursor moves into them.
-                "pointer-events-auto max-w-none text-balance"
-              : undefined
-          }
-          side="top"
-          style={
-            showUpdateDetails
-              ? {
-                  background:
-                    "color-mix(in srgb, var(--update) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
-                  borderColor: "var(--update-foreground)",
-                }
-              : undefined
-          }
-          variant={showUpdateDetails ? "glass" : "default"}
-        >
-          {showUpdateDetails && state ? (
-            <SidebarUpdateReleaseNotesTooltip state={state} tooltip={tooltip} />
-          ) : (
-            tooltip
-          )}
-        </TooltipPopup>
-      </Tooltip>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger render={renderTrigger()} />
+          <TooltipPopup
+            align="center"
+            side="top"
+            style={
+              showUpdateDetails
+                ? {
+                    background:
+                      "color-mix(in srgb, var(--update) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
+                    borderColor: "var(--update-foreground)",
+                  }
+                : undefined
+            }
+            variant={showUpdateDetails ? "glass" : "default"}
+          >
+            {tooltip}
+          </TooltipPopup>
+        </Tooltip>
+      )}
     </SidebarMenuItem>
   );
 }
