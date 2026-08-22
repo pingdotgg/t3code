@@ -9,12 +9,19 @@ import * as Schema from "effect/Schema";
 import { describe, expect } from "vite-plus/test";
 
 import {
+  extractGrokTokenUsage,
   extractXAiAskUserQuestions,
+  grokPromptCount,
+  grokPromptCountForTurns,
+  grokRewindFailureDetail,
+  grokRewindTargetKeepingPromptCount,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
+  parseGrokRewindPoints,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
+import { grokWorkflowRunStatus, parseXAiWorkflowUpdated } from "./GrokAcpWorkflow.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -329,4 +336,129 @@ describe("XAiAcpExtension", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("Grok rewind and usage helpers", () => {
+  it("picks the rewind target so Grok keeps the remaining local prompts", () => {
+    const points = parseGrokRewindPoints({
+      rewind_points: [
+        { prompt_index: 0, prompt_preview: "first" },
+        { prompt_index: 1, prompt_preview: "second" },
+        { prompt_index: 2, prompt_preview: "third" },
+      ],
+    });
+    expect(grokRewindTargetKeepingPromptCount(points, 2)?.promptIndex).toBe(2);
+    expect(grokRewindTargetKeepingPromptCount(points, 1)?.promptIndex).toBe(1);
+    expect(grokRewindTargetKeepingPromptCount(points, 0)?.promptIndex).toBe(0);
+    expect(grokRewindTargetKeepingPromptCount(points, 3)).toBeUndefined();
+    expect(grokPromptCount([{ items: [1] }, { items: [2, 3] }])).toBe(3);
+    expect(grokPromptCountForTurns([{ items: [1] }, { items: [2, 3] }], 1)).toBe(2);
+  });
+
+  it("discards a cancelled-prompt ghost with the rest of the dropped history", () => {
+    const points = parseGrokRewindPoints({
+      rewind_points: [
+        { prompt_index: 0, prompt_preview: "first" },
+        { prompt_index: 1, prompt_preview: "second" },
+        { prompt_index: 2, prompt_preview: "cancelled-ghost" },
+      ],
+    });
+    // Two completed local turns, rewind one: keep prompt 0, drop local turn 2
+    // and the ghost that landed after cancel. End-relative targeting would
+    // keep prompt 1 on Grok.
+    expect(grokRewindTargetKeepingPromptCount(points, 1)?.promptIndex).toBe(1);
+  });
+
+  it("keeps rewind failure detail bounded and includes the provider error", () => {
+    expect(grokRewindFailureDetail(null)).toBe("Grok rewind did not succeed.");
+    expect(grokRewindFailureDetail("target is stale")).toBe(
+      "Grok rewind did not succeed. target is stale",
+    );
+    expect(grokRewindFailureDetail(`  ${"x".repeat(400)}  `).length).toBeLessThanOrEqual(
+      "Grok rewind did not succeed. ".length + 240,
+    );
+  });
+
+  it("reads Grok token usage from prompt _meta", () => {
+    expect(
+      extractGrokTokenUsage({
+        usage: { input_tokens: 10, output_tokens: 4, reasoning_tokens: 3 },
+      }),
+    ).toMatchObject({
+      usedTokens: 17,
+      inputTokens: 10,
+      outputTokens: 4,
+      reasoningOutputTokens: 3,
+    });
+  });
+
+  it("reads Grok Build PromptUsage totals and cache-read tokens", () => {
+    expect(
+      extractGrokTokenUsage({
+        usage: {
+          inputTokens: 20,
+          outputTokens: 5,
+          cached_read_tokens: 8,
+          totals: { inputTokens: 20, outputTokens: 5, cachedReadTokens: 8 },
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: 25,
+      inputTokens: 20,
+      outputTokens: 5,
+      cachedInputTokens: 8,
+    });
+  });
+});
+
+describe("Grok workflow notifications", () => {
+  it("parses the official workflow_updated ACP envelope", () => {
+    const update = parseXAiWorkflowUpdated({
+      sessionId: "sess-1",
+      update: {
+        sessionUpdate: "workflow_updated",
+        run_id: "wf_review_1",
+        name: "review-changes",
+        objective: "Review the latest diff",
+        status: "active",
+        phases: [
+          { title: "Plan", state: "done" },
+          { title: "Execute", state: "active" },
+        ],
+        current_phase: "Execute",
+        elapsed_ms: 1200,
+        agents: [
+          {
+            agent_id: "agent_reviewer",
+            label: "Reviewer",
+            state: "running",
+            tokens_used: 42,
+            duration_ms: 800,
+          },
+        ],
+      },
+    });
+    expect(update).toMatchObject({
+      runId: "wf_review_1",
+      name: "review-changes",
+      status: "active",
+      currentPhase: "Execute",
+    });
+    expect(update?.phases).toHaveLength(2);
+    expect(update?.agents[0]).toMatchObject({
+      agentId: "agent_reviewer",
+      tokensUsed: 42,
+    });
+    expect(grokWorkflowRunStatus("active")).toBe("running");
+    expect(grokWorkflowRunStatus("complete")).toBe("completed");
+  });
+
+  it("ignores non-workflow session notifications", () => {
+    expect(
+      parseXAiWorkflowUpdated({
+        sessionId: "sess-1",
+        update: { sessionUpdate: "model_changed", model_id: "grok-4.6" },
+      }),
+    ).toBeUndefined();
+  });
 });

@@ -1,4 +1,8 @@
-import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
+import type {
+  ProviderUserInputAnswers,
+  ThreadTokenUsageSnapshot,
+  UserInputQuestion,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -430,3 +434,250 @@ function normalizeXAiStopReason(value: string | undefined): EffectAcpSchema.Stop
       return "end_turn";
   }
 }
+
+export interface GrokRewindPoint {
+  readonly promptIndex: number;
+  readonly promptPreview: string;
+}
+
+export interface GrokRewindExecuteResult {
+  readonly success: boolean;
+  readonly error: string | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function unwrapExtResult(value: unknown): unknown {
+  const record = asRecord(value);
+  return record && "result" in record ? record.result : value;
+}
+
+function nonNegativeInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.trunc(value);
+}
+
+/** Parses `_x.ai/rewind/points` into chronological prompt indexes. */
+export function parseGrokRewindPoints(payload: unknown): ReadonlyArray<GrokRewindPoint> {
+  const unwrapped = unwrapExtResult(payload);
+  const list = Array.isArray(unwrapped)
+    ? unwrapped
+    : (asRecord(unwrapped)?.rewind_points ??
+      asRecord(unwrapped)?.rewindPoints ??
+      asRecord(unwrapped)?.points);
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  return list.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record) {
+      return [];
+    }
+    const promptIndex = nonNegativeInt(record.prompt_index ?? record.promptIndex);
+    if (promptIndex === undefined) {
+      return [];
+    }
+    const preview =
+      (typeof record.prompt_preview === "string" ? record.prompt_preview : undefined) ??
+      (typeof record.promptPreview === "string" ? record.promptPreview : undefined) ??
+      "";
+    if (
+      /^\s*<system-reminder>/.test(preview) ||
+      /^\s*\[Plan (approved|rejected|cancelled)\]\s*$/i.test(preview.trim())
+    ) {
+      return [];
+    }
+    return [{ promptIndex, promptPreview: preview }];
+  });
+}
+
+export function grokPromptCount(
+  turns: ReadonlyArray<{ readonly items: ReadonlyArray<unknown> }>,
+): number {
+  return turns.reduce((count, turn) => count + turn.items.length, 0);
+}
+
+export function grokPromptCountForTurns(
+  turns: ReadonlyArray<{ readonly items: ReadonlyArray<unknown> }>,
+  numTurns: number,
+): number {
+  if (!Number.isInteger(numTurns) || numTurns < 1) {
+    return 0;
+  }
+  return grokPromptCount(turns.slice(-numTurns));
+}
+
+function orderedGrokRewindPoints(
+  points: ReadonlyArray<GrokRewindPoint>,
+): ReadonlyArray<GrokRewindPoint> {
+  return [...points].sort((left, right) => left.promptIndex - right.promptIndex);
+}
+
+/**
+ * First rewind point to discard so Grok keeps `keepPromptCount` user prompts.
+ * Execute drops the target and everything after it, including extra points from
+ * a cancelled in-flight prompt that still landed on the list.
+ */
+export function grokRewindTargetKeepingPromptCount(
+  points: ReadonlyArray<GrokRewindPoint>,
+  keepPromptCount: number,
+): GrokRewindPoint | undefined {
+  if (!Number.isInteger(keepPromptCount) || keepPromptCount < 0) {
+    return undefined;
+  }
+  const ordered = orderedGrokRewindPoints(points);
+  if (keepPromptCount >= ordered.length) {
+    return undefined;
+  }
+  return ordered[keepPromptCount];
+}
+
+export function parseGrokRewindExecute(payload: unknown): GrokRewindExecuteResult | undefined {
+  const record = asRecord(unwrapExtResult(payload));
+  if (!record || typeof record.success !== "boolean") {
+    return undefined;
+  }
+  return {
+    success: record.success,
+    error:
+      typeof record.error === "string"
+        ? record.error
+        : record.error == null
+          ? null
+          : String(record.error),
+  };
+}
+
+export const GROK_REWIND_FAILURE_DETAIL = "Grok rewind did not succeed.";
+
+/** Stable, bounded rewind failure text. The raw provider error stays in `cause`. */
+export function grokRewindFailureDetail(error: string | null | undefined): string {
+  const clipped = error?.replace(/\s+/g, " ").trim().slice(0, 240) ?? "";
+  return clipped.length > 0
+    ? `${GROK_REWIND_FAILURE_DETAIL} ${clipped}`
+    : GROK_REWIND_FAILURE_DETAIL;
+}
+
+function readTokenCount(...values: ReadonlyArray<unknown>): number | undefined {
+  for (const value of values) {
+    const parsed = nonNegativeInt(value);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function usageRecordFromUnknown(value: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  if (isRecord(record.usage)) {
+    return usageRecordFromUnknown(record.usage);
+  }
+  if (isRecord(record.tokenUsage)) {
+    return usageRecordFromUnknown(record.tokenUsage);
+  }
+  if (isRecord(record.token_usage)) {
+    return usageRecordFromUnknown(record.token_usage);
+  }
+  if (isRecord(record.agentResult)) {
+    return usageRecordFromUnknown(record.agentResult);
+  }
+  // Grok Build PromptUsage flattens totals onto the object, but older
+  // envelopes nest them. Merge so both shapes read the same fields.
+  if (isRecord(record.totals)) {
+    return { ...record.totals, ...record };
+  }
+  return record;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Pulls a T3 usage snapshot from a Grok prompt result or prompt-complete payload. */
+export function extractGrokTokenUsage(
+  payload: unknown,
+  maxTokens?: number,
+): ThreadTokenUsageSnapshot | undefined {
+  const usage = usageRecordFromUnknown(payload);
+  if (!usage) {
+    return undefined;
+  }
+
+  const inputTokens = readTokenCount(
+    usage.inputTokens,
+    usage.input_tokens,
+    usage.promptTokens,
+    usage.prompt_tokens,
+  );
+  const outputTokens = readTokenCount(
+    usage.outputTokens,
+    usage.output_tokens,
+    usage.completionTokens,
+    usage.completion_tokens,
+  );
+  const reasoningOutputTokens = readTokenCount(
+    usage.reasoningOutputTokens,
+    usage.reasoning_tokens,
+    usage.reasoningTokens,
+  );
+  const cachedInputTokens = readTokenCount(
+    usage.cachedInputTokens,
+    usage.cache_read_input_tokens,
+    usage.cacheReadInputTokens,
+    usage.cached_read_tokens,
+    usage.cachedReadTokens,
+  );
+  const usedTokens = readTokenCount(
+    usage.usedTokens,
+    usage.used_tokens,
+    usage.totalTokens,
+    usage.total_tokens,
+  );
+
+  const inferredUsed =
+    usedTokens ??
+    (inputTokens !== undefined || outputTokens !== undefined
+      ? (inputTokens ?? 0) + (outputTokens ?? 0) + (reasoningOutputTokens ?? 0)
+      : undefined);
+  if (inferredUsed === undefined || inferredUsed <= 0) {
+    return undefined;
+  }
+
+  return {
+    usedTokens: inferredUsed,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    lastUsedTokens: inferredUsed,
+    ...(inputTokens !== undefined ? { lastInputTokens: inputTokens } : {}),
+    ...(outputTokens !== undefined ? { lastOutputTokens: outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined
+      ? { lastReasoningOutputTokens: reasoningOutputTokens }
+      : {}),
+    ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
+  };
+}
+
+/**
+ * Grok Build fires workflow and subagent progress as `x.ai/session_notification`.
+ * The update body is parsed by GrokAcpWorkflow.
+ */
+export const XAiSessionNotification = Schema.Struct({
+  sessionId: Schema.optional(Schema.Unknown),
+  session_id: Schema.optional(Schema.Unknown),
+  update: Schema.Unknown,
+  _meta: Schema.optional(Schema.Unknown),
+});
+export type XAiSessionNotification = typeof XAiSessionNotification.Type;

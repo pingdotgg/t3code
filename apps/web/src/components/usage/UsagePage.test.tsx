@@ -54,10 +54,11 @@ vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }))
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
 vi.mock("./usageProviders", () => ({
-  PROVIDER_ORDER: ["codex", "claude"],
+  PROVIDER_ORDER: ["codex", "claude", "grok"],
   PROVIDER_PRESENTATION: {
     codex: { color: "white", label: "Codex", mark: "span" },
     claude: { color: "orange", label: "Claude Code", mark: "span" },
+    grok: { color: "purple", label: "Grok Build", mark: "span" },
   },
 }));
 

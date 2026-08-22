@@ -19,6 +19,10 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const xAiSessionNotificationMethod =
+  process.env.T3_ACP_XAI_SESSION_METHOD ?? "x.ai/session_notification";
+const emitSessionExtras = process.env.T3_ACP_EMIT_SESSION_EXTRAS === "1";
+const emitQueueChanged = process.env.T3_ACP_EMIT_QUEUE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
@@ -279,9 +283,29 @@ function modeState(): AcpSchema.SessionModeState {
 }
 
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
+  {
+    modelId: "grok-build",
+    name: "Grok Build",
+    _meta: {
+      supportsReasoningEffort: true,
+      reasoningEffort: "high",
+      totalContextTokens: 500000,
+      reasoningEfforts: [
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort" },
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "medium", value: "medium", label: "Medium Effort" },
+        { id: "low", value: "low", label: "Low Effort" },
+      ],
+    },
+  },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
+const enableRewind = process.env.T3_ACP_ENABLE_REWIND === "1";
+const ghostRewindOnCancel = process.env.T3_ACP_REWIND_GHOST_ON_CANCEL === "1";
+const emitUsage = process.env.T3_ACP_EMIT_USAGE === "1";
+const emitWorkflow = process.env.T3_ACP_EMIT_WORKFLOW === "1";
+const emitSubagent = process.env.T3_ACP_EMIT_SUBAGENT === "1";
+let rewindPoints: Array<{ prompt_index: number; prompt_preview: string }> = [];
 
 function modelState(): AcpSchema.SessionModelState {
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
@@ -392,7 +416,12 @@ const program = Effect.gen(function* () {
         );
       }
       currentModelId = request.modelId;
-      return {};
+      return {
+        _meta: {
+          model: { Ok: request.modelId },
+          ...(request._meta ?? {}),
+        },
+      };
     }),
   );
 
@@ -437,6 +466,12 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (enableRewind && ghostRewindOnCancel) {
+        rewindPoints.push({
+          prompt_index: rewindPoints.length,
+          prompt_preview: "cancelled-ghost",
+        });
+      }
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -545,7 +580,13 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
           ...(omitXAiPromptCompleteStopReason ? {} : { stopReason: "end_turn" }),
-          agentResult: null,
+          agentResult: emitUsage
+            ? {
+                input_tokens: 10,
+                output_tokens: 4,
+                reasoning_tokens: 3,
+              }
+            : null,
         });
 
         if (emitForeignSessionUpdates) {
@@ -873,11 +914,170 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      if (enableRewind && !cancelledSessions.has(requestedSessionId)) {
+        const preview =
+          request.prompt.find((block) => block.type === "text" && "text" in block)?.text ?? "";
+        rewindPoints.push({
+          prompt_index: rewindPoints.length,
+          prompt_preview: typeof preview === "string" ? preview : "",
+        });
+      }
+
+      if (emitSubagent) {
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "subagent_spawned",
+            subagent_id: "sa_explore_1",
+            parent_session_id: requestedSessionId,
+            child_session_id: "child-explore-1",
+            subagent_type: "explore",
+          },
+        });
+      }
+
+      if (emitWorkflow) {
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "workflow_updated",
+            run_id: "wf_review_1",
+            revision: 1,
+            name: "review-changes",
+            objective: "Review the latest diff",
+            status: "active",
+            phases: [
+              { title: "Plan", state: "done" },
+              { title: "Execute", state: "active" },
+            ],
+            current_phase: "Execute",
+            elapsed_ms: 1200,
+            active_agents: 1,
+            agents: [
+              {
+                agent_id: "agent_reviewer",
+                label: "Reviewer",
+                phase: "Execute",
+                model: "grok-4.6",
+                state: "running",
+                tokens_used: 42,
+                duration_ms: 800,
+              },
+            ],
+          },
+        });
+      }
+
+      if (emitSessionExtras) {
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "hook_execution",
+            event_name: "user_prompt_submit",
+            runs: [
+              {
+                name: "global/settings:user_prompt_submit[0].hooks[0]",
+                status: { status: "success", elapsed_ms: 12 },
+              },
+            ],
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "auto_compact_started",
+            tokens_used: 402_072,
+            context_window: 500_000,
+            percentage: 80,
+            reason: "Context window 80% full",
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "auto_compact_completed",
+            tokens_before: 402_072,
+            tokens_after: 42_380,
+            elapsed_ms: 80,
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "session_recap",
+            summary: "Mapped Grok extras onto T3 runtime events.",
+            auto: true,
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: "prompt-extras-1",
+            stop_reason: "end_turn",
+            usage: {
+              inputTokens: 100,
+              outputTokens: 20,
+              costUsdTicks: 1_626_488_800,
+            },
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "task_backgrounded",
+            task_id: "call-bg-1",
+            command: "sleep 1",
+            description: "Background wait",
+            output_file: "/tmp/grok-bg.log",
+          },
+        });
+      }
+
+      if (emitQueueChanged) {
+        writeJsonRpcNotification("_x.ai/queue/changed", {
+          sessionId: requestedSessionId,
+          entries: [{ prompt: "follow up" }],
+        });
+      }
+
+      return {
+        stopReason: "end_turn",
+        ...(emitUsage
+          ? {
+              _meta: {
+                usage: {
+                  input_tokens: 10,
+                  output_tokens: 4,
+                  reasoning_tokens: 3,
+                },
+              },
+            }
+          : {}),
+      };
     }),
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (method === "_x.ai/rewind/points") {
+      return Effect.succeed({ rewind_points: rewindPoints });
+    }
+    if (method === "_x.ai/rewind/execute") {
+      const record = typeof params === "object" && params !== null ? params : {};
+      const target =
+        "targetPromptIndex" in record && typeof record.targetPromptIndex === "number"
+          ? record.targetPromptIndex
+          : undefined;
+      if (target === undefined) {
+        return Effect.succeed({ success: false, error: "missing targetPromptIndex" });
+      }
+      rewindPoints = rewindPoints.filter((point) => point.prompt_index < target);
+      return Effect.succeed({
+        success: true,
+        target_prompt_index: target,
+        mode: "conversation_only",
+      });
+    }
     if (method === "cursor/list_available_models") {
       return Effect.succeed({
         models: availableModels(),
