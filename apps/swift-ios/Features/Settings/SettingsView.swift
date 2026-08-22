@@ -300,10 +300,16 @@ public struct SettingsView: View {
         let pendingAppearanceSave = appearanceSaveTask
         isSaving = true
         Task {
-            _ = await pendingAppearanceSave?.value
+            let appearanceDidSave = await pendingAppearanceSave?.value ?? true
+            if !appearanceDidSave, !hasUnsavedChanges {
+                isSaving = false
+                return
+            }
+
             let didSave = await model.saveSettings(settings)
             isSaving = false
             if didSave {
+                saveErrorMessage = nil
                 dismiss()
             } else {
                 saveErrorMessage = model.errorMessage ?? "Settings could not be saved."
