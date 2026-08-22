@@ -24,6 +24,7 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
@@ -251,6 +252,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
+  const refreshEntriesCommand = useAtomCommand(projectEnvironment.refreshEntries, {
+    reportFailure: false,
+  });
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const entriesQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
@@ -259,6 +264,13 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         })
       : null,
   );
+  const refreshEntries = useCallback(() => {
+    if (environmentId === null || cwd === null) return;
+    setIsRefreshing(true);
+    void refreshEntriesCommand({ environmentId, input: { cwd, refresh: true } }).finally(() => {
+      setIsRefreshing(false);
+    });
+  }, [cwd, environmentId, refreshEntriesCommand]);
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handleReturnToThread = useCallback(() => {
     if (navigation.canGoBack()) {
@@ -408,7 +420,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
               {
                 accessibilityLabel: "Refresh files",
                 icon: "arrow.clockwise",
-                onPress: entriesQuery.refresh,
+                onPress: refreshEntries,
               },
             ]}
           />
@@ -451,11 +463,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}
-        isPending={entriesQuery.isPending}
+        isPending={entriesQuery.isPending || isRefreshing}
         searchQuery={searchQuery}
         selectedPath={null}
         onPreviewFile={handlePreviewFile}
-        onRefresh={entriesQuery.refresh}
+        onRefresh={refreshEntries}
         onSelectFile={handleSelectFile}
       />
       <FilesToolbarBottomFade />

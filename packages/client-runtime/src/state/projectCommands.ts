@@ -1,5 +1,6 @@
 import { type EnvironmentId, type ProjectReadFileResult, WS_METHODS } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
 import { Atom } from "effect/unstable/reactivity";
 
 import {
@@ -54,18 +55,33 @@ export function createProjectEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { projectId: string } }) =>
       JSON.stringify([environmentId, input.projectId]),
   };
+  const listEntries = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:projects:list-entries",
+    tag: WS_METHODS.projectsListEntries,
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+  });
+  const refreshEntries = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:projects:refresh-entries",
+    tag: WS_METHODS.projectsListEntries,
+    onSuccess: (target, registry) =>
+      Effect.sync(() => {
+        registry.refresh(
+          listEntries({
+            environmentId: target.environmentId,
+            input: { cwd: target.input.cwd },
+          }),
+        );
+      }),
+  });
   return {
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
     }),
-    listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:projects:list-entries",
-      tag: WS_METHODS.projectsListEntries,
-      staleTimeMs: 30_000,
-      idleTtlMs: 5 * 60_000,
-    }),
+    listEntries,
+    refreshEntries,
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
