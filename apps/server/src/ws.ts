@@ -30,6 +30,7 @@ import {
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  OrchestrationThreadNotFoundError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
@@ -1492,9 +1493,8 @@ const makeWsRpcLayer = (
                 );
 
               if (Option.isNone(snapshot)) {
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
+                return yield* new OrchestrationThreadNotFoundError({
+                  threadId: input.threadId,
                 });
               }
 
