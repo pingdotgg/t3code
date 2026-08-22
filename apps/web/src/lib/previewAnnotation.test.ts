@@ -5,6 +5,7 @@ import {
   appendPreviewAnnotationPrompt,
   buildPreviewAnnotationPrompt,
   extractTrailingPreviewAnnotation,
+  previewAnnotationScreenshotFile,
 } from "./previewAnnotation";
 
 const annotation: PreviewAnnotationPayload = {
@@ -83,5 +84,42 @@ describe("preview annotations", () => {
     expect(extractedSecond.annotation?.id).toBe("annotation_2");
     expect(extractedFirst.annotation?.id).toBe("annotation_1");
     expect(extractedFirst.promptText).toBe("Fix this");
+  });
+});
+
+describe("preview annotation screenshots", () => {
+  it("decodes the crop into a named file", () => {
+    const file = previewAnnotationScreenshotFile(annotation);
+    expect(file?.name).toBe("preview-annotation-annotation_1.png");
+    expect(file?.type).toBe("image/png");
+    expect(file?.size).toBe(1);
+  });
+
+  it("returns null when the annotation carries no crop", () => {
+    expect(previewAnnotationScreenshotFile({ ...annotation, screenshot: null })).toBe(null);
+  });
+
+  it("returns null for a data URL that is not base64", () => {
+    expect(
+      previewAnnotationScreenshotFile({
+        ...annotation,
+        screenshot: { ...annotation.screenshot!, dataUrl: "data:image/png,notbase64" },
+      }),
+    ).toBe(null);
+  });
+
+  // The desktop renderer's CSP allows `data:` for `img-src` but not for
+  // `connect-src`, so fetching the crop is blocked there and the screenshot
+  // silently never reaches the composer. Decode it in place instead.
+  it("never fetches the data URL", () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      throw new Error("connect-src blocks data: URLs in the desktop renderer");
+    }) as typeof globalThis.fetch;
+    try {
+      expect(previewAnnotationScreenshotFile(annotation)).not.toBe(null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

@@ -85,7 +85,7 @@ function dataUrlByteLength(dataUrl: string): number {
 }
 
 /** Base64 payload of a data URL decoded back into a `File`. */
-function dataUrlToFile(dataUrl: string, name: string, mimeType: string): File {
+export function dataUrlToFile(dataUrl: string, name: string, mimeType: string): File {
   const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
   const binary = atob(payload);
   const bytes = new Uint8Array(binary.length);
