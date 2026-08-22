@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
@@ -1991,8 +1992,38 @@ code {
 .chat-markdown ol,
 .chat-markdown blockquote,
 .chat-markdown pre,
-.chat-markdown .chat-markdown-table-container {
+.chat-markdown .chat-markdown-table-container,
+.chat-markdown .katex-display {
   margin: 0.65rem 0;
+}
+
+.chat-markdown .katex-display,
+.chat-markdown :not(.katex-display) > .katex {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+}
+
+.chat-markdown :not(.katex-display) > .katex {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.chat-markdown .katex-display > .katex {
+  text-align: left;
+}
+
+.chat-markdown .katex-display::-webkit-scrollbar,
+.chat-markdown :not(.katex-display) > .katex::-webkit-scrollbar {
+  height: 7px;
+}
+
+.chat-markdown .katex-display::-webkit-scrollbar-thumb,
+.chat-markdown :not(.katex-display) > .katex::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .chat-markdown h1,

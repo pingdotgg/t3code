@@ -178,6 +178,14 @@ function serializeAnchor(anchor: Element): string {
   return `[${label}](${href})`;
 }
 
+function serializeKatex(element: Element, display: boolean): string {
+  const tex = element
+    .querySelector('annotation[encoding="application/x-tex"]')
+    ?.textContent?.trim();
+  if (!tex) return "";
+  return display ? `\\[\n${tex}\n\\]\n\n` : `\\(${tex}\\)`;
+}
+
 function serializeChildren(node: Node): string {
   let out = "";
   for (const child of node.childNodes) {
@@ -196,6 +204,12 @@ function serializeNode(node: Node): string {
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return "";
   const element = node as Element;
+  if (element.classList.contains("katex-display")) {
+    return serializeKatex(element, true);
+  }
+  if (element.classList.contains("katex")) {
+    return serializeKatex(element, false);
+  }
   if (element.hasAttribute("data-markdown-details")) {
     return serializeDetails(element);
   }
@@ -293,7 +307,16 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
+/** Keeps KaTeX's visual branch usable when rich-paste targets prefer HTML. */
+export function prepareKatexHtmlForClipboard(container: Element): void {
+  for (const katex of container.querySelectorAll(".katex")) {
+    katex.querySelector(":scope > .katex-mathml")?.remove();
+    katex.querySelector(":scope > .katex-html")?.removeAttribute("aria-hidden");
+  }
+}
+
 function sanitizedHtmlFrom(container: Element): string {
+  prepareKatexHtmlForClipboard(container);
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
