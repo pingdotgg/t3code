@@ -602,12 +602,12 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("closing the final terminal pane removes its surface and closes the panel", () => {
+  it("closing the final terminal pane removes its surface and keeps the panel open", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().closeTerminal(refA, "terminal:term-1", "term-1");
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: false,
+      isOpen: true,
       activeSurfaceId: null,
       surfaces: [],
     });
@@ -623,8 +623,50 @@ describe("rightPanelStore", () => {
     );
   });
 
-  it("closing the final surface closes the panel", () => {
+  it("closing the final surface keeps the panel open on the empty state", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().closeSurface(refA, "terminal:term-1");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
+
+  it("closing a file opened from the explorer keeps the panel open on the empty state", () => {
+    useRightPanelStore.getState().open(refA, "files");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().closeSurface(refA, "file:src/index.ts");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
+
+  it("closing the final surface of the pull-request list's shared panel closes it", () => {
+    const pullRequestsPanelRef = scopeThreadRef(
+      "env-1" as EnvironmentId,
+      ThreadId.make("pull-requests-panel"),
+    );
+    const target = { projectId: "project-1", repository: "owner/repo", number: 1 };
+    useRightPanelStore.getState().openPullRequest(pullRequestsPanelRef, target);
+    useRightPanelStore.getState().closeSurface(pullRequestsPanelRef, pullRequestSurfaceId(target));
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, pullRequestsPanelRef),
+    ).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
+
+  it("closing the final surface of a hidden panel leaves it hidden", () => {
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().close(refA);
     useRightPanelStore.getState().closeSurface(refA, "terminal:term-1");
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
@@ -670,14 +712,14 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("closing all surfaces closes the panel", () => {
+  it("closing all surfaces keeps the panel open on the empty state", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
 
     useRightPanelStore.getState().closeAllSurfaces(refA);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: false,
+      isOpen: true,
       activeSurfaceId: null,
       surfaces: [],
     });

@@ -76,6 +76,23 @@ const RIGHT_PANEL_STORAGE_VERSION = 11;
  */
 const isPullRequestsPanelKey = (threadKey: string) => threadKey.endsWith(":pull-requests-panel");
 
+/**
+ * Closing tabs never hides a thread's panel. An open panel with no surfaces is a
+ * real state that renders the empty-state picker, and it is already the state the
+ * panel opens in on a thread that has no tabs yet, so emptying it by closing the
+ * last tab lands there too instead of collapsing. Visibility stays owned by
+ * `close`/`toggleVisibility`.
+ *
+ * The pull-request list's shared panel is the exception: it renders only while a
+ * change request is selected, so emptying that one still closes it rather than
+ * leaving an open panel with nothing to show.
+ */
+const isOpenAfterClose = (
+  current: ThreadRightPanelState,
+  ref: ScopedThreadRef,
+  remaining: number,
+): boolean => current.isOpen && (remaining > 0 || !isPullRequestsPanelKey(scopedThreadKey(ref)));
+
 export interface ThreadRightPanelState {
   isOpen: boolean;
   activeSurfaceId: string | null;
@@ -471,7 +488,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
               return {
                 ...current,
-                isOpen: surfaces.length > 0 && current.isOpen,
+                isOpen: isOpenAfterClose(current, ref, surfaces.length),
                 surfaces,
                 activeSurfaceId:
                   current.activeSurfaceId === surfaceId
@@ -511,12 +528,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (index < 0) return current;
             const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
             if (current.activeSurfaceId !== surfaceId) {
-              return { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
+              return {
+                ...current,
+                isOpen: isOpenAfterClose(current, ref, surfaces.length),
+                surfaces,
+              };
             }
             const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
             return {
               ...current,
-              isOpen: surfaces.length > 0 && current.isOpen,
+              isOpen: isOpenAfterClose(current, ref, surfaces.length),
               surfaces,
               activeSurfaceId: fallback?.id ?? null,
             };
@@ -556,7 +577,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
             current.surfaces.length === 0
               ? current
-              : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
+              : {
+                  ...current,
+                  isOpen: isOpenAfterClose(current, ref, 0),
+                  surfaces: [],
+                  activeSurfaceId: null,
+                },
           ),
         })),
       reconcileBrowserSurfaces: (ref, tabIds) =>
