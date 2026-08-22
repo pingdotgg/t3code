@@ -993,7 +993,42 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("uses the full tolerance window for a stalled desktop foreground probe", () =>
+  it.effect("stays connected when a stalled desktop foreground probe answers on retry", () =>
+    Effect.gen(function* () {
+      const probeAttempts = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        probe: (attempt) =>
+          attempt === 1
+            ? Effect.gen(function* () {
+                const probeAttempt = yield* Ref.updateAndGet(probeAttempts, (count) => count + 1);
+                if (probeAttempt === 1) {
+                  return yield* Effect.never;
+                }
+              })
+            : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active");
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("5 seconds");
+
+      // The retry answers, so a busy backend never becomes a visible
+      // disconnect and the composer is never disabled.
+      yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(yield* Ref.get(probeAttempts)).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reconnects when the retried desktop foreground probe also stalls", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
@@ -1004,6 +1039,11 @@ describe("EnvironmentSupervisor", () => {
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("application-active");
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      // The retry gets the full desktop window before the lease is replaced.
       yield* TestClock.adjust("14999 millis");
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
       yield* TestClock.adjust("1 milli");

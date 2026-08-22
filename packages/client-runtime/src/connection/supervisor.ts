@@ -34,6 +34,10 @@ const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// How long a stalled desktop/web foreground probe waits before asking again.
+// Long enough for a burst of agent work to clear, short enough that a genuinely
+// wedged backend is still replaced promptly.
+const CONNECTION_PROBE_RETRY_DELAY = "5 seconds";
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -419,22 +423,53 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             return true;
           }
           if (next.reason === "application-active" || next.reason === "application-active-probe") {
-            const probe = yield* lease.session.probe.pipe(
-              Effect.timeoutOrElse({
-                duration:
-                  next.reason === "application-active-probe"
-                    ? MOBILE_CONNECTION_PROBE_TIMEOUT
-                    : CONNECTION_PROBE_TIMEOUT,
-                orElse: () =>
-                  Effect.fail(
-                    new ConnectionTransientError({
-                      reason: "timeout",
-                      detail: `${target.label} did not respond to a connection health check.`,
-                    }),
-                  ),
+            const probeTimedOut = Effect.fail(
+              new ConnectionTransientError({
+                reason: "timeout",
+                detail: `${target.label} did not respond to a connection health check.`,
               }),
-              Effect.forkChild,
             );
+            const probe = yield* (
+              next.reason === "application-active-probe"
+                ? // Mobile resume: the OS commonly suspends the socket without
+                  // delivering a close, so a stalled probe really does mean a
+                  // dead transport and waiting longer only delays recovery.
+                  lease.session.probe.pipe(
+                    Effect.timeoutOrElse({
+                      duration: MOBILE_CONNECTION_PROBE_TIMEOUT,
+                      orElse: () => probeTimedOut,
+                    }),
+                  )
+                : // Desktop and web: the socket is still open and no close
+                  // arrived, so a missed deadline says the backend is busy, not
+                  // gone. Replacing the lease on that evidence turns a stall
+                  // into a visible disconnect and disables the composer. Wait,
+                  // then ask once more; a second miss is a real failure.
+                  lease.session.probe.pipe(
+                    Effect.timeoutOption(CONNECTION_PROBE_TIMEOUT),
+                    Effect.flatMap((answered) =>
+                      Option.isSome(answered)
+                        ? Effect.void
+                        : Effect.logWarning(
+                            "Environment health check timed out; retrying before reconnecting.",
+                          ).pipe(
+                            Effect.annotateLogs({
+                              "environment.id": target.environmentId,
+                              "environment.label": target.label,
+                            }),
+                            Effect.andThen(Effect.sleep(CONNECTION_PROBE_RETRY_DELAY)),
+                            Effect.andThen(
+                              lease.session.probe.pipe(
+                                Effect.timeoutOption(CONNECTION_PROBE_TIMEOUT),
+                              ),
+                            ),
+                            Effect.flatMap((retried) =>
+                              Option.isSome(retried) ? Effect.void : probeTimedOut,
+                            ),
+                          ),
+                    ),
+                  )
+            ).pipe(Effect.forkChild);
             for (;;) {
               const probeEvent = yield* Effect.raceFirst(
                 Fiber.await(probe).pipe(
