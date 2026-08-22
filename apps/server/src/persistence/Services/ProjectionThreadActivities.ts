@@ -38,6 +38,13 @@ export const ListProjectionThreadActivitiesInput = Schema.Struct({
 });
 export type ListProjectionThreadActivitiesInput = typeof ListProjectionThreadActivitiesInput.Type;
 
+export const ListProjectionThreadActivitiesByKindInput = Schema.Struct({
+  threadId: ThreadId,
+  kinds: Schema.Array(Schema.String),
+});
+export type ListProjectionThreadActivitiesByKindInput =
+  typeof ListProjectionThreadActivitiesByKindInput.Type;
+
 export const DeleteProjectionThreadActivitiesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -65,6 +72,18 @@ export interface ProjectionThreadActivityRepositoryShape {
    */
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /**
+   * List projected thread activity rows for a thread, restricted to `kinds`.
+   *
+   * Same ordering as {@link listByThreadId}. Callers deriving a fact from a few
+   * activity kinds should use this: a thread's activity rows carry every tool
+   * payload it has produced, so reading them all to answer a narrow question
+   * scales with the thread's whole history.
+   */
+  readonly listByThreadIdAndKinds: (
+    input: ListProjectionThreadActivitiesByKindInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**

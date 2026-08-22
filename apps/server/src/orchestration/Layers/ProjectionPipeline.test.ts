@@ -2086,6 +2086,125 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("counts an unresolved user-input request on the thread shell", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-open-user-input-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-open-user-input"),
+        occurredAt: "2026-02-26T13:00:00.000Z",
+        commandId: CommandId.make("cmd-open-user-input-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-open-user-input-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-open-user-input"),
+          title: "Project Open User Input",
+          workspaceRoot: "/tmp/project-open-user-input",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-02-26T13:00:00.000Z",
+          updatedAt: "2026-02-26T13:00:00.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-open-user-input-2"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-open-user-input"),
+        occurredAt: "2026-02-26T13:00:01.000Z",
+        commandId: CommandId.make("cmd-open-user-input-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-open-user-input-2"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-open-user-input"),
+          projectId: ProjectId.make("project-open-user-input"),
+          title: "Thread Open User Input",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-02-26T13:00:01.000Z",
+          updatedAt: "2026-02-26T13:00:01.000Z",
+        },
+      });
+
+      // Noise the summary must read past: the request it counts is a handful of
+      // rows among a thread's whole tool timeline.
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-open-user-input-3"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-open-user-input"),
+        occurredAt: "2026-02-26T13:00:02.000Z",
+        commandId: CommandId.make("cmd-open-user-input-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-open-user-input-3"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-open-user-input"),
+          activity: {
+            id: EventId.make("activity-open-user-input-tool"),
+            tone: "tool",
+            kind: "tool.updated",
+            summary: "Tool progress",
+            payload: { requestId: "not-a-user-input-request" },
+            turnId: null,
+            createdAt: "2026-02-26T13:00:02.000Z",
+          },
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-open-user-input-4"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-open-user-input"),
+        occurredAt: "2026-02-26T13:00:03.000Z",
+        commandId: CommandId.make("cmd-open-user-input-4"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-open-user-input-4"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-open-user-input"),
+          activity: {
+            id: EventId.make("activity-open-user-input-requested"),
+            tone: "info",
+            kind: "user-input.requested",
+            summary: "User input requested",
+            payload: { requestId: "user-input-request-open-1" },
+            turnId: null,
+            createdAt: "2026-02-26T13:00:03.000Z",
+          },
+        },
+      });
+
+      const threadRows = yield* sql<{
+        readonly pendingUserInputCount: number;
+      }>`
+        SELECT pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = 'thread-open-user-input'
+      `;
+      assert.deepEqual(threadRows, [{ pendingUserInputCount: 1 }]);
+    }),
+  );
+
   it.effect("ignores non-stale provider approval response failures", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
