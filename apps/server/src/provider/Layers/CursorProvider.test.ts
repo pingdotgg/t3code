@@ -333,11 +333,12 @@ describe("buildCursorProviderSnapshot", () => {
           status: "ready",
           auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
         },
-        discoveryWarning: "Cursor ACP model discovery timed out after 15000ms.",
+        // Fixed literal: buildCursorProviderSnapshot passes discoveryWarning through.
+        discoveryWarning: "Cursor ACP model discovery timed out after 20000ms.",
       }),
     ).toMatchObject({
       status: "warning",
-      message: "Cursor ACP model discovery timed out after 15000ms.",
+      message: "Cursor ACP model discovery timed out after 20000ms.",
       models: [],
     });
   });

@@ -27,11 +27,8 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
-import {
-  AUTH_PROBE_TIMEOUT_MS,
-  buildServerProvider,
-  type ServerProviderDraft,
-} from "../providerSnapshot.ts";
+import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
+import { providerAuthProbeTimeoutMs, resolveProviderProbeCwd } from "../providerProbeTimeouts.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
@@ -547,18 +544,16 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const authProbeTimeoutMs = yield* providerAuthProbeTimeoutMs;
+  const probeCwd = yield* resolveProviderProbeCwd(undefined, resolvedEnvironment);
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
-    cwd: process.cwd(),
+    cwd: probeCwd,
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,
-  }).pipe(
-    Effect.scoped,
-    Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),
-    Effect.result,
-  );
+  }).pipe(Effect.scoped, Effect.timeoutOption(Duration.millis(authProbeTimeoutMs)), Effect.result);
 
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;

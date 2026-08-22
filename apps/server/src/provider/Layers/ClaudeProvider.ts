@@ -32,13 +32,13 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { providerVersionProbeTimeoutMs } from "../providerProbeTimeouts.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
@@ -840,11 +840,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const versionTimeoutMs = yield* providerVersionProbeTimeoutMs;
   const versionProbe = yield* runClaudeCommand(
     claudeSettings,
     ["--version"],
     resolvedEnvironment,
-  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  ).pipe(Effect.timeoutOption(versionTimeoutMs), Effect.result);
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
