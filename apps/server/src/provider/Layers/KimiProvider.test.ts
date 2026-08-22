@@ -182,6 +182,21 @@ it.layer(NodeServices.layer)("Kimi driver probe controls", (it) => {
     ),
   );
 
+  it.effect("atomically denies probe admission after a turn becomes active", () =>
+    Effect.gen(function* () {
+      const turnActivity = yield* makeKimiTurnActivity;
+      const threadId = ThreadId.make("thread-probe-admission");
+
+      expect(yield* turnActivity.beginProbeIfIdle).toBe(true);
+      yield* turnActivity.markActive(threadId);
+      expect(yield* turnActivity.beginProbeIfIdle).toBe(false);
+      yield* turnActivity.endProbe;
+      yield* turnActivity.markIdle(threadId);
+      expect(yield* turnActivity.beginProbeIfIdle).toBe(true);
+      yield* turnActivity.endProbe;
+    }),
+  );
+
   it.effect("defers a probe during an active turn and resumes when the turn settles", () =>
     Effect.gen(function* () {
       const turnActivity = yield* makeKimiTurnActivity;
@@ -337,6 +352,37 @@ it.layer(NodeServices.layer)("probeKimiProviderStatus", (it) => {
       expect(second.classification).toEqual({ _tag: "healthy", modelSource: "cache" });
       expect(second.snapshot.status).toBe("ready");
       expect(second.snapshot.models.map((model) => model.slug)).toEqual(["k3"]);
+    }),
+  );
+
+  it.effect("does not cache an empty model discovery result", () =>
+    Effect.gen(function* () {
+      const settings = decodeKimiSettings({ enabled: true });
+      const empty = yield* probeKimiProviderStatus(
+        settings,
+        {},
+        {
+          operations: makeProbeOperations({ discovery: { _tag: "success", value: [] } }),
+        },
+      );
+
+      expect(empty.classification).toEqual({ _tag: "healthy", modelSource: "discovery" });
+      expect(empty.discoveryCache).toBeUndefined();
+      expect(empty.snapshot.models.map((model) => model.slug)).toEqual([
+        "k3",
+        "kimi-for-coding",
+        "kimi-for-coding-highspeed",
+      ]);
+
+      const retry = yield* probeKimiProviderStatus(
+        settings,
+        {},
+        {
+          operations: makeProbeOperations(),
+        },
+      );
+      expect(retry.classification).toEqual({ _tag: "healthy", modelSource: "discovery" });
+      expect(retry.discoveryCache?.models).toEqual(discoveredModels);
     }),
   );
 

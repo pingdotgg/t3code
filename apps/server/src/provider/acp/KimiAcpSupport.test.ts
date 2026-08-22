@@ -337,16 +337,25 @@ describe("isKimiAuthRequiredError", () => {
     expect(isKimiAuthRequiredError(EffectAcpErrors.AcpRequestError.authRequired())).toBe(true);
   });
 
-  it("matches failures from the authenticate request", () => {
+  it("rejects non-authenticate protocol failures even when the method is authenticate", () => {
     expect(
       isKimiAuthRequiredError(
         new EffectAcpErrors.AcpRequestError({
-          code: -32603,
-          errorMessage: "token missing",
+          code: -32601,
+          errorMessage: "authenticate is unsupported",
           method: "authenticate",
         }),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isKimiAuthRequiredError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32602,
+          errorMessage: "invalid auth method",
+          method: "authenticate",
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("rejects unrelated errors", () => {

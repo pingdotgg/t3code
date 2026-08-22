@@ -54,11 +54,14 @@ export interface KimiTurnActivity {
   readonly markIdle: (threadId: ThreadId) => Effect.Effect<void>;
   readonly activeCount: Effect.Effect<number>;
   readonly awaitIdle: Effect.Effect<void>;
+  readonly beginProbeIfIdle: Effect.Effect<boolean>;
+  readonly endProbe: Effect.Effect<void>;
 }
 
 interface KimiTurnActivityState {
   readonly activeThreadIds: ReadonlySet<ThreadId>;
   readonly idle: Deferred.Deferred<void>;
+  readonly probesInFlight: number;
 }
 
 export const makeKimiTurnActivity: Effect.Effect<KimiTurnActivity> = Effect.gen(function* () {
@@ -67,6 +70,7 @@ export const makeKimiTurnActivity: Effect.Effect<KimiTurnActivity> = Effect.gen(
   const state = yield* SynchronizedRef.make<KimiTurnActivityState>({
     activeThreadIds: new Set<ThreadId>(),
     idle: initialIdle,
+    probesInFlight: 0,
   });
 
   const markActive = (threadId: ThreadId): Effect.Effect<void> =>
@@ -81,7 +85,7 @@ export const makeKimiTurnActivity: Effect.Effect<KimiTurnActivity> = Effect.gen(
           activeThreadIds.add(threadId);
           const idle =
             current.activeThreadIds.size === 0 ? yield* Deferred.make<void>() : current.idle;
-          return [undefined, { activeThreadIds, idle }] as const;
+          return [undefined, { ...current, activeThreadIds, idle }] as const;
         });
       },
     );
@@ -116,6 +120,16 @@ export const makeKimiTurnActivity: Effect.Effect<KimiTurnActivity> = Effect.gen(
     }
   });
 
+  const beginProbeIfIdle = SynchronizedRef.modify(state, (current) =>
+    current.activeThreadIds.size > 0
+      ? [false, current]
+      : [true, { ...current, probesInFlight: current.probesInFlight + 1 }],
+  );
+  const endProbe = SynchronizedRef.update(state, (current) => ({
+    ...current,
+    probesInFlight: Math.max(0, current.probesInFlight - 1),
+  }));
+
   return {
     markActive,
     markIdle,
@@ -123,6 +137,8 @@ export const makeKimiTurnActivity: Effect.Effect<KimiTurnActivity> = Effect.gen(
       Effect.map((current) => current.activeThreadIds.size),
     ),
     awaitIdle,
+    beginProbeIfIdle,
+    endProbe,
   } satisfies KimiTurnActivity;
 });
 
@@ -652,7 +668,7 @@ export function kimiConfigOptionsFromSessionNotification(
     : undefined;
 }
 
-/** True when an ACP failure means "signed out", i.e. `authenticate` was rejected. */
+/** True when Kimi reports its real missing-credential ACP error. */
 export function isKimiAuthRequiredError(error: unknown): boolean {
-  return isAcpRequestError(error) && (error.code === -32000 || error.method === "authenticate");
+  return isAcpRequestError(error) && error.code === -32000;
 }
