@@ -116,6 +116,39 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       ) ?? null)
     : null;
 
+  const defaultSelectionNavigatedRef = useRef(false);
+
+  useEffect(() => {
+    if (defaultSelectionNavigatedRef.current) {
+      return;
+    }
+
+    if (incomingShare || reservedDestinationProject) {
+      // Incoming shares have their own auto-navigation path; don't fight it.
+      defaultSelectionNavigatedRef.current = true;
+      return;
+    }
+
+    if (projectScopes.length > 0) {
+      defaultSelectionNavigatedRef.current = true;
+      const defaultProject = projectScopes[0]?.projects[0];
+      if (defaultProject) {
+        navigation.navigate("NewTaskSheet", {
+          screen: "NewTaskDraft",
+          params: {
+            environmentId: defaultProject.environmentId,
+            projectId: defaultProject.id,
+            title: defaultProject.title,
+          },
+        });
+      }
+    } else if (!projectEmptyState.loading) {
+      // If we finished loading and there are truly no projects, we shouldn't
+      // keep waiting to auto-navigate. Let the user see the empty state.
+      defaultSelectionNavigatedRef.current = true;
+    }
+  }, [projectScopes, navigation, incomingShare, reservedDestinationProject, projectEmptyState.loading]);
+
   async function selectProject(project: EnvironmentProject): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
       try {
