@@ -100,6 +100,17 @@ This is useful when a Codex-compatible setup needs account-specific variables. A
 the provider instance that should receive them, and mark API keys or tokens as sensitive. Sensitive
 values are stored as server secrets and are not sent back to the app after saving.
 
+## Automatic Recovery From Usage Limits
+
+If your configured Codex executable can select another account when it starts, T3 Code gives it one
+chance to do that automatically. When Codex reports a usage-limit failure before producing any
+output or starting any tool, T3 Code restarts the executable, resumes the same Codex thread, and
+retries the prompt once.
+
+T3 Code does not retry after output or tool activity because that could repeat commands or file
+changes. It also stops if the original thread cannot be resumed exactly. In either case, the original
+failure remains visible so you can switch accounts manually.
+
 ## Can I Switch Accounts In An Existing Thread?
 
 Yes, when both Codex providers share the same `CODEX_HOME path`.
