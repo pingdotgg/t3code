@@ -770,6 +770,11 @@ export const make = Effect.gen(function* () {
                 return next;
               });
               yield* installEntryLocked(fallback);
+              yield* routeTransition.afterSelected({
+                environmentId,
+                previous: selected.target,
+                selected: fallback.target,
+              });
             }),
           ).pipe(Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void));
         },

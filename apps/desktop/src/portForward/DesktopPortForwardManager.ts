@@ -569,8 +569,11 @@ export const make = Effect.gen(function* () {
     return snapshot;
   });
 
-  const stopManaged = (managed: ManagedForward) =>
-    Effect.sync(() => {
+  const stopManaged = Effect.fn("DesktopPortForwardManager.stopManaged")(function* (
+    managed: ManagedForward,
+  ) {
+    const generation = managed.generation;
+    yield* Effect.sync(() => {
       managed.generation += 1;
       managed.server.close();
       for (const socket of managed.sockets) socket.destroy();
@@ -578,6 +581,34 @@ export const make = Effect.gen(function* () {
       managed.sockets.clear();
       managed.webSockets.clear();
     });
+    const interrupted = yield* Ref.modify(pendingAuthorizations, (current) => {
+      const next = new Map(current);
+      const pending: Array<PendingAuthorization> = [];
+      for (const [requestId, authorization] of next) {
+        if (
+          authorization.forwardId !== managed.snapshot.id ||
+          authorization.generation !== generation
+        ) {
+          continue;
+        }
+        pending.push(authorization);
+        next.delete(requestId);
+      }
+      return [pending, next] as const;
+    });
+    yield* Effect.forEach(
+      interrupted,
+      (authorization) =>
+        Deferred.fail(
+          authorization.deferred,
+          new DesktopPortForwardError({
+            operation: "stop",
+            cause: "The desktop port forward stopped.",
+          }),
+        ),
+      { discard: true },
+    );
+  });
 
   const stop: DesktopPortForwardManager["Service"]["stop"] = (id) =>
     Ref.modify(forwards, (current) => {

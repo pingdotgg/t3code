@@ -61,7 +61,11 @@ const errorFrame = (message: string) => {
   return frame;
 };
 
-type CreateTargetConnection = (options: { host: string; port: number }) => NodeNet.Socket;
+type CreateTargetConnection = (options: {
+  host: string;
+  port: number;
+  allowHalfOpen: true;
+}) => NodeNet.Socket;
 
 const connectTargetAddress = (
   createConnection: CreateTargetConnection,
@@ -69,7 +73,7 @@ const connectTargetAddress = (
   port: number,
 ) =>
   Effect.callback<NodeNet.Socket, TcpForwardTargetConnectError>((resume) => {
-    const target = createConnection({ host, port });
+    const target = createConnection({ host, port, allowHalfOpen: true });
     const onConnect = () => {
       target.off("error", onError);
       resume(Effect.succeed(target));

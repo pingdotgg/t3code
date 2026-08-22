@@ -1,7 +1,7 @@
 # Desktop Port Forwarding
 
-> The bridge-first manual forwarding slice is implemented. Persistence,
-> preview discovery actions, and a native SSH driver remain follow-up work.
+> The bridge-first manual forwarding slice is implemented. Persistence and
+> preview discovery actions remain follow-up work.
 
 ## Decision
 
@@ -21,19 +21,15 @@ services on the Internet.
 
 ## Transport
 
-Do not allocate an additional FRP proxy for each forwarded port. The sovereign
-FRP authorization boundary intentionally permits one canonical HTTP proxy per
-environment. Expanding it would require public endpoint allocation, lifecycle
-reconciliation, and materially broader Internet-facing authorization.
-
-Instead, carry forwarding traffic through the environment's selected
-authenticated HTTPS/WSS endpoint:
+Carry forwarding traffic through the environment's selected authenticated
+HTTPS/WSS endpoint. A forward does not allocate another public endpoint or
+broaden the environment's network exposure:
 
 ```text
 desktop loopback listener
   -> Electron PortForwardManager
   -> dedicated authenticated binary WebSocket
-  -> existing T3 environment endpoint and FRP tunnel
+  -> selected T3 environment endpoint
   -> remote T3 TCP bridge
   -> remote loopback service
 ```
@@ -64,8 +60,7 @@ TCP streams are not transparently migratable; the local application must
 reconnect, at which point authorization uses the newly selected route.
 
 The server must advertise an additive `tcpPortForwarding` environment
-capability. The implementation should remain generic T3 behavior rather than
-sovereign-only code:
+capability. The implementation is independent of the selected route:
 
 - T3 Connect environments use the authenticated WebSocket bridge through the
   relay route.
@@ -182,7 +177,7 @@ reconciliation remain.
 2. **Complete:** Dedicated binary WebSocket with bounded flow control and close semantics.
 3. **Partial:** Electron manager with atomic listeners and environment-removal cleanup.
 4. **Partial:** Runtime-only definitions and manual desktop UI; persistence remains.
-5. SSH driver integration behind the same model.
+5. **Complete:** SSH routes use the same authenticated environment bridge.
 6. Failure-recovery, account-switch, revocation, load, and adversarial tests.
 
 A proof of concept is several focused days. A production-quality TCP feature
