@@ -212,6 +212,45 @@ describe("tailscale", () => {
     });
   });
 
+  it.effect("turns spawn defects into typed spawn failures", () => {
+    // A non-directory entry on PATH makes node's spawn throw ENOTDIR
+    // synchronously. The platform spawner calls `NodeChildProcess.spawn` from
+    // inside an `Effect.callback` registration, so that throw arrives as a
+    // defect rather than a typed error - the shape reproduced here.
+    const defect = Object.assign(new Error("spawn tailscale ENOTDIR"), { code: "ENOTDIR" });
+    const layer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() =>
+        Effect.callback<never, never>(() => {
+          throw defect;
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const statusError = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(statusError, TailscaleCommandSpawnError);
+      assert.equal(statusError.subcommand, "status");
+      assert.strictEqual(statusError.cause, defect);
+
+      const serveError = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+      assert.instanceOf(serveError, TailscaleCommandSpawnError);
+      assert.equal(serveError.subcommand, "serve");
+      assert.strictEqual(serveError.cause, defect);
+
+      // What callers actually rely on: the desktop endpoint providers recover
+      // with `Effect.orElseSucceed`, which only sees the typed error channel.
+      const degraded = yield* readTailscaleStatus.pipe(
+        Effect.orElseSucceed(() => null),
+        Effect.provide(layer),
+      );
+      assert.equal(degraded, null);
+    });
+  });
+
   it.effect("keeps nonzero exit diagnostics structured", () => {
     const layer = mockSpawnerLayer(() => ({
       code: 7,
