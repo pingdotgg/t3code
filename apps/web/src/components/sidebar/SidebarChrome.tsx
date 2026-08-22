@@ -155,6 +155,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ? "usage"
           : location.pathname === "/pull-requests"
             ? "pull-requests"
+            : location.pathname.startsWith("/projects/")
+              ? "project-settings"
             : null,
   });
   const { environments } = useEnvironments();
