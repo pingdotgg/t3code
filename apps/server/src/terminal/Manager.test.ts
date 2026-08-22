@@ -723,6 +723,23 @@ it.layer(
     }),
   );
 
+  it.effect("does not persist output after a concurrent clear", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("stale redraw\r");
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* manager.close({ threadId: "thread-1" });
+
+      const historyPath = yield* historyLogPath(logsDir);
+      expect(yield* readFileString(historyPath)).toBe("");
+    }),
+  );
+
   it.effect("restarts terminal with empty transcript and respawns pty", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();
@@ -1227,6 +1244,24 @@ it.layer(
 
       expect(opened.history).toBe("new-two\r");
       expect(yield* readFileString(historyPath)).toBe("new-two\r");
+    }),
+  );
+
+  it.effect("retains a bounded suffix from oversized history without line breaks", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager(100, {
+        historyTargetBytes: 12,
+        historyMaxBytes: 24,
+      });
+      const historyPath = yield* historyLogPath(logsDir);
+      const oversizedHistory = "abcdefghijklmnopqrstuvwxyz0123456789";
+      yield* writeFileString(historyPath, oversizedHistory);
+
+      const opened = yield* manager.open(openInput());
+      const expected = oversizedHistory.slice(-12);
+
+      expect(opened.history).toBe(expected);
+      expect(yield* readFileString(historyPath)).toBe(expected);
     }),
   );
 

@@ -843,7 +843,7 @@ function capHistoryByBytes(history: string, targetBytes: number): string {
       : carriageReturnIndex === -1
         ? newlineIndex
         : Math.min(newlineIndex, carriageReturnIndex);
-  if (boundaryIndex === -1) return "";
+  if (boundaryIndex === -1) return suffix;
 
   const boundaryLength =
     suffix[boundaryIndex] === "\r" && suffix[boundaryIndex + 1] === "\n" ? 2 : 1;
@@ -1758,106 +1758,116 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     expectedPid: number,
   ) {
     while (true) {
-      const action: DrainProcessEventAction = yield* Effect.sync(() => {
-        if (session.pid !== expectedPid || !session.process || session.status !== "running") {
-          session.pendingProcessEvents = [];
-          session.pendingProcessEventIndex = 0;
-          session.processEventDrainRunning = false;
-          return { type: "idle" } as const;
-        }
-
-        const nextEvent = session.pendingProcessEvents[session.pendingProcessEventIndex];
-        if (!nextEvent) {
-          session.pendingProcessEvents = [];
-          session.pendingProcessEventIndex = 0;
-          session.processEventDrainRunning = false;
-          return { type: "idle" } as const;
-        }
-
-        session.pendingProcessEventIndex += 1;
-        if (session.pendingProcessEventIndex >= session.pendingProcessEvents.length) {
-          session.pendingProcessEvents = [];
-          session.pendingProcessEventIndex = 0;
-        }
-
-        if (nextEvent.type === "output") {
-          const sanitized = sanitizeTerminalHistoryChunk(
-            session.pendingHistoryControlSequence,
-            nextEvent.data,
-          );
-          session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
-          let historyWrite: HistoryWrite | null = null;
-          if (sanitized.visibleText.length > 0) {
-            session.history = capHistory(
-              `${session.history}${sanitized.visibleText}`,
-              historyLineLimit,
-            );
-            session.persistedHistoryBytes += Buffer.byteLength(sanitized.visibleText);
-            if (session.persistedHistoryBytes > historyMaxBytes) {
-              session.history = capHistoryByBytes(session.history, historyTargetBytes);
-              session.persistedHistoryBytes = Buffer.byteLength(session.history);
-              historyWrite = {
-                contents: session.history,
-                mode: "truncate",
-              };
-            } else {
-              historyWrite = {
-                contents: sanitized.visibleText,
-                mode: "append",
-              };
+      const action = yield* withThreadLock(
+        session.threadId,
+        Effect.gen(function* () {
+          const nextAction: DrainProcessEventAction = yield* Effect.sync(() => {
+            if (session.pid !== expectedPid || !session.process || session.status !== "running") {
+              session.pendingProcessEvents = [];
+              session.pendingProcessEventIndex = 0;
+              session.processEventDrainRunning = false;
+              return { type: "idle" } as const;
             }
+
+            const nextEvent = session.pendingProcessEvents[session.pendingProcessEventIndex];
+            if (!nextEvent) {
+              session.pendingProcessEvents = [];
+              session.pendingProcessEventIndex = 0;
+              session.processEventDrainRunning = false;
+              return { type: "idle" } as const;
+            }
+
+            session.pendingProcessEventIndex += 1;
+            if (session.pendingProcessEventIndex >= session.pendingProcessEvents.length) {
+              session.pendingProcessEvents = [];
+              session.pendingProcessEventIndex = 0;
+            }
+
+            if (nextEvent.type === "output") {
+              const sanitized = sanitizeTerminalHistoryChunk(
+                session.pendingHistoryControlSequence,
+                nextEvent.data,
+              );
+              session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
+              let historyWrite: HistoryWrite | null = null;
+              if (sanitized.visibleText.length > 0) {
+                session.history = capHistory(
+                  `${session.history}${sanitized.visibleText}`,
+                  historyLineLimit,
+                );
+                session.persistedHistoryBytes += Buffer.byteLength(sanitized.visibleText);
+                if (session.persistedHistoryBytes > historyMaxBytes) {
+                  session.history = capHistoryByBytes(session.history, historyTargetBytes);
+                  session.persistedHistoryBytes = Buffer.byteLength(session.history);
+                  historyWrite = {
+                    contents: session.history,
+                    mode: "truncate",
+                  };
+                } else {
+                  historyWrite = {
+                    contents: sanitized.visibleText,
+                    mode: "append",
+                  };
+                }
+              }
+              const eventStamp = advanceEventSequence(session);
+
+              return {
+                type: "output",
+                threadId: session.threadId,
+                terminalId: session.terminalId,
+                sequence: eventStamp.sequence,
+                historyWrite,
+                data: nextEvent.data,
+              } as const;
+            }
+
+            const process = session.process;
+            cleanupProcessHandles(session);
+            session.process = null;
+            session.pid = null;
+            session.hasRunningSubprocess = false;
+            session.childCommandLabel = null;
+            session.status = "exited";
+            session.pendingHistoryControlSequence = "";
+            session.pendingProcessEvents = [];
+            session.pendingProcessEventIndex = 0;
+            session.processEventDrainRunning = false;
+            session.exitCode = Number.isInteger(nextEvent.event.exitCode)
+              ? nextEvent.event.exitCode
+              : null;
+            session.exitSignal = Number.isInteger(nextEvent.event.signal)
+              ? nextEvent.event.signal
+              : null;
+            const eventStamp = advanceEventSequence(session);
+
+            return {
+              type: "exit",
+              process,
+              threadId: session.threadId,
+              terminalId: session.terminalId,
+              sequence: eventStamp.sequence,
+              exitCode: session.exitCode,
+              exitSignal: session.exitSignal,
+            } as const;
+          });
+
+          if (nextAction.type === "output" && nextAction.historyWrite !== null) {
+            yield* queuePersist(
+              nextAction.threadId,
+              nextAction.terminalId,
+              nextAction.historyWrite,
+            );
           }
-          const eventStamp = advanceEventSequence(session);
-
-          return {
-            type: "output",
-            threadId: session.threadId,
-            terminalId: session.terminalId,
-            sequence: eventStamp.sequence,
-            historyWrite,
-            data: nextEvent.data,
-          } as const;
-        }
-
-        const process = session.process;
-        cleanupProcessHandles(session);
-        session.process = null;
-        session.pid = null;
-        session.hasRunningSubprocess = false;
-        session.childCommandLabel = null;
-        session.status = "exited";
-        session.pendingHistoryControlSequence = "";
-        session.pendingProcessEvents = [];
-        session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
-        session.exitCode = Number.isInteger(nextEvent.event.exitCode)
-          ? nextEvent.event.exitCode
-          : null;
-        session.exitSignal = Number.isInteger(nextEvent.event.signal)
-          ? nextEvent.event.signal
-          : null;
-        const eventStamp = advanceEventSequence(session);
-
-        return {
-          type: "exit",
-          process,
-          threadId: session.threadId,
-          terminalId: session.terminalId,
-          sequence: eventStamp.sequence,
-          exitCode: session.exitCode,
-          exitSignal: session.exitSignal,
-        } as const;
-      });
+          return nextAction;
+        }),
+      );
 
       if (action.type === "idle") {
         return;
       }
 
       if (action.type === "output") {
-        if (action.historyWrite !== null) {
-          yield* queuePersist(action.threadId, action.terminalId, action.historyWrite);
-        }
-
         yield* publishEvent({
           type: "output",
           threadId: action.threadId,
