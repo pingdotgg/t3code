@@ -3452,6 +3452,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       () => webContents.getFocusedWebContents(),
     );
     let keyDownAttempted = false;
+    const focusRestoreId = `__t3_focus_${Math.random().toString(36).slice(2)}`;
     const releaseInput = Effect.gen(function* () {
       if (keyDownAttempted) {
         yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
@@ -3468,6 +3469,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           },
           () => previouslyFocused.focus(),
         ).pipe(Effect.ignore);
+        yield* attemptPromise(
+          {
+            operation: "automationPress.restoreActiveElement",
+            tabId,
+            webContentsId: previouslyFocused.id,
+          },
+          () =>
+            previouslyFocused.executeJavaScript(
+              `if (window['${focusRestoreId}'] && typeof window['${focusRestoreId}'].focus === 'function') { window['${focusRestoreId}'].focus(); } delete window['${focusRestoreId}'];`,
+            ),
+        ).pipe(Effect.ignore);
       }
     });
 
@@ -3476,6 +3488,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // changing which thread is mounted in the UI. Restore the previous renderer
     // after dispatch so automation never leaves the app's input focus behind.
     yield* Effect.gen(function* () {
+      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
+        yield* attemptPromise(
+          {
+            operation: "automationPress.saveActiveElement",
+            tabId,
+            webContentsId: previouslyFocused.id,
+          },
+          () =>
+            previouslyFocused.executeJavaScript(
+              `if (document.activeElement && document.activeElement !== document.body) { window['${focusRestoreId}'] = document.activeElement; }`,
+            ),
+        ).pipe(Effect.ignore);
+      }
       yield* attempt(
         { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
         () => wc.focus(),
