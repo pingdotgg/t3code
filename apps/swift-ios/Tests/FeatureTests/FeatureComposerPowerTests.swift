@@ -38,6 +38,19 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test(
+        "An empty composer keeps its full tap target",
+        .bug("https://github.com/pingdotgg/t3code/pull/7601#discussion_r3816978964")
+    )
+    func composerTextInputKeepsMinimumTapHeight() {
+        #expect(
+            FeatureComposerTextInputSizing.height(
+                fittingHeight: 8,
+                lineHeight: 20
+            ) == T3Metrics.minimumTapTarget
+        )
+    }
+
     @Test
     func replacementCursorLandsAfterInsertedTextInUTF16() {
         // "🧪 " occupies three characters but four UTF-16 units; the caret
@@ -165,6 +178,124 @@ struct FeatureComposerPowerTests {
         ]
 
         #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
+    }
+
+    @Test(
+        "Text paste discards rich formatting",
+        .bug("https://github.com/pingdotgg/t3code/pull/7601#discussion_r3816978970")
+    )
+    @MainActor
+    func textPasteDiscardsRichFormatting() {
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let textColor = UIColor.label
+        let textView = FeatureComposerUITextView()
+        textView.attributedText = NSAttributedString(
+            string: "pasted text",
+            attributes: [
+                .font: UIFont.systemFont(ofSize: 30, weight: .bold),
+                .foregroundColor: UIColor.systemRed,
+            ]
+        )
+
+        textView.restorePlainTextStyle(font: font, textColor: textColor)
+
+        let attributes = textView.textStorage.attributes(at: 0, effectiveRange: nil)
+        #expect(attributes[.font] as? UIFont == font)
+        #expect(attributes[.foregroundColor] as? UIColor == textColor)
+        #expect(textView.typingAttributes[.font] as? UIFont == font)
+        #expect(textView.typingAttributes[.foregroundColor] as? UIColor == textColor)
+    }
+
+    @Test(
+        "Text paste removes inline attachments without leaving replacement characters",
+        .bug("https://github.com/pingdotgg/t3code/pull/7601#discussion_r3819336539")
+    )
+    @MainActor
+    func textPasteRemovesInlineAttachmentsCleanly() {
+        let textView = FeatureComposerUITextView()
+        let pastedText = NSMutableAttributedString(string: "before ")
+        pastedText.append(NSAttributedString(attachment: NSTextAttachment()))
+        pastedText.append(NSAttributedString(string: " after"))
+        textView.attributedText = pastedText
+
+        let removedAttachment = textView.restorePlainTextStyle(
+            font: .preferredFont(forTextStyle: .body),
+            textColor: .label
+        )
+
+        #expect(removedAttachment)
+        #expect(textView.text == "before  after")
+        #expect(textView.text.contains("\u{FFFC}") == false)
+        var stillHasAttachment = false
+        textView.textStorage.enumerateAttribute(
+            .attachment,
+            in: NSRange(location: 0, length: textView.textStorage.length)
+        ) { value, _, _ in
+            stillHasAttachment = stillHasAttachment || value != nil
+        }
+        #expect(stillHasAttachment == false)
+    }
+
+    @Test(
+        "An external clear wins after marked text finishes",
+        .bug("https://github.com/saphid/t3code-personal/issues/126#issuecomment-5351317338")
+    )
+    func externalTextUpdateReconcilesAfterComposition() {
+        var reconciliation = FeatureComposerTextReconciliation()
+
+        #expect(reconciliation.externalTextDidChange(
+            editorText: "draft候補",
+            bindingText: "",
+            hasMarkedText: true
+        ) == .none)
+        #expect(reconciliation.editorTextDidChange(
+            "stale committed draft",
+            hasMarkedText: true
+        ) == .none)
+        #expect(reconciliation.editorTextDidChange(
+            "stale committed draft",
+            hasMarkedText: false
+        ) == .applyExternal(""))
+        #expect(reconciliation.pendingExternalText == nil)
+    }
+
+    @Test
+    func matchingBindingCancelsADeferredExternalTextUpdate() {
+        var reconciliation = FeatureComposerTextReconciliation()
+
+        #expect(reconciliation.externalTextDidChange(
+            editorText: "draft候補",
+            bindingText: "",
+            hasMarkedText: true
+        ) == .none)
+        #expect(reconciliation.externalTextDidChange(
+            editorText: "draft候補",
+            bindingText: "draft候補",
+            hasMarkedText: true
+        ) == .none)
+        #expect(reconciliation.pendingExternalText == nil)
+    }
+
+    @Test(
+        "Image intake results are ignored after the composer context changes",
+        .bug("https://github.com/saphid/t3code-personal/issues/126#issuecomment-5351317338")
+    )
+    func staleImageIntakeResultIsRejected() {
+        #expect(FeatureComposerImageIntakeLifecycle.acceptsResult(
+            startedContextID: "project-a",
+            activeContextID: "project-a",
+            isCancelled: false
+        ))
+        #expect(FeatureComposerImageIntakeLifecycle.acceptsResult(
+            startedContextID: "project-a",
+            activeContextID: "project-b",
+            isCancelled: false
+        ) == false)
+        #expect(FeatureComposerImageIntakeLifecycle.acceptsResult(
+            startedContextID: "project-a",
+            activeContextID: "project-a",
+            isCancelled: true
+        ) == false)
     }
 
     @Test

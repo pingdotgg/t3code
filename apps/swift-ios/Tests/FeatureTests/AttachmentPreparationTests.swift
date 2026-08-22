@@ -61,6 +61,21 @@ struct AttachmentPreparationTests {
         #expect(state.pendingItemCount == 0)
     }
 
+    @Test(
+        "Completed items stop counting against overlapping preparation",
+        .bug("https://github.com/saphid/t3code-personal/issues/126#issuecomment-5351317338")
+    )
+    func completedItemsLeaveOnlyRemainingWorkPending() {
+        var state = FeatureAttachmentPreparationState()
+        let operation = state.begin(itemCount: 4)
+
+        state.completeItem(operation)
+        state.completeItem(operation)
+
+        #expect(state.pendingItemCount == 2)
+        #expect(state.statusLabel == "Preparing 2 images…")
+    }
+
     @Test
     func textOnlySubmissionWaitsForSelectedImagePreparation() {
         var state = FeatureAttachmentPreparationState()

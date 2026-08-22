@@ -377,6 +377,7 @@ public struct ThreadDetailView: View {
                 text: $draft,
                 selection: $selection,
                 attachments: $attachments,
+                attachmentContextID: thread.id,
                 providers: threadProviders,
                 threadSelection: currentSelection,
                 materializesDefaultSelection: false,
