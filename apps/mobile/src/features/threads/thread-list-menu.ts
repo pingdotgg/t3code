@@ -29,7 +29,13 @@ export function buildThreadListMenuActions(input: {
           } satisfies MenuAction,
         ]
       : []),
-    ...input.lifecycleActions,
+    // Archive rejects a thread with an active turn; rows that surface it as
+    // their lifecycle action get the same disabled treatment as the tail.
+    ...input.lifecycleActions.map((action) =>
+      action.id === "archive" && input.isRunning === true
+        ? { ...action, attributes: { ...action.attributes, disabled: true } }
+        : action,
+    ),
     {
       id: "thread-title-actions",
       title: "",

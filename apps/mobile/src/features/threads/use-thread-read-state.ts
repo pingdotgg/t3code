@@ -42,7 +42,13 @@ export function useThreadReadState(
   const markThreadVisited = useCallback(() => {
     const current = currentVisitedAtById();
     if (!preferencesReady || current === null) return;
-    const next = setThreadVisitedAt(current, threadKey, thread.latestTurn?.completedAt);
+    // A thread visited mid-turn has no completion to anchor to yet; stamp
+    // the visit time so a later completion still reads as unseen.
+    const next = setThreadVisitedAt(
+      current,
+      threadKey,
+      thread.latestTurn?.completedAt ?? new Date().toISOString(),
+    );
     if (next !== current) savePreferences({ threadLastVisitedAtById: next });
   }, [preferencesReady, savePreferences, thread.latestTurn?.completedAt, threadKey]);
 

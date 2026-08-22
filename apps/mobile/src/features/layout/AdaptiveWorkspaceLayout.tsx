@@ -37,6 +37,7 @@ import {
 import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mobilePreferencesAtom } from "../../state/preferences";
+import { useProjects } from "../../state/entities";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
   resolveMobileProjectGroupingSettings,
@@ -222,6 +223,7 @@ function AdaptiveWorkspaceLayoutContent(
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
   const navigation = useNavigation();
+  const projects = useProjects();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
@@ -477,7 +479,6 @@ function AdaptiveWorkspaceLayoutContent(
     },
     [navigation],
   );
-
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
   );
