@@ -21,6 +21,18 @@ export const DEFAULT_CHANGE_REQUEST_TERMINOLOGY: ChangeRequestTerminology = {
   singular: "pull request",
 };
 
+const CHANGE_REQUEST_URL_PATTERNS = [
+  /https:\/\/[^\s<>()]+\/[^/\s<>()]+\/[^/\s<>()]+\/pull\/\d+(?:[/?#][^\s<>()]*)?/i,
+  /https:\/\/[^\s<>()]+\/[^\s<>()]+\/-\/merge_requests\/\d+(?:[/?#][^\s<>()]*)?/i,
+  /https:\/\/[^\s<>()]+\/[^\s<>()]+\/_git\/[^/\s<>()]+\/pullrequest\/\d+(?:[/?#][^\s<>()]*)?/i,
+  /https:\/\/[^\s<>()]+\/[^/\s<>()]+\/[^/\s<>()]+\/pull-requests\/\d+(?:[/?#][^\s<>()]*)?/i,
+] as const;
+
+/** Detects a source-control change request URL embedded in agent-authored text. */
+export function containsChangeRequestUrl(text: string): boolean {
+  return CHANGE_REQUEST_URL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 const GITHUB_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "github",
   providerName: "GitHub",

@@ -20,6 +20,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import { containsChangeRequestUrl } from "@t3tools/shared/sourceControl";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -687,6 +688,41 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const refreshChangeRequestFromAssistantMessage = Effect.fn(
+    "refreshChangeRequestFromAssistantMessage",
+  )(function* (event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>) {
+    if (event.payload.role !== "assistant" || event.payload.streaming) {
+      return;
+    }
+
+    const thread = yield* resolveThreadDetail(event.payload.threadId);
+    const message = thread?.messages.find((entry) => entry.id === event.payload.messageId);
+    if (!thread || !message || !containsChangeRequestUrl(message.text)) {
+      return;
+    }
+
+    const projects = yield* resolveThreadProjects(thread.projectId);
+    const cwd = yield* resolveCheckpointCwd({
+      threadId: thread.id,
+      thread,
+      projects,
+      preferSessionRuntime: true,
+    });
+    if (!cwd) {
+      return;
+    }
+
+    yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to refresh change request status from assistant message", {
+          threadId: thread.id,
+          cwd,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+  });
+
   const handleRevertRequested = Effect.fn("handleRevertRequested")(function* (
     event: Extract<OrchestrationEvent, { type: "thread.checkpoint-revert-requested" }>,
   ) {
@@ -820,6 +856,9 @@ const make = Effect.gen(function* () {
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
+      if (event.type === "thread.message-sent") {
+        yield* refreshChangeRequestFromAssistantMessage(event);
+      }
       return;
     }
 

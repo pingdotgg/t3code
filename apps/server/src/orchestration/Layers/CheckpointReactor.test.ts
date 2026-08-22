@@ -285,6 +285,7 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly changeRequestRefreshCalls?: Array<string>;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -330,7 +331,23 @@ describe("CheckpointReactor", () => {
             workingTree: { files: [], insertions: 0, deletions: 0 },
           }),
         ),
-      refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
+      refreshStatus: (cwd: string) =>
+        Effect.sync(() => {
+          options?.changeRequestRefreshCalls?.push(cwd);
+          return {
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: true,
+            refName: "main",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+            hasUpstream: false,
+            aheadCount: 0,
+            behindCount: 0,
+            aheadOfDefaultCount: 0,
+            pr: null,
+          };
+        }),
       streamStatus: () => Stream.empty,
     });
 
@@ -452,6 +469,41 @@ describe("CheckpointReactor", () => {
       drain,
     };
   }
+
+  it("refreshes remote status when a completed assistant message contains a change request URL", async () => {
+    const changeRequestRefreshCalls: Array<string> = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      changeRequestRefreshCalls,
+    });
+    const messageId = MessageId.make("assistant-change-request-link");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-assistant-change-request-link"),
+        threadId: ThreadId.make("thread-1"),
+        messageId,
+        delta: "Opened https://bitbucket.org/pingdotgg/t3code/pull-requests/42",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.drain();
+    expect(changeRequestRefreshCalls).toEqual([]);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-assistant-change-request-link-complete"),
+        threadId: ThreadId.make("thread-1"),
+        messageId,
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(changeRequestRefreshCalls).toEqual([harness.cwd]);
+  });
 
   it("captures pre-turn baseline on turn.started and post-turn checkpoint on turn.completed", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
