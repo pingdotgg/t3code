@@ -1,21 +1,19 @@
 /**
- * ClaudeDriver — `ProviderDriver` for the Claude Agent SDK runtime.
+ * ZaiDriver — `ProviderDriver` for Z.ai's GLM Coding Plan.
  *
- * Mirrors `CodexDriver`: a plain value whose `create()` returns one
- * `ProviderInstance` bundling `snapshot` / `adapter` / `textGeneration`
- * closures captured over the per-instance `ClaudeSettings`.
+ * Z.ai has no CLI of its own; its endpoint is Anthropic-compatible and
+ * officially supported by Claude Code. This driver therefore instantiates the
+ * Claude runtime (adapter, text generation, probes) with the Z.ai endpoint
+ * environment and a dedicated `CLAUDE_CONFIG_DIR`, and stamps its own driver
+ * kind on sessions and events. Threads can never resume across stock Claude
+ * and Z.ai instances: the driver kind differs and the continuation group key
+ * resolves against the Z.ai home path.
  *
- * Unlike Codex, the Claude snapshot probe may invoke a secondary probe
- * (`probeClaudeCapabilities`) to read Anthropic account + slash-command
- * metadata. That probe is per-instance and keyed by binary + resolved HOME so
- * two concurrent Claude instances don't cross-contaminate account metadata.
- *
- * @module provider/Drivers/ClaudeDriver
+ * @module provider/Drivers/ZaiDriver
  */
-import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, ZaiSettings, type ServerProvider } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -24,16 +22,16 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
+import { probeClaudeCapabilities } from "../Layers/ClaudeProvider.ts";
 import {
-  checkClaudeProviderStatus,
-  makePendingClaudeProvider,
-  probeClaudeCapabilities,
-} from "../Layers/ClaudeProvider.ts";
+  buildInitialZaiProviderSnapshot,
+  checkZaiProviderStatus,
+  enrichZaiSnapshot,
+} from "../Layers/ZaiProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -44,9 +42,7 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
-  enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
-  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -54,22 +50,20 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
-const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+import { isClaudeNativeCommandPath, type ClaudeDriverEnv } from "./ClaudeDriver.ts";
+import {
+  makeClaudeCapabilitiesCacheKey,
+  makeClaudeContinuationGroupKey,
+} from "./ClaudeHome.ts";
+import { claudeSettingsForZai, zaiInstanceEnvironment } from "./ZaiHome.ts";
 
-const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
+const decodeZaiSettings = Schema.decodeSync(ZaiSettings);
+
+const DRIVER_KIND = ProviderDriverKind.make("zai");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 
-function isClaudeNativeCommandPath(commandPath: string): boolean {
-  const normalized = normalizeCommandPath(commandPath);
-  return (
-    normalized.endsWith("/.local/bin/claude") ||
-    normalized.endsWith("/.local/bin/claude.exe") ||
-    normalized.includes("/.local/share/claude/")
-  );
-}
-export { isClaudeNativeCommandPath };
-
+// Same binary as stock Claude, so the update machinery is the Claude one
+// under the Z.ai driver's identity (separate native-update lock).
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@anthropic-ai/claude-code",
@@ -77,21 +71,12 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   nativeUpdate: {
     executable: "claude",
     args: ["update"],
-    lockKey: "claude-native",
+    lockKey: "zai-claude-native",
     isCommandPath: isClaudeNativeCommandPath,
   },
 });
 
-export type ClaudeDriverEnv =
-  | BackgroundPolicy.BackgroundPolicy
-  | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
-  | FileSystem.FileSystem
-  | HttpClient.HttpClient
-  | Path.Path
-  | ProviderEventLoggers
-  | ServerConfig
-  | ServerSettingsService;
+export type ZaiDriverEnv = ClaudeDriverEnv;
 
 const withInstanceIdentity =
   (input: {
@@ -109,14 +94,14 @@ const withInstanceIdentity =
     continuation: { groupKey: input.continuationGroupKey },
   });
 
-export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
+export const ZaiDriver: ProviderDriver<ZaiSettings, ZaiDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
-    displayName: "Claude",
+    displayName: "Z.ai",
     supportsMultipleInstances: true,
   },
-  configSchema: ClaudeSettings,
-  defaultConfig: (): ClaudeSettings => decodeClaudeSettings({}),
+  configSchema: ZaiSettings,
+  defaultConfig: (): ZaiSettings => decodeZaiSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -126,12 +111,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      // Endpoint + token first, user-declared environment after: explicit
+      // instance env vars win over config-derived values.
+      const processEnv = mergeProviderInstanceEnvironment(
+        zaiInstanceEnvironment(config, environment),
+      );
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      const effectiveConfig = claudeSettingsForZai(config, enabled);
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -144,16 +133,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         continuationGroupKey,
       });
 
-      const adapterOptions = {
+      const adapter = yield* makeClaudeAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        driverKind: DRIVER_KIND,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      };
-      const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
+      });
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
 
-      // Per-instance capabilities cache: keyed on binary + resolved HOME so
-      // account-specific probes never share auth metadata across instances.
+      // Per-instance capabilities cache, keyed on binary + resolved HOME so
+      // probes never cross-contaminate auth metadata across instances.
       const capabilitiesProbeCache = yield* Cache.make({
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
@@ -164,8 +153,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
-      const checkProvider = checkClaudeProviderStatus(
-        effectiveConfig,
+      const checkProvider = checkZaiProviderStatus(
+        { ...config, enabled },
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
         processEnv,
         cwd,
@@ -177,28 +166,31 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<typeof effectiveConfig>
+      >({
         maintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingClaudeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+          buildInitialZaiProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-          enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+        enrichSnapshot: ({ settings, snapshot: current, publishSnapshot }) =>
+          enrichZaiSnapshot({
+            snapshot: current,
+            maintenanceCapabilities,
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-          }).pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-          ),
+            publishSnapshot,
+            httpClient,
+          }),
       }).pipe(
         Effect.mapError(
           (cause) =>
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Claude snapshot: ${cause.message ?? String(cause)}`,
+              detail: `Failed to build Z.ai snapshot: ${cause.message ?? String(cause)}`,
               cause,
             }),
         ),
