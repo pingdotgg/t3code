@@ -64,6 +64,7 @@ export function SidebarThreadDndRow(props: {
 
 export interface SidebarThreadDndBoundaryBag {
   readonly setNodeRef: (node: HTMLElement | null) => void;
+  readonly setDroppableNodeRef: (node: HTMLElement | null) => void;
   readonly transform: ReturnType<typeof useSortable>["transform"];
   readonly transition: string | undefined;
   readonly isOver: boolean;
@@ -82,10 +83,10 @@ export function SidebarThreadDndBoundary(props: {
   });
   const setNodeRef = useCallback(
     (node: HTMLElement | null) => {
-      sortable.setNodeRef(node);
+      sortable.setDraggableNodeRef(node);
       props.onNodeChange(id, node);
     },
-    [id, props.onNodeChange, sortable.setNodeRef],
+    [id, props.onNodeChange, sortable.setDraggableNodeRef],
   );
   useEffect(
     () => () => {
@@ -95,14 +96,16 @@ export function SidebarThreadDndBoundary(props: {
   );
   return props.children({
     setNodeRef,
+    setDroppableNodeRef: sortable.setDroppableNodeRef,
     transform: sortable.transform,
     transition: sortable.transition,
     isOver: sortable.isOver,
   });
 }
 
-export interface SidebarThreadDragView {
+interface SidebarThreadDragViewBase {
   readonly variant: SidebarDndPreviewVariant;
+  readonly flowPlaceholderHeight: number;
   readonly sourceRect: {
     readonly top: number;
     readonly left: number;
@@ -120,12 +123,24 @@ export interface SidebarThreadDragView {
   };
 }
 
+export type SidebarThreadDragView = SidebarThreadDragViewBase &
+  (
+    | { readonly kind: "dragging" }
+    | { readonly kind: "holding" }
+    | {
+        readonly kind: "dropping";
+        readonly targetNode: HTMLElement | null;
+        readonly onAnimationEnd: () => void;
+      }
+  );
+
 export function SidebarThreadDragMorph(props: {
   dragView: SidebarThreadDragView | null;
   children: ReactNode;
 }) {
   const innerRef = useRef<HTMLDivElement>(null);
-  const animationRef = useRef<Animation | null>(null);
+  const morphAnimationRef = useRef<Animation | null>(null);
+  const dropAnimationRef = useRef<Animation | null>(null);
   const geometryRef = useRef<{
     readonly width: number;
     readonly height: number;
@@ -147,8 +162,8 @@ export function SidebarThreadDragMorph(props: {
       pointerAnchorX === null ||
       pointerAnchorY === null
     ) {
-      animationRef.current?.cancel();
-      animationRef.current = null;
+      morphAnimationRef.current?.cancel();
+      morphAnimationRef.current = null;
       geometryRef.current = null;
       return;
     }
@@ -158,8 +173,8 @@ export function SidebarThreadDragMorph(props: {
     if (previousGeometry === null) return;
 
     const interruptedRect =
-      animationRef.current?.playState === "running" ? node.getBoundingClientRect() : null;
-    animationRef.current?.cancel();
+      morphAnimationRef.current?.playState === "running" ? node.getBoundingClientRect() : null;
+    morphAnimationRef.current?.cancel();
     const settledRect = node.getBoundingClientRect();
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
@@ -177,7 +192,7 @@ export function SidebarThreadDragMorph(props: {
       interruptedRect === null
         ? 0
         : interruptedRect.top + pointerAnchorY * interruptedRect.height - settledAnchorY;
-    animationRef.current = node.animate(
+    morphAnimationRef.current = node.animate(
       [
         {
           transform: `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`,
@@ -188,7 +203,66 @@ export function SidebarThreadDragMorph(props: {
       { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "both" },
     );
   }, [pointerAnchorX, pointerAnchorY, previewHeight, previewWidth]);
-  useEffect(() => () => animationRef.current?.cancel(), []);
+  const dragKind = props.dragView?.kind ?? null;
+  const dropTargetNode = props.dragView?.kind === "dropping" ? props.dragView.targetNode : null;
+  const onDropAnimationEnd =
+    props.dragView?.kind === "dropping" ? props.dragView.onAnimationEnd : null;
+
+  useLayoutEffect(() => {
+    if (dragKind !== "dropping" || onDropAnimationEnd === null) return;
+    const node = innerRef.current;
+    if (node === null || dropTargetNode === null) {
+      onDropAnimationEnd();
+      return;
+    }
+
+    const fromRect = node.getBoundingClientRect();
+    morphAnimationRef.current?.cancel();
+    morphAnimationRef.current = null;
+    const settledRect = node.getBoundingClientRect();
+    const targetRect = dropTargetNode.getBoundingClientRect();
+    if (
+      settledRect.width === 0 ||
+      settledRect.height === 0 ||
+      targetRect.width === 0 ||
+      targetRect.height === 0 ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      onDropAnimationEnd();
+      return;
+    }
+
+    const transform = (rect: Pick<DOMRect, "left" | "top" | "width" | "height">) =>
+      `translate(${rect.left - settledRect.left}px, ${rect.top - settledRect.top}px) scale(${rect.width / settledRect.width}, ${rect.height / settledRect.height})`;
+    const animation = node.animate(
+      [
+        { transformOrigin: "0 0", transform: transform(fromRect) },
+        { transformOrigin: "0 0", transform: transform(targetRect) },
+      ],
+      { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "both" },
+    );
+    dropAnimationRef.current = animation;
+    void animation.finished.then(
+      () => {
+        if (dropAnimationRef.current !== animation) return;
+        dropAnimationRef.current = null;
+        onDropAnimationEnd();
+      },
+      () => undefined,
+    );
+    return () => {
+      if (dropAnimationRef.current !== animation) return;
+      dropAnimationRef.current = null;
+      animation.cancel();
+    };
+  }, [dragKind, dropTargetNode, onDropAnimationEnd]);
+  useEffect(
+    () => () => {
+      morphAnimationRef.current?.cancel();
+      dropAnimationRef.current?.cancel();
+    },
+    [],
+  );
 
   if (
     props.dragView === null ||

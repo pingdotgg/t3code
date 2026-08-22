@@ -552,6 +552,15 @@ export function sortThreadsForSidebar<
   );
 }
 
+export function sortSnoozedThreadsForSidebar<
+  T extends { readonly snoozedUntil?: string | null | undefined },
+>(threads: readonly T[]): T[] {
+  return [...threads].toSorted(
+    (left, right) =>
+      firstValidTimestampMs(left.snoozedUntil) - firstValidTimestampMs(right.snoozedUntil),
+  );
+}
+
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
 export {

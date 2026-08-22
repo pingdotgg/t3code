@@ -109,7 +109,6 @@ import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
-  firstValidTimestampMs,
   hasUnseenCompletion,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
@@ -122,6 +121,7 @@ import {
   resolveWorkingStartedAt,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
+  sortSnoozedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
@@ -1212,7 +1212,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : null;
 
   const dnd = props.dnd;
-  const dragView = dnd?.isDragging ? props.dndDragView : null;
+  const dragView = props.dndDragView;
 
   if (variant === "slim") {
     return (
@@ -1229,7 +1229,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             ? {
                 transform: dragView === null ? CSS.Translate.toString(dnd.transform) : undefined,
                 transition: dragView === null ? dnd.transition : undefined,
-                height: dragView?.sourceRect.height,
+                height: dragView?.flowPlaceholderHeight,
               }
             : undefined
         }
@@ -1237,7 +1237,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         onPointerDownCapture={dnd ? handleDndPointerDownCapture : undefined}
         className={cn(
           "relative list-none",
-          dragView === null && "[content-visibility:auto] [contain-intrinsic-size:auto_34px]",
+          dragView === null && "[content-visibility:auto] [contain-intrinsic-size:auto_36px]",
           dnd && "touch-pan-y cursor-grab active:cursor-grabbing",
           dragView !== null && "z-20 cursor-grabbing",
           props.dndInert && "pointer-events-none",
@@ -1394,7 +1394,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           ? {
               transform: dragView === null ? CSS.Translate.toString(dnd.transform) : undefined,
               transition: dragView === null ? dnd.transition : undefined,
-              height: dragView?.sourceRect.height,
+              height: dragView?.flowPlaceholderHeight,
             }
           : undefined
       }
@@ -1403,7 +1403,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       className={cn(
         "relative list-none",
         dragView === null
-          ? "py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]"
+          ? "py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]"
           : "z-20 cursor-grabbing",
         dnd && "touch-pan-y cursor-grab active:cursor-grabbing",
         props.dndInert && "pointer-events-none",
@@ -2143,11 +2143,7 @@ export default function Sidebar() {
       ),
       activeThreads: sortThreadsForSidebar(active),
       // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed.toSorted(
-        (left, right) =>
-          firstValidTimestampMs(left.snoozedUntil ?? null) -
-          firstValidTimestampMs(right.snoozedUntil ?? null),
-      ),
+      snoozedThreads: sortSnoozedThreadsForSidebar(snoozed),
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };

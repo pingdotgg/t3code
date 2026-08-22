@@ -31,9 +31,19 @@ export interface SidebarDndPointerAnchor {
 
 export type SidebarThreadDragPhase =
   | "dragging"
+  | "dropping"
   | "awaiting-snooze-choice"
   | "committing"
   | "reconciling";
+
+export interface SidebarThreadDropAnimation {
+  readonly variant: SidebarDndPreviewVariant;
+  readonly translation: {
+    readonly x: number;
+    readonly y: number;
+  };
+  readonly scrollDeltaY: number;
+}
 
 export interface SidebarThreadDropTarget {
   readonly section: SidebarDndSection;
@@ -46,6 +56,10 @@ export interface SidebarThreadDragTransaction {
   readonly sourceThread: EnvironmentThreadShell;
   readonly sourceThreadKey: string;
   readonly sourceSection: SidebarDndSection;
+  readonly dragTranslation: {
+    readonly x: number;
+    readonly y: number;
+  };
   readonly sourceRect: {
     readonly top: number;
     readonly left: number;
@@ -56,8 +70,10 @@ export interface SidebarThreadDragTransaction {
   readonly pointerAnchor: SidebarDndPointerAnchor;
   readonly initialEntries: readonly SidebarDndBoardEntry[];
   readonly entries: readonly SidebarDndBoardEntry[];
+  readonly sectionCounts: Readonly<Record<SidebarDndSection, number>>;
   readonly emptySections: ReadonlySet<SidebarDndSection>;
   readonly target: SidebarThreadDropTarget | null;
+  readonly dropAnimation: SidebarThreadDropAnimation | null;
   readonly receiptSequencesByEnvironment: ReadonlyMap<
     EnvironmentThreadShell["environmentId"],
     number
