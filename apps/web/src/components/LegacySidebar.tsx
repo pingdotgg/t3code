@@ -22,6 +22,7 @@ import {
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { SidebarDraftBlock } from "./Sidebar";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -106,7 +107,7 @@ import {
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -2796,6 +2797,72 @@ interface SidebarProjectsContentProps {
   projectsLength: number;
 }
 
+// Drafts the user typed into but never sent, rendered above the projects
+// list so the legacy sidebar reaches parity with the v2 sidebar: without
+// these rows a draft started under this sidebar has no way back in and
+// silently piles up in the v2 list. Self-contained (own store and route
+// subscriptions) so per-keystroke composer updates re-render only this
+// block and SidebarProjectsContent's memo stays intact. SidebarDraftBlock
+// renders nothing at count 0, so the wrapping menu collapses to zero
+// height and costs the empty sidebar no space.
+function LegacySidebarDraftList() {
+  const projects = useProjects();
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const routeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  // The legacy list has no grouped display names on draft rows; the
+  // project's own title is what its header shows for local projects.
+  const projectTitleByKey = useMemo(
+    () =>
+      new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project.title])),
+    [projects],
+  );
+  const projectCwdByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [
+          `${project.environmentId}:${project.id}`,
+          project.workspaceRoot,
+        ]),
+      ),
+    [projects],
+  );
+  const projectFaviconPathByKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [`${project.environmentId}:${project.id}`, project.faviconPath]),
+      ),
+    [projects],
+  );
+  const navigateToDraft = useCallback(
+    (draftId: DraftId) => {
+      clearSelection();
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void navigate({ to: "/draft/$draftId", params: { draftId } });
+    },
+    [clearSelection, isMobile, navigate, setOpenMobile],
+  );
+  return (
+    <SidebarMenu>
+      <SidebarDraftBlock
+        projectDisplayNameByKey={projectTitleByKey}
+        projectCwdByKey={projectCwdByKey}
+        projectFaviconPathByKey={projectFaviconPathByKey}
+        scopedProjectKeys={null}
+        routeDraftId={routeDraftId}
+        onNavigateToDraft={navigateToDraft}
+      />
+    </SidebarMenu>
+  );
+}
+
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
   props: SidebarProjectsContentProps,
 ) {
@@ -2912,6 +2979,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       ) : null}
       <LocalSecondaryStatus />
       <SidebarGroup className="px-2 py-2">
+        <LegacySidebarDraftList />
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
           <div className="flex items-center gap-1">
