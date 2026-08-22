@@ -56,6 +56,8 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   public readonly interruptCalls: Array<void> = [];
   public readonly stopTaskCalls: Array<string> = [];
+  /** Task ids whose stopTask should reject, modelling a child that refuses. */
+  public readonly stopTaskRejections = new Set<string>();
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
@@ -101,6 +103,9 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly stopTask = async (taskId: string): Promise<void> => {
     this.stopTaskCalls.push(taskId);
+    if (this.stopTaskRejections.has(taskId)) {
+      throw new Error(`stopTask refused for ${taskId}`);
+    }
   };
 
   readonly setModel = async (model?: string): Promise<void> => {
@@ -1658,6 +1663,229 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(stoppedTaskEvent.payload.status, "stopped");
         assert.equal(stoppedTaskEvent.payload.taskType, "local_agent");
         assert.equal(stoppedTaskEvent.payload.title, "Agent A");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("interruptTurn settles a task whose stopTask was refused", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.stopTaskRejections.add("task-refuses");
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-refuses",
+        description: "Stubborn agent",
+        task_type: "local_agent",
+        uuid: "task-refuses-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(startedFiber);
+
+      const stoppedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.interruptTurn(session.threadId);
+
+      assert.deepEqual(harness.query.stopTaskCalls, ["task-refuses"]);
+      assert.equal(harness.query.interruptCalls.length, 1);
+
+      // The refusal must not strand the row: the turn is dead either way.
+      const stopped = Array.from(yield* Fiber.join(stoppedFiber));
+      assert.equal(stopped.length, 1);
+      const stoppedEvent = stopped[0];
+      assert.equal(stoppedEvent?.type, "task.completed");
+      if (stoppedEvent?.type === "task.completed") {
+        assert.equal(String(stoppedEvent.payload.taskId), "task-refuses");
+        assert.equal(stoppedEvent.payload.status, "stopped");
+        assert.equal(stoppedEvent.payload.title, "Stubborn agent");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("interruptTurn settles a nested task and keeps its owning agent linkage", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // Two task.started rows: the outer agent, then the one it spawned.
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn a fleet",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-outer",
+        tool_use_id: "tool-outer",
+        description: "Outer agent",
+        task_type: "local_agent",
+        uuid: "task-outer-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      // The nested Task tool call runs inside the outer agent, so its
+      // tool_use block carries parent_tool_use_id.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: "stream-nested-task-tool",
+        parent_tool_use_id: "tool-outer",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-inner",
+            name: "Task",
+            input: { description: "Nested agent" },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-nested",
+        tool_use_id: "tool-inner",
+        description: "Nested agent",
+        task_type: "local_agent",
+        uuid: "task-nested-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const started = Array.from(yield* Fiber.join(startedFiber));
+      const nestedStart = started[1];
+      assert.equal(nestedStart?.type, "task.started");
+      if (nestedStart?.type === "task.started") {
+        assert.equal(nestedStart.payload.agentId, "task-outer");
+      }
+
+      harness.query.stopTaskRejections.add("task-nested");
+      const stoppedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.interruptTurn(session.threadId);
+
+      const stopped = Array.from(yield* Fiber.join(stoppedFiber));
+      const nestedStopped = stopped.find(
+        (event) =>
+          event.type === "task.completed" && String(event.payload.taskId) === "task-nested",
+      );
+      assert.equal(nestedStopped?.type, "task.completed");
+      if (nestedStopped?.type === "task.completed") {
+        assert.equal(nestedStopped.payload.status, "stopped");
+        assert.equal(nestedStopped.payload.agentId, "task-outer");
+        assert.equal(nestedStopped.payload.title, "Nested agent");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("stopSession settles live tasks before session.exited", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // streamEvents is queue-backed, so consumers compete: run exactly one
+      // at a time: first to receipt the task registration, then to capture
+      // the shutdown ordering.
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-orphan",
+        description: "Orphan agent",
+        task_type: "local_agent",
+        uuid: "task-orphan-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(startedFiber);
+
+      const shutdownFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.stopSession(THREAD_ID);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(shutdownFiber));
+      const types = runtimeEvents.map((event) => event.type);
+      const stoppedIndex = types.indexOf("task.completed");
+      const exitedIndex = types.indexOf("session.exited");
+      assert.ok(stoppedIndex >= 0, "expected a terminal task row");
+      assert.ok(exitedIndex > stoppedIndex, "terminal task rows must precede session.exited");
+
+      const stoppedEvent = runtimeEvents[stoppedIndex];
+      assert.equal(stoppedEvent?.type, "task.completed");
+      if (stoppedEvent?.type === "task.completed") {
+        assert.equal(String(stoppedEvent.payload.taskId), "task-orphan");
+        assert.equal(stoppedEvent.payload.status, "stopped");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
