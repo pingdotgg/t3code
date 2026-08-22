@@ -1,12 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -46,6 +49,22 @@ function makeProcess(output: string): ChildProcessSpawner.ChildProcessHandle {
   });
 }
 
+function makeHangingProcess(): ChildProcessSpawner.ChildProcessHandle {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(124),
+    stdout: Stream.never,
+    stderr: Stream.never,
+    all: Stream.never,
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+}
+
 function withProcessEnv<A, E, R>(
   env: NodeJS.ProcessEnv,
   effect: Effect.Effect<A, E, R>,
@@ -67,7 +86,9 @@ function withProcessEnv<A, E, R>(
 function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
-  readonly handler: (command: ChildProcess.Command) => string;
+  readonly handler: (
+    command: ChildProcess.Command,
+  ) => string | ChildProcessSpawner.ChildProcessHandle;
   readonly failure?: PlatformError.PlatformError;
 }) {
   const environmentLayer = Layer.succeed(
@@ -78,11 +99,11 @@ function runShellEnvironment(input: {
   );
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) =>
-      input.failure === undefined
-        ? Effect.succeed(makeProcess(input.handler(command)))
-        : Effect.fail(input.failure),
-    ),
+    ChildProcessSpawner.make((command) => {
+      if (input.failure !== undefined) return Effect.fail(input.failure);
+      const result = input.handler(command);
+      return Effect.succeed(typeof result === "string" ? makeProcess(result) : result);
+    }),
   );
 
   const program = Effect.gen(function* () {
@@ -123,6 +144,7 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
+      assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].args[0] : "", "-lc");
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
@@ -261,16 +283,20 @@ describe("DesktopShellEnvironment", () => {
         PATH: "/usr/bin",
       };
 
+      const commands: ChildProcess.Command[] = [];
       yield* runShellEnvironment({
         env,
         platform: "linux",
-        handler: () =>
-          envOutput({
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({
             PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
-          }),
+          });
+        },
       });
 
+      assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].args[0] : "", "-ilc");
       assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
     }),
@@ -298,6 +324,47 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
     }),
   );
+
+  it.effect("caps a hanging macOS login shell before falling back to launchctl PATH", () => {
+    const env: NodeJS.ProcessEnv = {
+      SHELL: "/bin/zsh",
+      PATH: "/usr/bin",
+    };
+    const commands: string[] = [];
+    const testClockLayer = TestClock.layer();
+
+    return Effect.gen(function* () {
+      const fiber = yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          if (command.command === "/bin/launchctl") {
+            return "/opt/homebrew/bin:/usr/bin";
+          }
+          assert.equal(
+            Duration.toMillis(Duration.fromInputUnsafe(command.options.forceKillAfter ?? 0)),
+            100,
+          );
+          return makeHangingProcess();
+        },
+      }).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      assert.deepEqual(commands, ["/bin/zsh"]);
+
+      yield* TestClock.adjust(Duration.millis(749));
+      yield* Effect.yieldNow;
+      assert.deepEqual(commands, ["/bin/zsh"]);
+
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Fiber.join(fiber);
+
+      assert.deepEqual(commands, ["/bin/zsh", "/bin/launchctl"]);
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
+    }).pipe(Effect.provide(testClockLayer));
+  });
 
   it.effect("loads PowerShell profile environment on Windows", () =>
     Effect.gen(function* () {

@@ -91,8 +91,10 @@ const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
 const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
+const MACOS_LOGIN_SHELL_TIMEOUT = Duration.millis(750);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
+const MACOS_LOGIN_SHELL_TERMINATE_GRACE = Duration.millis(100);
 
 const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =>
   Option.fromNullishOr(value).pipe(
@@ -284,6 +286,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Duration;
+  readonly forceKillAfter?: Duration.Duration;
   readonly shell?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -295,7 +298,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
         stdout: "pipe",
         stderr: "pipe",
         killSignal: "SIGTERM",
-        forceKillAfter: PROCESS_TERMINATE_GRACE,
+        forceKillAfter: input.forceKillAfter ?? PROCESS_TERMINATE_GRACE,
       }),
     )
     .pipe(
@@ -331,14 +334,16 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
 const readLoginShellEnvironment = (
   shell: string,
   names: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
 ): Effect.Effect<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> =>
   names.length === 0
     ? Effect.succeed({})
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
-        timeout: LOGIN_SHELL_TIMEOUT,
+        args: [platform === "darwin" ? "-lc" : "-ilc", capturePosixEnvironmentCommand(names)],
+        timeout: platform === "darwin" ? MACOS_LOGIN_SHELL_TIMEOUT : LOGIN_SHELL_TIMEOUT,
+        ...(platform === "darwin" ? { forceKillAfter: MACOS_LOGIN_SHELL_TERMINATE_GRACE } : {}),
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
 const readLaunchctlPath = runCommandOutput({
@@ -429,7 +434,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     for (const shell of listLoginShellCandidates(config)) {
       Object.assign(
         shellEnvironment,
-        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
+        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES, config.platform),
       );
       if (shellEnvironment.PATH) break;
     }
