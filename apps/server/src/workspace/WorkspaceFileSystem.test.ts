@@ -350,6 +350,33 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("follows a symlinked file to edits made through its target", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "real/config.json", '{ "value": "before" }\n');
+        yield* fileSystem
+          .symlink(path.join(cwd, "real", "config.json"), path.join(cwd, "alias.json"))
+          .pipe(Effect.orDie);
+
+        // Watching through the alias must see a write to the canonical path,
+        // which lives in a different directory under a different name.
+        //
+        // This discriminates on inotify platforms, where a watch on the alias's
+        // own directory would never hear about the target. It does not on
+        // macOS: FSEvents reports the alias entry as touched when its target is
+        // written, so this passes there even with the parent-only resolve.
+        const event = yield* awaitFirstChange(
+          cwd,
+          "alias.json",
+          writeTextFile(cwd, "real/config.json", '{ "value": "after" }\n'),
+        );
+
+        expect(event).toEqual(Option.some({ relativePath: "alias.json" }));
+      }),
+    );
+
     it.effect("rejects a watch that escapes the workspace through a symlink", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

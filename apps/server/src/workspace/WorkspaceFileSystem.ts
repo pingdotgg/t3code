@@ -341,14 +341,25 @@ export const make = Effect.gen(function* () {
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
         });
-        // Contain the directory rather than the file: the directory is what
-        // gets watched, and requiring the leaf to resolve would refuse to watch
-        // a path that is momentarily absent — mid atomic-replace, or not yet
-        // created. A symlinked leaf stays safe because the re-read still goes
-        // through `readFile`, which contains the file it opens.
-        const directory = yield* realPathWithinRoot(input, path.dirname(target.absolutePath));
-        const fileName = path.basename(target.absolutePath);
-        const watchedPath = path.join(directory, fileName);
+        // Prefer the canonical leaf, so a symlinked file follows edits made
+        // through its target's own path. Fall back to the parent when the leaf
+        // does not resolve, so a watch still attaches to a path that is
+        // momentarily absent — mid atomic-replace, or not yet created. Either
+        // way the directory that gets watched is proven inside the workspace,
+        // and an escaping symlink still fails rather than falling back.
+        const canonical = yield* Effect.tryPromise({
+          try: () => NodeFSP.realpath(target.absolutePath),
+          catch: () => null,
+        }).pipe(Effect.orElseSucceed(() => null));
+        const watchedPath =
+          canonical === null
+            ? path.join(
+                yield* realPathWithinRoot(input, path.dirname(target.absolutePath)),
+                path.basename(target.absolutePath),
+              )
+            : yield* realPathWithinRoot(input, canonical);
+        const directory = path.dirname(watchedPath);
+        const fileName = path.basename(watchedPath);
 
         return fileSystem.watch(directory).pipe(
           Stream.filter(
