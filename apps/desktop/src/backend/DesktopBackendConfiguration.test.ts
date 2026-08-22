@@ -553,6 +553,40 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolveWsl forwards Claude Bedrock credentials across the WSL boundary", () =>
+    Effect.gen(function* () {
+      const previousBearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
+      const previousRegion = process.env.AWS_REGION;
+      const previousUseBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
+      try {
+        process.env.AWS_BEARER_TOKEN_BEDROCK = "bedrock-token";
+        process.env.AWS_REGION = "us-west-2";
+        process.env.CLAUDE_CODE_USE_BEDROCK = "1";
+
+        yield* withHarness(
+          Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            const config = yield* configuration.resolveWsl({
+              distro: "Ubuntu",
+              port: 4889,
+            });
+
+            assert.equal(config.env.AWS_BEARER_TOKEN_BEDROCK, "bedrock-token");
+            assert.equal(config.env.AWS_REGION, "us-west-2");
+            assert.equal(config.env.CLAUDE_CODE_USE_BEDROCK, "1");
+            assert.include(config.env.WSLENV ?? "", "AWS_BEARER_TOKEN_BEDROCK");
+            assert.include(config.env.WSLENV ?? "", "AWS_REGION");
+            assert.include(config.env.WSLENV ?? "", "CLAUDE_CODE_USE_BEDROCK");
+          }),
+        );
+      } finally {
+        restoreEnv("AWS_BEARER_TOKEN_BEDROCK", previousBearerToken);
+        restoreEnv("AWS_REGION", previousRegion);
+        restoreEnv("CLAUDE_CODE_USE_BEDROCK", previousUseBedrock);
+      }
+    }),
+  );
+
   it.effect(
     "resolvePrimary falls back to the Windows primary when wsl-only but WSL is unavailable",
     () =>

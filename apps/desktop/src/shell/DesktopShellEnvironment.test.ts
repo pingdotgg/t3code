@@ -129,6 +129,31 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates missing Claude Bedrock credentials from the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            AWS_BEARER_TOKEN_BEDROCK: "bedrock-token",
+            AWS_REGION: "us-west-2",
+            CLAUDE_CODE_USE_BEDROCK: "1",
+          }),
+      });
+
+      assert.equal(env.AWS_BEARER_TOKEN_BEDROCK, "bedrock-token");
+      assert.equal(env.AWS_REGION, "us-west-2");
+      assert.equal(env.CLAUDE_CODE_USE_BEDROCK, "1");
+    }),
+  );
+
   it.effect("preserves inherited POSIX values when present", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -344,6 +369,36 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+    }),
+  );
+
+  it.effect("hydrates missing Claude Bedrock credentials from the PowerShell profile", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        PATH: "C:\\Windows\\System32",
+        AWS_REGION: "eu-west-1",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          const loadProfile = !command.args.includes("-NoProfile");
+          return loadProfile
+            ? envOutput({
+                PATH: "C:\\Profile\\Node;C:\\Windows\\System32",
+                AWS_BEARER_TOKEN_BEDROCK: "bedrock-token",
+                AWS_REGION: "us-west-2",
+                CLAUDE_CODE_USE_BEDROCK: "1",
+              })
+            : envOutput({ PATH: "C:\\Windows\\System32" });
+        },
+      });
+
+      assert.equal(env.AWS_BEARER_TOKEN_BEDROCK, "bedrock-token");
+      assert.equal(env.AWS_REGION, "eu-west-1");
+      assert.equal(env.CLAUDE_CODE_USE_BEDROCK, "1");
     }),
   );
 
