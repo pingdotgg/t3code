@@ -325,6 +325,10 @@ it("seeds a playful multi-environment project spectrum", () => {
   }
   const primaryThread = SHOWCASE_THREADS.find((thread) => thread.id === "remote-command-center");
   assert.equal(primaryThread !== undefined && !("snoozeMinutes" in primaryThread), true);
+  assert.equal(
+    SHOWCASE_THREADS.filter((thread) => "archived" in thread && thread.archived).length,
+    1,
+  );
   // Every project contributes to both the active block and the settled tail,
   // so each list scope screenshots with the same two-part structure.
   for (const project of SHOWCASE_PROJECTS) {

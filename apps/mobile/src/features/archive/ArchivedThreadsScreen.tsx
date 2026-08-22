@@ -360,7 +360,7 @@ function ArchivedThreadsHeader(props: {
   );
 }
 
-function ProjectGroupLabel(props: {
+export function ArchivedThreadProjectLabel(props: {
   readonly environmentLabel: string | null;
   readonly project: EnvironmentProject;
 }) {
@@ -388,8 +388,14 @@ function ProjectGroupLabel(props: {
   );
 }
 
-function ArchivedThreadRow(props: {
+const ARCHIVED_THREAD_MENU_ACTIONS: MenuAction[] = [
+  { id: "restore", title: "Restore", image: "arrow.uturn.backward" },
+  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+];
+
+export function ArchivedThreadRow(props: {
   readonly environmentLabel: string | null;
+  readonly fullSwipeWidth?: number;
   readonly isFirst: boolean;
   readonly isLast: boolean;
   readonly onDelete: () => void;
@@ -409,6 +415,13 @@ function ArchivedThreadRow(props: {
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
+  const handleMenuAction = useCallback(
+    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "restore") props.onUnarchive();
+      if (nativeEvent.event === "delete") props.onDelete();
+    },
+    [props.onDelete, props.onUnarchive],
+  );
   return (
     <ThreadSwipeable
       backgroundColor={cardColor}
@@ -421,61 +434,79 @@ function ArchivedThreadRow(props: {
         borderBottomRightRadius: props.isLast ? 20 : 0,
         overflow: "hidden",
       }}
-      fullSwipeWidth={windowWidth - 32}
+      fullSwipeAction="primary"
+      fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
       onDelete={props.onDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={{
-        accessibilityLabel: `Unarchive ${props.thread.title}`,
+        accessibilityLabel: `Restore ${props.thread.title}`,
         icon: "arrow.uturn.backward",
-        label: "Unarchive",
+        label: "Restore",
         onPress: props.onUnarchive,
       }}
+      resetKey={`${props.thread.environmentId}:${props.thread.id}`}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
       {() => (
-        <View
-          className="flex-row items-center gap-3 bg-card px-4 py-3"
-          style={{
-            borderBottomColor: separatorColor,
-            borderBottomWidth: props.isLast ? 0 : 1,
-          }}
+        <ControlPillMenu
+          actions={ARCHIVED_THREAD_MENU_ACTIONS}
+          onPressAction={handleMenuAction}
+          shouldOpenOnLongPress
         >
-          <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
-            <SymbolView name="archivebox.fill" size={15} tintColor={iconColor} type="monochrome" />
-          </View>
-
-          <View className="min-w-0 flex-1 gap-1">
-            <View className="flex-row items-center gap-2">
-              <Text
-                className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
-                numberOfLines={1}
-              >
-                {props.thread.title}
-              </Text>
-              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-                {timestamp}
-              </Text>
-            </View>
-            {subtitle.length > 0 ? (
-              <View className="flex-row items-center gap-1.5">
+          <Pressable
+            accessibilityHint="Swipe left to restore, or long press for restore and delete options."
+            accessibilityLabel={props.thread.title}
+          >
+            <View
+              className="flex-row items-center gap-3 bg-card px-4 py-3"
+              style={{
+                borderBottomColor: separatorColor,
+                borderBottomWidth: props.isLast ? 0 : 1,
+              }}
+            >
+              <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
                 <SymbolView
-                  name="arrow.triangle.branch"
-                  size={10}
+                  name="archivebox.fill"
+                  size={15}
                   tintColor={iconColor}
                   type="monochrome"
                 />
-                <Text
-                  className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
-                  numberOfLines={1}
-                >
-                  {subtitle.join(" · ")}
-                </Text>
               </View>
-            ) : null}
-          </View>
-        </View>
+
+              <View className="min-w-0 flex-1 gap-1">
+                <View className="flex-row items-center gap-2">
+                  <Text
+                    className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
+                    numberOfLines={1}
+                  >
+                    {props.thread.title}
+                  </Text>
+                  <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
+                    {timestamp}
+                  </Text>
+                </View>
+                {subtitle.length > 0 ? (
+                  <View className="flex-row items-center gap-1.5">
+                    <SymbolView
+                      name="arrow.triangle.branch"
+                      size={10}
+                      tintColor={iconColor}
+                      type="monochrome"
+                    />
+                    <Text
+                      className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
+                      numberOfLines={1}
+                    >
+                      {subtitle.join(" · ")}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          </Pressable>
+        </ControlPillMenu>
       )}
     </ThreadSwipeable>
   );
@@ -563,7 +594,10 @@ export function ArchivedThreadsScreen(props: {
       if (item.kind === "project") {
         return (
           <View className="pt-4">
-            <ProjectGroupLabel environmentLabel={item.environmentLabel} project={item.project} />
+            <ArchivedThreadProjectLabel
+              environmentLabel={item.environmentLabel}
+              project={item.project}
+            />
           </View>
         );
       }

@@ -69,9 +69,11 @@ import {
 import {
   buildHomeProjectScopes,
   buildHomeThreadGroups,
+  hasVisibleHomeThreadResults,
   sortHomeProjectScopes,
   type HomeProjectSortOrder,
 } from "./homeThreadList";
+import { ArchivedThreadsShelf, useArchivedThreadsShelfData } from "../archive/ArchivedThreadsShelf";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
@@ -97,6 +99,8 @@ interface HomeScreenProps {
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onAddConnection: () => void;
+  readonly onOpenEnvironments: () => void;
+  readonly onOpenArchivedThreads: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
@@ -340,6 +344,12 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
     [selectedProjectScope],
   );
+  const archivedThreadsShelfData = useArchivedThreadsShelfData({
+    environments: props.environments,
+    environmentId: props.selectedEnvironmentId,
+    projectKeys: selectedProjectRefKeys,
+    searchQuery: props.searchQuery,
+  });
   const scopedProjects = useMemo(
     () =>
       selectedProjectRefKeys === null
@@ -1046,8 +1056,18 @@ export function HomeScreen(props: HomeScreenProps) {
   // full-page "No threads yet". Settled threads are unarchived live shells,
   // so the v1 check already covers v2.
   const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
-  const hasResults = projectGroups.length > 0;
+    props.threads.some((thread) => thread.archivedAt === null) ||
+    props.pendingTasks.length > 0 ||
+    archivedThreadsShelfData.hasAnyArchivedThreads ||
+    archivedThreadsShelfData.error !== null;
+  const hasVisibleV1Results = hasVisibleHomeThreadResults({
+    activeResultCount: projectGroups.length,
+    archivedResultCount: archivedThreadsShelfData.threadCount,
+  });
+  const hasVisibleV2Results = hasVisibleHomeThreadResults({
+    activeResultCount: threadListV2Items.length,
+    archivedResultCount: archivedThreadsShelfData.threadCount,
+  });
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -1094,7 +1114,7 @@ export function HomeScreen(props: HomeScreenProps) {
   // mobile — the menu is the one filter surface).
   const v2ListHeader = listHeader;
 
-  const listEmpty = !hasResults ? (
+  const listEmpty = !hasVisibleV1Results ? (
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
     ) : selectedProjectScope !== null ? (
@@ -1114,8 +1134,9 @@ export function HomeScreen(props: HomeScreenProps) {
   // Self-contained: v1's listEmpty keys off projectGroups, which ignores the
   // v2 project scope, so it can be null (results elsewhere) while this list
   // is empty. Snoozed threads need no special empty state: their shelf header
-  // is a list row even while collapsed.
-  const v2ListEmpty =
+  // is a list row even while collapsed. Archived matches live in the footer,
+  // so they explicitly suppress the active-list empty state above.
+  const v2ListEmpty = !hasVisibleV2Results ? (
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
     ) : v2ScopedProjectGroup !== null ? (
@@ -1125,7 +1146,8 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     ) : (
       listEmpty
-    );
+    )
+  ) : null;
 
   if (threadListV2Enabled) {
     return (
@@ -1138,19 +1160,28 @@ export function HomeScreen(props: HomeScreenProps) {
             extraData={v2ExtraData}
             ListHeaderComponent={v2ListHeader}
             ListFooterComponent={
-              settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
-                  onPress={showMoreSettled}
-                  className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
-                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-                >
-                  <Text className="text-xs font-t3-medium text-foreground-muted">
-                    Show more ({threadListV2Layout.hiddenSettledCount} settled hidden)
-                  </Text>
-                </Pressable>
-              ) : null
+              <>
+                {settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
+                    onPress={showMoreSettled}
+                    className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
+                    style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                  >
+                    <Text className="text-xs font-t3-medium text-foreground-muted">
+                      Show more ({threadListV2Layout.hiddenSettledCount} settled hidden)
+                    </Text>
+                  </Pressable>
+                ) : null}
+                <ArchivedThreadsShelf
+                  data={archivedThreadsShelfData}
+                  onOpenArchive={props.onOpenArchivedThreads}
+                  onSwipeableClose={handleSwipeableClose}
+                  onSwipeableWillOpen={handleSwipeableWillOpen}
+                  searchQuery={props.searchQuery}
+                />
+              </>
             }
             ListEmptyComponent={v2ListEmpty}
             style={{ flex: 1 }}
@@ -1192,6 +1223,15 @@ export function HomeScreen(props: HomeScreenProps) {
           estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
           extraData={extraData}
           ListHeaderComponent={listHeader}
+          ListFooterComponent={
+            <ArchivedThreadsShelf
+              data={archivedThreadsShelfData}
+              onOpenArchive={props.onOpenArchivedThreads}
+              onSwipeableClose={handleSwipeableClose}
+              onSwipeableWillOpen={handleSwipeableWillOpen}
+              searchQuery={props.searchQuery}
+            />
+          }
           ListEmptyComponent={listEmpty}
           style={{ flex: 1 }}
           automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}

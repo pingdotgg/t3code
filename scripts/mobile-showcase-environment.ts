@@ -255,6 +255,7 @@ export const SHOWCASE_THREADS = [
     title: "Make the OOM killer explain itself",
     branch: "feat/quieter-oom",
     minutesAgo: 2 * 24 * 60,
+    archived: true,
     settled: true,
     request: "Make out-of-memory kills legible without adding a single allocation to the hot path.",
     response:
@@ -347,6 +348,7 @@ function insertThread(
     readonly title: string;
     readonly branch: string;
     readonly minutesAgo: number;
+    readonly archived?: boolean;
     readonly state?: "working" | "approval" | "plan";
     readonly settled?: boolean;
     readonly snoozeMinutes?: number;
@@ -371,7 +373,7 @@ function insertThread(
         branch, worktree_path, latest_turn_id, latest_user_message_at, pending_approval_count,
         pending_user_input_count, has_actionable_proposed_plan, created_at, updated_at,
         archived_at, deleted_at, settled_override, settled_at, snoozed_until, snoozed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
@@ -388,6 +390,7 @@ function insertThread(
       input.state === "plan" ? 1 : 0,
       minutesBefore(now, input.minutesAgo + 120),
       updatedAt,
+      input.archived ? updatedAt : null,
       input.settled ? "settled" : null,
       input.settled ? updatedAt : null,
       snoozedUntil,

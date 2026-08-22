@@ -64,20 +64,23 @@ function threadTimeLabel(thread: EnvironmentThreadShell): string {
   return relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt);
 }
 
-// Menus keep lifecycle and title regeneration together. Archive keeps its
-// own surface (thread screen / settings) rather than crowding v2 rows.
+// Menus keep lifecycle, pinning, title regeneration, and archive reachable
+// while Archive remains the consistent full-swipe action.
 const CARD_MENU_ACTIONS: MenuAction[] = [
   { id: "settle", title: "Settle", image: "checkmark" },
+  { id: "archive", title: "Archive", image: "archivebox" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
 const SLIM_MENU_ACTIONS: MenuAction[] = [
   { id: "unsettle", title: "Un-settle", image: "arrow.uturn.backward" },
+  { id: "archive", title: "Archive", image: "archivebox" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
 const SNOOZED_MENU_ACTIONS: MenuAction[] = [
   { id: "unsnooze", title: "Wake thread", image: "clock" },
+  { id: "archive", title: "Archive", image: "archivebox" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
@@ -449,9 +452,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
 
-  // Swipe: the v2 primary action is the lifecycle transition. Every settled
-  // row can un-settle — explicit settles clear the override, auto-settled
-  // rows get pinned active until real activity clears the pin.
+  // Archive is the consistent full-swipe action for visible work. Snoozed
+  // rows keep Wake as their primary action because waking is the shelf's
+  // direct inverse; Archive remains in their long-press menu.
   const canUnsettle = variant === "slim";
   const [snoozeGateTick, bumpSnoozeGateTick] = useState(0);
   const snoozeGateExpiryMs = props.snoozeSupported
@@ -464,8 +467,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     return () => clearTimeout(id);
   }, [snoozeGateExpiryMs, snoozeGateTick]);
   const swipeActions = resolveThreadListV2SwipeActions({
-    variant,
-    settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: new Date().toISOString() }),
     snoozed: snoozedRow,
@@ -538,6 +539,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       },
       ...pinMenuItem,
       ...titleRegenerationMenuItems,
+      { id: "archive", title: "Archive", image: "archivebox" },
       { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
     ],
     [pinMenuItem, snoozePresetActions, titleRegenerationMenuItems],
@@ -602,17 +604,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
   );
   const primaryAction = useMemo(() => {
-    // Pre-settlement server: archive is the swipe action, as in v1. (Slim
-    // rows cannot occur here — unsupported environments never classify as
-    // settled.)
-    if (swipeActions.primary === "archive") {
-      return {
-        accessibilityLabel: `Archive ${thread.title}`,
-        icon: "archivebox" as const,
-        label: "Archive",
-        onPress: handleArchive,
-      };
-    }
     if (swipeActions.primary === "unsnooze") {
       return {
         accessibilityLabel: `Wake ${thread.title} now`,
@@ -621,27 +612,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onPress: handleUnsnooze,
       };
     }
-    return swipeActions.primary === "unsettle"
-      ? {
-          accessibilityLabel: `Un-settle ${thread.title}`,
-          icon: "arrow.uturn.backward" as const,
-          label: "Un-settle",
-          onPress: handleUnsettle,
-        }
-      : {
-          accessibilityLabel: `Settle ${thread.title}`,
-          icon: "checkmark" as const,
-          label: "Settle",
-          onPress: handleSettle,
-        };
-  }, [
-    handleArchive,
-    handleSettle,
-    handleUnsettle,
-    handleUnsnooze,
-    swipeActions.primary,
-    thread.title,
-  ]);
+    return {
+      accessibilityLabel: `Archive ${thread.title}`,
+      icon: "archivebox" as const,
+      label: "Archive",
+      onPress: handleArchive,
+    };
+  }, [handleArchive, handleUnsnooze, swipeActions.primary, thread.title]);
   const secondaryAction = useMemo(
     () =>
       swipeActions.secondary === "snooze"
@@ -916,8 +893,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           sidebarPane ? { borderRadius: SIDEBAR_V2_ROW_RADIUS, overflow: "hidden" } : undefined
         }
         enableTrackpadSwipe
-        // Full swipe commits the advertised lifecycle action (Settle /
-        // Un-settle), never the secondary snooze action.
+        // Full swipe always commits the advertised primary action, never the
+        // secondary Snooze menu.
         fullSwipeAction="primary"
         fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
         onDelete={handleDelete}

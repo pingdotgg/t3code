@@ -1,0 +1,294 @@
+name: Personal Android Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Build even when the source commits have not changed
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # The VPS timer below is the durable trigger. This is an independent backup.
+    - cron: "17 4 * * *"
+
+concurrency:
+  group: personal-android-preview
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  APK_NAME: t3-code-preview.apk
+  APP_VARIANT: preview
+  # Pin the reviewed personal feature set while still rebasing it onto current
+  # upstream source. Rebase drops patch-equivalent commits as upstream merges
+  # them without dropping changes that remain personal to this build.
+  PERSONAL_FEATURE_HEAD: 16601a0c0497c2621ba2ba3152b5ae7e4a48ca0b
+  FEATURE_BRANCH: feat/mobile-quick-archive
+  FEATURE_REPOSITORY: Feighery89/t3code
+  NODE_OPTIONS: --max-old-space-size=6144
+  EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST: http://100.97.53.68:7791
+  EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL: https://api.github.com/repos/Feighery89/t3code/releases/latest
+  UPSTREAM_REPOSITORY: pingdotgg/t3code
+
+jobs:
+  build:
+    name: Build signed Android preview
+    if: github.repository == 'Feighery89/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Clone preview automation
+        run: >-
+          git clone
+          --filter=blob:none
+          --no-tags
+          --single-branch
+          --branch "$GITHUB_REF_NAME"
+          "https://github.com/${GITHUB_REPOSITORY}.git"
+          automation
+
+      - name: Clone latest upstream source
+        run: >-
+          git clone
+          --filter=blob:none
+          --no-tags
+          --single-branch
+          --branch main
+          "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          source
+
+      - id: source
+        name: Resolve upstream and feature source
+        env:
+          FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git -C source fetch --no-tags origin main
+          git -C source checkout --detach origin/main
+
+          main_sha="$(git -C source rev-parse HEAD)"
+          git -C source fetch --no-tags \
+            "https://github.com/${FEATURE_REPOSITORY}.git" \
+            "+refs/heads/${FEATURE_BRANCH}:refs/remotes/personal/feature"
+          feature_sha="$PERSONAL_FEATURE_HEAD"
+
+          if ! git -C source merge-base --is-ancestor \
+            "$feature_sha" \
+            refs/remotes/personal/feature; then
+            echo "::error::The curated personal feature commit is no longer available on the feature branch."
+            exit 1
+          fi
+
+          git -C source config user.name "github-actions[bot]"
+          git -C source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C source checkout --detach "$feature_sha"
+          git -C source rebase origin/main
+
+          source_key="${main_sha}:${feature_sha}"
+          latest_body=""
+          if latest_body="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.body')"; then
+            :
+          fi
+
+          should_build="true"
+          if [[ "$FORCE_REBUILD" != "true" && "$latest_body" == *"Source key: ${source_key}"* ]]; then
+            should_build="false"
+            echo "Source has not changed since the latest preview release."
+          fi
+
+          version_code="$(date -u +%s)"
+          build_sha="$(git -C source rev-parse HEAD)"
+
+          echo "build_sha=${build_sha}" >>"$GITHUB_OUTPUT"
+          echo "feature_sha=${feature_sha}" >>"$GITHUB_OUTPUT"
+          echo "main_sha=${main_sha}" >>"$GITHUB_OUTPUT"
+          echo "should_build=${should_build}" >>"$GITHUB_OUTPUT"
+          echo "source_key=${source_key}" >>"$GITHUB_OUTPUT"
+          echo "version_code=${version_code}" >>"$GITHUB_OUTPUT"
+
+      - name: Report unchanged source
+        if: steps.source.outputs.should_build != 'true'
+        run: echo "No preview build was needed." >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Set up pnpm
+        if: steps.source.outputs.should_build == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+          version: 11.10.0
+
+      - name: Set up Node
+        if: steps.source.outputs.should_build == 'true'
+        uses: actions/setup-node@v7
+        with:
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+          node-version: 24.13.1
+
+      - name: Set up Java
+        if: steps.source.outputs.should_build == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle cache
+        if: steps.source.outputs.should_build == 'true'
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install mobile dependencies
+        if: steps.source.outputs.should_build == 'true'
+        working-directory: source
+        env:
+          CI: "1"
+        run: pnpm install --frozen-lockfile --filter @t3tools/mobile...
+
+      - name: Generate the Android preview project
+        if: steps.source.outputs.should_build == 'true'
+        working-directory: source/apps/mobile
+        env:
+          APP_VARIANT: preview
+          CI: "1"
+          EXPO_NO_DOTENV: "1"
+          EXPO_NO_GIT_STATUS: "1"
+        run: pnpm exec expo prebuild --clean --platform android
+
+      - name: Apply personal preview safeguards
+        if: steps.source.outputs.should_build == 'true'
+        run: >-
+          node automation/.github/scripts/prepare-personal-android-preview.mjs
+          source
+          "${{ steps.source.outputs.version_code }}"
+
+      - name: Restore private signing key
+        if: steps.source.outputs.should_build == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.T3CODE_PREVIEW_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.T3CODE_PREVIEW_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$KEYSTORE_BASE64" || -z "$KEYSTORE_PASSWORD" ]]; then
+            echo "::error::The personal preview signing secrets are missing."
+            exit 1
+          fi
+
+          install -d -m 700 "$RUNNER_TEMP/t3code-preview-signing"
+          printf '%s' "$KEYSTORE_BASE64" \
+            | base64 --decode \
+            >"$RUNNER_TEMP/t3code-preview-signing/t3code-preview.p12"
+          chmod 600 "$RUNNER_TEMP/t3code-preview-signing/t3code-preview.p12"
+
+      - name: Build signed release APK
+        if: steps.source.outputs.should_build == 'true'
+        working-directory: source/apps/mobile/android
+        env:
+          CI: "1"
+          T3CODE_PREVIEW_KEYSTORE_FILE: ${{ runner.temp }}/t3code-preview-signing/t3code-preview.p12
+          T3CODE_PREVIEW_KEYSTORE_PASSWORD: ${{ secrets.T3CODE_PREVIEW_KEYSTORE_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - id: apk
+        name: Verify package, embedded config, version, and signature
+        if: steps.source.outputs.should_build == 'true'
+        env:
+          EXPECTED_VERSION_CODE: ${{ steps.source.outputs.version_code }}
+        run: |
+          set -euo pipefail
+
+          source_apk="source/apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          apk="$RUNNER_TEMP/${APK_NAME}"
+          install -m 644 "$source_apk" "$apk"
+
+          build_tools_version="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
+          aapt="$ANDROID_HOME/build-tools/$build_tools_version/aapt"
+          apksigner="$ANDROID_HOME/build-tools/$build_tools_version/apksigner"
+
+          badging="$($aapt dump badging "$apk" | head -n 1)"
+          package_name="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
+          version_code="$(sed -n "s/^package: name='[^']*' versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
+
+          if [[ "$package_name" != "com.t3tools.t3code.preview" ]]; then
+            echo "::error::Unexpected Android package: ${package_name}"
+            exit 1
+          fi
+
+          if [[ "$version_code" != "$EXPECTED_VERSION_CODE" ]]; then
+            echo "::error::Unexpected version code: ${version_code}"
+            exit 1
+          fi
+
+          bundle="$RUNNER_TEMP/index.android.bundle"
+          unzip -p "$apk" assets/index.android.bundle >"$bundle"
+          if ! grep -aFq "$EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_UPDATE_API_URL" "$bundle" || \
+             ! grep -aFq "$EXPO_PUBLIC_T3CODE_PERSONAL_PREVIEW_DEFAULT_ENVIRONMENT_HOST" "$bundle"; then
+            echo "::error::The embedded app bundle is missing the personal preview configuration."
+            exit 1
+          fi
+
+          "$apksigner" verify --verbose --print-certs "$apk"
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "$APK_NAME" >SHA256SUMS.txt
+          )
+
+          echo "apk=${apk}" >>"$GITHUB_OUTPUT"
+          echo "package_name=${package_name}" >>"$GITHUB_OUTPUT"
+          echo "version_code=${version_code}" >>"$GITHUB_OUTPUT"
+
+      - name: Retain verified preview artifact
+        if: steps.source.outputs.should_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3-code-preview-${{ steps.apk.outputs.version_code }}
+          path: |
+            ${{ steps.apk.outputs.apk }}
+            ${{ runner.temp }}/SHA256SUMS.txt
+          compression-level: 0
+          retention-days: 3
+
+      - name: Publish immutable preview release
+        if: steps.source.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.T3CODE_PREVIEW_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::The personal preview release token is missing."
+            exit 1
+          fi
+
+          tag="mark-mobile-preview-v${{ steps.apk.outputs.version_code }}"
+          release_date="$(date -u +%Y-%m-%d)"
+          notes="$RUNNER_TEMP/release-notes.md"
+
+          printf '%s\n' \
+            "A separately installed Android preview containing Mark's archive workflow, local agent notifications, and current upstream T3 Code improvements." \
+            "" \
+            "- Package: \`${{ steps.apk.outputs.package_name }}\`" \
+            "- Android version code: \`${{ steps.apk.outputs.version_code }}\`" \
+            "- Upstream main: \`${{ steps.source.outputs.main_sha }}\`" \
+            "- Personal feature set: \`${{ steps.source.outputs.feature_sha }}\`" \
+            "- Official Expo OTA updates: disabled for this custom package" \
+            "- Personal updates: checked automatically from this signed GitHub release channel" \
+            "" \
+            "Source key: ${{ steps.source.outputs.source_key }}" \
+            >"$notes"
+
+          gh release create "$tag" \
+            "${{ steps.apk.outputs.apk }}#T3 Code Preview APK" \
+            "$RUNNER_TEMP/SHA256SUMS.txt#SHA-256 checksum" \
+            --latest \
+            --notes-file "$notes" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "T3 Code Preview ${release_date}"
+
+          stable_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${APK_NAME}"
+          printf '### Android preview published\n\n[%s](%s)\n' "$APK_NAME" "$stable_url" >>"$GITHUB_STEP_SUMMARY"
