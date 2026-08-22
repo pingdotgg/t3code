@@ -182,6 +182,24 @@ You can also check the OpenRouter activity dashboard for requests from your API 
 OpenRouter's setup can change over time. Use its upstream Claude Code guide for the current details:
 <https://openrouter.ai/docs/guides/guides/claude-code-integration>.
 
+## I Want To Use CLIProxyAPI
+
+Claude providers have a dedicated CLIProxyAPI option. Start CLIProxyAPI, then add or edit a Claude
+provider in T3 Code Settings:
+
+```text
+Use CLIProxyAPI: on
+CLIProxyAPI URL: http://127.0.0.1:8317
+CLIProxyAPI key: your configured API key
+```
+
+T3 Code sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, and clears `ANTHROPIC_API_KEY`, only on
+the Claude Code processes for that provider. It does not change the T3 Code server environment, your
+shell, or another provider. Turning the option off returns that Claude provider to its normal
+environment.
+
+The key is stored in plain text in T3 Code's settings file.
+
 ## I Want To Use Claude Code Router
 
 Claude Code Router is useful when you want a local routing layer with more control than a direct

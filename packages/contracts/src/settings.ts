@@ -383,6 +383,39 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "~/.claude", clearWhenEmpty: "omit" },
       }),
     ),
+    useCliProxyApi: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Use CLIProxyAPI",
+        description:
+          "Route this Claude Code instance through CLIProxyAPI using temporary environment variables.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
+    cliProxyApiUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("http://127.0.0.1:8317")),
+      Schema.annotateKey({
+        title: "CLIProxyAPI URL",
+        description: "Used as ANTHROPIC_BASE_URL only when CLIProxyAPI is enabled.",
+        providerSettingsForm: {
+          placeholder: "http://127.0.0.1:8317",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    cliProxyApiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "CLIProxyAPI key",
+        description:
+          "Used as ANTHROPIC_AUTH_TOKEN only when CLIProxyAPI is enabled. Stored in plain text on disk.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -400,7 +433,14 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "useCliProxyApi",
+      "cliProxyApiUrl",
+      "cliProxyApiKey",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -783,6 +823,9 @@ const ClaudeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   homePath: Schema.optionalKey(TrimmedString),
+  useCliProxyApi: Schema.optionalKey(Schema.Boolean),
+  cliProxyApiUrl: Schema.optionalKey(TrimmedString),
+  cliProxyApiKey: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
   launchArgs: Schema.optionalKey(TrimmedString),
 });
