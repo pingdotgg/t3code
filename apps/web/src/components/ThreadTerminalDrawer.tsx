@@ -11,6 +11,7 @@ import {
   TerminalSquare,
   Trash2,
   XIcon,
+  ChevronDown,
 } from "lucide-react";
 import {
   type ContextMenuItem,
@@ -1006,6 +1007,7 @@ interface ThreadTerminalDrawerProps {
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
+  onHideDrawer?: () => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
@@ -1067,6 +1069,7 @@ export default function ThreadTerminalDrawer({
   closeShortcutLabel,
   onActiveTerminalChange,
   onCloseTerminal,
+  onHideDrawer,
   onHeightChange,
   onAddTerminalContext,
   keybindings,
@@ -1471,6 +1474,18 @@ export default function ThreadTerminalDrawer({
               <Plus className="size-3.25" />
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
+            {onHideDrawer && (
+              <>
+                <TerminalActionButton
+                  className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+                  onClick={onHideDrawer}
+                  label="Hide Terminal"
+                >
+                  <ChevronDown className="size-3.25" />
+                </TerminalActionButton>
+                <div className="h-4 w-px bg-border/80" />
+              </>
+            )}
             <TerminalActionButton
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
               onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
@@ -1611,6 +1626,15 @@ export default function ThreadTerminalDrawer({
                   >
                     <Plus className="size-3.25" />
                   </TerminalActionButton>
+                  {onHideDrawer && (
+                    <TerminalActionButton
+                      className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                      onClick={onHideDrawer}
+                      label="Hide Terminal"
+                    >
+                      <ChevronDown className="size-3.25" />
+                    </TerminalActionButton>
+                  )}
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
