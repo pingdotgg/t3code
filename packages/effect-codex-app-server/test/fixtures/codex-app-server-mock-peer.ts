@@ -71,11 +71,13 @@ const handleMethod = (message: Record<string, unknown>) => {
       return;
     }
     case "account/read": {
+      // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone mock peer process has no Effect runtime.
+      const planType = process.env.CODEX_APP_SERVER_TEST_ACCOUNT_PLAN_TYPE ?? "plus";
       respond(message.id as number | string, {
         account: {
           type: "chatgpt",
           email: "mock@example.com",
-          planType: "plus",
+          planType,
         },
         requiresOpenaiAuth: false,
       });
