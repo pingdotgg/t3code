@@ -1275,6 +1275,57 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect(
+    "reuses persisted Claude resume cursor when startSession follows an idle adapter stop",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const resumeCursor = {
+          threadId: asThreadId("thread-claude-idle"),
+          resume: "550e8400-e29b-41d4-a716-446655440000",
+          resumeSessionAt: "assistant-99",
+          turnCount: 3,
+        };
+
+        const initial = yield* provider.startSession(asThreadId("thread-claude-idle"), {
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeAgentInstanceId,
+          threadId: asThreadId("thread-claude-idle"),
+          cwd: "/tmp/project-claude-idle",
+          resumeCursor,
+          runtimeMode: "full-access",
+        });
+
+        yield* routing.claude.stopSession(initial.threadId);
+        routing.claude.startSession.mockClear();
+        routing.claude.sendTurn.mockClear();
+
+        yield* provider.startSession(initial.threadId, {
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: claudeAgentInstanceId,
+          threadId: initial.threadId,
+          runtimeMode: "full-access",
+        });
+
+        assert.equal(routing.claude.startSession.mock.calls.length, 1);
+        const resumedStartInput = routing.claude.startSession.mock.calls[0]?.[0];
+        assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+        if (resumedStartInput && typeof resumedStartInput === "object") {
+          const startPayload = resumedStartInput as {
+            resumeCursor?: unknown;
+          };
+          assert.deepEqual(startPayload.resumeCursor, resumeCursor);
+        }
+
+        yield* provider.sendTurn({
+          threadId: initial.threadId,
+          input: "after idle",
+          attachments: [],
+        });
+        assert.equal(routing.claude.sendTurn.mock.calls.length, 1);
+      }),
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
