@@ -13,7 +13,6 @@ import {
   selectProjectGroupingSettings,
 } from "../../logicalProject";
 import type {
-  ContextMenuItem,
   ModelSelection,
   ProviderDriverKind,
   SidebarProjectGroupingMode,
@@ -26,14 +25,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
@@ -73,6 +65,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { ProjectScopeBreadcrumb } from "../ProjectScopeBreadcrumb";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
@@ -96,11 +89,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-} from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   SettingResetButton,
@@ -189,53 +177,23 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
 function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
-  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
-  const openProjectMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    const api = readLocalApi();
-    if (!api) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const items: ContextMenuItem<string>[] = groups.map((group) => ({
-      id: group.projectKey,
-      label: group.displayName,
-    }));
-    void settlePromise(() =>
-      api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
-    ).then((clicked) => {
-      if (clicked._tag === "Failure" || clicked.value === null) return;
-      void navigate({
-        to: "/projects/$projectKey",
-        params: { projectKey: clicked.value },
-        replace: true,
-        hashScrollIntoView: false,
-      });
-    });
-  };
-
   return (
-    <WorkspaceBreadcrumb ariaLabel="Project settings breadcrumb">
-      <WorkspaceBreadcrumbItem>Projects</WorkspaceBreadcrumbItem>
-      <WorkspaceBreadcrumbSeparator />
-      <WorkspaceBreadcrumbItem current>
-        {selected ? (
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-label="Switch project"
-            onClick={openProjectMenu}
-            className="group/project-title inline-flex min-w-0 max-w-64 cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <span className="min-w-0 truncate">{selected.displayName}</span>
-            <ChevronDownIcon
-              aria-hidden
-              className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/project-title:opacity-100 group-focus-visible/project-title:opacity-100"
-            />
-          </button>
-        ) : (
-          <span className="truncate text-muted-foreground">Unavailable project</span>
-        )}
-      </WorkspaceBreadcrumbItem>
-    </WorkspaceBreadcrumb>
+    <ProjectScopeBreadcrumb
+      ariaLabel="Project settings breadcrumb"
+      items={groups.map((group) => ({ id: group.projectKey, label: group.displayName }))}
+      onSelect={(selectedProjectKey) => {
+        if (selectedProjectKey === null) return;
+        void navigate({
+          to: "/projects/$projectKey",
+          params: { projectKey: selectedProjectKey },
+          replace: true,
+          hashScrollIntoView: false,
+        });
+      }}
+      rootLabel="Projects"
+      selectedKey={projectKey}
+      unavailableLabel="Unavailable project"
+    />
   );
 }
 
