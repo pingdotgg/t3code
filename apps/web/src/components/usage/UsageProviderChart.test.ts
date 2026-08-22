@@ -88,6 +88,13 @@ describe("buildDayColumns", () => {
     ]);
   });
 
+  it("omits providers that are not enabled", () => {
+    const [first] = buildDayColumns(days, byDay, "cost", ["codex"]);
+
+    expect(first?.bands).toEqual([{ provider: "codex", value: 10 }]);
+    expect(first?.total).toBe(10);
+  });
+
   it("reports the total as the sum of its bands", () => {
     for (const column of buildDayColumns(days, byDay, "cost")) {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);

@@ -14,6 +14,9 @@
 import * as NodeOS from "node:os";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
+  ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
   type UsageProviderKind,
   type UsageSource,
@@ -21,6 +24,7 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
+import { getEnabledProviderDriverInstances } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -37,6 +41,7 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -65,6 +70,8 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
  */
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
@@ -215,14 +222,42 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const dirs: Array<{ readonly provider: UsageProviderKind; readonly dir: string }> = [];
+    const seen = new Set<string>();
+    const addDir = (provider: UsageProviderKind, dir: string) => {
+      const key = `${provider}\0${dir}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      dirs.push({ provider, dir });
+    };
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-    ];
+    for (const instance of getEnabledProviderDriverInstances(
+      settings,
+      ProviderDriverKind.make("claudeAgent"),
+    )) {
+      const config = decodeClaudeSettings(instance.config ?? {});
+      if (Option.isNone(config)) continue;
+      const processEnv = mergeProviderInstanceEnvironment(instance.environment);
+      const claudeHome = yield* resolveClaudeHomePath({
+        homePath: config.value.homePath || processEnv.CLAUDE_CONFIG_DIR || "",
+      });
+      addDir("claude", yield* resolveClaudeTranscriptDir(claudeHome));
+    }
+
+    for (const instance of getEnabledProviderDriverInstances(
+      settings,
+      ProviderDriverKind.make("codex"),
+    )) {
+      const config = decodeCodexSettings(instance.config ?? {});
+      if (Option.isNone(config)) continue;
+      const processEnv = mergeProviderInstanceEnvironment(instance.environment);
+      const codexLayout = yield* resolveCodexHomeLayout({
+        ...config.value,
+        homePath: config.value.homePath || processEnv.CODEX_HOME || "",
+      });
+      addDir("codex", path.join(codexLayout.sharedHomePath, "sessions"));
+    }
+    return dirs;
   });
 
   /**
