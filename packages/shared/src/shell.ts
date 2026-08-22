@@ -563,6 +563,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
 ): Effect.fn.Return<string, CommandResolutionError, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = options.platform;
   const env = options.env ?? process.env;
@@ -610,7 +611,23 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   }
 
   for (const pathEntry of pathEntries) {
-    for (const candidate of commandCandidates) {
+    let candidates = commandCandidates;
+    if (platform === "win32") {
+      // Fall back to direct probes when a directory is searchable but not listable.
+      const entries = yield* fileSystem
+        .readDirectory(pathEntry)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (entries !== null) {
+        const names = new Map(entries.map((entry) => [entry.toUpperCase(), entry]));
+        candidates = commandCandidates.flatMap((candidate) => {
+          const exactMatch = entries.find((entry) => entry === candidate);
+          const match = exactMatch ?? names.get(candidate.toUpperCase());
+          return match === undefined ? [] : [match];
+        });
+      }
+    }
+
+    for (const candidate of candidates) {
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
         cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
