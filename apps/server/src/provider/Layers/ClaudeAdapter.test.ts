@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
+  HookEvent,
+  HookInput,
   Options as ClaudeQueryOptions,
   PermissionMode,
   PermissionResult,
@@ -208,6 +210,38 @@ function makeHarness(config?: {
     query,
     getLastCreateQueryInput: () => createInput,
   };
+}
+
+async function invokeSubagentEffortHook(
+  harness: ReturnType<typeof makeHarness>,
+  hookEvent: Extract<HookEvent, "SubagentStart" | "SubagentStop">,
+  agentId: string,
+  effort: string,
+): Promise<void> {
+  const hook = harness.getLastCreateQueryInput()?.options.hooks?.[hookEvent]?.[0]?.hooks[0];
+  assert.isDefined(hook);
+  if (!hook) {
+    return;
+  }
+  const base = {
+    session_id: "sdk-session",
+    transcript_path: "/tmp/session.jsonl",
+    cwd: "/tmp/claude-adapter-test",
+    permission_mode: "bypassPermissions",
+    agent_id: agentId,
+    agent_type: "custom-agent",
+    effort: { level: effort },
+  };
+  const input =
+    hookEvent === "SubagentStart"
+      ? { ...base, hook_event_name: hookEvent }
+      : {
+          ...base,
+          hook_event_name: hookEvent,
+          stop_hook_active: false,
+          agent_transcript_path: `/tmp/${agentId}.jsonl`,
+        };
+  await hook(input as HookInput, undefined, { signal: new AbortController().signal });
 }
 
 function makeDeterministicRandomService(seed = 0x1234_5678): {
@@ -1753,14 +1787,14 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("task.started carries model/effort; subagent snapshots refine the model", () => {
+  it.effect("does not infer a file-defined subagent's model or effort from its parent", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
       const taskEventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.type.startsWith("task.")),
-        Stream.take(2),
+        Stream.take(1),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1781,8 +1815,9 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      // No explicit model/effort on the launch input: the task inherits the
-      // session's selection.
+      // File-defined agents resolve model/effort from their own frontmatter.
+      // The Agent tool input carries neither value, so the adapter must keep
+      // them unknown instead of attributing the parent's selection.
       harness.query.emit({
         type: "system",
         subtype: "task_started",
@@ -1793,8 +1828,47 @@ describe("ClaudeAdapterLive", () => {
         uuid: "task-model-uuid",
         session_id: "sdk-session",
       } as unknown as SDKMessage);
-      // The subagent's assistant snapshot carries the authoritative API
-      // model id, which refines the linkage on later rows.
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const started = taskEvents[0];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.model, undefined);
+        assert.equal(started.payload.effort, undefined);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("uses a subagent snapshot that arrives before task.started", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
       harness.query.emit({
         type: "assistant",
         parent_tool_use_id: "toolu_agent_m",
@@ -1805,6 +1879,122 @@ describe("ClaudeAdapterLive", () => {
         uuid: "subagent-snapshot-uuid",
         session_id: "sdk-session",
       } as unknown as SDKMessage);
+      yield* Effect.promise(() =>
+        invokeSubagentEffortHook(harness, "SubagentStart", "task-model", "medium"),
+      );
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-model",
+        description: "Agent M",
+        task_type: "local_agent",
+        tool_use_id: "toolu_agent_m",
+        uuid: "task-model-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvent = yield* Fiber.join(taskEventFiber);
+      assert.equal(taskEvent._tag, "Some");
+      if (taskEvent._tag === "Some" && taskEvent.value.type === "task.started") {
+        assert.equal(taskEvent.value.payload.model, "claude-sonnet-5[1m]");
+        assert.equal(taskEvent.value.payload.effort, "medium");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("emits a correction when a subagent snapshot arrives after completion", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const terminalTaskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-model",
+        description: "Agent M",
+        task_type: "local_agent",
+        tool_use_id: "toolu_agent_m",
+        uuid: "task-model-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-model",
+        patch: { status: "completed" },
+        uuid: "task-model-updated-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-model",
+        tool_use_id: "toolu_agent_m",
+        status: "completed",
+        output_file: "/tmp/task-model.output",
+        summary: "done",
+        uuid: "task-model-completed-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const terminalTaskEvents = Array.from(yield* Fiber.join(terminalTaskEventsFiber));
+      const correctionEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_m",
+        message: {
+          model: "claude-sonnet-5[1m]",
+          content: [],
+        },
+        uuid: "subagent-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      yield* Effect.promise(() =>
+        invokeSubagentEffortHook(harness, "SubagentStop", "task-model", "medium"),
+      );
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_m",
+        message: {
+          model: "claude-sonnet-5[1m]",
+          content: [],
+        },
+        uuid: "subagent-snapshot-repeat-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // Keeps the pre-fix test deterministic: without a correction event this
+      // becomes the fifth task event instead of leaving the stream waiting.
       harness.query.emit({
         type: "system",
         subtype: "task_progress",
@@ -1815,18 +2005,160 @@ describe("ClaudeAdapterLive", () => {
         session_id: "sdk-session",
       } as unknown as SDKMessage);
 
-      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
-      const started = taskEvents[0];
+      const correctionEvents = Array.from(yield* Fiber.join(correctionEventsFiber));
+      const started = terminalTaskEvents[0];
       assert.equal(started?.type, "task.started");
       if (started?.type === "task.started") {
-        assert.equal(started.payload.model, "claude-opus-4-6");
-        assert.equal(started.payload.effort, "max");
+        assert.equal(started.payload.model, undefined);
+        assert.equal(started.payload.effort, undefined);
       }
-      const progress = taskEvents[1];
-      assert.equal(progress?.type, "task.progress");
-      if (progress?.type === "task.progress") {
-        assert.equal(progress.payload.model, "claude-sonnet-5[1m]");
-        assert.equal(progress.payload.effort, "max");
+      const completed = terminalTaskEvents[2];
+      assert.equal(completed?.type, "task.completed");
+      if (completed?.type === "task.completed") {
+        assert.equal(completed.payload.model, undefined);
+        assert.equal(completed.payload.effort, undefined);
+      }
+      const correction = correctionEvents[1];
+      assert.equal(correction?.type, "task.updated");
+      if (correction?.type === "task.updated") {
+        assert.equal(correction.payload.model, "claude-sonnet-5[1m]");
+        assert.equal(correction.payload.effort, "medium");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps explicit Agent tool model and effort overrides", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: "agent-tool-start-uuid",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_agent_override",
+            name: "Agent",
+            input: {
+              subagent_type: "custom-agent",
+              model: "claude-haiku-4-5",
+              effort: "low",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-override",
+        description: "Agent override",
+        task_type: "local_agent",
+        tool_use_id: "toolu_agent_override",
+        uuid: "task-override-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvent = yield* Fiber.join(taskEventFiber);
+      assert.equal(taskEvent._tag, "Some");
+      if (taskEvent._tag === "Some" && taskEvent.value.type === "task.started") {
+        assert.equal(taskEvent.value.payload.model, "claude-haiku-4-5");
+        assert.equal(taskEvent.value.payload.effort, "low");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("bounds unmatched pre-start subagent snapshots", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn agents",
+        attachments: [],
+      });
+
+      for (let index = 0; index <= 256; index += 1) {
+        harness.query.emit({
+          type: "assistant",
+          parent_tool_use_id: `toolu_unmatched_${index}`,
+          message: {
+            model: `claude-model-${index}`,
+            content: [],
+          },
+          uuid: `subagent-snapshot-${index}`,
+          session_id: "sdk-session",
+        } as unknown as SDKMessage);
+      }
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-evicted",
+        description: "Evicted agent",
+        task_type: "local_agent",
+        tool_use_id: "toolu_unmatched_0",
+        uuid: "task-evicted-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-retained",
+        description: "Retained agent",
+        task_type: "local_agent",
+        tool_use_id: "toolu_unmatched_256",
+        uuid: "task-retained-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      assert.equal(taskEvents[0]?.type, "task.started");
+      if (taskEvents[0]?.type === "task.started") {
+        assert.equal(taskEvents[0].payload.model, undefined);
+      }
+      assert.equal(taskEvents[1]?.type, "task.started");
+      if (taskEvents[1]?.type === "task.started") {
+        assert.equal(taskEvents[1].payload.model, "claude-model-256");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
