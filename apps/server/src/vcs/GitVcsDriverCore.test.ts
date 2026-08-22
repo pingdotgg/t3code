@@ -635,6 +635,109 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("retries GitLab merge-request refs after a GitHub pull-ref fetch fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetchSpecs = yield* Ref.make<string[]>([]);
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("fetch") && command.args.includes("--quiet")) {
+            const spec = command.args.at(-1) ?? "";
+            yield* Ref.update(fetchSpecs, (specs) => [...specs, spec]);
+            if (spec.includes("refs/pull/")) {
+              return makeNonRepositoryHandle();
+            }
+            return makeSuccessfulHandle("");
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const runGit = (workingDirectory: string, args: ReadonlyArray<string>) =>
+        driver.execute({
+          operation: "GitVcsDriver.test.fetchPullRequestBranchFallback",
+          cwd: workingDirectory,
+          args,
+          timeoutMs: 10_000,
+        });
+
+      yield* driver.initRepo({ cwd });
+      yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+      yield* runGit(cwd, ["config", "user.name", "Test"]);
+      yield* writeTextFile(cwd, "README.md", "# test\n");
+      yield* runGit(cwd, ["add", "."]);
+      yield* runGit(cwd, ["commit", "-m", "initial commit"]);
+      yield* runGit(remote, ["init", "--bare"]);
+      yield* runGit(cwd, ["remote", "add", "origin", remote]);
+
+      yield* driver.fetchPullRequestBranch({ cwd, prNumber: 42, branch: "pr-42" });
+      const specs = yield* Ref.get(fetchSpecs);
+      assert.isTrue(specs.some((spec) => spec.includes("refs/pull/42/head")));
+      assert.isTrue(specs.some((spec) => spec.includes("refs/merge-requests/42/head")));
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("aggregates both pull and merge-request fetch failures", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetchSpecs = yield* Ref.make<string[]>([]);
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("fetch") && command.args.includes("--quiet")) {
+            const spec = command.args.at(-1) ?? "";
+            yield* Ref.update(fetchSpecs, (specs) => [...specs, spec]);
+            return makeNonRepositoryHandle();
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const runGit = (workingDirectory: string, args: ReadonlyArray<string>) =>
+        driver.execute({
+          operation: "GitVcsDriver.test.fetchPullRequestBranchBothFail",
+          cwd: workingDirectory,
+          args,
+          timeoutMs: 10_000,
+        });
+
+      yield* driver.initRepo({ cwd });
+      yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+      yield* runGit(cwd, ["config", "user.name", "Test"]);
+      yield* writeTextFile(cwd, "README.md", "# test\n");
+      yield* runGit(cwd, ["add", "."]);
+      yield* runGit(cwd, ["commit", "-m", "initial commit"]);
+      yield* runGit(remote, ["init", "--bare"]);
+      yield* runGit(cwd, ["remote", "add", "origin", remote]);
+
+      const error = yield* driver
+        .fetchPullRequestBranch({ cwd, prNumber: 7, branch: "pr-7" })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, GitCommandError);
+      assert.instanceOf(error.cause, AggregateError);
+      const specs = yield* Ref.get(fetchSpecs);
+      assert.isTrue(specs.some((spec) => spec.includes("refs/pull/7/head")));
+      assert.isTrue(specs.some((spec) => spec.includes("refs/merge-requests/7/head")));
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>
