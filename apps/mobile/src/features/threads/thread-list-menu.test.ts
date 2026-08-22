@@ -49,12 +49,16 @@ describe("buildThreadListMenuActions", () => {
       deleteGroup?.subactions?.find((action) => action.id === "archive")?.attributes?.disabled,
     ).toBe(true);
 
+    // Compact rows carry Archive as their whole lifecycle slot.
     const compact = buildThreadListMenuActions({
       thread: { branch: null, id: ThreadId.make("thread-1"), titleRegeneration: null },
-      lifecycleActions: [{ id: "archive", title: "Archive thread" }],
+      lifecycleActions: [{ id: "archive", title: "Archive thread", image: "archivebox" }],
       titleRegenerationSupported: true,
+      isRunning: true,
       showArchiveAction: false,
     });
+    expect(compact.find((action) => action.id === "archive")?.attributes?.disabled).toBe(true);
+
     expect(compact.filter((action) => action.id === "archive")).toHaveLength(1);
   });
 
