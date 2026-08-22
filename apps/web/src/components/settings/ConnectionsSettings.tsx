@@ -1517,8 +1517,7 @@ function SavedBackendListRow({
                 className="w-full min-w-0 sm:w-48"
                 aria-label={`Connection method for ${environment.label}`}
                 disabled={
-                  switchingRouteEnvironmentId === environmentId ||
-                  removingEnvironmentId === environmentId
+                  switchingRouteEnvironmentId !== null || removingEnvironmentId === environmentId
                 }
               >
                 <SelectValue>{connectionRouteLabel(environment.entry)}</SelectValue>
