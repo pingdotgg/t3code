@@ -147,6 +147,10 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
 
+const WINDOWS_DRIVE_LINK_PROTOCOLS = Array.from(
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+);
+
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
   const firstLine = markdown.slice(
@@ -187,7 +191,10 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    // rehype-sanitize runs before react-markdown's urlTransform. A Windows
+    // drive letter looks like a protocol (`C:`), so allow drive letters here;
+    // urlTransform only preserves values with a drive-path shape afterward.
+    href: [...(defaultSchema.protocols?.href ?? []), "file", ...WINDOWS_DRIVE_LINK_PROTOCOLS],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 

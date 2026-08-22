@@ -126,9 +126,18 @@ function parseFileUrlHref(
 export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
   if (!href) return null;
   const normalizedHref = normalizeMarkdownLinkDestination(href);
+  // Markdown parsing can encode backslashes or duplicate the drive separator.
+  const windowsDriveHref = normalizedHref
+    .replaceAll(/%5c/gi, "/")
+    .replaceAll(/\\/g, "/")
+    .replace(/^\/?([A-Za-z]):\/+/, "/$1:/");
+  // A leading slash keeps the drive letter from being treated as a URL scheme.
+  if (/^\/[A-Za-z]:\//.test(windowsDriveHref)) return windowsDriveHref;
+
   const target = parseFileUrlHref(normalizedHref, { decodePath: false });
   if (!target) return null;
-  return `${target.path}${target.hash}`;
+  const path = WINDOWS_DRIVE_PATH_PATTERN.test(target.path) ? `/${target.path}` : target.path;
+  return `${path}${target.hash}`;
 }
 
 function looksLikePosixFilesystemPath(path: string): boolean {

@@ -83,17 +83,39 @@ describe("rewriteMarkdownFileUriHref", () => {
   });
 
   it("normalizes file uri hrefs for windows drive paths", () => {
+    const canonicalHref = "/D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69";
     expect(
       rewriteMarkdownFileUriHref(
         "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
+    ).toBe(canonicalHref);
+    expect(rewriteMarkdownFileUriHref(canonicalHref)).toBe(canonicalHref);
   });
 
   it("unwraps angle-bracketed file uri hrefs", () => {
     expect(
       rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
-    ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
+    ).toBe("/D:/Programme/t3code/apps/web/src/markdown-links.ts");
+  });
+
+  it("canonicalizes windows drive hrefs for the custom markdown file renderer", () => {
+    expect(rewriteMarkdownFileUriHref("C:/Users/mike/project/src/main.ts:42")).toBe(
+      "/C:/Users/mike/project/src/main.ts:42",
+    );
+    expect(rewriteMarkdownFileUriHref("C:\\Users\\mike\\project\\src\\main.ts:42")).toBe(
+      "/C:/Users/mike/project/src/main.ts:42",
+    );
+    expect(rewriteMarkdownFileUriHref("C:%5CUsers%5Cmike%5Cproject%5Csrc%5Cmain.ts:42")).toBe(
+      "/C:/Users/mike/project/src/main.ts:42",
+    );
+    expect(rewriteMarkdownFileUriHref("C://Users/mike/project/src/main.ts:42")).toBe(
+      "/C:/Users/mike/project/src/main.ts:42",
+    );
+  });
+
+  it("ignores non-file hrefs", () => {
+    expect(rewriteMarkdownFileUriHref("https://example.com/docs")).toBeNull();
+    expect(rewriteMarkdownFileUriHref("x:command")).toBeNull();
   });
 });
 
