@@ -484,6 +484,20 @@ export const Zed: Icon = (props) => {
   );
 };
 
+/** Official Kimi Code mark, shared by the TUI and desktop surfaces. */
+export const KimiCode: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    className={cn("text-[#6c5ce7] dark:text-[#a89cff]", className)}
+    fill="none"
+  >
+    <rect x="3" y="4.5" width="18" height="13" rx="2.2" stroke="currentColor" strokeWidth="1.6" />
+    <rect x="9.6" y="8" width="1.4" height="2.6" rx="0.45" fill="currentColor" />
+    <rect x="15.6" y="8" width="1.4" height="2.6" rx="0.45" fill="currentColor" />
+  </svg>
+);
+
 export const OpenAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}

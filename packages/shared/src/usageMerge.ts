@@ -61,6 +61,15 @@ export interface CostQuality {
   readonly cacheSavingsUsd: number;
 }
 
+export interface IncompleteUsageSource {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly provider: UsageProviderKind;
+  readonly sourcePath: string;
+  readonly status: "partial" | "failed";
+  readonly message: string | null;
+}
+
 export interface MergedUsage {
   readonly costUsd: number;
   readonly uncachedInputTokens: number;
@@ -78,6 +87,8 @@ export interface MergedUsage {
   readonly costQuality: CostQuality;
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
+  /** Provider stores that could not be read completely. */
+  readonly incompleteSources: readonly IncompleteUsageSource[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly staleEnvironments: readonly EnvironmentId[];
 }
@@ -103,10 +114,10 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
- * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * the same provider home and would otherwise double count every token. A complete
+ * source wins over a partial duplicate; ties are sorted by
+ * environment id so the owner does not change between renders. Fully failed
+ * and missing sources cannot own a fingerprint.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -115,18 +126,25 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
   const duplicates: string[] = [];
 
-  const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
+  const candidates = environments
+    .flatMap((environment) =>
+      environment.summary.sources.flatMap((source) =>
+        source.status === "missing" || source.status === "failed" ? [] : [{ environment, source }],
+      ),
+    )
+    .sort((a, b) => {
+      const statusOrder =
+        Number(a.source.status === "partial") - Number(b.source.status === "partial");
+      return statusOrder || a.environment.environmentId.localeCompare(b.environment.environmentId);
+    });
 
-  for (const environment of ordered) {
-    for (const source of environment.summary.sources) {
-      if (source.status === "missing") continue;
-      const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
-        continue;
-      }
-      ownerByFingerprint.set(key, environment.environmentId);
+  for (const { environment, source } of candidates) {
+    const key = fingerprintKey(source.fingerprint);
+    if (ownerByFingerprint.has(key)) {
+      duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      continue;
     }
+    ownerByFingerprint.set(key, environment.environmentId);
   }
 
   return { ownerByFingerprint, duplicates };
@@ -143,7 +161,7 @@ function ownedContribution(
   const ownedProviders = new Set<UsageProviderKind>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
   for (const source of environment.summary.sources) {
-    if (source.status === "missing") continue;
+    if (source.status === "missing" || source.status === "failed") continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;
@@ -193,6 +211,7 @@ const EMPTY_MERGED: MergedUsage = {
     cacheSavingsUsd: 0,
   },
   duplicateSources: [],
+  incompleteSources: [],
   contributingEnvironments: [],
   staleEnvironments: [],
 };
@@ -221,6 +240,22 @@ export function mergeUsage(
   }
 
   const { ownerByFingerprint, duplicates } = claimSources(current);
+  const incompleteSources: IncompleteUsageSource[] = [];
+  for (const environment of current) {
+    for (const source of environment.summary.sources) {
+      if (source.status !== "partial" && source.status !== "failed") continue;
+      const owner = ownerByFingerprint.get(fingerprintKey(source.fingerprint));
+      if (owner !== undefined && owner !== environment.environmentId) continue;
+      incompleteSources.push({
+        environmentId: environment.environmentId,
+        environmentLabel: environment.label,
+        provider: source.fingerprint.provider,
+        sourcePath: source.fingerprint.resolvedHomePath,
+        status: source.status,
+        message: source.message,
+      });
+    }
+  }
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -411,6 +446,7 @@ export function mergeUsage(
       cacheSavingsUsd,
     },
     duplicateSources: duplicates,
+    incompleteSources,
     contributingEnvironments,
     staleEnvironments,
   };
