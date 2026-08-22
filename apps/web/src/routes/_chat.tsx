@@ -11,11 +11,14 @@ import {
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useProjects, useThreadShell } from "../state/entities";
+import { useProjects, readProject, useThreadShell } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
-import { threadChangeRequestSnapshotsAtom } from "../components/ThreadStatusIndicators";
+import {
+  resolveDisplayedThreadPr,
+  threadChangeRequestSnapshotsAtom,
+} from "../components/ThreadStatusIndicators";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -27,6 +30,8 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useEnvironmentQuery } from "../state/query";
+import { vcsEnvironment } from "../state/vcs";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -69,6 +74,25 @@ function ChatRouteGlobalShortcuts() {
   const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
+  // PR resolution mirrors ChatView's banner exactly: live VCS status first,
+  // snapshot second. The snapshot alone (Sidebar-written) is missing on the
+  // legacy sidebar or before a row mounts, which would misclassify settle.
+  const gitStatusCwd =
+    activeThreadShell?.worktreePath ??
+    (routeThreadRef && activeThreadShell
+      ? (readProject({
+          environmentId: routeThreadRef.environmentId,
+          projectId: activeThreadShell.projectId,
+        })?.workspaceRoot ?? null)
+      : null);
+  const gitStatusQuery = useEnvironmentQuery(
+    routeThreadRef === null || gitStatusCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId: routeThreadRef.environmentId,
+          input: { cwd: gitStatusCwd },
+        }),
+  );
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
@@ -176,12 +200,18 @@ function ChatRouteGlobalShortcuts() {
             .threadSettlement === true;
         if (!supportsSettlement) return;
         const threadKey = scopedThreadKey(routeThreadRef);
-        const snapshot = changeRequestSnapshotByKey.get(threadKey);
+        // Same PR resolution as ChatView's banner: resolveDisplayedThreadPr
+        // over live git status + the snapshot map.
+        const activeThreadPr = resolveDisplayedThreadPr({
+          threadBranch: activeThreadShell.branch,
+          gitStatus: gitStatusQuery.data ?? null,
+          snapshot: changeRequestSnapshotByKey.get(threadKey),
+          retainTerminalOnBranchMismatch: activeThreadShell.worktreePath === null,
+        });
         const changeRequest =
-          snapshot != null &&
-          (activeThreadShell.worktreePath === null || snapshot.branch === activeThreadShell.branch)
-            ? snapshot.pr
-            : null;
+          activeThreadPr === null
+            ? null
+            : { state: activeThreadPr.state, updatedAt: activeThreadPr.updatedAt };
         // Classify like ChatView's parked-thread banner and the header menu:
         // effectiveSettled alone, minute-quantized so it cannot disagree
         // with those surfaces within the same minute.
@@ -223,6 +253,7 @@ function ChatRouteGlobalShortcuts() {
     changeRequestSnapshotByKey,
     clearSelection,
     handleNewThread,
+    gitStatusQuery,
     keybindings,
     defaultProjectRef,
     previewOpen,
