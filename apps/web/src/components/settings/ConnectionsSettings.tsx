@@ -6,7 +6,7 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
+import { type ReactNode, memo, useCallback, useEffect, useId, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -42,8 +42,12 @@ import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestam
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
   applyWslEnableSelection,
+  excludeHiddenAccessRows,
   isQrShareableEndpoint,
+  reconcileHiddenAccessIds,
   selectQrEndpointOption,
+  withHiddenAccessId,
+  withHiddenAccessIds,
 } from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
@@ -1812,6 +1816,14 @@ export function ConnectionsSettings() {
   const [desktopAccessManagementMutationError, setDesktopAccessManagementMutationError] = useState<
     string | null
   >(null);
+  // Optimistic hides so revoked rows leave the list immediately, even if the
+  // auth-access stream lags or drops the clientRemoved event.
+  const [hiddenDesktopPairingLinkIds, setHiddenDesktopPairingLinkIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const [hiddenDesktopClientSessionIds, setHiddenDesktopClientSessionIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const [revokingDesktopPairingLinkId, setRevokingDesktopPairingLinkId] = useState<string | null>(
     null,
   );
@@ -1927,24 +1939,45 @@ export function ConnectionsSettings() {
     desktopAccessManagementMutationError ?? authAccessChanges.error;
   const isLoadingDesktopAccessManagement =
     authAccessChanges.isPending && authAccessChanges.data === null;
+  useEffect(() => {
+    const event = authAccessChanges.data;
+    if (event?.type !== "snapshot") return;
+    const livePairingLinkIds = new Set(event.payload.pairingLinks.map((link) => link.id));
+    const liveClientSessionIds = new Set(
+      event.payload.clientSessions.map((session) => session.sessionId),
+    );
+    setHiddenDesktopPairingLinkIds((current) =>
+      reconcileHiddenAccessIds(current, livePairingLinkIds),
+    );
+    setHiddenDesktopClientSessionIds((current) =>
+      reconcileHiddenAccessIds(current, liveClientSessionIds),
+    );
+  }, [authAccessChanges.data]);
+
   const desktopPairingLinks = useMemo(() => {
     const event = authAccessChanges.data;
     if (event?.type !== "snapshot") return [];
-    return sortDesktopPairingLinks(
+    const links = sortDesktopPairingLinks(
       event.payload.pairingLinks.map((pairingLink: AuthPairingLink) =>
         toDesktopPairingLinkRecord(pairingLink),
       ),
     );
-  }, [authAccessChanges.data]);
+    return excludeHiddenAccessRows(links, hiddenDesktopPairingLinkIds, (link) => link.id);
+  }, [authAccessChanges.data, hiddenDesktopPairingLinkIds]);
   const desktopClientSessions = useMemo(() => {
     const event = authAccessChanges.data;
     if (event?.type !== "snapshot") return [];
-    return sortDesktopClientSessions(
+    const sessions = sortDesktopClientSessions(
       event.payload.clientSessions.map((clientSession: AuthClientSession) =>
         toDesktopClientSessionRecord(clientSession),
       ),
     );
-  }, [authAccessChanges.data]);
+    return excludeHiddenAccessRows(
+      sessions,
+      hiddenDesktopClientSessionIds,
+      (session) => session.sessionId,
+    );
+  }, [authAccessChanges.data, hiddenDesktopClientSessionIds]);
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
@@ -2078,6 +2111,7 @@ export function ConnectionsSettings() {
     setDesktopAccessManagementMutationError(null);
     try {
       await revokeServerPairingLink(id);
+      setHiddenDesktopPairingLinkIds((current) => withHiddenAccessId(current, id));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
       setDesktopAccessManagementMutationError(message);
@@ -2099,6 +2133,7 @@ export function ConnectionsSettings() {
       setDesktopAccessManagementMutationError(null);
       try {
         await revokeServerClientSession(sessionId);
+        setHiddenDesktopClientSessionIds((current) => withHiddenAccessId(current, sessionId));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to revoke client access.";
         setDesktopAccessManagementMutationError(message);
@@ -2119,8 +2154,14 @@ export function ConnectionsSettings() {
   const handleRevokeOtherDesktopClients = useCallback(async () => {
     setIsRevokingOtherDesktopClients(true);
     setDesktopAccessManagementMutationError(null);
+    const otherSessionIds = desktopClientSessions
+      .filter((session) => !session.current)
+      .map((session) => session.sessionId);
     try {
       const revokedCount = await revokeOtherServerClientSessions();
+      if (revokedCount > 0) {
+        setHiddenDesktopClientSessionIds((current) => withHiddenAccessIds(current, otherSessionIds));
+      }
       toastManager.add({
         type: "success",
         title: revokedCount === 1 ? "Revoked 1 other client" : `Revoked ${revokedCount} clients`,
@@ -2139,7 +2180,7 @@ export function ConnectionsSettings() {
     } finally {
       setIsRevokingOtherDesktopClients(false);
     }
-  }, []);
+  }, [desktopClientSessions]);
 
   const handleAddSavedBackend = useCallback(async () => {
     if (savedBackendMode === "ssh") {
