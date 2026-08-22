@@ -30,20 +30,82 @@ type SkillFrontmatter =
   | { readonly kind: "malformed" }
   | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
 
+// A YAML flow/block construct starting here means the author was attempting
+// real YAML nesting that broke, not a plain scalar that merely contains a
+// colon — the lenient recovery below must not paper over that.
+const YAML_STRUCTURAL_VALUE_PATTERN = /^[[{|>&*!]/;
+
+/**
+ * Recovers `name`/`description` as flat "key: value" scalars when strict YAML
+ * parsing rejects the frontmatter. Claude Code's own frontmatter parser is
+ * more lenient than a real YAML parser — it accepts an unquoted scalar
+ * description containing a "word: " sequence (e.g. "... via kane-cli: run
+ * ..."), which strict YAML rejects as an ambiguous nested mapping. A skill
+ * that demonstrably loads in Claude Code must not be invisible in T3 purely
+ * over that mismatch. This only recovers the two scalar fields we read, and
+ * only when no top-level line's value looks like broken YAML syntax (an
+ * unterminated flow collection, block scalar, anchor, alias, or tag) — any
+ * such line, in this or another field, means the document has a real syntax
+ * error Claude Code wouldn't load either, so the whole file counts as
+ * malformed rather than surfacing a partial, plausible-looking recovery.
+ */
+function parseSkillFrontmatterLeniently(yamlSource: string): SkillFrontmatter {
+  const fields: Partial<Record<"name" | "description", string>> = {};
+  for (const rawLine of yamlSource.split(/\r?\n/)) {
+    if (/^\s/.test(rawLine) || rawLine.trim().length === 0) {
+      // Indented (nested/continuation) or blank lines aren't a top-level
+      // scalar this recovery can safely reinterpret.
+      continue;
+    }
+    const separatorIndex = rawLine.indexOf(":");
+    if (separatorIndex === -1) {
+      continue;
+    }
+    const key = rawLine.slice(0, separatorIndex).trim();
+    const rawValue = rawLine.slice(separatorIndex + 1).trim();
+    if (YAML_STRUCTURAL_VALUE_PATTERN.test(rawValue)) {
+      return { kind: "malformed" };
+    }
+    if (key !== "name" && key !== "description") {
+      continue;
+    }
+    // Parse the value in isolation with the real YAML parser rather than
+    // just trimming it: a plain scalar with a trailing "# comment" or one
+    // quoted with escapes needs real YAML scalar rules to come out right.
+    // The one case this is *for* — an unquoted value with its own embedded
+    // ": " — parses as a one-entry mapping in isolation too, not a string,
+    // so it correctly falls through to the untouched raw text below.
+    let value = rawValue;
+    try {
+      const parsedValue: unknown = parseYamlDocument(rawValue);
+      if (typeof parsedValue === "string") {
+        value = parsedValue;
+      }
+    } catch {
+      // Not parseable in isolation either; keep the raw text.
+    }
+    if (value.length > 0) {
+      fields[key] = value;
+    }
+  }
+  return Object.keys(fields).length > 0 ? { kind: "parsed", ...fields } : { kind: "malformed" };
+}
+
 function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) {
     return { kind: "missing" };
   }
+  const yamlSource = match[1] ?? "";
 
   let parsed: unknown;
   try {
-    parsed = parseYamlDocument(match[1] ?? "");
+    parsed = parseYamlDocument(yamlSource);
   } catch {
-    return { kind: "malformed" };
+    return parseSkillFrontmatterLeniently(yamlSource);
   }
   if (typeof parsed !== "object" || parsed === null) {
-    return { kind: "malformed" };
+    return parseSkillFrontmatterLeniently(yamlSource);
   }
 
   const record = parsed as Record<string, unknown>;
