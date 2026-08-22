@@ -36,10 +36,14 @@ the rest of your environment stay as they are.
 
 ## Where Claude Skills Are Loaded
 
-T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then
-`<workspace>/.agents/skills`, then `<workspace>/.claude/skills`.
+T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then in every
+installed plugin, then `<workspace>/.agents/skills`, then `<workspace>/.claude/skills`.
 
 If the same skill name exists in more than one folder, the later folder wins.
+
+Plugin skills carry the plugin's name, so a `tdd` skill from the `mattpocock-skills` plugin appears
+as `mattpocock-skills:tdd` — the same name Claude Code itself uses. A plugin you have switched off,
+or one installed for a different project, stays out of the list.
 
 ## I Want Work And Personal Claude Accounts
 

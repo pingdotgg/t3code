@@ -301,4 +301,182 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(skills, []);
     }),
   );
+
+  it.effect("names installed plugin skills `<plugin>:<skill>` across all three layouts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const pluginsDir = path.join(configDir, "plugins");
+
+      // Layout 1: a cached install, addressed by `installPath`.
+      const cached = path.join(pluginsDir, "cache", "shop", "cached", "1.0.0");
+      yield* writeSkill(path.join(cached, "skills"), "build", "---\nname: build\n---\n");
+
+      // Layout 2: a plugin inside a marketplace checkout. The stale
+      // `installPath` left behind still exists and still has a `skills`
+      // directory — it just holds no skill, so the search must go on.
+      const shop = path.join(pluginsDir, "marketplaces", "shop");
+      yield* writeSkill(path.join(shop, "plugins", "nested", "skills"), "ship", "---\n---\n");
+      yield* fs.makeDirectory(path.join(tempDir, "stale", "skills", "leftover"), {
+        recursive: true,
+      });
+
+      // Layout 3: a marketplace whose root *is* the plugin.
+      const flat = path.join(pluginsDir, "marketplaces", "flat");
+      yield* writeSkill(path.join(flat, "skills"), "audit", "---\nname: audit\n---\n");
+
+      // Written as literal JSON rather than built with JSON.stringify, which
+      // the repo's `preferSchemaOverJson` rule rejects. `stale` and `gone` are
+      // the installPath a directory-sourced marketplace leaves behind — one
+      // still on disk, one deleted — and `empty@nowhere` is installed but
+      // ships no skills from a marketplace nothing knows about.
+      const json = (value: string) => value.replaceAll("'", '"');
+      yield* fs.writeFileString(
+        path.join(pluginsDir, "installed_plugins.json"),
+        json(`{'plugins':{
+          'cached@shop':[{'installPath':'${cached}'}],
+          'nested@shop':[{'installPath':'${path.join(tempDir, "stale")}'}],
+          'flat@flat':[{'installPath':'${path.join(tempDir, "gone")}'}],
+          'empty@nowhere':[{}]
+        }}`),
+      );
+      yield* fs.writeFileString(
+        path.join(pluginsDir, "known_marketplaces.json"),
+        json(`{'shop':{'installLocation':'${shop}'},'flat':{'installLocation':'${flat}'}}`),
+      );
+
+      // A marketplace plugin nobody installed must stay out of the picker.
+      yield* writeSkill(path.join(shop, "plugins", "unwanted", "skills"), "nope", "---\n---\n");
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined, {});
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["cached:build", "flat:audit", "nested:ship"],
+      );
+    }),
+  );
+
+  it.effect("discovers the skills a plugin manifest declares outside `skills/<name>`", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const pluginsDir = path.join(configDir, "plugins");
+      const json = (value: string) => value.replaceAll("'", '"');
+
+      // A plugin that buckets its skills a level deeper than the conventional
+      // scan reaches, and lists them in its manifest — the shape
+      // `mattpocock-skills` ships.
+      const bucketed = path.join(pluginsDir, "cache", "shop", "bucketed", "1.0.0");
+      yield* writeSkill(
+        path.join(bucketed, "skills", "engineering"),
+        "tdd",
+        "---\nname: tdd\n---\n",
+      );
+      yield* writeSkill(path.join(bucketed, "skills", "in-progress"), "draft", "---\n---\n");
+      yield* fs.makeDirectory(path.join(bucketed, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(bucketed, ".claude-plugin", "plugin.json"),
+        json("{'skills':['./skills/engineering/tdd']}"),
+      );
+
+      // An older plugin keeps its manifest at the plugin root, and its skills
+      // sit where the conventional scan already finds them.
+      const rootManifest = path.join(pluginsDir, "cache", "shop", "rooted", "1.0.0");
+      yield* writeSkill(path.join(rootManifest, "skills"), "wt", "---\nname: wt\n---\n");
+      yield* fs.writeFileString(
+        path.join(rootManifest, "plugin.json"),
+        json("{'skills':['./skills/wt']}"),
+      );
+
+      // A manifest may name a folder of skills instead of one skill, and may
+      // carry a bare string instead of an array.
+      const folder = path.join(pluginsDir, "cache", "shop", "folder", "1.0.0");
+      yield* writeSkill(path.join(folder, "extra"), "audit", "---\nname: audit\n---\n");
+      yield* fs.makeDirectory(path.join(folder, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(folder, ".claude-plugin", "plugin.json"),
+        json("{'skills':'./extra'}"),
+      );
+
+      yield* fs.writeFileString(
+        path.join(pluginsDir, "installed_plugins.json"),
+        json(`{'plugins':{
+          'bucketed@shop':[{'installPath':'${bucketed}'}],
+          'rooted@shop':[{'installPath':'${rootManifest}'}],
+          'folder@shop':[{'installPath':'${folder}'}]
+        }}`),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined, {});
+
+      // The declared skill reaches the picker; the undeclared one a level down
+      // does not, matching what the CLI loads. A manifest that repeats a
+      // conventional skill yields it once.
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["bucketed:tdd", "folder:audit", "rooted:wt"],
+      );
+    }),
+  );
+
+  it.effect("skips plugins switched off in settings and installs owned by another workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const pluginsDir = path.join(configDir, "plugins");
+      const workspace = path.join(tempDir, "workspace");
+      const json = (value: string) => value.replaceAll("'", '"');
+
+      const install = Effect.fn(function* (name: string) {
+        const root = path.join(pluginsDir, "cache", "shop", name, "1.0.0");
+        yield* writeSkill(path.join(root, "skills"), name, `---\nname: ${name}\n---\n`);
+        return root;
+      });
+      const on = yield* install("on");
+      const off = yield* install("off");
+      const mine = yield* install("mine");
+      const theirs = yield* install("theirs");
+      const everywhere = yield* install("everywhere");
+      const here = yield* install("here");
+
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        json("{'enabledPlugins':{'on@shop':true,'off@shop':false}}"),
+      );
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.local.json"),
+        json("{'enabledPlugins':{'mine@shop':true}}"),
+      );
+      yield* fs.writeFileString(
+        path.join(pluginsDir, "installed_plugins.json"),
+        json(`{'plugins':{
+          'on@shop':[{'installPath':'${on}'}],
+          'off@shop':[{'installPath':'${off}'}],
+          'mine@shop':[{'scope':'local','projectPath':'${workspace}','installPath':'${mine}'}],
+          'theirs@shop':[{'scope':'local','projectPath':'${path.join(tempDir, "elsewhere")}','installPath':'${theirs}'}],
+          'both@shop':[
+            {'scope':'user','installPath':'${everywhere}'},
+            {'scope':'local','projectPath':'${workspace}','installPath':'${here}'}
+          ]
+        }}`),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace, {});
+
+      // `both@shop` is installed twice and the user entry is listed first, so
+      // only picking the more specific project entry yields `here`.
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["both:here", "mine:mine", "on:on"],
+      );
+    }),
+  );
 });
