@@ -32,6 +32,11 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import {
+  observeNetworkPath,
+  seedNetworkPathBaseline,
+  UNKNOWN_NETWORK_PATH,
+} from "./network-path-change";
 import { connectionStorageLayer } from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -88,11 +93,13 @@ const connectivityLayer = Connectivity.layer({
 
 const wakeupsLayer = Wakeups.layer({
   changes: Stream.merge(
-    Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
+    Stream.callback<
+      "application-active-probe" | "application-active-reconnect" | "network-path-changed"
+    >((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
           let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
-          return AppState.addEventListener("change", (state) => {
+          const appStateSubscription = AppState.addEventListener("change", (state) => {
             if (state === "background") {
               backgroundedAtMs = Date.now();
               return;
@@ -102,6 +109,36 @@ const wakeupsLayer = Wakeups.layer({
               backgroundedAtMs = null;
             }
           });
+          // WiFi <-> cellular keeps isConnected true while invalidating the
+          // socket's path, so the coarse online/offline signal never fires.
+          // Emit an advisory wakeup on interface-type changes while active;
+          // the supervisor probes the session rather than blindly replacing
+          // it, which keeps flapping paths cheap. Seed the current type so
+          // the first flip after startup is detected; the listener only
+          // reports changes.
+          let networkPath = UNKNOWN_NETWORK_PATH;
+          void Network.getNetworkStateAsync()
+            .then((current) => {
+              networkPath = seedNetworkPathBaseline(networkPath, current.type ?? null);
+            })
+            .catch(() => undefined);
+          const networkSubscription = Network.addNetworkStateListener((state) => {
+            const observation = observeNetworkPath(networkPath, state.type ?? null);
+            networkPath = observation.baseline;
+            if (
+              observation.shouldProbe &&
+              state.isConnected === true &&
+              AppState.currentState === "active"
+            ) {
+              Queue.offerUnsafe(queue, "network-path-changed");
+            }
+          });
+          return {
+            remove: () => {
+              appStateSubscription.remove();
+              networkSubscription.remove();
+            },
+          };
         }),
         (subscription) => Effect.sync(() => subscription.remove()),
       ).pipe(Effect.asVoid),

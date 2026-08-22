@@ -252,14 +252,13 @@ describe("environment shell synchronization", () => {
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
       const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
       const loaderCalls = yield* Ref.make(0);
-      const capturedAfterSequences = yield* Ref.make<ReadonlyArray<number | undefined>>([]);
+      const subscriptionReceipts = yield* Queue.unbounded<number | undefined>();
       const client = {
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: { readonly afterSequence?: number }) =>
           Stream.unwrap(
-            Ref.update(capturedAfterSequences, (captured) => [
-              ...captured,
-              input.afterSequence,
-            ]).pipe(Effect.as(Stream.fromQueue(events))),
+            Queue.offer(subscriptionReceipts, input.afterSequence).pipe(
+              Effect.as(Stream.fromQueue(events)),
+            ),
           ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
@@ -306,11 +305,7 @@ describe("environment shell synchronization", () => {
       );
 
       // A new session starts from an authoritative HTTP snapshot.
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(capturedAfterSequences)).length >= 1) break;
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10]);
+      expect(yield* Queue.take(subscriptionReceipts)).toBe(10);
       yield* Queue.offer(events, { kind: "synchronized" });
       yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter((value) => value.status === "live"),
@@ -330,35 +325,27 @@ describe("environment shell synchronization", () => {
       );
 
       yield* Queue.offer(wakeups, "application-active");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(capturedAfterSequences)).length >= 2) break;
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40]);
+      expect(yield* Queue.take(subscriptionReceipts)).toBe(40);
       yield* Queue.offer(events, { kind: "synchronized" });
 
       yield* Queue.offer(wakeups, "application-active-probe");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(capturedAfterSequences)).length >= 3) break;
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40]);
-
-      yield* Queue.offer(wakeups, "application-active-reconnect");
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        yield* Effect.yieldNow;
-      }
-      expect((yield* Ref.get(capturedAfterSequences)).length).toBe(3);
+      expect(yield* Queue.take(subscriptionReceipts)).toBe(40);
       expect(yield* Ref.get(loaderCalls)).toBe(1);
 
       // Replacing the session performs another authoritative refresh.
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(capturedAfterSequences)).length >= 4) break;
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
+      expect(yield* Queue.take(subscriptionReceipts)).toBe(20);
       expect(yield* Ref.get(loaderCalls)).toBe(2);
     }),
   );
+
+  it("only resubscribes for foreground wakeups that keep the current session", () => {
+    expect(ConnectionWakeups.shouldResubscribeAfterWakeup("application-active")).toBe(true);
+    expect(ConnectionWakeups.shouldResubscribeAfterWakeup("application-active-probe")).toBe(true);
+    expect(ConnectionWakeups.shouldResubscribeAfterWakeup("application-active-reconnect")).toBe(
+      false,
+    );
+    expect(ConnectionWakeups.shouldResubscribeAfterWakeup("network-path-changed")).toBe(false);
+    expect(ConnectionWakeups.shouldResubscribeAfterWakeup("credentials-changed")).toBe(false);
+  });
 });
