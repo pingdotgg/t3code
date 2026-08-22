@@ -49,6 +49,7 @@ import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJso
 import {
   applyServerSettingsPatch,
   isModelSelectionProviderEnabled,
+  SUPERCOMPRESS_API_KEY_CONFIGURED_SENTINEL,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 
@@ -158,7 +159,18 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  // Never ship the SuperCompress API key to browsers / remote clients.
+  // Clients treat a non-empty redacted sentinel as "key already configured"
+  // and only overwrite when the user pastes a new `sc_…` value.
+  const apiKey = settings.supercompress.apiKey.trim();
+  return {
+    ...settings,
+    providerInstances,
+    supercompress: {
+      ...settings.supercompress,
+      apiKey: apiKey.length > 0 ? SUPERCOMPRESS_API_KEY_CONFIGURED_SENTINEL : "",
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<

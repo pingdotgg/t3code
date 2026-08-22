@@ -122,18 +122,36 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
+/** Redacted placeholder returned to clients when a SuperCompress key is stored. */
+export const SUPERCOMPRESS_API_KEY_CONFIGURED_SENTINEL = "sc_configured";
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
+  // Clients round-trip a redacted sentinel for configured keys. Never persist it.
+  const supercompressPatch =
+    patch.supercompress === undefined
+      ? undefined
+      : patch.supercompress.apiKey === SUPERCOMPRESS_API_KEY_CONFIGURED_SENTINEL
+        ? (() => {
+            const { apiKey: _omit, ...rest } = patch.supercompress;
+            return Object.keys(rest).length > 0 ? rest : undefined;
+          })()
+        : patch.supercompress;
   const {
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
-    ...patchForMerge
+    supercompress: _ignoredSupercompress,
+    ...restPatch
   } = patch;
+  const patchForMerge = {
+    ...restPatch,
+    ...(supercompressPatch !== undefined ? { supercompress: supercompressPatch } : {}),
+  };
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
   const backgroundActivityPatch =
     backgroundActivityProfile !== undefined

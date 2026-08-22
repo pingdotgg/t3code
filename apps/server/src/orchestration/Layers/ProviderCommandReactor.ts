@@ -44,6 +44,7 @@ import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
 } from "../../serverSettings.ts";
+import { compressTurnMessage } from "../../supercompress/compressTurnMessage.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
@@ -1150,9 +1151,52 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    // Opt-in SuperCompress: shrink bulky pasted context before the provider
+    // turn. The thread message stays as the user wrote it; only the outbound
+    // provider payload is rewritten. Fail-open on any skip/error.
+    let outboundMessageText = message.text;
+    const serverSettings = yield* serverSettingsService.getSettings.pipe(
+      Effect.catchAll(() => Effect.succeed(null)),
+    );
+    const supercompress = serverSettings?.supercompress;
+    if (supercompress?.enabled && supercompress.apiKey.trim().length > 0) {
+      const codingAgent =
+        thread.session?.providerInstanceId ?? event.payload.modelSelection?.instanceId ?? "T3 Code";
+      const compressed = yield* Effect.tryPromise(() =>
+        compressTurnMessage({
+          text: message.text,
+          apiKey: supercompress.apiKey,
+          minChars: supercompress.minChars,
+          codingAgent: String(codingAgent),
+        }),
+      ).pipe(
+        Effect.catchAll((error) =>
+          Effect.succeed({
+            text: message.text,
+            compressed: false as const,
+            skipped: error instanceof Error ? error.message : "error",
+          }),
+        ),
+      );
+      if (compressed.compressed) {
+        outboundMessageText = compressed.text;
+        yield* Effect.logInfo("supercompress compressed outbound turn context", {
+          threadId: event.payload.threadId,
+          originalTokens: compressed.originalTokens,
+          compressedTokens: compressed.compressedTokens,
+          savingsPct: compressed.savingsPct,
+        });
+      } else if (compressed.skipped && compressed.skipped !== "no_context") {
+        yield* Effect.logDebug("supercompress skipped outbound turn context", {
+          threadId: event.payload.threadId,
+          reason: compressed.skipped,
+        });
+      }
+    }
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: outboundMessageText,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

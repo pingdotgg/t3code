@@ -350,3 +350,34 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
 });
+
+describe("ServerSettings SuperCompress", () => {
+  it("defaults to disabled with an 800-character threshold", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.supercompress).toEqual({
+      enabled: false,
+      apiKey: "",
+      minChars: 800,
+    });
+  });
+
+  it("accepts an opt-in connection patch", () => {
+    const patch = decodeServerSettingsPatch({
+      supercompress: {
+        enabled: true,
+        apiKey: "sc_live_test",
+        minChars: 1200,
+      },
+    });
+    expect(patch.supercompress).toEqual({
+      enabled: true,
+      apiKey: "sc_live_test",
+      minChars: 1200,
+    });
+  });
+
+  it("rejects an out-of-range minimum size", () => {
+    expect(() => decodeServerSettings({ supercompress: { minChars: 50 } })).toThrow();
+    expect(() => decodeServerSettingsPatch({ supercompress: { minChars: 50_000 } })).toThrow();
+  });
+});

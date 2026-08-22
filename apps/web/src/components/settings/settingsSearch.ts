@@ -193,6 +193,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/keybindings",
   },
   {
+    id: "supercompress",
+    title: "SuperCompress",
+    to: "/settings/general",
+  },
+  {
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
