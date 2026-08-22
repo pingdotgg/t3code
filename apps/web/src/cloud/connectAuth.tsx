@@ -20,6 +20,7 @@ import { resolveClerkSignInProps } from "../components/clerk/authRedirect";
 import { PrimaryEnvironmentHttpClient } from "../environments/primary/httpClient";
 import { runPrimaryHttp } from "../lib/runtime";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
+import { shouldRetryDesktopConnectAuthState } from "./connectAuthState";
 
 /**
  * One T3 Connect session surface across auth backends. The hosted web app
@@ -191,11 +192,12 @@ export function DesktopConnectAuthProvider({ children }: { readonly children: Re
   // The bundled server may still be starting when the app mounts; retry until
   // the first state read lands.
   const isLoaded = state !== null;
+  const shouldRetryAuthState = shouldRetryDesktopConnectAuthState(state);
   useEffect(() => {
-    if (isLoaded) return;
+    if (!shouldRetryAuthState) return;
     const interval = setInterval(() => void refresh(), 3_000);
     return () => clearInterval(interval);
-  }, [isLoaded, refresh]);
+  }, [refresh, shouldRetryAuthState]);
 
   // The credential is shared with `t3 connect`, so a CLI sign-in or logout
   // can change it while the app is open; re-read when the window regains
