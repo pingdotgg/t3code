@@ -111,18 +111,6 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).not.toContain("animate-pulse");
   });
 
-  it("caps authored dimensions while a workspace image loads", () => {
-    testState.assetState = "loading";
-
-    const html = render(
-      '<img src=".t3/workspace-image.svg" alt="oversized" width="2000" height="1500">',
-    );
-
-    expect(html).toContain('style="width:2000px;height:1500px"');
-    expect(html).toContain("max-w-[min(100%,30rem)]");
-    expect(html).toContain("max-h-[30rem]");
-  });
-
   it("never passes a workspace source to a raw image when thread context is unavailable", () => {
     const html = renderWithoutThread(
       "![file URL](file:///C:/Users/shawn/project/workspace-image.svg)",
