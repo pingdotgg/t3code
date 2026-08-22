@@ -395,6 +395,50 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("reads a complete transcript record at the exact chunk boundary", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const record = claudeSessionLine(workspace).split("\n")[0]!;
+        const prefix = '{"padding":"';
+        const suffix = `",${record.slice(1)}`;
+        const contents = `${prefix}${"x".repeat(32 * 1024 - prefix.length - suffix.length)}${suffix}`;
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-exact", "session.jsonl"),
+          contents,
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(contents).toHaveLength(32 * 1024);
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+      }),
+    );
+
+    it.effect("finds session metadata after a first record larger than one chunk", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const history = `{"type":"file-history-snapshot","data":"${"x".repeat(32 * 1024)}"}\n`;
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-large", "session.jsonl"),
+          contents: `${history}${claudeSessionLine(workspace)}`,
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+      }),
+    );
+
     it.effect("skips malformed transcripts without failing the scan", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

@@ -43,6 +43,7 @@ import * as ServerSettings from "../serverSettings.ts";
  * cheap even when a transcript is hundreds of megabytes.
  */
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
+const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 
 /**
  * Upper bound on transcripts inspected (first line read) per source.
@@ -82,8 +83,6 @@ interface RawCandidate {
   readonly threadCount: number;
   readonly lastActiveAtMs: number | null;
 }
-
-const decoder = new TextDecoder();
 
 /**
  * T3 Code runs its own agent sessions inside disposable worktrees. Their
@@ -168,41 +167,41 @@ export const make = Effect.gen(function* () {
   const statOption = (target: string) =>
     fileSystem.stat(target).pipe(Effect.map(Option.some), Effect.orElseSucceed(Option.none));
 
-  /**
-   * Read the head of a transcript and return its complete lines. Returns an
-   * empty list when the file is unreadable; a trailing partial line (cut by
-   * the prefix cap) is dropped rather than parsed as truncated JSON.
-   */
-  const readHeadLines = Effect.fn("AgentSessionScanner.readHeadLines")(function* (
-    filePath: string,
-  ): Effect.fn.Return<ReadonlyArray<string>> {
-    const prefix = yield* Effect.scoped(
-      fileSystem
-        .open(filePath, { flag: "r" })
-        .pipe(Effect.flatMap((file) => file.readAlloc(TRANSCRIPT_PREFIX_BYTES))),
-    ).pipe(Effect.orElseSucceed(Option.none<Uint8Array>));
-    if (Option.isNone(prefix)) return [];
-
-    const text = decoder.decode(prefix.value);
-    const lines = text.split("\n");
-    // A prefix-capped read may end mid-line; only a file smaller than the cap
-    // is guaranteed to have a complete final line.
-    if (prefix.value.length >= TRANSCRIPT_PREFIX_BYTES) {
-      lines.pop();
-    }
-    return lines;
-  });
-
-  // Transcripts often open with records that carry no cwd (Claude writes
-  // file-history snapshots and queue operations first), so scan every
-  // complete line in the prefix for the first one that names a directory.
+  // A large history snapshot can precede session metadata. Read bounded
+  // chunks until a complete record names its cwd or the safety budget ends.
   const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (filePath: string) {
-    const lines = yield* readHeadLines(filePath);
-    for (const line of lines) {
-      const cwd = extractCwd(line.trim());
-      if (cwd !== null) return cwd;
-    }
-    return null;
+    return yield* Effect.scoped(
+      fileSystem.open(filePath, { flag: "r" }).pipe(
+        Effect.flatMap((file) =>
+          Effect.gen(function* () {
+            const decoder = new TextDecoder();
+            let remaining = "";
+            let bytesRead = 0;
+
+            while (bytesRead < MAX_TRANSCRIPT_SCAN_BYTES) {
+              const next = yield* file.readAlloc(
+                Math.min(TRANSCRIPT_PREFIX_BYTES, MAX_TRANSCRIPT_SCAN_BYTES - bytesRead),
+              );
+              if (Option.isNone(next)) {
+                return extractCwd(remaining.trim());
+              }
+
+              bytesRead += next.value.byteLength;
+              remaining += decoder.decode(next.value, { stream: true });
+              const lines = remaining.split("\n");
+              remaining = lines.pop() ?? "";
+
+              for (const line of lines) {
+                const cwd = extractCwd(line.trim());
+                if (cwd !== null) return cwd;
+              }
+            }
+
+            return null;
+          }),
+        ),
+      ),
+    ).pipe(Effect.orElseSucceed(() => null));
   });
 
   const latestMtimeMs = Effect.fn("AgentSessionScanner.latestMtimeMs")(function* (

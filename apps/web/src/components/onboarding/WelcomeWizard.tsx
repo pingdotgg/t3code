@@ -94,7 +94,7 @@ function useOnboardingTargetEnvironment(mode: ConnectionMode) {
   if (primaryEnvironment !== null && primaryEnvironment.connection.phase === "connected") {
     return primaryEnvironment;
   }
-  return connectedRemotes[0] ?? null;
+  return mode === "local" ? null : (connectedRemotes[0] ?? null);
 }
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
