@@ -2,7 +2,12 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  getOrphanedWorktreePathsForThreads,
+  scopedWorktreePathKey,
+} from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -85,6 +90,69 @@ describe("getOrphanedWorktreePathForThread", () => {
   });
 });
 
+describe("getOrphanedWorktreePathsForThreads", () => {
+  it("returns nothing when no thread in the batch has a worktree", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-1"), worktreePath: null }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: null }),
+    ];
+    const result = getOrphanedWorktreePathsForThreads(
+      threads,
+      new Set([ThreadId.make("thread-1"), ThreadId.make("thread-2")]),
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("collects one path per deleted thread that owns its worktree alone", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-1"), worktreePath: "/tmp/repo/worktrees/a" }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: "/tmp/repo/worktrees/b" }),
+      makeThread({ id: ThreadId.make("thread-3"), worktreePath: "/tmp/repo/worktrees/c" }),
+    ];
+    const result = getOrphanedWorktreePathsForThreads(
+      threads,
+      new Set([ThreadId.make("thread-1"), ThreadId.make("thread-2")]),
+    );
+    expect(result).toEqual(["/tmp/repo/worktrees/a", "/tmp/repo/worktrees/b"]);
+  });
+
+  it("skips a worktree a surviving thread still points at", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-1"), worktreePath: "/tmp/repo/worktrees/shared" }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: "/tmp/repo/worktrees/shared" }),
+    ];
+    const result = getOrphanedWorktreePathsForThreads(
+      threads,
+      new Set([ThreadId.make("thread-1")]),
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("counts a shared worktree once when the whole batch releases it", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-1"), worktreePath: "/tmp/repo/worktrees/shared" }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: "/tmp/repo/worktrees/shared" }),
+    ];
+    const result = getOrphanedWorktreePathsForThreads(
+      threads,
+      new Set([ThreadId.make("thread-1"), ThreadId.make("thread-2")]),
+    );
+    expect(result).toEqual(["/tmp/repo/worktrees/shared"]);
+  });
+
+  it("ignores blank worktree paths", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-1"), worktreePath: "   " }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: "/tmp/repo/worktrees/a" }),
+    ];
+    const result = getOrphanedWorktreePathsForThreads(
+      threads,
+      new Set([ThreadId.make("thread-1"), ThreadId.make("thread-2")]),
+    );
+    expect(result).toEqual(["/tmp/repo/worktrees/a"]);
+  });
+});
+
 describe("formatWorktreePathForDisplay", () => {
   it("shows only the last path segment for unix-like paths", () => {
     const result = formatWorktreePathForDisplay(
@@ -108,5 +176,19 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("scopedWorktreePathKey", () => {
+  it("keeps the same path in different environments apart", () => {
+    const local = scopedWorktreePathKey("local", "/tmp/repo/worktrees/a");
+    const remote = scopedWorktreePathKey("remote", "/tmp/repo/worktrees/a");
+    expect(local).not.toBe(remote);
+  });
+
+  it("is stable for the same environment and path", () => {
+    expect(scopedWorktreePathKey("local", "/tmp/repo/worktrees/a")).toBe(
+      scopedWorktreePathKey("local", "/tmp/repo/worktrees/a"),
+    );
   });
 });

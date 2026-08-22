@@ -1731,6 +1731,7 @@ export default function Sidebar() {
     reorderPinnedThread,
     archiveThread,
     deleteThread,
+    collectOrphanedWorktreePathsForThreads,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -2984,16 +2985,51 @@ export default function Sidebar() {
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
       }
+      const deleteTargets = threadKeys.flatMap((threadKey) => {
+        const thread = threadByKeyRef.current.get(threadKey);
+        return thread
+          ? [{ threadKey, threadRef: scopeThreadRef(thread.environmentId, thread.id) }]
+          : [];
+      });
+      // Asked once for the whole batch. Left to itself each deleteThread call
+      // opens its own worktree confirmation, so a ten-row selection meant ten
+      // prompts with a round trip of deletion work between them.
+      const orphanedWorktreePathKeys = collectOrphanedWorktreePathsForThreads(
+        deleteTargets.map(({ threadRef }) => threadRef),
+      );
+      // The answer travels with the exact paths it was given for, so a worktree
+      // that only becomes orphaned mid-batch still gets its own prompt.
+      let worktreeBatch: { decision: "delete" | "keep"; pathKeys: ReadonlySet<string> } = {
+        decision: "keep",
+        pathKeys: orphanedWorktreePathKeys,
+      };
+      if (orphanedWorktreePathKeys.size > 0) {
+        const confirmedWorktrees = await settlePromise(() =>
+          api.dialogs.confirm(
+            [
+              "Delete the worktrees too?",
+              orphanedWorktreePathKeys.size === 1
+                ? "There is 1 worktree linked only to the threads you're deleting."
+                : `There are ${orphanedWorktreePathKeys.size} worktrees linked only to the threads you're deleting.`,
+            ].join("\n"),
+            { variant: "destructive" },
+          ),
+        );
+        if (confirmedWorktrees._tag === "Failure") return;
+        worktreeBatch = {
+          decision: confirmedWorktrees.value ? "delete" : "keep",
+          pathKeys: orphanedWorktreePathKeys,
+        };
+      }
       // Grown as deletions actually land, never seeded with the whole batch:
       // orphaned-worktree detection must only discount threads that are
       // really gone, or the first delete would treat still-alive batch mates
       // as deleted and remove a worktree they still point at.
       const deletedThreadKeys = new Set<string>();
-      for (const threadKey of threadKeys) {
-        const thread = threadByKeyRef.current.get(threadKey);
-        if (!thread) continue;
-        const result = await deleteThread(scopeThreadRef(thread.environmentId, thread.id), {
+      for (const { threadKey, threadRef } of deleteTargets) {
+        const result = await deleteThread(threadRef, {
           deletedThreadKeys,
+          worktreeBatch,
         });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
@@ -3017,6 +3053,7 @@ export default function Sidebar() {
       attemptSnooze,
       clearSelection,
       confirmThreadDelete,
+      collectOrphanedWorktreePathsForThreads,
       deleteThread,
       markThreadUnread,
       performSnooze,
