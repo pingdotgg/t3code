@@ -7,12 +7,12 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
-  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
+  resolveReasoningTransition,
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
@@ -45,8 +45,6 @@ type TraitsPersistence =
       threadRef?: undefined;
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
     };
-
-const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
 function DefaultBadge() {
   return (
@@ -87,6 +85,35 @@ function getDescriptorStringValue(
   }
   const value = getProviderOptionCurrentValue(descriptor);
   return typeof value === "string" ? value : null;
+}
+
+export function resolveTraitsSelectChange(input: {
+  caps: ReturnType<typeof getProviderModelCapabilities>;
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>;
+  value: string;
+  prompt: string;
+  modelOptions: ProviderOptions | null | undefined;
+}): { prompt: string; modelOptions: ProviderOptions | undefined } | null {
+  const transition = resolveReasoningTransition({
+    capabilities: input.caps,
+    modelOptions: input.modelOptions,
+    prompt: input.prompt,
+    action: { type: "select", descriptorId: input.descriptor.id, value: input.value },
+  });
+  if (transition.status === "changed") {
+    return { prompt: transition.prompt, modelOptions: transition.modelOptions };
+  }
+  if (transition.status !== "not-applicable") {
+    return null;
+  }
+
+  return {
+    prompt: input.prompt,
+    modelOptions: buildProviderOptionSelectionsFromDescriptors(
+      replaceDescriptorCurrentValue(input.descriptors, input.descriptor.id, input.value),
+    ),
+  };
 }
 
 function getSelectedTraits(
@@ -255,6 +282,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     [instanceId, model, persistence, provider, setProviderModelOptions],
   );
   const {
+    caps,
     descriptors,
     selectDescriptors,
     booleanDescriptors,
@@ -280,20 +308,21 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     value: string,
   ) => {
     if (!value) return;
-    if (descriptor.promptInjectedValues?.includes(value)) {
-      const nextPrompt =
-        prompt.trim().length === 0
-          ? ULTRATHINK_PROMPT_PREFIX
-          : applyClaudePromptEffortPrefix(prompt, "ultrathink");
-      onPromptChange(nextPrompt);
-      return;
+    const change = resolveTraitsSelectChange({
+      caps,
+      descriptors,
+      descriptor,
+      value,
+      prompt,
+      modelOptions,
+    });
+    if (!change) return;
+    if (change.prompt !== prompt) {
+      onPromptChange(change.prompt);
     }
-    if (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id) return;
-    if (ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id) {
-      const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
-      onPromptChange(stripped);
+    if (change.modelOptions !== (modelOptions ?? undefined)) {
+      updateModelOptions(change.modelOptions);
     }
-    updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
   };
 
   if (!hasAnyControls) {

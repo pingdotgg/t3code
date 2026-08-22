@@ -314,10 +314,18 @@ export function normalizeShortcutKeyToken(key: string): string | null {
 }
 
 export function keybindingFromKeyboardEvent(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
   platform: string,
 ): string | null {
-  const keyToken = normalizeShortcutKeyToken(event.key);
+  const portableOptionKey =
+    isMacPlatform(platform) && event.altKey
+      ? event.code === "Comma"
+        ? ","
+        : event.code === "Period"
+          ? "."
+          : event.key
+      : event.key;
+  const keyToken = normalizeShortcutKeyToken(portableOptionKey);
   if (!keyToken) return null;
 
   const parts: string[] = [];

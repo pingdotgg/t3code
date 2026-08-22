@@ -52,16 +52,45 @@ describe("KeybindingsSettings.logic", () => {
   it("captures platform-specific mod shortcuts", () => {
     expect(
       keybindingFromKeyboardEvent(
-        { key: "K", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
+        { key: "K", code: "KeyK", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
         "MacIntel",
       ),
     ).toBe("mod+shift+k");
     expect(
       keybindingFromKeyboardEvent(
-        { key: "K", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
+        { key: "K", code: "KeyK", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
         "Win32",
       ),
     ).toBe("mod+shift+k");
+  });
+
+  it("records macOS Option punctuation using portable key names", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "≤",
+          code: "Comma",
+          metaKey: false,
+          ctrlKey: false,
+          altKey: true,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe("alt+,");
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "≥",
+          code: "Period",
+          metaKey: false,
+          ctrlKey: false,
+          altKey: true,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe("alt+.");
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {

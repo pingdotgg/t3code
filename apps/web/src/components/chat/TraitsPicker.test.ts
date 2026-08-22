@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { buildTraitsTriggerDisplay } from "./TraitsPicker";
+import { buildTraitsTriggerDisplay, resolveTraitsSelectChange } from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
@@ -128,5 +128,56 @@ describe("buildTraitsTriggerDisplay", () => {
         ultrathinkPromptControlled: true,
       }),
     ).toEqual({ label: "Ultrathink", showFastModeIcon: true });
+  });
+});
+
+describe("resolveTraitsSelectChange", () => {
+  it("routes reasoning selections through the shared preserving transition", () => {
+    const modelOptions = [
+      { id: "future", value: "keep" },
+      { id: "reasoningEffort", value: "high" },
+      { id: "contextWindow", value: "1m" },
+    ] as const;
+
+    expect(
+      resolveTraitsSelectChange({
+        caps: { optionDescriptors: [EFFORT, CONTEXT_WINDOW] },
+        descriptors: [EFFORT, CONTEXT_WINDOW],
+        descriptor: EFFORT,
+        value: "max",
+        prompt: "unchanged prompt",
+        modelOptions,
+      }),
+    ).toEqual({
+      prompt: "unchanged prompt",
+      modelOptions: [
+        { id: "future", value: "keep" },
+        { id: "reasoningEffort", value: "max" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    });
+    expect(modelOptions[1]?.value).toBe("high");
+  });
+
+  it("retains the generic descriptor path for non-reasoning traits", () => {
+    expect(
+      resolveTraitsSelectChange({
+        caps: { optionDescriptors: [EFFORT, CONTEXT_WINDOW] },
+        descriptors: [EFFORT, CONTEXT_WINDOW],
+        descriptor: CONTEXT_WINDOW,
+        value: "200k",
+        prompt: "unchanged prompt",
+        modelOptions: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "contextWindow", value: "1m" },
+        ],
+      }),
+    ).toEqual({
+      prompt: "unchanged prompt",
+      modelOptions: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "contextWindow", value: "200k" },
+      ],
+    });
   });
 });

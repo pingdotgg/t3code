@@ -21,7 +21,11 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  normalizeModelSlug,
+  resolveReasoningTransition,
+} from "@t3tools/shared/model";
 import {
   memo,
   type ReactNode,
@@ -76,7 +80,7 @@ import {
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
-import { resolveShortcutCommand } from "../../keybindings";
+import { reasoningCycleDirectionFromCommand, resolveShortcutCommand } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -236,7 +240,10 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
+import {
+  getProviderInteractionModeToggle,
+  getProviderModelCapabilities,
+} from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -722,6 +729,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
@@ -2431,9 +2439,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           modelPickerOpen: isComposerModelPickerOpen,
         },
       });
-      if (command !== "composer.stash") return;
-      // Always claim the shortcut so the browser save dialog never opens,
-      // even when the composer is in a state that can't stash.
+      const reasoningDirection = reasoningCycleDirectionFromCommand(command);
+      if (command !== "composer.stash" && reasoningDirection === null) return;
+      // Always claim recognized composer shortcuts, including in states where
+      // the requested mutation is unavailable.
       event.preventDefault();
       event.stopPropagation();
       if (isCommandPaletteOpen()) {
@@ -2446,17 +2455,66 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (isComposerApprovalState || projectSelectionRequired || activePendingProgress !== null) {
         return;
       }
+      if (reasoningDirection !== null) {
+        const currentModelOptions = composerModelOptions?.[selectedInstanceId];
+        const transition = resolveReasoningTransition({
+          capabilities: getProviderModelCapabilities(
+            selectedProviderModels,
+            selectedModel,
+            selectedProvider,
+          ),
+          modelOptions: currentModelOptions,
+          prompt: promptRef.current,
+          action: { type: "cycle", direction: reasoningDirection },
+        });
+        if (transition.status === "changed") {
+          if (transition.prompt !== promptRef.current) {
+            setPromptFromTraits(transition.prompt);
+          }
+          if (transition.modelOptions !== currentModelOptions) {
+            setProviderModelOptions(
+              composerDraftTarget,
+              selectedProvider,
+              transition.modelOptions,
+              {
+                instanceId: selectedInstanceId,
+                model: selectedModel,
+                persistSticky: true,
+              },
+            );
+          }
+        } else if (transition.status === "blocked") {
+          toastManager.add({
+            type: "info",
+            title: "Remove “ultrathink” from the prompt text to change reasoning.",
+          });
+        } else if (transition.status === "unsupported") {
+          toastManager.add({
+            type: "info",
+            title: "This model does not advertise reasoning levels.",
+          });
+        }
+        return;
+      }
       void stashCurrentPrompt();
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    composerDraftTarget,
+    composerModelOptions,
     isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,
     pendingUserInputs.length,
     projectSelectionRequired,
+    selectedInstanceId,
+    selectedModel,
+    selectedProvider,
+    selectedProviderModels,
+    setPromptFromTraits,
+    setProviderModelOptions,
     stashCurrentPrompt,
     terminalOpen,
   ]);
