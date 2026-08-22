@@ -32,6 +32,25 @@ function byTrueFirst<T>(predicate: (item: T) => boolean): Order.Order<T> {
   return Order.mapInput(Order.flip(Order.Boolean), predicate);
 }
 
+function hydrateModelOrderFromProviderOrder(
+  providerOrder: ReadonlyArray<string>,
+  modelOrder: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const providerSlugs = new Set(providerOrder);
+  const hydratedOrder = modelOrder.filter((slug) => providerSlugs.has(slug));
+  const orderedSlugs = new Set(hydratedOrder);
+  const firstOrderedProviderIndex = providerOrder.findIndex((slug) => orderedSlugs.has(slug));
+
+  if (firstOrderedProviderIndex <= 0) {
+    return hydratedOrder;
+  }
+
+  return [
+    ...providerOrder.slice(0, firstOrderedProviderIndex).filter((slug) => !orderedSlugs.has(slug)),
+    ...hydratedOrder,
+  ];
+}
+
 export function sortModelsForProviderInstance<T extends ModelSlugItem>(
   models: ReadonlyArray<T>,
   options?: {
@@ -42,8 +61,13 @@ export function sortModelsForProviderInstance<T extends ModelSlugItem>(
 ): T[] {
   const modelOrder = options?.modelOrder ?? [];
   const favoriteModels = toSet(options?.favoriteModels);
-  const orderBySlug = rankByValue(modelOrder);
   const originalOrder = rankByValue(Arr.map(models, (model) => model.slug));
+  const orderBySlug = rankByValue(
+    hydrateModelOrderFromProviderOrder(
+      Arr.map(models, (model) => model.slug),
+      modelOrder,
+    ),
+  );
   const orders: Array<Order.Order<T>> = [
     ...(options?.groupFavorites === true
       ? [byTrueFirst<T>((model) => favoriteModels.has(model.slug))]
