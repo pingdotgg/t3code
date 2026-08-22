@@ -2714,6 +2714,48 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("runtime exploded");
   });
 
+  it("settles an active turn when an error session exit arrives without runtime.error", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-session-exit-error");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-session-exit-error-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running" && entry.session.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exit-error"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        reason: "Provider process exited unexpectedly (137).",
+        exitKind: "error",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session.activeTurnId === null &&
+        entry.session.lastError === "Provider process exited unexpectedly (137).",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.session?.lastError).toBe("Provider process exited unexpectedly (137).");
+  });
+
   it("records runtime.error activities from the typed payload message", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
