@@ -1131,7 +1131,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                   render={
                     <p
                       data-assistant-actual-model
-                      className="max-w-[22rem] truncate text-muted-foreground"
+                      className="min-w-0 max-w-[22rem] truncate text-muted-foreground"
                     />
                   }
                 >
