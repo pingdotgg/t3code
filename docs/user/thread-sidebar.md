@@ -1,5 +1,10 @@
 # Organizing threads
 
+Use the sort button beside the project filter on web and desktop to order active threads by when
+they were created or by your last message. Sorting by **Last user message** moves a thread to the
+top after you send a new message. **Created at** remains the default. Pinned, snoozed, and settled
+threads keep their own ordering.
+
 Pin a thread from its context menu to keep it in the pinned section above your active work.
 Pinned threads are shown independently of their project, including when you connect to more than
 one environment.

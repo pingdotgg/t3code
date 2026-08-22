@@ -75,6 +75,14 @@ describe("ClientSettings sidebar", () => {
     expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
     expect(settings.sidebarAutoSettleOnMerge).toBe(true);
+    expect(settings.sidebarActiveThreadSortOrder).toBe("created_at");
+  });
+
+  it("accepts an active thread sort preference", () => {
+    expect(
+      decodeClientSettingsPatch({ sidebarActiveThreadSortOrder: "updated_at" })
+        .sidebarActiveThreadSortOrder,
+    ).toBe("updated_at");
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
