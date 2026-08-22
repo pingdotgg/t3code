@@ -3,7 +3,9 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { beforeEach } from "vite-plus/test";
 
@@ -256,7 +258,18 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ],
       };
 
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-inventory-test-" });
+
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings(),
+        path.join(tempDir, "workspace"),
+        {
+          HOME: path.join(tempDir, "empty-home"),
+          OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-config"),
+        },
+      );
 
       NodeAssert.deepEqual(
         snapshot.skills.map((skill) => ({
@@ -306,6 +319,32 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       );
     }),
   );
+
+  it.effect("includes discovered skills from workspace in provider snapshot", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-provider-test-" });
+      const workspace = path.join(tempDir, "workspace");
+      const skillDir = path.join(workspace, ".opencode", "skills", "test-skill");
+
+      yield* fs.makeDirectory(skillDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(skillDir, "SKILL.md"),
+        ["---", "name: test-skill", "description: Test skill description.", "---"].join("\n"),
+      );
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), workspace, {
+        HOME: path.join(tempDir, "empty-home"),
+        OPENCODE_CONFIG_DIR: path.join(tempDir, "empty-config"),
+      });
+
+      NodeAssert.equal(snapshot.skills.length, 1);
+      NodeAssert.equal(snapshot.skills[0]?.name, "test-skill");
+      NodeAssert.equal(snapshot.skills[0]?.description, "Test skill description.");
+      NodeAssert.equal(snapshot.skills[0]?.scope, "project");
+    }),
+  );
 });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (it) => {
@@ -348,6 +387,34 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         snapshot.message,
         "Couldn't reach the configured OpenCode server at http://127.0.0.1:9999. Check that the server is running and the URL is correct.",
       );
+    }),
+  );
+
+  it.effect("does not publish locally discovered skills for configured servers", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-provider-test-" });
+      const workspace = path.join(tempDir, "workspace");
+      const skillDir = path.join(workspace, ".opencode", "skills", "local-only-skill");
+
+      yield* fs.makeDirectory(skillDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(skillDir, "SKILL.md"),
+        ["---", "name: local-only-skill", "---"].join("\n"),
+      );
+      runtimeMock.state.inventory = {
+        providerList: { connected: ["openai"], all: [], default: {} },
+        agents: [],
+        skills: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
+        workspace,
+      );
+
+      NodeAssert.deepEqual(snapshot.skills, []);
     }),
   );
 });

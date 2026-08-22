@@ -1,0 +1,197 @@
+/**
+ * OpenCodeSkills — filesystem discovery of OpenCode skills for the `$` picker.
+ *
+ * OpenCode loads skills from user directories (~/.claude/skills, ~/.agents/skills,
+ * ~/.config/opencode/skills, ~/.opencode/skills, or $OPENCODE_CONFIG_DIR/skills),
+ * then project directories from git ancestors down to <cwd> (.claude/skills,
+ * .agents/skills, and .opencode/skills), one directory per skill with a `SKILL.md`
+ * carrying YAML frontmatter. Later roots win on name collisions, so project skills
+ * override user skills, deeper child workspaces override ancestor directories, and
+ * `.opencode` wins over `.agents` and `.claude`.
+ *
+ * OpenCode's own disable flags are honored so discovery matches what OpenCode
+ * actually loads: OPENCODE_DISABLE_EXTERNAL_SKILLS skips .claude/skills and
+ * .agents/skills roots, and OPENCODE_DISABLE_CLAUDE_CODE /
+ * OPENCODE_DISABLE_CLAUDE_CODE_SKILLS skip .claude/skills roots. Native
+ * OpenCode roots (.opencode, config dirs) always load. Flags enable only for
+ * "1" and "true", matching OpenCode's strict parsing.
+ *
+ * @module provider/Drivers/OpenCodeSkills
+ */
+import * as NodeOS from "node:os";
+
+import type { ServerProviderSkill } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { parse as parseYamlDocument } from "yaml";
+
+type SkillScope = "user" | "project";
+
+const FRONTMATTER_PATTERN = /^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/;
+
+type SkillFrontmatter =
+  | { readonly kind: "missing" }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
+
+// Matches OpenCode's strict flag parsing: only "1" and "true" enable a flag.
+function isDisableFlagSet(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
+}
+
+function parseSkillFrontmatter(contents: string): SkillFrontmatter {
+  const match = FRONTMATTER_PATTERN.exec(contents);
+  if (!match) {
+    // An opening `---` without a closing delimiter is invalid frontmatter, not a
+    // file without frontmatter, so skip it instead of trusting its directory name.
+    return /^---\r?\n/.test(contents) ? { kind: "malformed" } : { kind: "missing" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = parseYamlDocument(match[1] ?? "");
+  } catch {
+    return { kind: "malformed" };
+  }
+  // Empty frontmatter parses to null; treat it like a file without frontmatter.
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "missing" };
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  const description = typeof record.description === "string" ? record.description.trim() : "";
+  return {
+    kind: "parsed",
+    ...(name ? { name } : {}),
+    ...(description ? { description } : {}),
+  };
+}
+
+/**
+ * Enumerate OpenCode skills from user config dirs, workspace `.claude/skills`,
+ * workspace `.agents/skills`, and workspace `.opencode/skills`, in that order.
+ * Discovery is best-effort: unreadable roots and malformed skill entries are skipped.
+ * On name collisions, later roots win: project beats user, `.agents` beats `.claude`,
+ * and `.opencode` beats `.agents`.
+ *
+ * Matches OpenCode's own gating: `OPENCODE_DISABLE_EXTERNAL_SKILLS` skips
+ * `.claude/skills` and `.agents/skills` roots, `OPENCODE_DISABLE_CLAUDE_CODE` /
+ * `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` skip `.claude/skills` roots, and native
+ * OpenCode roots always load.
+ */
+export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(function* (
+  cwd?: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const env = environment ?? process.env;
+
+  const externalSkillsDisabled = isDisableFlagSet(env.OPENCODE_DISABLE_EXTERNAL_SKILLS);
+  // Matches upstream: the external flag drops both .claude and .agents roots,
+  // while OPENCODE_DISABLE_CLAUDE_CODE / _SKILLS drop only .claude roots.
+  // Native OpenCode roots (.opencode, config dirs) always load.
+  const agentsSkillsDisabled = externalSkillsDisabled;
+  const claudeSkillsDisabled =
+    externalSkillsDisabled ||
+    isDisableFlagSet(env.OPENCODE_DISABLE_CLAUDE_CODE) ||
+    isDisableFlagSet(env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS);
+
+  const homeDir = env.HOME?.trim() || env.USERPROFILE?.trim() || NodeOS.homedir();
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
+  const defaultConfigDir = xdgConfigHome
+    ? path.join(xdgConfigHome, "opencode")
+    : path.join(homeDir, ".config", "opencode");
+  const customConfigDir = env.OPENCODE_CONFIG_DIR?.trim();
+  const resolvedCustomConfigDir = customConfigDir
+    ? cwd
+      ? path.resolve(cwd, customConfigDir)
+      : path.resolve(customConfigDir)
+    : undefined;
+
+  const userRoots: ReadonlyArray<string> = [
+    ...(claudeSkillsDisabled ? [] : [path.join(homeDir, ".claude", "skills")]),
+    ...(agentsSkillsDisabled ? [] : [path.join(homeDir, ".agents", "skills")]),
+    path.join(defaultConfigDir, "skills"),
+    path.join(homeDir, ".opencode", "skills"),
+    ...(resolvedCustomConfigDir ? [path.join(resolvedCustomConfigDir, "skills")] : []),
+  ];
+
+  const projectDirs: ReadonlyArray<string> = cwd
+    ? yield* Effect.gen(function* () {
+        const dirs: Array<string> = [];
+        let current = path.resolve(cwd);
+        let foundGit = false;
+        while (true) {
+          dirs.push(current);
+          const gitPath = path.join(current, ".git");
+          const hasGit = yield* fileSystem.exists(gitPath).pipe(Effect.orElseSucceed(() => false));
+          if (hasGit) {
+            foundGit = true;
+            break;
+          }
+          const parent = path.dirname(current);
+          if (parent === current) {
+            break;
+          }
+          current = parent;
+        }
+        return foundGit ? dirs.toReversed() : [path.resolve(cwd)];
+      })
+    : [];
+
+  const roots: ReadonlyArray<{ directory: string; scope: SkillScope }> = [
+    ...userRoots.map((directory) => ({ directory, scope: "user" as const })),
+    ...projectDirs.flatMap((dir) => [
+      ...(claudeSkillsDisabled
+        ? []
+        : [{ directory: path.join(dir, ".claude", "skills"), scope: "project" as const }]),
+      ...(agentsSkillsDisabled
+        ? []
+        : [{ directory: path.join(dir, ".agents", "skills"), scope: "project" as const }]),
+      { directory: path.join(dir, ".opencode", "skills"), scope: "project" as const },
+    ]),
+  ];
+
+  const skillsByName = new Map<string, ServerProviderSkill>();
+  for (const root of roots) {
+    const entries = yield* fileSystem
+      .readDirectory(root.directory)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+
+    for (const entry of [...entries].sort()) {
+      const skillPath = path.join(root.directory, entry, "SKILL.md");
+      const contents = yield* fileSystem
+        .readFileString(skillPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (contents === undefined) {
+        continue;
+      }
+
+      const frontmatter = parseSkillFrontmatter(contents);
+      if (frontmatter.kind === "malformed") {
+        continue;
+      }
+
+      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
+      if (!name) {
+        continue;
+      }
+
+      skillsByName.set(name, {
+        name,
+        path: skillPath,
+        enabled: true,
+        scope: root.scope,
+        ...(frontmatter.kind === "parsed" && frontmatter.description
+          ? { description: frontmatter.description }
+          : {}),
+      });
+    }
+  }
+
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+});

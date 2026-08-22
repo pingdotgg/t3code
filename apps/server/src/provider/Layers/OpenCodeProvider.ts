@@ -23,6 +23,9 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
+import { discoverOpenCodeSkills } from "../Drivers/OpenCodeSkills.ts";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const OPENCODE_PRESENTATION = {
@@ -277,6 +280,20 @@ function flattenOpenCodeSkills(input: OpenCodeInventory): ReadonlyArray<ServerPr
   return skills.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
+function mergeOpenCodeSkills(
+  sdkSkills: ReadonlyArray<ServerProviderSkill>,
+  discoveredSkills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyArray<ServerProviderSkill> {
+  const skillsByName = new Map<string, ServerProviderSkill>();
+  for (const skill of sdkSkills) {
+    skillsByName.set(skill.name, skill);
+  }
+  for (const skill of discoveredSkills) {
+    skillsByName.set(skill.name, skill);
+  }
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
 ): Effect.Effect<ServerProviderDraft> =>
@@ -326,12 +343,21 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   openCodeSettings: OpenCodeSettings,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
-): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  OpenCodeRuntime | FileSystem.FileSystem | Path.Path
+> {
   const openCodeRuntime = yield* OpenCodeRuntime;
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+  // An external OpenCode server loads skills from its own filesystem; publishing
+  // locally discovered ones here would advertise skills the server cannot invoke.
+  const discoveredSkills = isExternalServer
+    ? []
+    : yield* discoverOpenCodeSkills(cwd, resolvedEnvironment);
 
   const fallback = (cause: unknown, version: string | null = null) => {
     const failure = formatOpenCodeProbeError({
@@ -344,6 +370,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: openCodeSettings.enabled,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      skills: discoveredSkills,
       probe: {
         installed: failure.installed,
         version,
@@ -360,6 +387,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: false,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      skills: discoveredSkills,
       probe: {
         installed: false,
         version: null,
@@ -406,6 +434,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         enabled: openCodeSettings.enabled,
         checkedAt,
         models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+        skills: discoveredSkills,
         probe: {
           installed: true,
           version,
@@ -457,7 +486,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = flattenOpenCodeSkills(inventoryExit.value);
+  const skills = mergeOpenCodeSkills(flattenOpenCodeSkills(inventoryExit.value), discoveredSkills);
   const connectedCount = inventoryExit.value.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
