@@ -1,6 +1,9 @@
+import * as NodeOS from "node:os";
+
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -194,6 +197,152 @@ export function makeXAiAskUserQuestionResponse(
 
 export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCancelledResponse {
   return { outcome: "cancelled" };
+}
+
+const XAiExitPlanModeParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  planContent: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const XAiWrappedExitPlanModeParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]),
+  params: XAiExitPlanModeParams,
+});
+
+export const XAiExitPlanModeRequest = Schema.Union([
+  XAiExitPlanModeParams,
+  XAiWrappedExitPlanModeParams,
+]);
+
+type XAiExitPlanModeRequestParams = typeof XAiExitPlanModeParams.Type;
+type XAiExitPlanModeRequest = typeof XAiExitPlanModeRequest.Type;
+
+function unwrapExitPlanModeParams(params: XAiExitPlanModeRequest): XAiExitPlanModeRequestParams {
+  return "params" in params ? params.params : params;
+}
+
+export const XAI_EMPTY_PLAN_MARKDOWN =
+  "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)";
+
+export function extractXAiExitPlanMarkdown(
+  params: XAiExitPlanModeRequest,
+  fallback?: string | null,
+): string {
+  const content = unwrapExitPlanModeParams(params).planContent;
+  const fromRequest = typeof content === "string" ? trimmed(content) : undefined;
+  if (fromRequest) {
+    return fromRequest;
+  }
+  return trimmed(fallback ?? undefined) ?? XAI_EMPTY_PLAN_MARKDOWN;
+}
+
+export type XAiExitPlanModeOutcome = "approved" | "abandoned" | "request_changes";
+
+export interface XAiExitPlanModeResponse {
+  readonly outcome: XAiExitPlanModeOutcome;
+  readonly feedback?: string;
+}
+
+/**
+ * T3 has captured the plan into its proposed-plan flow. Abandon Grok's native
+ * approval gate so this turn can finish without implicitly approving work.
+ */
+export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitPlanModeResponse {
+  return {
+    outcome: "abandoned",
+    feedback:
+      feedback ??
+      "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+  };
+}
+
+function isWindowsStylePath(path: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("\\\\");
+}
+
+function resolveAbsoluteFilePath(path: string, caseInsensitive: boolean): string | undefined {
+  const normalized = path.trim().replace(/\\/g, "/");
+  const drive = normalized.match(/^([a-zA-Z]:)\//)?.[1];
+  if (drive === undefined && !normalized.startsWith("/")) {
+    return undefined;
+  }
+  const segments: string[] = [];
+  for (const segment of normalized.slice(drive?.length ?? 0).split("/")) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  const resolved = `${drive ?? ""}/${segments.join("/")}`;
+  return caseInsensitive ? resolved.toLowerCase() : resolved;
+}
+
+/** Match only Grok's private session plan below the environment user's home directory. */
+export function isGrokPlanMarkdownPath(
+  path: string | undefined | null,
+  homeDirectory = NodeOS.homedir(),
+): boolean {
+  if (typeof path !== "string") {
+    return false;
+  }
+  const caseInsensitive = isWindowsStylePath(path) || isWindowsStylePath(homeDirectory);
+  const resolvedHome = resolveAbsoluteFilePath(homeDirectory, caseInsensitive);
+  const resolvedPath = resolveAbsoluteFilePath(path, caseInsensitive);
+  if (resolvedHome === undefined || resolvedPath === undefined) {
+    return false;
+  }
+  const privateSessionRoot = `${resolvedHome.replace(/\/+$/, "")}/.grok/sessions/`;
+  if (!resolvedPath.startsWith(privateSessionRoot)) {
+    return false;
+  }
+  const sessionPlanSegments = resolvedPath.slice(privateSessionRoot.length).split("/");
+  return (
+    sessionPlanSegments.length === 2 &&
+    sessionPlanSegments[0] !== "" &&
+    sessionPlanSegments[1] === "plan.md"
+  );
+}
+
+/** Extract the latest plan body from Grok's ACP write/edit tool payload. */
+export function extractGrokPlanMarkdownFromToolCallData(
+  data: Record<string, unknown> | undefined,
+  homeDirectory = NodeOS.homedir(),
+): string | undefined {
+  if (!data) {
+    return undefined;
+  }
+
+  const rawInput = data.rawInput;
+  if (Predicate.isObject(rawInput)) {
+    const filePath =
+      (typeof rawInput.file_path === "string" ? rawInput.file_path : undefined) ??
+      (typeof rawInput.path === "string" ? rawInput.path : undefined);
+    const content = typeof rawInput.content === "string" ? rawInput.content.trim() : undefined;
+    if (isGrokPlanMarkdownPath(filePath, homeDirectory) && content !== undefined) {
+      return content || XAI_EMPTY_PLAN_MARKDOWN;
+    }
+  }
+
+  if (!Array.isArray(data.content)) {
+    return undefined;
+  }
+  for (const block of data.content) {
+    if (!Predicate.isObject(block) || block.type !== "diff") {
+      continue;
+    }
+    const path = typeof block.path === "string" ? block.path : undefined;
+    // ACP diff blocks carry the complete file content after the modification.
+    const newText = typeof block.newText === "string" ? block.newText.trim() : undefined;
+    if (isGrokPlanMarkdownPath(path, homeDirectory) && newText !== undefined) {
+      return newText || XAI_EMPTY_PLAN_MARKDOWN;
+    }
+  }
+  return undefined;
 }
 
 /**

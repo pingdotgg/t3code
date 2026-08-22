@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   ApprovalRequestId,
@@ -26,26 +27,47 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
+import { XAI_EMPTY_PLAN_MARKDOWN } from "../acp/XAiAcpExtension.ts";
+import {
+  grokPromptSettlementBelongsToContext,
+  isGrokEnterPlanModeToolCall,
+  makeGrokAdapter,
+} from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = process.execPath;
 
-async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
-  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
-  const wrapperPath = NodePath.join(dir, "fake-grok.sh");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
+function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
+  return Effect.gen(function* () {
+    const isWindows = (yield* HostProcessPlatform) === "win32";
+    return yield* Effect.promise(async () => {
+      const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
+      const wrapperPath = NodePath.join(dir, isWindows ? "fake-grok.cmd" : "fake-grok.sh");
+      const envExports = Object.entries(extraEnv ?? {})
+        .map(([key, value]) =>
+          isWindows
+            ? `set "${key}=${value.replace(/%/g, "%%")}"`
+            : `export ${key}='${value.replace(/'/g, `'"'"'`)}'`,
+        )
+        .join("\n");
+      const script = isWindows
+        ? `@echo off
 ${envExports}
-exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
+"${mockAgentCommand}" "${mockAgentPath}" %*
+`
+        : `#!/bin/sh
+${envExports}
+exec '${mockAgentCommand.replace(/'/g, `'"'"'`)}' '${mockAgentPath.replace(/'/g, `'"'"'`)}' "$@"
 `;
-  await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  await NodeFSP.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+      await NodeFSP.writeFile(wrapperPath, script, "utf8");
+      if (!isWindows) {
+        await NodeFSP.chmod(wrapperPath, 0o755);
+      }
+      return wrapperPath;
+    });
+  });
 }
 
 function waitForFileContent(
@@ -73,6 +95,25 @@ function waitForFileContent(
   return readAttempt(attempts);
 }
 
+function waitForProcessExit(processId: number, attempts = 40): Effect.Effect<void> {
+  const poll = (remainingAttempts: number): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const isRunning = yield* Effect.try(() => process.kill(processId, 0)).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!isRunning) {
+        return;
+      }
+      if (remainingAttempts <= 0) {
+        return yield* Effect.die(new Error(`Timed out waiting for process ${processId} to exit.`));
+      }
+      yield* Effect.sleep("25 millis");
+      return yield* poll(remainingAttempts - 1);
+    });
+  return poll(attempts);
+}
+
 async function readJsonLines(filePath: string) {
   const raw = await NodeFSP.readFile(filePath, "utf8");
   return raw
@@ -88,6 +129,27 @@ const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
+
+it("detects Grok enter_plan_mode tool calls", () => {
+  assert.isTrue(
+    isGrokEnterPlanModeToolCall({
+      title: "enter_plan_mode",
+      data: { toolCallId: "1" },
+    }),
+  );
+  assert.isTrue(
+    isGrokEnterPlanModeToolCall({
+      title: "Enter plan mode",
+      data: { toolCallId: "1", rawInput: { variant: "EnterPlanMode" } },
+    }),
+  );
+  assert.isFalse(
+    isGrokEnterPlanModeToolCall({
+      title: "write",
+      data: { toolCallId: "1", rawInput: { file_path: "/tmp/x", content: "y" } },
+    }),
+  );
+});
 
 it("requires a settlement to match the live Grok turn", () => {
   const staleTurnId = TurnId.make("stale-turn");
@@ -126,7 +188,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* makeMockGrokWrapper();
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -196,11 +258,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       );
       const exitLogPath = NodePath.join(tempDir, "exit.log");
 
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EXIT_LOG_PATH: exitLogPath,
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_EXIT_LOG_PATH: exitLogPath,
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       yield* adapter.startSession({
@@ -211,21 +271,26 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
       });
 
+      const startLog = yield* waitForFileContent(exitLogPath, 40, "START:");
+      const processId = Number(/^START:(\d+)$/m.exec(startLog)?.[1]);
+      assert.isTrue(Number.isInteger(processId));
       yield* adapter.stopSession(threadId);
 
-      const exitLog = yield* waitForFileContent(exitLogPath);
-      assert.include(exitLog, "SIGTERM");
+      if ((yield* HostProcessPlatform) === "win32") {
+        yield* waitForProcessExit(processId);
+      } else {
+        const exitLog = yield* waitForFileContent(exitLogPath, 40, "SIGTERM");
+        assert.include(exitLog, "SIGTERM");
+      }
     }),
   );
 
   it.effect("reports a Grok session running only while the prompt is in flight", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-session-ready-after-prompt");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EMIT_TOOL_CALLS: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_EMIT_TOOL_CALLS: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
       const requestOpened =
         yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
@@ -273,7 +338,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("restores ready without completing an unstarted turn when preparation fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-preparation-failure-while-connecting");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* makeMockGrokWrapper();
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -330,12 +395,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("completes a Grok turn from xAI prompt completion when the prompt RPC hangs", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-xai-prompt-complete-fallback");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
-          T3_ACP_EMIT_FOREIGN_SESSION_UPDATES: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+        T3_ACP_EMIT_FOREIGN_SESSION_UPDATES: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -421,11 +484,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("retains turn transcript when sendTurn is interrupted after prompt success", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-send-turn-interrupt-after-prompt");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
       const contentDelta = yield* Deferred.make<void>();
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
@@ -469,12 +530,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("does not report a synthetic stop reason when xAI omits one", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-xai-prompt-complete-missing-stop-reason");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
-          T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+        T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -522,11 +581,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("lets Stop unblock a fully silent Grok prompt and accept a follow-up turn", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-after-full-silence");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -601,12 +658,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-cancel-race-")),
       );
       const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
-          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -679,12 +734,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("drops late ACP notifications after a turn is cancelled", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-drop-late-cancelled-notifications");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_HANG_PROMPT_FOREVER: "1",
-          T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_HANG_PROMPT_FOREVER: "1",
+        T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL: "1",
+      });
       const lateNativeUpdate = yield* Deferred.make<void>();
       const adapter = yield* makeTestAdapter(wrapperPath, {
         nativeEventLogger: {
@@ -762,11 +815,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("lets Stop cancel during the xAI completion drain window", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-during-completion-drain");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -832,7 +883,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("settles the in-flight prompt before emitting completion", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-completion-before-next-turn");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* makeMockGrokWrapper();
       const adapter = yield* makeTestAdapter(wrapperPath);
       const completedCountRef = yield* Ref.make(0);
       const secondTurnCompleted = yield* Deferred.make<void>();
@@ -895,11 +946,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("restores a Grok session to ready when the prompt RPC fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-prompt-failure-ready");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_FAIL_PROMPT: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_FAIL_PROMPT: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
@@ -946,11 +995,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("ignores replayed session/load updates when resuming a Grok session", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-load-replay-filter");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EMIT_LOAD_REPLAY: "1",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_EMIT_LOAD_REPLAY: "1",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
@@ -997,7 +1044,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
   it.effect("rejects startSession when provider mismatches", () =>
     Effect.gen(function* () {
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* makeMockGrokWrapper();
       const adapter = yield* makeTestAdapter(wrapperPath);
       const threadId = ThreadId.make("grok-provider-mismatch");
 
@@ -1019,7 +1066,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-empty-turn");
 
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* makeMockGrokWrapper();
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       yield* adapter.startSession({
@@ -1051,13 +1098,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
       );
       const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-          T3_ACP_EMIT_TOOL_CALLS: "1",
-          T3_ACP_ALLOW_ONCE_OPTION_ID: "agent-defined-approval-id",
-        }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_EMIT_TOOL_CALLS: "1",
+        T3_ACP_ALLOW_ONCE_OPTION_ID: "agent-defined-approval-id",
+      });
       const adapter = yield* makeTestAdapter(wrapperPath);
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         event.type === "request.opened"
@@ -1097,12 +1142,129 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("captures xAI exit_plan_mode as a proposed plan and unblocks the turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-xai-exit-plan-mode");
+      const wrapperPath = yield* makeMockGrokWrapper({ T3_ACP_EMIT_XAI_EXIT_PLAN_MODE: "1" });
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const proposed =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "turn.proposed.completed" }>>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId)) {
+          return Effect.void;
+        }
+        return Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            Effect.all(
+              [
+                event.type === "turn.proposed.completed"
+                  ? Deferred.succeed(proposed, event).pipe(Effect.ignore)
+                  : Effect.void,
+                event.type === "turn.completed"
+                  ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+              ],
+              { discard: true },
+            ),
+          ),
+        );
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "present the plan", attachments: [] });
+
+      const proposedEvent = yield* Deferred.await(proposed);
+      yield* Deferred.await(turnCompleted);
+      assert.equal(proposedEvent.payload.planMarkdown, "# Exit plan\n\n- Step one\n- Step two");
+      assert.equal(proposedEvent.raw?.method, "_x.ai/exit_plan_mode");
+      assert.deepStrictEqual(
+        runtimeEvents
+          .filter((event) => event.type === "turn.proposed.completed")
+          .map((event) => event.payload.planMarkdown),
+        ["# Exit plan\n\n- Step one\n- Step two", XAI_EMPTY_PLAN_MARKDOWN],
+      );
+      assert.equal(
+        new Set(runtimeEvents.map((event) => String(event.eventId))).size,
+        runtimeEvents.length,
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("surfaces a Grok session plan.md write while plan mode is active", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-xai-plan-md-write");
+      const wrapperPath = yield* makeMockGrokWrapper({ T3_ACP_EMIT_XAI_PLAN_MD_WRITE: "1" });
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const proposed =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "turn.proposed.completed" }>>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId)) {
+          return Effect.void;
+        }
+        return Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            Effect.all(
+              [
+                event.type === "turn.proposed.completed"
+                  ? Deferred.succeed(proposed, event).pipe(Effect.ignore)
+                  : Effect.void,
+                event.type === "turn.completed"
+                  ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+              ],
+              { discard: true },
+            ),
+          ),
+        );
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "write the plan", attachments: [] });
+
+      const proposedEvent = yield* Deferred.await(proposed);
+      yield* Deferred.await(turnCompleted);
+      assert.equal(
+        proposedEvent.payload.planMarkdown,
+        "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it",
+      );
+      assert.equal(proposedEvent.raw?.method, "session/update");
+      assert.equal(
+        runtimeEvents.filter((event) => event.type === "turn.proposed.completed").length,
+        1,
+      );
+      assert.equal(
+        new Set(runtimeEvents.map((event) => String(event.eventId))).size,
+        runtimeEvents.length,
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("handles xAI ask_user_question extension requests", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-xai-ask-user-question");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({ T3_ACP_EMIT_XAI_ASK_USER_QUESTION: "1" }),
-      );
+      const wrapperPath = yield* makeMockGrokWrapper({ T3_ACP_EMIT_XAI_ASK_USER_QUESTION: "1" });
       const adapter = yield* makeTestAdapter(wrapperPath);
       const requested =
         yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.requested" }>>();
@@ -1162,7 +1324,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("continues streaming events when native notification logging fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-native-log-failure");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* makeMockGrokWrapper();
       const adapter = yield* makeTestAdapter(wrapperPath, {
         nativeEventLogger: {
           filePath: "memory://grok-native-events",
