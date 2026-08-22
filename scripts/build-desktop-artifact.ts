@@ -149,6 +149,34 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
   },
 };
 
+const DEB_DEPENDENCIES = [
+  "libgtk-3-0",
+  "libnotify4",
+  "libnss3",
+  "libxss1",
+  "libxtst6",
+  "xdg-utils",
+  "libatspi2.0-0",
+  "libuuid1",
+  "libsecret-1-0",
+  "libasound2t64 | libasound2",
+  "libgbm1",
+] as const;
+
+const RPM_DEPENDENCIES = [
+  "gtk3",
+  "libnotify",
+  "nss",
+  "libXScrnSaver",
+  "(libXtst or libXtst6)",
+  "xdg-utils",
+  "at-spi2-core",
+  "(libuuid or libuuid1)",
+  "alsa-lib",
+  "libsecret",
+  "mesa-libgbm",
+] as const;
+
 interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
   readonly target: Option.Option<string>;
@@ -775,6 +803,9 @@ interface StagePackageJson {
   readonly packageManager: string;
   readonly description: string;
   readonly author: string;
+  readonly homepage: string;
+  readonly license: string;
+  readonly desktopName: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -2019,6 +2050,23 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+/**
+ * Splits a comma-separated Linux target string, for example "AppImage,deb,rpm",
+ * so one electron-builder run emits every package from the same staged app.
+ *
+ * The alternative — one release-matrix entry per format — collides on the
+ * upload artifact name (`desktop-${platform}-${arch}` is identical for two
+ * entries that differ only by target), which is what sank #1655. artifactName's
+ * ${ext} already keeps the output files apart, so a single run needs no extra
+ * runner and no extra release wall-clock.
+ */
+export function resolveLinuxTargets(target: string): ReadonlyArray<string> {
+  return target
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2108,11 +2156,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    const linuxTargets = resolveLinuxTargets(target);
     buildConfig.linux = {
-      target: [target],
+      target: linuxTargets,
       executableName: "t3code",
       icon: "icons",
       category: "Development",
+      maintainer: "T3 Tools <support@t3.gg>",
+      vendor: "T3 Tools",
+      synopsis: "A desktop GUI for AI coding agents",
+      syncDesktopName: true,
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
       // t3code:// OAuth callbacks to the app.
@@ -2128,6 +2181,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       },
     };
+
+    if (linuxTargets.includes("deb")) {
+      buildConfig.deb = {
+        depends: [...DEB_DEPENDENCIES],
+      };
+    }
+
+    if (linuxTargets.includes("rpm")) {
+      buildConfig.rpm = {
+        depends: [...RPM_DEPENDENCIES],
+      };
+    }
   }
 
   if (platform === "win") {
@@ -2901,8 +2966,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
-    author: "T3 Tools",
+    description: "A desktop GUI for AI coding agents such as Codex, Claude, Cursor, and OpenCode.",
+    author: "T3 Tools <support@t3.gg>",
+    homepage: "https://github.com/pingdotgg/t3code",
+    license: "MIT",
+    desktopName: "t3code.desktop",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,

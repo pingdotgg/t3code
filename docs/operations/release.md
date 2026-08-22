@@ -16,7 +16,7 @@ This document covers the unified release workflow for stable and nightly desktop
 - Builds four artifacts in parallel for both channels:
   - macOS `arm64` DMG
   - macOS `x64` DMG
-  - Linux `x64` AppImage
+  - Linux `x64` AppImage plus `.deb` and `.rpm` emitted by the same electron-builder run
   - Windows `x64` NSIS installer
 - Publishes one GitHub Release with all produced files.
   - Stable tags with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
@@ -208,6 +208,8 @@ desktop-managed guidance when those environments are available.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - the Linux `.deb` and `.rpm` ship in the same release but are not updater payloads: in-app updates
+    on Linux stay AppImage-only, so those installs upgrade through `dpkg`/`apt` and `rpm`/`dnf`
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases
   - `*.blockmap` files (used for differential downloads)
 - macOS metadata note:

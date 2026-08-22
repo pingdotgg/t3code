@@ -39,6 +39,7 @@ import {
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
+  resolveLinuxTargets,
   resolveResourceMonitorRustTargets,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
@@ -1035,6 +1036,115 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(win.icon, "icon.ico");
       assert.equal(win.signAndEditExecutable, true);
       assert.notProperty(win, "azureSignOptions");
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it("splits a comma-separated Linux target into one target per package", () => {
+    assert.deepStrictEqual(resolveLinuxTargets("AppImage"), ["AppImage"]);
+    assert.deepStrictEqual(resolveLinuxTargets("AppImage,deb,rpm"), ["AppImage", "deb", "rpm"]);
+    assert.deepStrictEqual(resolveLinuxTargets(" AppImage , deb "), ["AppImage", "deb"]);
+  });
+
+  it.effect("emits every requested Linux package from a single build", () =>
+    Effect.gen(function* () {
+      const all = yield* createBuildConfig(
+        "linux",
+        "AppImage,deb,rpm",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const appImageOnly = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.deepStrictEqual((all.linux as Record<string, unknown>).target, [
+        "AppImage",
+        "deb",
+        "rpm",
+      ]);
+      // Both fpm-backed formats are configured from the one run.
+      assert.property(all, "deb");
+      assert.property(all, "rpm");
+
+      // An AppImage-only build stays free of package-format sections.
+      assert.notProperty(appImageOnly, "deb");
+      assert.notProperty(appImageOnly, "rpm");
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("includes distribution metadata in Linux package builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "linux",
+        "deb",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const linux = config.linux as Record<string, unknown>;
+      assert.deepStrictEqual(linux.target, ["deb"]);
+      assert.equal(linux.executableName, "t3code");
+      assert.equal(linux.category, "Development");
+      assert.equal(linux.maintainer, "T3 Tools <support@t3.gg>");
+      assert.equal(linux.vendor, "T3 Tools");
+      assert.equal(linux.synopsis, "A desktop GUI for AI coding agents");
+      assert.equal(linux.syncDesktopName, true);
+
+      const deb = config.deb as Record<string, unknown>;
+      assert.deepStrictEqual(deb.depends, [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2t64 | libasound2",
+        "libgbm1",
+      ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("includes runtime dependencies in RPM packages", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "linux",
+        "rpm",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const rpm = config.rpm as Record<string, unknown>;
+      assert.deepStrictEqual(rpm.depends, [
+        "gtk3",
+        "libnotify",
+        "nss",
+        "libXScrnSaver",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "alsa-lib",
+        "libsecret",
+        "mesa-libgbm",
+      ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
