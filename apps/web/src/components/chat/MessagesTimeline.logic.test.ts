@@ -6,7 +6,54 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
+  workEntryViewedImagePath,
 } from "./MessagesTimeline.logic";
+import { type WorkLogEntry } from "../../session-logic";
+
+describe("workEntryViewedImagePath", () => {
+  const readEntry = (overrides: Partial<WorkLogEntry>): WorkLogEntry => ({
+    id: "e1",
+    createdAt: "2026-01-01T00:00:00Z",
+    label: "Image view",
+    tone: "tool",
+    itemType: "image_view",
+    ...overrides,
+  });
+
+  it("returns the detail path for image_view entries", () => {
+    const entry = readEntry({ detail: "/workspace/screenshots/after.png" });
+    expect(workEntryViewedImagePath(entry)).toBe("/workspace/screenshots/after.png");
+  });
+
+  it("returns the path for file-read entries that read an image", () => {
+    const entry: WorkLogEntry = {
+      id: "e2",
+      createdAt: "2026-01-01T00:00:00Z",
+      label: "Read file",
+      tone: "tool",
+      requestKind: "file-read",
+      detail: "assets/logo.webp",
+    };
+    expect(workEntryViewedImagePath(entry)).toBe("assets/logo.webp");
+  });
+
+  it("ignores non-image details", () => {
+    expect(workEntryViewedImagePath(readEntry({ detail: "src/index.ts" }))).toBeNull();
+  });
+
+  it("ignores multi-line details", () => {
+    expect(workEntryViewedImagePath(readEntry({ detail: "a.png\nb.png" }))).toBeNull();
+  });
+
+  it("ignores entries that are not reads", () => {
+    const entry = readEntry({ itemType: "command_execution", detail: "shot.png" });
+    expect(workEntryViewedImagePath(entry)).toBeNull();
+  });
+
+  it("ignores entries without detail", () => {
+    expect(workEntryViewedImagePath(readEntry({}))).toBeNull();
+  });
+});
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {

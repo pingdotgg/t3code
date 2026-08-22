@@ -12,18 +12,35 @@ const EMPTY_ASSET_URL_ATOM = Atom.make(AsyncResult.initial<never, never>(false))
   Atom.withLabel("mobile-asset-url:empty"),
 );
 
-export function useAssetUrl(
+export type AssetUrlState =
+  | { readonly _tag: "Loading" }
+  | { readonly _tag: "Failure" }
+  | { readonly _tag: "Success"; readonly url: string };
+
+export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
-): string | null {
+): AssetUrlState {
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
       : assetEnvironment.createUrl({ environmentId, input: { resource } }),
   );
-  if (preparedConnection._tag === "None" || result._tag !== "Success") {
-    return null;
+  if (result._tag === "Failure") {
+    return { _tag: "Failure" };
   }
-  return resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
+  if (preparedConnection._tag === "None" || result._tag !== "Success") {
+    return { _tag: "Loading" };
+  }
+  const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
+  return url === null ? { _tag: "Failure" } : { _tag: "Success", url };
+}
+
+export function useAssetUrl(
+  environmentId: EnvironmentId | null,
+  resource: AssetResource | null,
+): string | null {
+  const state = useAssetUrlState(environmentId, resource);
+  return state._tag === "Success" ? state.url : null;
 }

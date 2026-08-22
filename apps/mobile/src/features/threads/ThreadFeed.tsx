@@ -54,6 +54,7 @@ import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
+  type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
@@ -101,8 +102,8 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
-import { useAssetUrl } from "../../state/assets";
-import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import { useAssetUrl, useAssetUrlState } from "../../state/assets";
+import { resolveWorkspaceFilePath, resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -190,6 +191,125 @@ function MessageAttachmentImage(props: {
     <TouchableOpacity activeOpacity={0.7} onPress={() => props.onPressImage(uri)}>
       <Image source={{ uri }} className={props.className} resizeMode="cover" />
     </TouchableOpacity>
+  );
+}
+
+const REMOTE_IMAGE_SRC_PATTERN = /^https?:\/\//i;
+const NON_FILE_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+/**
+ * Absolute filesystem path for a markdown image src, or null when the src is
+ * not a workspace file (remote URL, other scheme, or a relative path with no
+ * workspace root to resolve against).
+ */
+function markdownImageWorkspacePath(href: string, workspaceRoot: string | null): string | null {
+  const isFileUri = /^file:\/\//i.test(href);
+  let path = isFileUri ? href.slice("file://".length) : href;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // Keep the raw path when it is not valid percent-encoding.
+  }
+  if (path.length === 0) {
+    return null;
+  }
+  if (isFileUri) {
+    // file://localhost/... is the historical spelling of file:///... (WHATWG
+    // parsers normalize the localhost authority away), not a UNC host.
+    if (/^localhost\//i.test(path)) {
+      path = path.slice("localhost".length);
+    }
+    if (!path.startsWith("/")) {
+      // file://host/share/... — the authority is a UNC host on the
+      // environment machine, not a path segment under the workspace root.
+      return `\\\\${path.replaceAll("/", "\\")}`;
+    }
+    // URL parsers encode Windows drive paths as /C:/... — drop the slash.
+    if (/^\/[A-Za-z]:[\\/]/.test(path)) {
+      path = path.slice(1);
+    }
+  } else if (path.startsWith("//")) {
+    // Protocol-relative URL (//cdn.example.com/x.png), not a filesystem path.
+    return null;
+  }
+  const isAbsolute =
+    path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+  if (!isAbsolute && NON_FILE_SCHEME_PATTERN.test(path)) {
+    return null;
+  }
+  if (isAbsolute) {
+    return path;
+  }
+  if (workspaceRoot === null) {
+    return null;
+  }
+  return resolveWorkspaceFilePath(workspaceRoot, path);
+}
+
+/** Markdown image whose src is a workspace file — loads through a signed asset URL. */
+function ThreadMarkdownImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly path: string;
+  readonly alt: string | null;
+  readonly onPressImage: (uri: string) => void;
+}) {
+  const codeBackground = useThemeColor("--color-md-code-bg");
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const assetUrl = useAssetUrlState(props.environmentId, {
+    _tag: "workspace-file",
+    threadId: props.threadId,
+    path: props.path,
+  });
+  const uri = assetUrl._tag === "Success" ? assetUrl.url : null;
+  const failed = assetUrl._tag === "Failure" || (uri !== null && failedUri === uri);
+
+  return (
+    <View style={{ gap: 6 }}>
+      {uri === null || failed ? (
+        <View
+          style={{
+            width: "100%",
+            aspectRatio: 16 / 9,
+            borderRadius: 10,
+            backgroundColor: codeBackground,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {failed ? (
+            <Text className="text-xs text-foreground-muted">Image unavailable</Text>
+          ) : (
+            <ActivityIndicator />
+          )}
+        </View>
+      ) : (
+        <TouchableOpacity
+          accessibilityRole="imagebutton"
+          accessibilityLabel={props.alt ?? "Markdown image"}
+          activeOpacity={0.7}
+          onPress={() => props.onPressImage(uri)}
+        >
+          <Image
+            source={{ uri }}
+            resizeMode="contain"
+            accessible={false}
+            onError={() => setFailedUri(uri)}
+            style={{
+              width: "100%",
+              aspectRatio: 16 / 9,
+              borderRadius: 10,
+              backgroundColor: codeBackground,
+            }}
+          />
+        </TouchableOpacity>
+      )}
+      {props.alt ? (
+        <Text selectable className="text-xs text-foreground-muted">
+          {props.alt}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -408,7 +528,10 @@ function useReviewCommentColors(): ReviewCommentColors {
   );
 }
 
-function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
+function useMarkdownStyles(
+  onLinkPress: (href: string) => void,
+  renderImage: MarkdownImageRenderer,
+): MarkdownStyleSets {
   const { appearance, themeAppearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),
@@ -613,6 +736,14 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           })}
         </View>
       ),
+      image: ({ node }) =>
+        node.href
+          ? (renderImage({
+              href: node.href,
+              alt: node.alt ?? null,
+              title: node.title ?? null,
+            }) ?? undefined)
+          : undefined,
       code_inline: ({ content }) => {
         const value = content ?? "";
         return (
@@ -786,6 +917,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     nativeMarkdownTypography,
     onLinkPress,
     regularFontFamily,
+    renderImage,
     themeMode,
     userBubbleForegroundMuted,
     userBubbleSkillForeground,
@@ -805,6 +937,8 @@ function renderFeedEntry(
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
+    readonly renderMarkdownImage: MarkdownImageRenderer;
+    readonly renderViewedWorkImage: (path: string) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -903,6 +1037,7 @@ function renderFeedEntry(
                 reviewCommentColors={props.reviewCommentColors}
                 skills={props.skills}
                 onLinkPress={props.onMarkdownLinkPress}
+                renderImage={props.renderMarkdownImage}
               />
             ) : null}
             {attachments.map((attachment) => {
@@ -954,6 +1089,7 @@ function renderFeedEntry(
               skills={props.skills}
               textStyle={styles.nativeTextStyle}
               onLinkPress={props.onMarkdownLinkPress}
+              renderImage={props.renderMarkdownImage}
             />
           ) : (
             <Markdown
@@ -1003,6 +1139,7 @@ function renderFeedEntry(
       iconSubtleColor={iconSubtleColor}
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
+      renderViewedImage={props.renderViewedWorkImage}
     />
   );
 }
@@ -1039,6 +1176,7 @@ function UserMessageContent(props: {
   readonly reviewCommentColors: ReviewCommentColors;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onLinkPress: (href: string) => void;
+  readonly renderImage: MarkdownImageRenderer;
 }) {
   const segments = parseReviewCommentMessageSegments(props.text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
@@ -1051,6 +1189,7 @@ function UserMessageContent(props: {
           textStyle={props.markdownStyles.nativeTextStyle}
           preserveSoftBreaks
           onLinkPress={props.onLinkPress}
+          renderImage={props.renderImage}
         />
       );
     }
@@ -1092,6 +1231,7 @@ function UserMessageContent(props: {
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
             onLinkPress={props.onLinkPress}
+            renderImage={props.renderImage}
           />
         ) : (
           <Markdown
@@ -1413,7 +1553,41 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [props.environmentId, props.threadId, props.workspaceRoot, navigation],
   );
-  const markdownStyles = useMarkdownStyles(onMarkdownLinkPress);
+  const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
+    (image) => {
+      // Remote URIs load fine in a plain RN Image — keep the module fallback.
+      if (REMOTE_IMAGE_SRC_PATTERN.test(image.href)) {
+        return null;
+      }
+      const path = markdownImageWorkspacePath(image.href, props.workspaceRoot ?? null);
+      if (path === null) {
+        return null;
+      }
+      return (
+        <ThreadMarkdownImage
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+          path={path}
+          alt={image.alt}
+          onPressImage={(uri) => setExpandedImage({ uri })}
+        />
+      );
+    },
+    [props.environmentId, props.threadId, props.workspaceRoot],
+  );
+  const renderViewedWorkImage = useCallback(
+    (path: string) => (
+      <ThreadMarkdownImage
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        path={path}
+        alt={null}
+        onPressImage={(uri) => setExpandedImage({ uri })}
+      />
+    ),
+    [props.environmentId, props.threadId],
+  );
+  const markdownStyles = useMarkdownStyles(onMarkdownLinkPress, renderMarkdownImage);
   const reviewCommentColors = useReviewCommentColors();
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Keep row-local interaction props in extraData so disclosures and copy feedback repaint.
@@ -1804,6 +1978,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onToggleTurnFold,
         onPressImage,
         onMarkdownLinkPress,
+        renderMarkdownImage,
+        renderViewedWorkImage,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -1831,6 +2007,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkRow,
       props.environmentId,
       props.skills,
+      renderMarkdownImage,
+      renderViewedWorkImage,
     ],
   );
 

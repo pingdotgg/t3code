@@ -584,6 +584,7 @@ describe("buildThreadFeed", () => {
       summary: `Tool ${id}`,
       detail: null,
       canExpand: false,
+      viewedImagePath: null,
       getFullDetail: () => null,
       getCopyText: () => id,
       icon: "command",

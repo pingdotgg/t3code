@@ -1,4 +1,5 @@
 import * as Equal from "effect/Equal";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import {
   formatDuration,
   workEntryDisplayIndicatesToolFailure,
@@ -305,6 +306,18 @@ export function toolGroupAction(entry: WorkLogEntry): ToolGroupAction {
   if (workLogEntryIsLocalCodeSearch(entry)) return "code-search";
   if (entry.itemType === "web_search") return "search";
   return "other";
+}
+
+/**
+ * Workspace path of the image a read/view tool entry looked at. Non-null only
+ * when the entry's detail is a single image path the asset route can serve —
+ * the expanded row then renders the image itself above the text detail.
+ */
+export function workEntryViewedImagePath(entry: WorkLogEntry): string | null {
+  if (toolGroupAction(entry) !== "read") return null;
+  const detail = entry.detail?.trim();
+  if (!detail || detail.includes("\n") || !isWorkspaceImagePreviewPath(detail)) return null;
+  return detail;
 }
 
 function toolGroupActionCount(

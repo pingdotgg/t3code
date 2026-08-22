@@ -1,4 +1,5 @@
 import * as Haptics from "expo-haptics";
+import type { ReactNode } from "react";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { LayoutAnimation, Pressable, ScrollView, View } from "react-native";
 
@@ -127,6 +128,8 @@ export function ThreadWorkLog(props: {
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
+  /** Renders the image a read/view entry looked at inside its expanded detail. */
+  readonly renderViewedImage: (path: string) => ReactNode;
 }) {
   const pressedBackground = useThemeColor("--color-subtle");
   const rows = visibleWorkLogActivities(props.activities).map((activity) => ({
@@ -250,6 +253,9 @@ export function ThreadWorkLog(props: {
 
               {fullDetail ? (
                 <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
+                  {row.viewedImagePath ? (
+                    <View className="pb-1.5">{props.renderViewedImage(row.viewedImagePath)}</View>
+                  ) : null}
                   <ScrollView
                     nestedScrollEnabled
                     directionalLockEnabled

@@ -86,6 +86,7 @@ import {
   shouldPreserveAssistantLineBreaks,
   toolGroupAction,
   workEntryIsVisibleInGroup,
+  workEntryViewedImagePath,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
@@ -117,6 +118,8 @@ import {
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { useAssetUrlState } from "../../assets/assetUrls";
+import { Skeleton } from "../ui/skeleton";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
@@ -2457,6 +2460,52 @@ function buildToolCallExpandedBody(
 const toolCallExpandedBodyClassName =
   "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
 
+/**
+ * The image a read/view tool entry looked at, loaded through a signed
+ * workspace-file asset URL. Mounted only while the row is expanded, so
+ * collapsed rows never fetch. Falls back to nothing on failure — the path
+ * stays visible in the text body underneath.
+ */
+const ToolCallExpandedImage = memo(function ToolCallExpandedImage(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly path: string;
+}) {
+  const { onImageExpand } = use(TimelineRowCtx);
+  const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
+    _tag: "workspace-file",
+    threadId: props.threadRef.threadId,
+    path: props.path,
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+    return null;
+  }
+  if (assetUrl._tag !== "Success") {
+    return (
+      <Skeleton role="status" aria-label="Loading image" className="mb-1.5 h-24 w-40 rounded-md" />
+    );
+  }
+  const name = props.path.split(/[\\/]/).pop() ?? props.path;
+  return (
+    <button
+      type="button"
+      className="mb-1.5 block cursor-zoom-in rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+      aria-label={`Preview ${name}`}
+      onClick={() => onImageExpand({ images: [{ src: assetUrl.url, name }], index: 0 })}
+    >
+      <img
+        src={assetUrl.url}
+        alt={name}
+        loading="lazy"
+        draggable={false}
+        className="block max-h-64 max-w-full rounded-md border border-border/40 object-contain"
+        onError={() => setFailedUrl(assetUrl.url)}
+      />
+    </button>
+  );
+});
+
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
@@ -2620,6 +2669,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   isExpandedToolGroupEntry: boolean;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
+  const { threadRef } = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -2628,6 +2678,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     showWarningIndicator || showFailedIndicator ? "x" : workEntryIconName(workEntry);
   const displayText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
+  const viewedImagePath = workEntryViewedImagePath(workEntry);
   const canExpand = expandedBody !== null;
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -2718,7 +2769,14 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
+          // Keys pressed on the expanded body (e.g. Enter on the image
+          // preview button) must not reach the row's toggle handler — its
+          // preventDefault would also cancel the button's click activation.
+          onKeyDown={stopRowToggle}
         >
+          {viewedImagePath && threadRef ? (
+            <ToolCallExpandedImage threadRef={threadRef} path={viewedImagePath} />
+          ) : null}
           <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
         </div>
       ) : null}
