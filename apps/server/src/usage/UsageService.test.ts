@@ -2,10 +2,19 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   chooseMcodeUsageStore,
+  classifyUsageSourceExistence,
   negotiateUsageContractVersion,
   resolveMcodeDataDir,
   summarizeSourceReadFailures,
 } from "./UsageService.ts";
+
+describe("classifyUsageSourceExistence", () => {
+  it("keeps I/O failures distinct from missing sources", () => {
+    expect(classifyUsageSourceExistence(true)).toBe("present");
+    expect(classifyUsageSourceExistence(false)).toBe("missing");
+    expect(classifyUsageSourceExistence(null)).toBe("failed");
+  });
+});
 
 describe("resolveMcodeDataDir", () => {
   it("prefers the current MCode override and accepts the legacy name", () => {

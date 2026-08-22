@@ -135,6 +135,12 @@ export function negotiateUsageContractVersion(
     : PRE_MCODE_USAGE_CONTRACT_VERSION;
 }
 
+export type UsageSourceExistence = "present" | "missing" | "failed";
+
+export function classifyUsageSourceExistence(exists: boolean | null): UsageSourceExistence {
+  return exists === null ? "failed" : exists ? "present" : "missing";
+}
+
 export function summarizeSourceReadFailures(
   totalFiles: number,
   failedFiles: number,
@@ -438,20 +444,25 @@ export const make = Effect.gen(function* () {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(source.file ?? dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      const existence = classifyUsageSourceExistence(exists);
 
-      if (!exists) {
+      if (existence !== "present") {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "missing",
+          status: existence,
           scannedFiles: 0,
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
           message:
-            source.file === undefined
-              ? "No transcript directory on this environment."
-              : "No usage store on this environment.",
+            existence === "failed"
+              ? source.file === undefined
+                ? "Transcript directory could not be inspected."
+                : "Usage store could not be inspected."
+              : source.file === undefined
+                ? "No transcript directory on this environment."
+                : "No usage store on this environment.",
         });
         continue;
       }

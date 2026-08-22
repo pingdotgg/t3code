@@ -234,7 +234,13 @@ export async function statSqliteUsageStore(
 ): Promise<readonly TranscriptFile[] | null> {
   try {
     const stats = await NodeFSP.stat(filePath);
-    const walStats = await NodeFSP.stat(`${filePath}-wal`).catch(() => null);
+    let walStats: Awaited<ReturnType<typeof NodeFSP.stat>> | null;
+    try {
+      walStats = await NodeFSP.stat(`${filePath}-wal`);
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") return null;
+      walStats = null;
+    }
     const size = stats.size + (walStats?.size ?? 0);
     const mtimeMs = Math.max(stats.mtimeMs, walStats?.mtimeMs ?? 0);
     return mtimeMs >= sinceMs ? [{ path: filePath, size, mtimeMs }] : [];
