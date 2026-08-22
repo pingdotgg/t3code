@@ -141,12 +141,13 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   const exactCandidates = environments
     .flatMap((environment) =>
       environment.summary.sources.flatMap((source) =>
-        source.status === "missing" || source.status === "failed" ? [] : [{ environment, source }],
+        source.status === "missing" ? [] : [{ environment, source }],
       ),
     )
     .sort((a, b) => {
-      const statusOrder =
-        Number(a.source.status === "partial") - Number(b.source.status === "partial");
+      const rank = (status: "ok" | "partial" | "failed" | "missing") =>
+        status === "ok" ? 0 : status === "partial" ? 1 : status === "failed" ? 2 : 3;
+      const statusOrder = rank(a.source.status) - rank(b.source.status);
       return statusOrder || a.environment.environmentId.localeCompare(b.environment.environmentId);
     });
   for (const { environment, source } of exactCandidates) {
@@ -275,6 +276,8 @@ function ownedContribution(
         const source = sourceByPath.get(`${bucket.provider}\0${bucket.sourcePath}`);
         return (
           source !== undefined &&
+          source.status !== "missing" &&
+          source.status !== "failed" &&
           ownerByFingerprint.get(sourceClaimKey(source.fingerprint, environment.environmentId)) ===
             environment.environmentId
         );

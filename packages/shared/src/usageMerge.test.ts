@@ -458,6 +458,68 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toEqual(["env-b: /shared/.kimi-code/sessions"]);
   });
 
+  it("reports a losing environment's unique failed Kimi store", () => {
+    const sharedTui = {
+      provider: "kimi" as const,
+      hostId: "mac",
+      homePath: "/shared/.kimi-code/sessions",
+      volumeId: "shared-tui",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({
+                provider: "kimi",
+                sourcePath: sharedTui.homePath,
+                model: "kimi-code/k3",
+                costUsd: 2,
+              }),
+            ],
+            [sharedTui],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [
+              bucket({
+                provider: "kimi",
+                sourcePath: sharedTui.homePath,
+                model: "kimi-code/k3",
+                costUsd: 2,
+              }),
+            ],
+            [
+              { ...sharedTui, status: "partial" },
+              {
+                provider: "kimi",
+                hostId: "mac",
+                homePath: "/machine-b/kimi-desktop",
+                volumeId: "desktop-b",
+                status: "failed",
+                message: "1 usage file could not be read.",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(2);
+    expect(merged.incompleteSources).toEqual([
+      expect.objectContaining({
+        environmentId: "env-b",
+        provider: "kimi",
+        sourcePath: "/machine-b/kimi-desktop",
+        status: "failed",
+      }),
+    ]);
+  });
+
   it("prefers a complete Kimi Code duplicate without a false coverage gap", () => {
     const shared = {
       provider: "kimi" as const,
