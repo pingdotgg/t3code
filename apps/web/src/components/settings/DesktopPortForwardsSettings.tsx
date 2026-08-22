@@ -76,8 +76,8 @@ export function DesktopPortForwardsSettings() {
       >
         <div className="space-y-1 pb-2">
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_8rem_auto] sm:items-end">
-            <label className="space-y-1 text-xs text-muted-foreground">
-              <span className="block">Environment</span>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">Environment</span>
               <Select
                 value={environmentId ?? ""}
                 onValueChange={(value) => {
@@ -114,8 +114,8 @@ export function DesktopPortForwardsSettings() {
                 </SelectPopup>
               </Select>
             </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              <span className="block">Remote port</span>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">Remote port</span>
               <Input
                 type="number"
                 min={1}
@@ -131,8 +131,8 @@ export function DesktopPortForwardsSettings() {
                 }
               />
             </label>
-            <label className="space-y-1 text-xs text-muted-foreground">
-              <span className="block">Local port</span>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">Local port</span>
               <Input
                 type="number"
                 min={1}

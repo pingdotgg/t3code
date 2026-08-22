@@ -140,8 +140,8 @@ export function DesktopPortForwardControl({
           </p>
         ) : null}
         <div className="space-y-3">
-          <label className="text-xs text-muted-foreground">
-            <span className="mb-1.5 block">Environment</span>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-foreground">Environment</span>
             <Select
               value={selectedEnvironmentId ?? ""}
               onValueChange={(value) => {
@@ -174,11 +174,16 @@ export function DesktopPortForwardControl({
             </Select>
           </label>
           <div className="grid grid-cols-2 gap-3">
-            <label className="text-xs text-muted-foreground">
-              <span className="mb-1.5 block">Remote port</span>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">Remote port</span>
               <Input
                 aria-label="Remote port"
                 aria-invalid={parsedRemotePort === null}
+                aria-describedby={
+                  parsedRemotePort === null
+                    ? "desktop-port-forward-control-remote-port-error"
+                    : undefined
+                }
                 type="number"
                 min={1}
                 max={65_535}
@@ -188,16 +193,24 @@ export function DesktopPortForwardControl({
                 onChange={(event) => setRemotePort(event.target.value)}
               />
               {parsedRemotePort === null ? (
-                <span className="mt-1 block text-[11px] text-destructive">
+                <span
+                  id="desktop-port-forward-control-remote-port-error"
+                  className="mt-1 block text-[11px] text-destructive"
+                >
                   Enter a port from 1 to 65535.
                 </span>
               ) : null}
             </label>
-            <label className="text-xs text-muted-foreground">
-              <span className="mb-1.5 block">Local port</span>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-foreground">Local port</span>
               <Input
                 aria-label="Local port"
                 aria-invalid={localPort.trim() !== "" && parsedLocalPort === null}
+                aria-describedby={
+                  localPort.trim() !== "" && parsedLocalPort === null
+                    ? "desktop-port-forward-control-local-port-error"
+                    : undefined
+                }
                 type="number"
                 min={1}
                 max={65_535}
@@ -208,7 +221,10 @@ export function DesktopPortForwardControl({
                 onChange={(event) => setLocalPort(event.target.value)}
               />
               {localPort.trim() !== "" && parsedLocalPort === null ? (
-                <span className="mt-1 block text-[11px] text-destructive">
+                <span
+                  id="desktop-port-forward-control-local-port-error"
+                  className="mt-1 block text-[11px] text-destructive"
+                >
                   Enter a port from 1 to 65535.
                 </span>
               ) : null}
