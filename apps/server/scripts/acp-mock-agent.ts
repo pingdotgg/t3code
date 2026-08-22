@@ -278,15 +278,17 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
+// Mirrors the real Grok ACP: it only accepts "grok-4.6"/"grok-4.5" as
+// modelIds, never the CLI's own "grok-build" product name (see #7791).
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
+  { modelId: "grok-4.6", name: "Grok 4.6" },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
 function modelState(): AcpSchema.SessionModelState {
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : "grok-4.6";
   return {
     currentModelId: modelId,
     availableModels: grokAcpModels,

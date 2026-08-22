@@ -154,4 +154,10 @@ describe("model slug normalization", () => {
     expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
     expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
   });
+
+  it("aliases Grok's product-name slug to a modelId its ACP accepts", () => {
+    const grok = ProviderDriverKind.make("grok");
+
+    expect(normalizeModelSlug("grok-build", grok)).toBe("grok-4.6");
+  });
 });
