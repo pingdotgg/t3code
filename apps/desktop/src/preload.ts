@@ -7,9 +7,19 @@ import type {
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
 
+import {
+  decodeDesktopDeepLinkTarget,
+  makeDesktopDeepLinkBuffer,
+} from "./app/DesktopDeepLinkBuffer.ts";
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+const deepLinkBuffer = makeDesktopDeepLinkBuffer();
+ipcRenderer.on(IpcChannels.DEEP_LINK_CHANNEL, (_event, value: unknown) => {
+  const target = decodeDesktopDeepLinkTarget(value);
+  if (target !== null) deepLinkBuffer.push(target);
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -134,6 +144,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
+  onDeepLink: (listener) => deepLinkBuffer.subscribe(listener),
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   onWindowFullscreenStateChange: (listener) => {
