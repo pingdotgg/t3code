@@ -214,6 +214,18 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+/** Moonshot Kimi mark — simplified “K” monogram for provider picker chips. */
+export const KimiIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#1783FF] dark:fill-[#5CADFF]", className)}
+  >
+    <path d="M6 3.5h3.2v7.1L15.7 3.5H19.5L12.6 11.1 19.7 20.5h-3.9l-5.4-7.1v7.1H6V3.5Z" />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

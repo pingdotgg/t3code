@@ -891,12 +891,20 @@ const handleSessionUpdate = ({
         continue;
       }
       if (event._tag === "ContentDelta") {
+        // Thought streams must not open assistant message segments — they are
+        // projected separately as reasoning/worklog activity.
+        if (event.streamKind === "reasoning_text") {
+          yield* Queue.offer(queue, event);
+          continue;
+        }
         if (event.text.trim().length === 0) {
           const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
           if (!assistantSegmentState.activeItemId) {
             continue;
           }
         }
+        // Thought → answer boundary: close any open assistant segment first so
+        // a new answer segment starts cleanly after tools/thought.
         const itemId = yield* ensureActiveAssistantSegment({
           queue,
           assistantSegmentRef,

@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -99,6 +100,8 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+/** Cap for per-turn reasoning/thought buffers (same order as assistant text). */
+const MAX_BUFFERED_REASONING_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -922,6 +925,17 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  // Streaming reasoning/thought chunks (ACP agent_thought_chunk, Claude thinking, …)
+  // are buffered per turn and projected as thinking worklog activity.
+  const bufferedReasoningByTurnKey = yield* Cache.make<
+    string,
+    { text: string; started: boolean; lastPublishedLength: number }
+  >({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () => Effect.succeed({ text: "", started: false, lastPublishedLength: 0 }),
+  });
+
   // Task names arrive on task.started/task.progress but not on task.completed,
   // so remember them per task to title the completion activity.
   const taskDescriptionByTaskKey = yield* Cache.make<string, string>({
@@ -932,6 +946,150 @@ const make = Effect.gen(function* () {
 
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
     Cache.set(taskDescriptionByTaskKey, providerTaskKey(threadId, taskId), description);
+
+  const reasoningTaskIdForTurn = (turnId: TurnId) => `reasoning:${turnId}`;
+  const REASONING_PROGRESS_PUBLISH_CHARS = 280;
+
+  const appendReasoningDelta = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly delta: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const key = providerTurnKey(input.threadId, input.turnId);
+      const existing = yield* Cache.getOption(bufferedReasoningByTurnKey, key).pipe(
+        Effect.map((option) =>
+          Option.getOrElse(option, () => ({ text: "", started: false, lastPublishedLength: 0 })),
+        ),
+      );
+      // Cap buffer growth so long thought streams cannot exhaust server memory.
+      let nextText = `${existing.text}${input.delta}`;
+      if (nextText.length > MAX_BUFFERED_REASONING_CHARS) {
+        nextText = nextText.slice(0, MAX_BUFFERED_REASONING_CHARS);
+      }
+      const taskId = reasoningTaskIdForTurn(input.turnId);
+      const activities: Array<OrchestrationThreadActivity> = [];
+      const hasVisibleText = nextText.trim().length > 0;
+      // Only open a Thinking task once there is non-whitespace content so a
+      // whitespace-only stream never leaves a dangling "Thinking" entry.
+      const shouldStart = !existing.started && hasVisibleText;
+      const shouldPublishProgress =
+        hasVisibleText &&
+        (shouldStart ||
+          nextText.length - existing.lastPublishedLength >= REASONING_PROGRESS_PUBLISH_CHARS);
+
+      if (shouldStart) {
+        activities.push({
+          id: EventId.make(`${input.event.eventId}:reasoning-started`),
+          createdAt: input.createdAt,
+          tone: "info",
+          kind: "task.started",
+          summary: "Thinking",
+          payload: {
+            taskId,
+            taskType: "reasoning",
+            detail: "Thinking…",
+          },
+          turnId: input.turnId,
+        });
+      }
+
+      if (shouldPublishProgress) {
+        activities.push({
+          id: EventId.make(`${input.event.eventId}:reasoning-progress`),
+          createdAt: input.createdAt,
+          tone: "info",
+          kind: "task.progress",
+          summary: "Thinking",
+          payload: {
+            taskId,
+            title: "Thinking",
+            detail: truncateDetail(nextText),
+            summary: truncateDetail(nextText, 160),
+          },
+          turnId: input.turnId,
+        });
+      }
+
+      const started = existing.started || shouldStart;
+      yield* Cache.set(bufferedReasoningByTurnKey, key, {
+        text: nextText,
+        started,
+        // Only advance when progress was actually published (not on whitespace skips).
+        lastPublishedLength: shouldPublishProgress ? nextText.length : existing.lastPublishedLength,
+      });
+      if (started) {
+        yield* rememberTaskDescription(input.threadId, taskId, "Thinking");
+      }
+
+      yield* Effect.forEach(
+        activities,
+        (activity) =>
+          providerCommandId(input.event, "reasoning-activity").pipe(
+            Effect.flatMap((commandId) =>
+              orchestrationEngine.dispatch({
+                type: "thread.activity.append",
+                commandId,
+                threadId: input.threadId,
+                activity,
+                createdAt: activity.createdAt,
+              }),
+            ),
+          ),
+        { concurrency: 1 },
+      );
+    });
+
+  const completeReasoningForTurn = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const key = providerTurnKey(input.threadId, input.turnId);
+      const existing = yield* Cache.getOption(bufferedReasoningByTurnKey, key).pipe(
+        Effect.map(Option.getOrUndefined),
+      );
+      if (!existing?.started) {
+        // Drop any whitespace-only buffer that never opened a UI task.
+        if (existing) {
+          yield* Cache.invalidate(bufferedReasoningByTurnKey, key);
+        }
+        return;
+      }
+      const taskId = reasoningTaskIdForTurn(input.turnId);
+      const detail = truncateDetail(existing.text.trim());
+      yield* Cache.invalidate(bufferedReasoningByTurnKey, key);
+      // Always close the task if we opened it, even when the visible detail is empty.
+      yield* providerCommandId(input.event, "reasoning-complete").pipe(
+        Effect.flatMap((commandId) =>
+          orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId,
+            threadId: input.threadId,
+            activity: {
+              id: EventId.make(`${input.event.eventId}:reasoning-completed`),
+              createdAt: input.createdAt,
+              tone: "info",
+              kind: "task.completed",
+              summary: "Thinking complete",
+              payload: {
+                taskId,
+                status: "completed",
+                title: "Thinking",
+                summary: detail.length > 0 ? detail : "Thinking complete",
+                detail: detail.length > 0 ? detail : "Thinking complete",
+              },
+              turnId: input.turnId,
+            },
+            createdAt: input.createdAt,
+          }),
+        ),
+      );
+    });
 
   // Entries are left in place after completion so replayed or duplicate
   // terminal events stay titled; TTL, capacity, and the session-exit sweep
@@ -1368,6 +1526,7 @@ const make = Effect.gen(function* () {
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       const taskDescriptionKeys = Array.from(yield* Cache.keys(taskDescriptionByTaskKey));
+      const reasoningKeys = Array.from(yield* Cache.keys(bufferedReasoningByTurnKey));
       yield* Effect.forEach(
         turnKeys,
         (key) =>
@@ -1407,6 +1566,12 @@ const make = Effect.gen(function* () {
         taskDescriptionKeys,
         (key) =>
           key.startsWith(prefix) ? Cache.invalidate(taskDescriptionByTaskKey, key) : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        reasoningKeys,
+        (key) =>
+          key.startsWith(prefix) ? Cache.invalidate(bufferedReasoningByTurnKey, key) : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
     });
@@ -1660,11 +1825,37 @@ const make = Effect.gen(function* () {
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
+      const reasoningDelta =
+        event.type === "content.delta" && event.payload.streamKind === "reasoning_text"
+          ? event.payload.delta
+          : undefined;
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
+      if (reasoningDelta && reasoningDelta.length > 0) {
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          yield* appendReasoningDelta({
+            event,
+            threadId: thread.id,
+            turnId,
+            delta: reasoningDelta,
+            createdAt: now,
+          });
+        }
+      }
+
       if (assistantDelta && assistantDelta.length > 0) {
         const turnId = toTurnId(event.turnId);
+        // First visible answer token closes the thinking worklog for this turn.
+        if (turnId) {
+          yield* completeReasoningForTurn({
+            event,
+            threadId: thread.id,
+            turnId,
+            createdAt: now,
+          });
+        }
         const assistantMessageId = yield* getOrCreateAssistantMessageId({
           threadId: thread.id,
           event,
@@ -1843,6 +2034,12 @@ const make = Effect.gen(function* () {
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
+          yield* completeReasoningForTurn({
+            event,
+            threadId: thread.id,
+            turnId,
+            createdAt: now,
+          });
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
