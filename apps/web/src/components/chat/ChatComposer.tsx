@@ -969,6 +969,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
+  // Pending-question answers submit plain strings, so while a question is
+  // active the editor renders raw text (no inline tokens) and the trigger
+  // menus stay closed. Mobile answers questions with a plain input for the
+  // same reason.
+  const plainAnswerMode = activePendingProgress !== null;
+  // While a question is open, promptRef tracks the answer text the editor is
+  // showing, not the draft. Draft-oriented writers (traits, stash restore)
+  // and the question-ended handoff read and write this ref instead so they
+  // never disturb the answer's caret.
+  const draftPromptRef = useRef(prompt);
   const [composerCursor, setComposerCursor] = useState(() =>
     collapseExpandedComposerCursor(prompt, prompt.length),
   );
@@ -1162,7 +1172,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     workspaceEntries.entries,
   ]);
 
-  const composerMenuOpen = Boolean(composerTrigger);
+  const composerMenuOpen = Boolean(composerTrigger) && !plainAnswerMode;
   const composerMenuSearchKey = composerTrigger
     ? `${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
@@ -1239,18 +1249,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const setPromptFromTraits = useCallback(
     (nextPrompt: string) => {
+      if (plainAnswerMode) {
+        // A trait toggle while a question is open edits the parked draft; the
+        // editor is showing the answer, so leave its caret and focus alone.
+        if (nextPrompt !== draftPromptRef.current) {
+          draftPromptRef.current = nextPrompt;
+          setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+        }
+        return;
+      }
       if (nextPrompt === promptRef.current) {
         scheduleComposerFocus();
         return;
       }
       promptRef.current = nextPrompt;
+      draftPromptRef.current = nextPrompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
       setComposerCursor(nextCursor);
       setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
       scheduleComposerFocus();
     },
-    [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
+    [
+      composerDraftTarget,
+      plainAnswerMode,
+      promptRef,
+      scheduleComposerFocus,
+      setComposerDraftPrompt,
+    ],
   );
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
@@ -1361,9 +1387,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Sync refs back to parent
   // ------------------------------------------------------------------
   useEffect(() => {
+    draftPromptRef.current = prompt;
+    // In plain answer mode the editor shows the question answer, so a draft
+    // write (trait toggle, stash restore, another device syncing the draft)
+    // must not clobber the answer text or clamp its caret against the draft.
+    // promptRef is restored from the draft when the question resolves.
+    if (plainAnswerMode) return;
     promptRef.current = prompt;
     setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
-  }, [prompt, promptRef]);
+  }, [plainAnswerMode, prompt, promptRef]);
 
   useEffect(() => {
     if (composerSubmissionError === null) return;
@@ -1435,7 +1467,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
+      const pendingInputEnded = lastSyncedPendingInputRef.current !== null;
       lastSyncedPendingInputRef.current = null;
+      if (pendingInputEnded) {
+        // The question is gone; hand the composer back to the regular draft
+        // with token-aware cursor state. The draft is read from a ref instead
+        // of depending on `prompt` so draft writes while a question is open
+        // don't re-run this effect and yank the answer's caret to the end.
+        const draftPrompt = draftPromptRef.current;
+        promptRef.current = draftPrompt;
+        setComposerCursor(collapseExpandedComposerCursor(draftPrompt, draftPrompt.length));
+        setComposerTrigger(detectComposerTrigger(draftPrompt, draftPrompt.length));
+        setComposerHighlightedItemId(null);
+      }
       return;
     }
 
@@ -1456,14 +1500,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const nextCursor = collapseExpandedComposerCursor(nextCustomAnswer, nextCustomAnswer.length);
-    setComposerCursor(nextCursor);
-    setComposerTrigger(
-      detectComposerTrigger(
-        nextCustomAnswer,
-        expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
-      ),
-    );
+    // Plain answer mode: cursor offsets are raw because the editor renders no
+    // inline tokens, and trigger menus never open.
+    setComposerCursor(nextCustomAnswer.length);
+    setComposerTrigger(null);
     setComposerHighlightedItemId(null);
   }, [
     activePendingProgress?.customAnswer,
@@ -1479,10 +1519,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedItemId(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
-    setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    setComposerCursor(
+      plainAnswerMode
+        ? promptRef.current.length
+        : collapseExpandedComposerCursor(promptRef.current, promptRef.current.length),
+    );
+    setComposerTrigger(
+      plainAnswerMode ? null : detectComposerTrigger(promptRef.current, promptRef.current.length),
+    );
     setIsDragOverComposer(false);
-  }, [draftId, activeThreadId, promptRef]);
+  }, [draftId, activeThreadId, plainAnswerMode, promptRef]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -1611,9 +1657,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) => {
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
-        setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-        );
+        // Plain answer mode: no trigger menus over question answers.
+        setComposerTrigger(null);
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
@@ -1726,9 +1771,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger: plainAnswerMode
+        ? null
+        : detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
     };
-  }, [readComposerSnapshot]);
+  }, [plainAnswerMode, readComposerSnapshot]);
 
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -2051,7 +2098,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       setIsStashMenuOpen(false);
 
-      const currentPrompt = promptRef.current;
+      // The restore always targets the draft, which is not what promptRef
+      // holds while a question is open (the answer text is showing then).
+      const currentPrompt = draftPromptRef.current;
       // An image-only stash must not append blank lines to whatever is
       // already in the composer.
       const nextPrompt =
@@ -2062,10 +2111,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : entry.prompt;
       const promptChanged = nextPrompt !== currentPrompt;
       if (promptChanged) {
-        promptRef.current = nextPrompt;
+        draftPromptRef.current = nextPrompt;
         setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-        setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
-        setComposerTrigger(null);
+        // While a question is open the editor keeps showing the answer, so
+        // its caret must stay where the user left it.
+        if (!plainAnswerMode) {
+          promptRef.current = nextPrompt;
+          setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+          setComposerTrigger(null);
+        }
       }
 
       let unrestoredImageNames: string[] = [];
@@ -2134,7 +2188,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
       // Only yank the caret to the end when text was actually inserted;
       // restoring images alone should leave the user where they were typing.
-      if (promptChanged) {
+      if (promptChanged && !plainAnswerMode) {
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAtEnd();
         });
@@ -2144,6 +2198,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftImages,
       composerDraftTarget,
       composerImagesRef,
+      plainAnswerMode,
       promptRef,
       setComposerDraftPrompt,
       takeStashEntry,
@@ -3227,7 +3282,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? composerTerminalContexts
                       : []
                   }
-                  skills={selectedProviderStatus?.skills ?? []}
+                  skills={plainAnswerMode ? [] : (selectedProviderStatus?.skills ?? [])}
+                  plainText={plainAnswerMode}
                   {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}
