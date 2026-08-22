@@ -205,6 +205,17 @@ export const ProjectReadFileResult = Schema.Struct({
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
+/**
+ * Emitted by `subscribeProjectFileChanges` whenever a watched workspace file
+ * changes on disk. It is a signal, not a payload: clients re-read the file
+ * through `projects.readFile` so size limits, binary detection and error
+ * mapping keep living in one place.
+ */
+export const ProjectFileChangedEvent = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectFileChangedEvent = typeof ProjectFileChangedEvent.Type;
+
 export const ProjectFileFailure = Schema.Literals([
   "workspace_path_outside_root",
   "resolved_path_outside_root",
@@ -223,6 +234,7 @@ export const ProjectFileOperation = Schema.Literals([
   "close",
   "make-directory",
   "write-file",
+  "watch",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 

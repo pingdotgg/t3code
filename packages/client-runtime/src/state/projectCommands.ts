@@ -8,6 +8,7 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
+import { subscribe } from "../rpc/client.ts";
 import {
   type CreateProjectInput,
   type DeleteProjectInput,
@@ -66,11 +67,16 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
     }),
+    // The server watches the open file and says when it moved, so an agent (or
+    // anything else) editing on disk lands in the viewer without polling and
+    // without waiting for a focus change. Web, desktop and mobile all read this
+    // atom, so they all stop serving stale contents together.
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
+      invalidate: (input) => subscribe(WS_METHODS.subscribeProjectFileChanges, input),
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),

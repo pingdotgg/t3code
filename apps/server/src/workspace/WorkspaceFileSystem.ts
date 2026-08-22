@@ -10,17 +10,20 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type {
+  ProjectFileChangedEvent,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -43,6 +46,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<W
       "close",
       "make-directory",
       "write-file",
+      "watch",
     ]),
     cause: Schema.Defect(),
   },
@@ -123,6 +127,19 @@ export class WorkspaceFileSystem extends Context.Service<
       ProjectWriteFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
+    /**
+     * Emit a change event every time the file changes on disk.
+     *
+     * The stream is a signal only: subscribers re-read through `readFile`, so
+     * every size, binary and error rule stays in one place. Events are
+     * debounced because a single save is several `fs.watch` events.
+     */
+    readonly watchFile: (
+      input: ProjectReadFileInput,
+    ) => Stream.Stream<
+      ProjectFileChangedEvent,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
   }
 >()("t3/workspace/WorkspaceFileSystem") {}
 
@@ -132,39 +149,42 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
 
-  const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
-    "WorkspaceFileSystem.readFile",
-  )(function* (input) {
-    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
-      workspaceRoot: input.cwd,
-      relativePath: input.relativePath,
-    });
-
+  /**
+   * Resolve one absolute path with `realpath` and prove it sits inside the
+   * workspace root. Lexical containment is not enough: a symlink inside the
+   * workspace can point anywhere, so both ends are resolved physically and
+   * compared. Callers pick what they need contained — `readFile` contains the
+   * file it opens, `watchFile` the directory it watches.
+   */
+  const realPathWithinRoot = Effect.fn("WorkspaceFileSystem.realPathWithinRoot")(function* (
+    input: ProjectReadFileInput,
+    absolutePath: string,
+  ) {
     const realWorkspaceRoot = yield* Effect.tryPromise({
       try: () => NodeFSP.realpath(input.cwd),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
-          resolvedPath: target.absolutePath,
+          resolvedPath: absolutePath,
           operationPath: input.cwd,
           operation: "realpath-workspace-root",
           cause,
         }),
     });
-    const realTargetPath = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(target.absolutePath),
+    const realPath = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(absolutePath),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
-          resolvedPath: target.absolutePath,
-          operationPath: target.absolutePath,
+          resolvedPath: absolutePath,
+          operationPath: absolutePath,
           operation: "realpath-target",
           cause,
         }),
     });
-    const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
+    const relativeRealPath = path.relative(realWorkspaceRoot, realPath);
     if (
       relativeRealPath.startsWith(`..${path.sep}`) ||
       relativeRealPath === ".." ||
@@ -174,9 +194,21 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
         resolvedWorkspaceRoot: realWorkspaceRoot,
-        resolvedPath: realTargetPath,
+        resolvedPath: realPath,
       });
     }
+
+    return realPath;
+  });
+
+  const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
+    "WorkspaceFileSystem.readFile",
+  )(function* (input) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+    const realTargetPath = yield* realPathWithinRoot(input, target.absolutePath);
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -297,7 +329,80 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ readFile, writeFile });
+  /**
+   * Watches the containing directory rather than the file itself: saves that
+   * land as rename-over-temp (git, most editors, atomic writers) replace the
+   * inode, and a file-level watch would follow the discarded one.
+   */
+  const watchFile: WorkspaceFileSystem["Service"]["watchFile"] = (input) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+
+        // A symlinked file can be changed from either end, and the two land in
+        // different directories: an edit through the target's own path fires
+        // beside the target, while an atomic rename-over-temp save on the alias
+        // fires beside the alias. Watch both, and the ordinary case collapses
+        // back to one watcher because the two coincide.
+        const aliasDirectory = yield* realPathWithinRoot(input, path.dirname(target.absolutePath));
+        const aliasWatch = {
+          directory: aliasDirectory,
+          fileName: path.basename(target.absolutePath),
+        };
+        const watched: Array<typeof aliasWatch> = [aliasWatch];
+
+        // Missing leaf is not an error: a watch must still attach to a path
+        // that is momentarily absent, mid atomic-replace or not yet created.
+        const canonical = yield* Effect.tryPromise({
+          try: () => NodeFSP.realpath(target.absolutePath),
+          catch: () => null,
+        }).pipe(Effect.orElseSucceed(() => null));
+        if (canonical !== null) {
+          // Contained, not merely resolved: an escaping symlink fails here
+          // rather than quietly falling back to the alias-only watch.
+          const canonicalPath = yield* realPathWithinRoot(input, canonical);
+          const directory = path.dirname(canonicalPath);
+          const fileName = path.basename(canonicalPath);
+          if (directory !== aliasWatch.directory || fileName !== aliasWatch.fileName) {
+            watched.push({ directory, fileName });
+          }
+        }
+
+        const changes = watched.map(({ directory, fileName }) =>
+          fileSystem.watch(directory).pipe(
+            Stream.filter(
+              (event) =>
+                event.path === fileName ||
+                path.resolve(directory, event.path) === path.join(directory, fileName),
+            ),
+            Stream.mapError(
+              (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: path.join(directory, fileName),
+                  operationPath: directory,
+                  operation: "watch",
+                  cause,
+                }),
+            ),
+          ),
+        );
+
+        const [first, second] = changes;
+        return (second === undefined ? first! : Stream.merge(first!, second)).pipe(
+          // Debounce so the file is fully written before subscribers re-read it,
+          // and so both watchers reporting one save stay a single event.
+          Stream.debounce(Duration.millis(100)),
+          Stream.map(() => ({ relativePath: target.relativePath })),
+        );
+      }),
+    );
+
+  return WorkspaceFileSystem.of({ readFile, writeFile, watchFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

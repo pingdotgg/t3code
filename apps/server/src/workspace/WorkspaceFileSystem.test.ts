@@ -1,9 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -262,6 +266,179 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+  });
+
+  describe("watchFile", () => {
+    /**
+     * `fs.watch` registration is not observable, so the writer keeps rewriting
+     * until the watcher reports instead of racing a fixed startup delay. It
+     * pauses longer than the debounce window between rewrites so the stream
+     * gets the quiet period it waits for.
+     */
+    const awaitFirstChange = Effect.fn("awaitFirstChange")(function* (
+      cwd: string,
+      relativePath: string,
+      rewrite: Effect.Effect<void, never, FileSystem.FileSystem | Path.Path>,
+    ) {
+      const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const watcher = yield* workspaceFileSystem
+        .watchFile({ cwd, relativePath })
+        .pipe(Stream.runHead, Effect.forkChild());
+      const writer = yield* rewrite.pipe(
+        Effect.delay(Duration.millis(300)),
+        Effect.forever,
+        Effect.forkChild(),
+      );
+      const event = yield* Fiber.join(watcher).pipe(Effect.timeout(Duration.seconds(10)));
+      yield* Fiber.interrupt(writer);
+      return event;
+    });
+
+    it.effect("reports a plain on-disk write", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "package.json",
+          '{ "description": "An awesome horse platform" }\n',
+        );
+
+        const event = yield* awaitFirstChange(
+          cwd,
+          "package.json",
+          writeTextFile(cwd, "package.json", '{ "description": "An awesome course platform" }\n'),
+        );
+
+        expect(event).toEqual(Option.some({ relativePath: "package.json" }));
+      }),
+    );
+
+    it.effect("reports an atomic replace that swaps the file's inode", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+
+        const target = path.join(cwd, "src/index.ts");
+        const temp = path.join(cwd, "src/index.ts.tmp");
+        const replace = Effect.gen(function* () {
+          yield* fileSystem.writeFileString(temp, "export const answer = 43;\n").pipe(Effect.orDie);
+          yield* fileSystem.rename(temp, target).pipe(Effect.orDie);
+        });
+
+        const event = yield* awaitFirstChange(cwd, "src/index.ts", replace);
+
+        expect(event).toEqual(Option.some({ relativePath: "src/index.ts" }));
+      }),
+    );
+
+    it.effect("reports a file that does not exist yet when it appears", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        // No file at this path: the watcher must still attach, so a tab whose
+        // file is momentarily absent keeps its live refresh.
+        const event = yield* awaitFirstChange(
+          cwd,
+          "later.txt",
+          writeTextFile(cwd, "later.txt", "created\n"),
+        );
+
+        expect(event).toEqual(Option.some({ relativePath: "later.txt" }));
+      }),
+    );
+
+    it.effect("follows a symlinked file to edits made through its target", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "real/config.json", '{ "value": "before" }\n');
+        yield* fileSystem
+          .symlink(path.join(cwd, "real", "config.json"), path.join(cwd, "alias.json"))
+          .pipe(Effect.orDie);
+
+        // Watching through the alias must see a write to the canonical path,
+        // which lives in a different directory under a different name.
+        //
+        // This discriminates on inotify platforms, where a watch on the alias's
+        // own directory would never hear about the target. It does not on
+        // macOS: FSEvents reports the alias entry as touched when its target is
+        // written, so this passes there even with the parent-only resolve.
+        const event = yield* awaitFirstChange(
+          cwd,
+          "alias.json",
+          writeTextFile(cwd, "real/config.json", '{ "value": "after" }\n'),
+        );
+
+        expect(event).toEqual(Option.some({ relativePath: "alias.json" }));
+      }),
+    );
+
+    it.effect("reports an atomic replace of the symlink's own path", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "real/config.json", '{ "value": "before" }\n');
+        const alias = path.join(cwd, "alias.json");
+        yield* fileSystem.symlink(path.join(cwd, "real", "config.json"), alias).pipe(Effect.orDie);
+
+        // The editor/git pattern: write a temp file beside the alias and rename
+        // over it. That fires in the alias's directory, not the target's, so a
+        // watch that only followed the canonical path would miss it.
+        //
+        // Like the sibling symlink test, this discriminates on inotify and not
+        // on macOS, where FSEvents coalesces to directory granularity and
+        // delivers a matching event either way.
+        const temp = path.join(cwd, "alias.json.tmp");
+        const replaceAlias = Effect.gen(function* () {
+          yield* fileSystem.writeFileString(temp, '{ "value": "after" }\n').pipe(Effect.orDie);
+          yield* fileSystem.rename(temp, alias).pipe(Effect.orDie);
+        });
+
+        const event = yield* awaitFirstChange(cwd, "alias.json", replaceAlias);
+
+        expect(event).toEqual(Option.some({ relativePath: "alias.json" }));
+      }),
+    );
+
+    it.effect("rejects a watch that escapes the workspace through a symlink", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outside = yield* makeTempDir;
+        yield* fileSystem
+          .writeFileString(path.join(outside, "secret.txt"), "secret\n")
+          .pipe(Effect.orDie);
+        // Lexically `link/secret.txt` sits inside the workspace; physically it
+        // does not, so no watcher may be pointed at it.
+        yield* fileSystem.symlink(outside, path.join(cwd, "link")).pipe(Effect.orDie);
+
+        const error = yield* workspaceFileSystem
+          .watchFile({ cwd, relativePath: "link/secret.txt" })
+          .pipe(Stream.runHead, Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceFilePathEscapeError");
+      }),
+    );
+
+    it.effect("rejects watches outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const error = yield* workspaceFileSystem
+          .watchFile({ cwd, relativePath: "../escape.md" })
+          .pipe(Stream.runHead, Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
       }),
     );
   });
