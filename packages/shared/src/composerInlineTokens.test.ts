@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  collectComposerSkillInvocations,
+} from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -141,6 +144,37 @@ describe("collectComposerInlineTokens", () => {
   it("leaves a file link past the label cap as plain text", () => {
     const label = `${"a".repeat(509)}.tsx`;
     expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
+  });
+
+  it("collects complete submitted skill invocations including a trailing token", () => {
+    expect(collectComposerSkillInvocations("$grill-with-docs explain this")).toEqual([
+      "grill-with-docs",
+    ]);
+    expect(collectComposerSkillInvocations("Use $grill-with-docs")).toEqual(["grill-with-docs"]);
+    expect(collectComposerSkillInvocations("$ui then $ui again $review")).toEqual(["ui", "review"]);
+  });
+
+  it("collects skill invocations terminated by punctuation", () => {
+    expect(collectComposerSkillInvocations("Use $review.")).toEqual(["review"]);
+    expect(collectComposerSkillInvocations("$review, then continue")).toEqual(["review"]);
+    expect(collectComposerSkillInvocations("call $skill-name.")).toEqual(["skill-name"]);
+    expect(collectComposerSkillInvocations("try $review!")).toEqual(["review"]);
+  });
+
+  it("does not treat shell paths or filenames as skill invocations", () => {
+    expect(collectComposerSkillInvocations("check $HOME/.config")).toEqual([]);
+    expect(collectComposerSkillInvocations("read $FOO/bar")).toEqual([]);
+    expect(collectComposerSkillInvocations("open $review.md")).toEqual([]);
+    expect(collectComposerSkillInvocations("open $review.配置")).toEqual([]);
+    expect(collectComposerSkillInvocations("open $review.é")).toEqual([]);
+    expect(collectComposerSkillInvocations("$PATH/bin then $review.")).toEqual(["review"]);
+  });
+
+  it("ignores non-skill dollar text and empty prompts", () => {
+    expect(collectComposerSkillInvocations("")).toEqual([]);
+    expect(collectComposerSkillInvocations("plain text")).toEqual([]);
+    expect(collectComposerSkillInvocations("costs $100 please")).toEqual([]);
+    expect(collectComposerSkillInvocations("foo$bar baz")).toEqual([]);
   });
 
   it("stays fast on unterminated bracket runs", () => {
