@@ -110,7 +110,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
-  clearPersistedServerRuntimeState,
+  clearPersistedServerRuntimeStateIfOwned,
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
@@ -515,13 +515,19 @@ export const makeServerLayer = Layer.unwrap(
               Effect.logWarning("Failed to persist server runtime state", { cause }),
             ),
           );
+          return state;
         }),
-        () =>
-          clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to clear server runtime state", { cause }),
-            ),
-          ),
+        (state) =>
+          state === undefined
+            ? Effect.void
+            : clearPersistedServerRuntimeStateIfOwned({
+                path: config.serverRuntimeStatePath,
+                state,
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to clear server runtime state", { cause }),
+                ),
+              ),
       ),
     );
     const tailscaleServeLayer = config.tailscaleServeEnabled

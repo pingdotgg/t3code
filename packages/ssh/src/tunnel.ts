@@ -528,18 +528,22 @@ REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
+DEFAULT_RUNTIME_IS_MANAGED=0
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && [ -n "$DEFAULT_RUNTIME_PID" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ] && [ "$DEFAULT_REMOTE_PORT" = "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+  DEFAULT_RUNTIME_IS_MANAGED=1
+fi
+if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$DEFAULT_RUNTIME_IS_MANAGED" -eq 0 ]; then
+  PREVIOUS_REMOTE_PORT="$REMOTE_PORT"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
-      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
-      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
-        kill "$PID_TO_STOP" 2>/dev/null || true
-        wait_for_pid_exit "$PID_TO_STOP"
+      if [ -n "$REMOTE_PID" ] && [ -n "$PREVIOUS_REMOTE_PORT" ] && [ "$PREVIOUS_REMOTE_PORT" != "$DEFAULT_REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+        kill "$REMOTE_PID" 2>/dev/null || true
+        wait_for_pid_exit "$REMOTE_PID"
       fi
       REMOTE_PID=""
       REMOTE_PORT="$DEFAULT_REMOTE_PORT"
@@ -560,10 +564,13 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
-  if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+  if [ -z "$REMOTE_PORT" ]; then
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
+  elif ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    printf 'External T3 server did not become ready on 127.0.0.1:%s; refusing to replace it with a managed SSH server. Disconnect the SSH environment to clear external ownership.\\n' "$REMOTE_PORT" >&2
+    exit 1
   fi
 elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   if [ "$RUNNER_CHANGED" -eq 1 ]; then
