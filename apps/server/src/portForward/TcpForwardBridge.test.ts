@@ -23,6 +23,12 @@ it("connects to IPv6 loopback when the IPv4 loopback target is unavailable", asy
   const target = await Effect.runPromise(makeConnectTarget(createConnection)("127.0.0.1", 5173));
 
   expect(attemptedHosts).toEqual(["127.0.0.1", "::1"]);
+  expect(createConnection).toHaveBeenCalledWith({
+    host: "127.0.0.1",
+    port: 5173,
+    allowHalfOpen: true,
+  });
+  expect(createConnection).toHaveBeenCalledWith({ host: "::1", port: 5173, allowHalfOpen: true });
   target.destroy();
 });
 

@@ -947,6 +947,13 @@ describe("EnvironmentRegistry", () => {
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)?.target,
         ).toEqual(SSH_CONNECTION);
+        expect(yield* Ref.get(harness.routeTransitions)).toEqual([
+          {
+            environmentId: SSH_CONNECTION.environmentId,
+            previous: SSH_RELAY_TARGET,
+            selected: SSH_CONNECTION,
+          },
+        ]);
         expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
         expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
