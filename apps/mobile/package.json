@@ -109,7 +109,7 @@
     "react-native-keyboard-controller": "1.21.13",
     "react-native-nitro-markdown": "^0.5.0",
     "react-native-nitro-modules": "0.35.9",
-    "react-native-reanimated": "4.3.1",
+    "react-native-reanimated": "4.3.4",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.25.2",
     "react-native-shiki-engine": "^0.3.12",
