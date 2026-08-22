@@ -127,6 +127,7 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
+  projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -139,6 +140,7 @@ function resolveCommandEditorArgs(
       return Option.match(parsedTarget, {
         onNone: () => [target],
         onSome: ({ path, line, column }) => [
+          ...(projectRoot === undefined ? [] : [projectRoot]),
           "--line",
           line,
           ...Option.match(column, {
@@ -154,9 +156,10 @@ function resolveCommandEditorArgs(
 function resolveEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
+  projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const baseArgs = "baseArgs" in editor ? editor.baseArgs : [];
-  return [...baseArgs, ...resolveCommandEditorArgs(editor, target)];
+  return [...baseArgs, ...resolveCommandEditorArgs(editor, target, projectRoot)];
 }
 
 const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableCommand")(function* (
@@ -352,6 +355,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   yield* Effect.annotateCurrentSpan({
     "externalLauncher.editor": input.editor,
     "externalLauncher.cwd": input.cwd,
+    "externalLauncher.projectRoot": input.projectRoot,
     "externalLauncher.platform": platform,
   });
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
@@ -368,7 +372,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: resolveEditorArgs(editorDef, input.cwd),
+      args: resolveEditorArgs(editorDef, input.cwd, input.projectRoot),
     };
   }
 

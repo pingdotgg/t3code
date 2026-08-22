@@ -1377,6 +1377,7 @@ function ChatMarkdown({
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
+    cwd,
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
