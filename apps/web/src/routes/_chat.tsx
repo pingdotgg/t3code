@@ -167,9 +167,9 @@ function ChatRouteGlobalShortcuts() {
       }
 
       if (command === "thread.settle.toggle") {
-        if (event.repeat) return;
         event.preventDefault();
         event.stopPropagation();
+        if (event.repeat) return;
         if (!routeThreadRef || !activeThreadShell) return;
         const supportsSettlement =
           serverConfigs.get(routeThreadRef.environmentId)?.environment.capabilities
