@@ -1865,26 +1865,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               nextAction.historyWrite,
             );
           }
-
-          if (nextAction.type === "output") {
-            yield* publishEvent({
-              type: "output",
-              threadId: nextAction.threadId,
-              terminalId: nextAction.terminalId,
-              sequence: nextAction.sequence,
-              data: nextAction.data,
-            });
-          } else if (nextAction.type === "exit") {
-            yield* publishEvent({
-              type: "exited",
-              threadId: nextAction.threadId,
-              terminalId: nextAction.terminalId,
-              sequence: nextAction.sequence,
-              exitCode: nextAction.exitCode,
-              exitSignal: nextAction.exitSignal,
-            });
-          }
-
           return nextAction;
         }),
       );
@@ -1894,6 +1874,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (action.type === "output") {
+        yield* publishEvent({
+          type: "output",
+          threadId: action.threadId,
+          terminalId: action.terminalId,
+          sequence: action.sequence,
+          data: action.data,
+        });
         continue;
       }
 
@@ -1901,6 +1888,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* unregisterTerminal({
         threadId: action.threadId,
         terminalId: action.terminalId,
+      });
+      yield* publishEvent({
+        type: "exited",
+        threadId: action.threadId,
+        terminalId: action.terminalId,
+        sequence: action.sequence,
+        exitCode: action.exitCode,
+        exitSignal: action.exitSignal,
       });
       yield* evictInactiveSessionsIfNeeded();
       return;
@@ -2525,6 +2520,37 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const attachStream: TerminalManager["Service"]["attachStream"] = (input, listener) => {
     let unsubscribe: (() => void) | null = null;
+    let initialSnapshot: TerminalSessionSnapshot | null = null;
+    let lastSequence: number | null = null;
+    let sessionClosed = false;
+
+    const shouldDeliver = (event: TerminalEvent): boolean => {
+      if (sessionClosed) {
+        if (event.type !== "started") {
+          return false;
+        }
+        sessionClosed = false;
+        lastSequence = event.sequence ?? null;
+        return true;
+      }
+
+      if (event.sequence !== undefined) {
+        if (lastSequence !== null && event.sequence <= lastSequence) {
+          return false;
+        }
+        lastSequence = event.sequence;
+      } else if (
+        initialSnapshot !== null &&
+        isDuplicateAttachSnapshotEvent(event, initialSnapshot)
+      ) {
+        return false;
+      }
+
+      if (event.type === "closed") {
+        sessionClosed = true;
+      }
+      return true;
+    };
 
     return Effect.gen(function* () {
       const bufferedEvents: TerminalEvent[] = [];
@@ -2540,11 +2566,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           return Effect.void;
         }
 
+        if (!shouldDeliver(event)) {
+          return Effect.void;
+        }
         const attachEvent = terminalEventToAttachEvent(event);
         return attachEvent ? listener(attachEvent) : Effect.void;
       });
 
-      const initialSnapshot = yield* openOrAttachForStream(input);
+      initialSnapshot = yield* openOrAttachForStream(input);
+      lastSequence = initialSnapshot.sequence ?? null;
 
       yield* listener({
         type: "snapshot",
@@ -2552,7 +2582,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
 
       for (const event of bufferedEvents) {
-        if (isDuplicateAttachSnapshotEvent(event, initialSnapshot)) {
+        if (!shouldDeliver(event)) {
           continue;
         }
 

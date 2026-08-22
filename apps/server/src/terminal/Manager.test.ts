@@ -740,7 +740,7 @@ it.layer(
     }),
   );
 
-  it.effect("publishes output before a concurrent clear", () =>
+  it.effect("drops delayed output published after a concurrent clear", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
@@ -750,19 +750,32 @@ it.layer(
 
       const outputStarted = yield* Deferred.make<void>();
       const releaseOutput = yield* Deferred.make<void>();
-      const publishedEvents = yield* Ref.make<ReadonlyArray<"output" | "cleared">>([]);
-      const unsubscribe = yield* manager.subscribe((event) =>
+      const outputFinished = yield* Deferred.make<void>();
+      const clearedDelivered = yield* Deferred.make<void>();
+      const blockerUnsubscribe = yield* manager.subscribe((event) =>
         Effect.gen(function* () {
           if (event.type === "output") {
             yield* Deferred.succeed(outputStarted, undefined);
             yield* Deferred.await(releaseOutput);
-            yield* Ref.update(publishedEvents, (events) => events.concat("output"));
-          } else if (event.type === "cleared") {
-            yield* Ref.update(publishedEvents, (events) => events.concat("cleared"));
           }
         }),
       );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* Effect.addFinalizer(() => Effect.sync(blockerUnsubscribe));
+
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const attachUnsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(attachEvents, (events) => [...events, event]).pipe(
+          Effect.andThen(
+            event.type === "cleared" ? Deferred.succeed(clearedDelivered, undefined) : Effect.void,
+          ),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(attachUnsubscribe));
+
+      const observerUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" ? Deferred.succeed(outputFinished, undefined) : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(observerUnsubscribe));
 
       process.emitData("before clear\n");
       yield* Deferred.await(outputStarted);
@@ -770,11 +783,15 @@ it.layer(
       const clearFiber = yield* manager
         .clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID })
         .pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
+      yield* Deferred.await(clearedDelivered);
       yield* Deferred.succeed(releaseOutput, undefined);
       yield* Fiber.join(clearFiber);
+      yield* Deferred.await(outputFinished);
 
-      expect(yield* Ref.get(publishedEvents)).toEqual(["output", "cleared"]);
+      expect((yield* Ref.get(attachEvents)).map((event) => event.type)).toEqual([
+        "snapshot",
+        "cleared",
+      ]);
     }),
   );
 
