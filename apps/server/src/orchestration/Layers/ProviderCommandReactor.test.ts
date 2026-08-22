@@ -2486,6 +2486,79 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("settles the thread when provider interrupt and session cleanup fail", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.interruptTurn.mockImplementationOnce(
+      () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "opencode",
+            method: "session.abort",
+            detail: "OpenCode server is unavailable.",
+          }),
+        ) as never,
+    );
+    harness.stopSession.mockImplementationOnce(
+      () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "opencode",
+            method: "session.stop",
+            detail: "OpenCode server is unavailable.",
+          }),
+        ) as never,
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-failed-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "opencode",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-provider-failure"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.interruptTurn).toHaveBeenCalledWith({ threadId: "thread-1" });
+    expect(harness.stopSession).toHaveBeenCalledWith({ threadId: "thread-1" });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session).toMatchObject({
+      status: "error",
+      activeTurnId: null,
+      lastError: "OpenCode server is unavailable.",
+    });
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+    ).toMatchObject({
+      turnId: "turn-1",
+      payload: {
+        detail: "OpenCode server is unavailable.",
+      },
+    });
+  });
+
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

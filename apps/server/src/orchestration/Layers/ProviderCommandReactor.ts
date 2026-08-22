@@ -394,7 +394,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
+  const setThreadSessionError = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly detail: string;
     readonly createdAt: string;
@@ -1119,7 +1119,7 @@ const make = Effect.gen(function* () {
         return Effect.void;
       }
       const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
+      return setThreadSessionError({
         threadId: event.payload.threadId,
         detail,
         createdAt: event.payload.createdAt,
@@ -1193,7 +1193,57 @@ const make = Effect.gen(function* () {
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        const detail = formatFailureDetail(cause);
+        return providerService.stopSession({ threadId: event.payload.threadId }).pipe(
+          Effect.catchCause((stopCause) =>
+            Cause.hasInterruptsOnly(stopCause)
+              ? Effect.interrupt
+              : Effect.logWarning(
+                  "provider command reactor failed to stop session after turn interrupt failure",
+                  {
+                    threadId: event.payload.threadId,
+                    cause: Cause.pretty(stopCause),
+                    originalCause: Cause.pretty(cause),
+                  },
+                ),
+          ),
+          Effect.flatMap(() =>
+            setThreadSessionError({
+              threadId: event.payload.threadId,
+              detail,
+              createdAt: event.payload.createdAt,
+            }),
+          ),
+          Effect.flatMap(() =>
+            appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.turn.interrupt.failed",
+              summary: "Provider turn interrupt failed",
+              detail,
+              turnId: event.payload.turnId ?? null,
+              createdAt: event.payload.createdAt,
+            }),
+          ),
+          Effect.catchCause((recoveryCause) =>
+            Cause.hasInterruptsOnly(recoveryCause)
+              ? Effect.interrupt
+              : Effect.logWarning(
+                  "provider command reactor failed to recover turn interrupt failure",
+                  {
+                    threadId: event.payload.threadId,
+                    cause: Cause.pretty(recoveryCause),
+                    originalCause: Cause.pretty(cause),
+                  },
+                ),
+          ),
+        );
+      }),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
