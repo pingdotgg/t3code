@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
@@ -20,6 +21,9 @@ import {
   ClientOs,
   ClientSurface,
   ClientWebDeployment,
+  type CodexGoalOperation,
+  CodexGoalOperationError,
+  type CodexGoalStreamEvent,
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
@@ -187,6 +191,11 @@ function legacySetupFailureDescription(cause: unknown): string {
     return cause.message;
   }
   return String(cause);
+}
+
+function codexGoalOperationError(operation: CodexGoalOperation, threadId: ThreadId) {
+  return (cause: unknown): CodexGoalOperationError =>
+    new CodexGoalOperationError({ operation, threadId, cause });
 }
 
 function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
@@ -2607,6 +2616,70 @@ const makeWsRpcLayer = (
               ),
             ),
             { "rpc.aggregate": "terminal" },
+          ),
+        [WS_METHODS.codexGoalGet]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexGoalGet,
+            providerService
+              .getCodexGoal(input.threadId)
+              .pipe(Effect.mapError(codexGoalOperationError("get", input.threadId))),
+            { "rpc.aggregate": "codex-goal" },
+          ),
+        [WS_METHODS.codexGoalSet]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexGoalSet,
+            providerService
+              .setCodexGoal(input)
+              .pipe(Effect.mapError(codexGoalOperationError("set", input.threadId))),
+            { "rpc.aggregate": "codex-goal" },
+          ),
+        [WS_METHODS.codexGoalClear]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexGoalClear,
+            providerService
+              .clearCodexGoal(input.threadId)
+              .pipe(Effect.mapError(codexGoalOperationError("clear", input.threadId))),
+            { "rpc.aggregate": "codex-goal" },
+          ),
+        [WS_METHODS.subscribeCodexGoal]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.subscribeCodexGoal,
+            Effect.gen(function* () {
+              const liveGoalEvents = yield* Stream.toQueue(
+                providerService.streamEvents.pipe(
+                  Stream.filterMap((event) => {
+                    if (event.threadId !== input.threadId) {
+                      return Result.failVoid;
+                    }
+                    if (event.type === "thread.goal.updated") {
+                      return Result.succeed<CodexGoalStreamEvent>({
+                        type: "updated",
+                        threadId: input.threadId,
+                        goal: event.payload.goal,
+                      });
+                    }
+                    if (event.type === "thread.goal.cleared") {
+                      return Result.succeed<CodexGoalStreamEvent>({
+                        type: "cleared",
+                        threadId: input.threadId,
+                      });
+                    }
+                    return Result.failVoid;
+                  }),
+                ),
+                { capacity: "unbounded" },
+              );
+              const goal = yield* providerService
+                .getCodexGoal(input.threadId, { allowRecovery: false })
+                .pipe(Effect.mapError(codexGoalOperationError("subscribe", input.threadId)));
+              const snapshot: CodexGoalStreamEvent = {
+                type: "snapshot",
+                threadId: input.threadId,
+                goal,
+              };
+              return Stream.concat(Stream.make(snapshot), Stream.fromQueue(liveGoalEvents));
+            }),
+            { "rpc.aggregate": "codex-goal" },
           ),
         [WS_METHODS.previewOpen]: (input) =>
           observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(input), {

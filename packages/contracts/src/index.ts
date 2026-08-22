@@ -16,6 +16,7 @@ export * from "./providerSetup.ts";
 export * from "./providerRuntime.ts";
 export * from "./providerUsageLimits.ts";
 export * from "./usageLimitSourceId.ts";
+export * from "./codexGoal.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";

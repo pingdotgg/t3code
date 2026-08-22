@@ -436,8 +436,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
     try {
-      const messageId = await onSendMessage();
-      if (messageId === null) {
+      const sentMessageId = await onSendMessage();
+      if (sentMessageId === null) {
         return;
       }
       // Sending a prompt starts agent work: arm the lock-screen card while the

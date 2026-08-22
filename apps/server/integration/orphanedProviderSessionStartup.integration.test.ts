@@ -121,6 +121,9 @@ const startupDependencies = Layer.mergeAll(
     getInstanceInfo: () => Effect.die("unused"),
     rollbackConversation: () => Effect.die("unused"),
     uploadFeedback: () => Effect.die("unused"),
+    getCodexGoal: () => Effect.die("unused"),
+    setCodexGoal: () => Effect.die("unused"),
+    clearCodexGoal: () => Effect.die("unused"),
     streamEvents: Stream.empty,
   }),
 );

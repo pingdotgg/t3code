@@ -1,11 +1,20 @@
+import {
+  type CodexGoal,
+  type CodexGoalSetInput,
+  type CodexGoalStatus,
+  type CodexGoalStreamEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import { Atom } from "effect/unstable/reactivity";
-import { WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import {
   type ArchiveThreadInput,
@@ -51,6 +60,97 @@ import {
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
+export type CodexGoalCommand =
+  | { readonly action: "status" }
+  | { readonly action: "set"; readonly objective?: string; readonly status?: "active" | "paused" }
+  | { readonly action: "clear" }
+  | { readonly action: "invalid"; readonly message: string };
+
+const GOAL_USAGE =
+  "Usage: /goal [status | create <objective> | steer <objective> | pause | resume | clear | reset]";
+
+export function formatCodexGoalUsage(goal: CodexGoal): string {
+  const budget = goal.tokenBudget == null ? "" : ` / ${goal.tokenBudget.toLocaleString()}`;
+  return `${goal.tokensUsed.toLocaleString()} tokens${budget}, ${goal.timeUsedSeconds.toLocaleString()} seconds`;
+}
+
+export function formatCodexGoalDescription(goal: CodexGoal): string {
+  return `${goal.objective} - ${formatCodexGoalUsage(goal)}`;
+}
+
+const CODEX_GOAL_STATUS_LABELS: Record<CodexGoalStatus, string> = {
+  active: "active",
+  paused: "paused",
+  budgetLimited: "budget limited",
+  usageLimited: "usage limited",
+  complete: "complete",
+  blocked: "blocked",
+};
+
+export function formatCodexGoalStatus(status: CodexGoalStatus): string {
+  return CODEX_GOAL_STATUS_LABELS[status];
+}
+
+export function formatCodexGoalError(error: unknown): string {
+  if (!(error instanceof Error)) return "Codex Goal operation failed.";
+  const reason = error.cause instanceof Error ? error.cause.message.trim() : "";
+  return reason.length === 0 ? error.message : `${error.message}: ${reason}`;
+}
+
+export function parseCodexGoalCommand(value: string): CodexGoalCommand | null {
+  const match = /^\/goal(?:\s+([\s\S]*))?$/i.exec(value.trim());
+  if (match === null) return null;
+
+  const argument = match[1]?.trim() ?? "";
+  if (argument === "" || argument.toLowerCase() === "status") return { action: "status" };
+
+  const [rawAction = "", ...rest] = argument.split(/\s+/);
+  const action = rawAction.toLowerCase();
+  const objective = rest.join(" ").trim();
+  if (action === "create" || action === "steer") {
+    if (objective === "") return { action: "invalid", message: GOAL_USAGE };
+    return action === "create"
+      ? { action: "set", objective, status: "active" }
+      : { action: "set", objective };
+  }
+  if (action === "edit") {
+    return objective === ""
+      ? {
+          action: "invalid",
+          message: "T3 does not open Codex's Goal editor. Use /goal steer <objective>.",
+        }
+      : { action: "set", objective };
+  }
+  if (action === "pause" || action === "resume") {
+    if (objective !== "") return { action: "invalid", message: GOAL_USAGE };
+    return { action: "set", status: action === "pause" ? "paused" : "active" };
+  }
+  if (action === "clear" || action === "reset") {
+    if (objective !== "") return { action: "invalid", message: GOAL_USAGE };
+    return { action: "clear" };
+  }
+  if (action === "status") return { action: "invalid", message: GOAL_USAGE };
+
+  // Match Codex's `/goal <objective>` shorthand.
+  return { action: "set", objective: argument, status: "active" };
+}
+
+interface CodexGoalProjection {
+  readonly goal: CodexGoal | null;
+  readonly hasNativeUpdate: boolean;
+}
+
+export function applyCodexGoalStreamEvent(
+  current: CodexGoalProjection,
+  event: CodexGoalStreamEvent,
+): CodexGoalProjection {
+  if (event.type === "snapshot") {
+    return current.hasNativeUpdate ? current : { goal: event.goal, hasNativeUpdate: false };
+  }
+  if (event.type === "updated") return { goal: event.goal, hasNativeUpdate: true };
+  return { goal: null, hasNativeUpdate: true };
+}
+
 export type {
   ArchiveThreadInput,
   CreateThreadInput,
@@ -83,7 +183,52 @@ export function createThreadEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
+  const codexGoal = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:codex-goal",
+    tag: WS_METHODS.subscribeCodexGoal,
+    transform: (events) =>
+      events.pipe(
+        Stream.mapAccum(
+          (): CodexGoalProjection => ({ goal: null, hasNativeUpdate: false }),
+          (current, event) => {
+            const next = applyCodexGoalStreamEvent(current, event);
+            return [next, [next.goal]] as const;
+          },
+        ),
+      ),
+  });
+  const refreshCodexGoal = (
+    target: Parameters<typeof codexGoal>[0],
+    registry: AtomRegistry.AtomRegistry,
+  ) => Effect.sync(() => registry.refresh(codexGoal(target)));
+
   return {
+    codexGoal,
+    getCodexGoal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:codex-goal:get",
+      tag: WS_METHODS.codexGoalGet,
+      scheduler,
+      concurrency,
+      onSuccess: refreshCodexGoal,
+    }),
+    setCodexGoal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:codex-goal:set",
+      tag: WS_METHODS.codexGoalSet,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }: { environmentId: string; input: CodexGoalSetInput }) =>
+          JSON.stringify([environmentId, input.threadId]),
+      },
+      onSuccess: refreshCodexGoal,
+    }),
+    clearCodexGoal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:codex-goal:clear",
+      tag: WS_METHODS.codexGoalClear,
+      scheduler,
+      concurrency,
+      onSuccess: refreshCodexGoal,
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

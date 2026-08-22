@@ -194,6 +194,7 @@ import {
   GitBranchIcon,
   Minimize2Icon,
   PaperclipIcon,
+  TargetIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -279,7 +280,13 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { threadEnvironment, useCodexGoal, useEnvironmentThread } from "../state/threads";
+import {
+  formatCodexGoalDescription,
+  formatCodexGoalError,
+  formatCodexGoalStatus,
+  parseCodexGoalCommand,
+} from "@t3tools/client-runtime/state/threads";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -1417,6 +1424,11 @@ export default function ChatView(props: ChatViewProps) {
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
+  const getCodexGoal = useAtomCommand(threadEnvironment.getCodexGoal, { reportFailure: false });
+  const setCodexGoal = useAtomCommand(threadEnvironment.setCodexGoal, { reportFailure: false });
+  const clearCodexGoal = useAtomCommand(threadEnvironment.clearCodexGoal, {
+    reportFailure: false,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
@@ -1824,6 +1836,10 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const activeThreadKeyRef = useRef(activeThreadKey);
+  useLayoutEffect(() => {
+    activeThreadKeyRef.current = activeThreadKey;
+  }, [activeThreadKey]);
   const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -2532,6 +2548,10 @@ export default function ChatView(props: ChatViewProps) {
   const supportsConversationRollback =
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
+  const codexGoal = useCodexGoal(
+    isServerThread && selectedProvider === "codex" ? environmentId : null,
+    isServerThread && selectedProvider === "codex" ? activeThreadId : null,
+  );
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const latestCheckpointCompletedAt = activeThread?.checkpoints.at(-1)?.completedAt ?? null;
@@ -5441,6 +5461,13 @@ export default function ChatView(props: ChatViewProps) {
       onDismiss: acknowledgeActiveThreadWoke,
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
+  // The stack renders items[0] front-most and tucks the rest behind hover, so
+  // ordering is priority: urgent system banners (error/warning variants plus
+  // calm-styled live states flagged `urgent`, like update progress), then
+  // background liveness — its Stop button is the only stop affordance for
+  // settled turns, so a passive "update available" notice must not cover it —
+  // then calm system banners, the woke and branch-mismatch notices, the parked
+  // banner, and the passive Goal banner last — it must never cover another.
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
@@ -5585,6 +5612,24 @@ export default function ChatView(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     selectedProvider,
   ]);
+  const codexGoalBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (codexGoal === null) return null;
+    const goalDescription = formatCodexGoalDescription(codexGoal);
+    return {
+      id: `codex-goal:${activeThread?.id ?? "unknown"}`,
+      variant: "info",
+      icon: <TargetIcon />,
+      title: `Goal ${formatCodexGoalStatus(codexGoal.status)}`,
+      description: (
+        <Tooltip>
+          <TooltipTrigger render={<span className="line-clamp-2">{goalDescription}</span>} />
+          <TooltipPopup side="top" className="max-w-96">
+            {goalDescription}
+          </TooltipPopup>
+        </Tooltip>
+      ),
+    };
+  }, [activeThread?.id, codexGoal]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);
@@ -5599,6 +5644,7 @@ export default function ChatView(props: ChatViewProps) {
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const codexGoalItems = codexGoalBannerItem === null ? [] : [codexGoalBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...systemComposerBannerItems,
@@ -5606,6 +5652,7 @@ export default function ChatView(props: ChatViewProps) {
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
+        ...codexGoalItems,
       ];
     }
     return [
@@ -5652,10 +5699,12 @@ export default function ChatView(props: ChatViewProps) {
         },
       },
       ...parkedThreadItems,
+      ...codexGoalItems,
     ];
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    codexGoalBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -6121,6 +6170,20 @@ export default function ChatView(props: ChatViewProps) {
     }
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx?.providerAvailable) {
+      if (
+        sendCtx !== undefined &&
+        !directAnnotation &&
+        sendCtx.images.length === 0 &&
+        parseCodexGoalCommand(promptRef.current) !== null
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Provider still loading",
+            description: "Wait for the thread's provider to load before running a Goal command.",
+          }),
+        );
+      }
       notifyDirectAnnotationAttached();
       return;
     }
@@ -6186,16 +6249,16 @@ export default function ChatView(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
-    const feedbackCommand =
+    const isUnadornedCodexCommand =
       ctxSelectedProvider === "codex" &&
+      !directAnnotation &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
-        ? parseCodexFeedbackCommand(trimmed)
-        : null;
+      composerReviewComments.length === 0;
+    const feedbackCommand = isUnadornedCodexCommand ? parseCodexFeedbackCommand(trimmed) : null;
     if (feedbackCommand) {
       if (!isServerThread || activeThread.session === null) {
         toastManager.add(
@@ -6281,6 +6344,103 @@ export default function ChatView(props: ChatViewProps) {
         }),
       );
       return;
+    }
+    const codexGoalCommand = isUnadornedCodexCommand ? parseCodexGoalCommand(trimmed) : null;
+    if (codexGoalCommand !== null) {
+      if (codexGoalCommand.action === "invalid") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Invalid Goal command",
+            description: codexGoalCommand.message,
+          }),
+        );
+        return;
+      }
+      if (!isServerThread || activeThreadId === null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Start the Codex thread first",
+            description: "Send a message before managing its native Goal.",
+          }),
+        );
+        return;
+      }
+
+      const target = { environmentId, input: { threadId: activeThreadId } };
+      const submittedThreadKey = activeThreadKey;
+      const stillOnSubmittedThread = () => activeThreadKeyRef.current === submittedThreadKey;
+      const clearSubmittedGoalCommandDraft = () => {
+        if (!stillOnSubmittedThread() || promptRef.current !== promptForSend) return;
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      };
+      sendInFlightRef.current = true;
+      try {
+        if (codexGoalCommand.action === "status") {
+          const result = await getCodexGoal(target);
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Codex Goal operation failed",
+                  description: formatCodexGoalError(squashAtomCommandFailure(result)),
+                }),
+              );
+            }
+            return;
+          }
+          clearSubmittedGoalCommandDraft();
+          if (!stillOnSubmittedThread()) return;
+          toastManager.add(
+            stackedThreadToast(
+              result.value === null
+                ? { type: "info", title: "No active Codex Goal" }
+                : {
+                    type: "info",
+                    title: `Goal ${formatCodexGoalStatus(result.value.status)}`,
+                    description: formatCodexGoalDescription(result.value),
+                  },
+            ),
+          );
+          return;
+        }
+        const result =
+          codexGoalCommand.action === "clear"
+            ? await clearCodexGoal(target)
+            : await setCodexGoal({
+                environmentId,
+                input: {
+                  threadId: activeThreadId,
+                  ...(codexGoalCommand.objective === undefined
+                    ? {}
+                    : { objective: codexGoalCommand.objective }),
+                  ...(codexGoalCommand.status === undefined
+                    ? {}
+                    : { status: codexGoalCommand.status }),
+                },
+              });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Codex Goal operation failed",
+                description: formatCodexGoalError(squashAtomCommandFailure(result)),
+              }),
+            );
+          }
+          return;
+        }
+
+        clearSubmittedGoalCommandDraft();
+        return;
+      } finally {
+        sendInFlightRef.current = false;
+      }
     }
     if (
       !directAnnotation &&

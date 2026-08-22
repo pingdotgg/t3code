@@ -187,6 +187,9 @@ describe("ProviderSessionReaper", () => {
       },
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
+      getCodexGoal: () => unsupported(),
+      setCodexGoal: () => unsupported(),
+      clearCodexGoal: () => unsupported(),
       streamEvents: Stream.empty,
     };
 

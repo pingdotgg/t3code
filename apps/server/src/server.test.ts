@@ -9,6 +9,7 @@ import {
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
+  CodexGoalOperationError,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   type DpopFailureReason,
@@ -35,6 +36,7 @@ import {
   ProviderInstanceId,
   type ProviderInstallState,
   ProviderSetupError,
+  type ProviderRuntimeEvent,
   ResolvedKeybindingRule,
   type ServerLifecycleStreamEvent,
   ThreadId,
@@ -86,6 +88,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+const isCodexGoalOperationError = Schema.is(CodexGoalOperationError);
 const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
 );
@@ -114,6 +117,7 @@ import {
   OrchestrationListenerCallbackError,
   OrchestrationThreadSettleBlockedError,
 } from "./orchestration/Errors.ts";
+import { ProviderUnsupportedError } from "./provider/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -776,7 +780,21 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.providerRegistry,
           }),
           Layer.mock(ProviderService.ProviderService)({
+            startSession: () => Effect.die("ProviderService not stubbed in this test"),
+            sendTurn: () => Effect.die("ProviderService not stubbed in this test"),
+            interruptTurn: () => Effect.die("ProviderService not stubbed in this test"),
+            respondToRequest: () => Effect.die("ProviderService not stubbed in this test"),
+            respondToUserInput: () => Effect.die("ProviderService not stubbed in this test"),
+            stopSession: () => Effect.die("ProviderService not stubbed in this test"),
+            listSessions: () => Effect.succeed([]),
+            getCapabilities: () => Effect.die("ProviderService not stubbed in this test"),
+            getInstanceInfo: () => Effect.die("ProviderService not stubbed in this test"),
+            rollbackConversation: () => Effect.die("ProviderService not stubbed in this test"),
             uploadFeedback: () => Effect.die("Provider feedback is not stubbed in this test"),
+            getCodexGoal: () => Effect.die("ProviderService not stubbed in this test"),
+            setCodexGoal: () => Effect.die("ProviderService not stubbed in this test"),
+            clearCodexGoal: () => Effect.die("ProviderService not stubbed in this test"),
+            streamEvents: Stream.empty,
             ...options?.layers?.providerService,
           }),
           Layer.mock(ProviderAuthService)({
@@ -6165,6 +6183,213 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(Option.isSome(snapshot));
       assert.equal(snapshot.value.processes.length, 0);
       assert.equal(snapshot.value.groups.backend.processCount, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes native Codex Goal controls and notifications over websocket", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("goal-rpc-thread");
+      const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+      const setInputs: unknown[] = [];
+      const getOptions: Array<{ readonly allowRecovery?: boolean } | undefined> = [];
+      const initialGoal = {
+        objective: "Initial Goal",
+        status: "active" as const,
+        tokenBudget: 100_000,
+        tokensUsed: 1_000,
+        timeUsedSeconds: 10,
+        createdAt: 1_777_000_000,
+        updatedAt: 1_777_000_010,
+      };
+      const steeredGoal = {
+        ...initialGoal,
+        objective: "Steered Goal",
+        updatedAt: 1_777_000_020,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            getCodexGoal: (_threadId, options) =>
+              Effect.sync(() => {
+                getOptions.push(options);
+                return initialGoal;
+              }),
+            setCodexGoal: (input) =>
+              Effect.sync(() => {
+                setInputs.push(input);
+                return steeredGoal;
+              }),
+            clearCodexGoal: () => Effect.succeed({ cleared: true }),
+            streamEvents: Stream.fromPubSub(events),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const current = yield* client[WS_METHODS.codexGoalGet]({ threadId });
+            const steered = yield* client[WS_METHODS.codexGoalSet]({
+              threadId,
+              objective: "Steered Goal",
+            });
+            const cleared = yield* client[WS_METHODS.codexGoalClear]({ threadId });
+            const snapshotSeen = yield* Deferred.make<void>();
+            const streamed = yield* client[WS_METHODS.subscribeCodexGoal]({ threadId }).pipe(
+              Stream.tap((event) =>
+                event.type === "snapshot"
+                  ? Deferred.succeed(snapshotSeen, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+              Stream.take(3),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            yield* Deferred.await(snapshotSeen);
+            yield* PubSub.publish(events, {
+              type: "thread.goal.updated",
+              eventId: EventId.make("goal-updated-event"),
+              provider: ProviderDriverKind.make("codex"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              threadId,
+              payload: { goal: steeredGoal },
+            });
+            yield* PubSub.publish(events, {
+              type: "thread.goal.cleared",
+              eventId: EventId.make("goal-cleared-event"),
+              provider: ProviderDriverKind.make("codex"),
+              createdAt: "2026-01-01T00:00:01.000Z",
+              threadId,
+              payload: {},
+            });
+            return { current, steered, cleared, streamed: yield* Fiber.join(streamed) };
+          }),
+        ),
+      );
+
+      if (result.current === null) {
+        throw new Error("Expected native Codex Goal snapshot");
+      }
+      assert.equal(result.current.objective, "Initial Goal");
+      assert.equal(result.steered.objective, "Steered Goal");
+      assert.deepEqual(result.cleared, { cleared: true });
+      assert.deepEqual(setInputs, [{ threadId, objective: "Steered Goal" }]);
+      assert.deepEqual(getOptions, [undefined, { allowRecovery: false }]);
+      assert.deepEqual(
+        Array.from(result.streamed).map((event) => event.type),
+        ["snapshot", "updated", "cleared"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("codexGoalSet failures carry the operation, thread, and provider detail", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("goal-error-thread");
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            setCodexGoal: () => Effect.fail(new ProviderUnsupportedError({ provider: "claude" })),
+            streamEvents: Stream.empty,
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const failure = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.codexGoalSet]({ threadId, objective: "Ship it" }).pipe(Effect.flip),
+        ),
+      );
+
+      assertTrue(isCodexGoalOperationError(failure));
+      assert.equal(failure.operation, "set");
+      assert.equal(failure.threadId, threadId);
+      assert.equal(failure.message, `Codex Goal set failed for thread ${threadId}`);
+      const cause = failure.cause;
+      assertTrue(cause instanceof Error);
+      assert.equal(cause.message, "Provider 'claude' is not implemented");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeCodexGoal delivers goal updates published while the snapshot loads", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("goal-race-thread");
+      const events = yield* PubSub.unbounded<ProviderRuntimeEvent>({ replay: 1 });
+      const snapshotRequested = yield* Deferred.make<void>();
+      const releaseSnapshot = yield* Deferred.make<void>();
+      const subscriptionSteps: string[] = [];
+      const initialGoal = {
+        objective: "Initial Goal",
+        status: "active" as const,
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1_777_000_000,
+        updatedAt: 1_777_000_000,
+      };
+      const steeredGoal = {
+        ...initialGoal,
+        objective: "Steered Goal",
+        updatedAt: 1_777_000_020,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            getCodexGoal: () =>
+              Effect.yieldNow.pipe(
+                Effect.andThen(Effect.sync(() => subscriptionSteps.push("snapshot-read"))),
+                Effect.andThen(Deferred.succeed(snapshotRequested, undefined)),
+                Effect.andThen(Deferred.await(releaseSnapshot)),
+                Effect.as(initialGoal),
+              ),
+            streamEvents: Stream.unwrap(
+              Effect.sync(() => {
+                subscriptionSteps.push("live-attached");
+                return Stream.fromPubSub(events);
+              }),
+            ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const streamed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const collected = yield* client[WS_METHODS.subscribeCodexGoal]({ threadId }).pipe(
+              Stream.take(2),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            yield* Deferred.await(snapshotRequested);
+            yield* PubSub.publish(events, {
+              type: "thread.goal.updated",
+              eventId: EventId.make("goal-race-updated-event"),
+              provider: ProviderDriverKind.make("codex"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              threadId,
+              payload: { goal: steeredGoal },
+            });
+            yield* Deferred.succeed(releaseSnapshot, undefined);
+            return yield* Fiber.join(collected);
+          }),
+        ),
+      );
+
+      assert.deepEqual(subscriptionSteps, ["live-attached", "snapshot-read"]);
+      const [snapshot, updated] = Array.from(streamed);
+      assert.equal(snapshot?.type, "snapshot");
+      if (snapshot?.type === "snapshot") {
+        assert.equal(snapshot.goal?.objective, "Initial Goal");
+      }
+      assert.equal(updated?.type, "updated");
+      if (updated?.type === "updated") {
+        assert.equal(updated.goal.objective, "Steered Goal");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

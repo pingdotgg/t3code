@@ -391,6 +391,9 @@ describe("ProviderCommandReactor", () => {
       },
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
+      getCodexGoal: () => unsupported(),
+      setCodexGoal: () => unsupported(),
+      clearCodexGoal: () => unsupported(),
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },

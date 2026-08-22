@@ -7,7 +7,7 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { CodexGoal, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -28,6 +28,21 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
   Atom.withLabel("web-environment-thread:empty"),
 );
+const EMPTY_CODEX_GOAL_ATOM = Atom.make(AsyncResult.success<CodexGoal | null>(null)).pipe(
+  Atom.withLabel("web-codex-goal:empty"),
+);
+
+export function useCodexGoal(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): CodexGoal | null {
+  const result = useAtomValue(
+    environmentId !== null && threadId !== null
+      ? threadEnvironment.codexGoal({ environmentId, input: { threadId } })
+      : EMPTY_CODEX_GOAL_ATOM,
+  );
+  return Option.getOrNull(AsyncResult.value(result));
+}
 
 export function useEnvironmentThread(
   environmentId: EnvironmentId | null,

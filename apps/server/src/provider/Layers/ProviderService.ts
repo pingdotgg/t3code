@@ -2050,6 +2050,63 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  const getCodexGoal: ProviderServiceMethod<"getCodexGoal"> = Effect.fn("getCodexGoal")(
+    function* (threadId, options) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.getCodexGoal",
+        allowRecovery: options?.allowRecovery ?? true,
+      });
+      const goal = routed.adapter.codexGoal;
+      if (!goal) {
+        return yield* toValidationError(
+          "ProviderService.getCodexGoal",
+          `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
+        );
+      }
+      if (!routed.isActive) {
+        return null;
+      }
+      return yield* goal.get(routed.threadId);
+    },
+  );
+
+  const setCodexGoal: ProviderServiceMethod<"setCodexGoal"> = Effect.fn("setCodexGoal")(
+    function* (input) {
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.setCodexGoal",
+        allowRecovery: true,
+      });
+      const goal = routed.adapter.codexGoal;
+      if (!goal) {
+        return yield* toValidationError(
+          "ProviderService.setCodexGoal",
+          `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
+        );
+      }
+      return yield* goal.set(input);
+    },
+  );
+
+  const clearCodexGoal: ProviderServiceMethod<"clearCodexGoal"> = Effect.fn("clearCodexGoal")(
+    function* (threadId) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.clearCodexGoal",
+        allowRecovery: true,
+      });
+      const goal = routed.adapter.codexGoal;
+      if (!goal) {
+        return yield* toValidationError(
+          "ProviderService.clearCodexGoal",
+          `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
+        );
+      }
+      return yield* goal.clear(routed.threadId);
+    },
+  );
+
   return {
     startSession,
     sendTurn,
@@ -2064,6 +2121,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     assertConversationRollbackSupported,
     rollbackConversation,
     uploadFeedback,
+    getCodexGoal,
+    setCodexGoal,
+    clearCodexGoal,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.
