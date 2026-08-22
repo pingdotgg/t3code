@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import {
   formatShortcutLabel,
+  formatShortcutLabelParts,
   isChatNewShortcut,
   isChatNewLocalShortcut,
   isDiffToggleShortcut,
@@ -792,6 +793,31 @@ describe("formatShortcutLabel", () => {
   it("formats labels for plus key", () => {
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "MacIntel"), "⌘+");
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "Linux"), "Ctrl++");
+  });
+});
+
+describe("formatShortcutLabelParts", () => {
+  it("splits the chord into one label per key", () => {
+    assert.deepStrictEqual(
+      formatShortcutLabelParts(modShortcut("d", { altKey: true, shiftKey: true }), "MacIntel"),
+      ["\u2325", "\u21e7", "\u2318", "D"],
+    );
+    assert.deepStrictEqual(
+      formatShortcutLabelParts(modShortcut("d", { altKey: true, shiftKey: true }), "Linux"),
+      ["Ctrl", "Alt", "Shift", "D"],
+    );
+  });
+
+  it("keeps the plus key as its own part", () => {
+    assert.deepStrictEqual(formatShortcutLabelParts(modShortcut("+"), "Linux"), ["Ctrl", "+"]);
+  });
+
+  it("names non-printable keys", () => {
+    assert.deepStrictEqual(formatShortcutLabelParts(modShortcut("escape"), "Linux"), [
+      "Ctrl",
+      "Esc",
+    ]);
+    assert.deepStrictEqual(formatShortcutLabelParts(modShortcut(" "), "Linux"), ["Ctrl", "Space"]);
   });
 });
 

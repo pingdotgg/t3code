@@ -1,8 +1,11 @@
+import { useAtomValue } from "@effect/atom-react";
 import { XIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { shortcutLabelForCommand } from "~/keybindings";
 import { cn } from "~/lib/utils";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { type PromptStashEntry } from "../../promptStashStore";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { Button } from "../ui/button";
@@ -24,9 +27,9 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
 }
 
 /**
- * Popover listing the stashed prompts. Keyboard-first: opened by ⌘S on an
- * empty composer, navigated with arrows, restored with Enter, dismissed
- * with Escape. The listener runs capture-phase on window so it wins over
+ * Popover listing the stashed prompts. Keyboard-first: opened by the stash
+ * shortcut on an empty composer, navigated with arrows, restored with Enter,
+ * dismissed with Escape. The listener runs capture-phase on window so it wins over
  * the Lexical editor's handlers while the menu is open.
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
@@ -38,6 +41,8 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   const { entries, onRestore, onDelete, onClose } = props;
   const drawerRef = useRef<HTMLDivElement>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const stashShortcut = shortcutLabelForCommand(keybindings, "composer.stash");
 
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
 
@@ -128,7 +133,9 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <CommandGroup>
             {entries.length === 0 ? (
               <p className="px-3 py-1.5 text-secondary-label text-xs">
-                Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.
+                {stashShortcut
+                  ? `Nothing stashed yet. Press ${stashShortcut} with a prompt in the composer to stash it.`
+                  : "Nothing stashed yet. Stash a prompt from the composer to see it here."}
               </p>
             ) : (
               entries.map((entry) => (

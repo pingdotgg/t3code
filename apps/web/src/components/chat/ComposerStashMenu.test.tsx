@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
+import { isMacPlatform } from "~/lib/utils";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 
 describe("ComposerStashMenu", () => {
@@ -20,6 +21,20 @@ describe("ComposerStashMenu", () => {
     expect(markup).toContain('aria-label="Close stash"');
     expect(markup).not.toContain("dropdown-glass");
     expect(markup).not.toContain("Stashed prompts");
+  });
+
+  it("labels the empty-stash hint with the host platform's shortcut", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[]}
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    const shortcut = isMacPlatform(navigator.platform) ? "\u2318S" : "Ctrl+S";
+    expect(markup).toContain(`Press ${shortcut} with a prompt`);
   });
 
   it("shows saved image thumbnails and incomplete image states", () => {

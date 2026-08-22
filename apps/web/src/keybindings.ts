@@ -233,28 +233,34 @@ function formatShortcutKeyLabel(key: string): string {
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
+/**
+ * One label per key of the chord, modifiers first. Callers that render each key
+ * separately (the keybindings settings pills) need the parts; everything else
+ * wants `formatShortcutLabel`, which joins them the way the platform writes
+ * chords.
+ */
+export function formatShortcutLabelParts(
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+): ReadonlyArray<string> {
+  const useMetaForMod = isMacPlatform(platform);
+  const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
+  const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
+
+  const parts: string[] = [];
+  if (showCtrl) parts.push(useMetaForMod ? "\u2303" : "Ctrl");
+  if (shortcut.altKey) parts.push(useMetaForMod ? "\u2325" : "Alt");
+  if (shortcut.shiftKey) parts.push(useMetaForMod ? "\u21e7" : "Shift");
+  if (showMeta) parts.push(useMetaForMod ? "\u2318" : "Meta");
+  parts.push(formatShortcutKeyLabel(shortcut.key));
+  return parts;
+}
+
 export function formatShortcutLabel(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): string {
-  const keyLabel = formatShortcutKeyLabel(shortcut.key);
-  const useMetaForMod = isMacPlatform(platform);
-  const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
-  const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
-  const showAlt = shortcut.altKey;
-  const showShift = shortcut.shiftKey;
-
-  if (useMetaForMod) {
-    return `${showCtrl ? "\u2303" : ""}${showAlt ? "\u2325" : ""}${showShift ? "\u21e7" : ""}${showMeta ? "\u2318" : ""}${keyLabel}`;
-  }
-
-  const parts: string[] = [];
-  if (showCtrl) parts.push("Ctrl");
-  if (showAlt) parts.push("Alt");
-  if (showShift) parts.push("Shift");
-  if (showMeta) parts.push("Meta");
-  parts.push(keyLabel);
-  return parts.join("+");
+  return formatShortcutLabelParts(shortcut, platform).join(isMacPlatform(platform) ? "" : "+");
 }
 
 export function shortcutLabelForCommand(
