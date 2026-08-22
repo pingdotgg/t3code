@@ -1,6 +1,7 @@
 import {
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type ScopedProjectRef,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
@@ -37,9 +38,17 @@ export function browseInputEndPaddingClass(input: {
  */
 export type SearchOverlayMode = "command" | "files" | "content";
 
-export interface CommandPaletteOpenIntent {
-  readonly kind: "add-project" | "new-thread-in";
-}
+export type CommandPaletteOpenIntent =
+  | { readonly kind: "add-project" }
+  | {
+      readonly kind: "new-thread-in";
+      /**
+       * Project to list first, so the picker opens on it and Enter creates
+       * there. Set by the sidebar's new-thread button from its project
+       * filter; unset opens on the project of the thread being viewed.
+       */
+      readonly preferredProjectRef: ScopedProjectRef | null;
+    };
 
 export interface CommandPaletteUiState {
   readonly open: boolean;
@@ -51,7 +60,7 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "SetOpen"; readonly open: boolean }
   | { readonly _tag: "ToggleMode"; readonly mode: SearchOverlayMode }
   | { readonly _tag: "OpenAddProject" }
-  | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "OpenNewThreadIn"; readonly preferredProjectRef: ScopedProjectRef | null }
   | { readonly _tag: "ClearOpenIntent" };
 
 export function reduceCommandPaletteUiState(
@@ -70,7 +79,11 @@ export function reduceCommandPaletteUiState(
     case "OpenAddProject":
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":
-      return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
+      return {
+        open: true,
+        mode: "command",
+        openIntent: { kind: "new-thread-in", preferredProjectRef: action.preferredProjectRef },
+      };
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }
@@ -163,6 +176,38 @@ export function buildProjectActionItems(input: {
       await input.runProject(project);
     },
   }));
+}
+
+/**
+ * Lists the preferred project's item first so the picker opens on it.
+ *
+ * Matches on logical group membership rather than the exact ref: the sidebar
+ * filter scopes a whole logical project, and the item standing for that group
+ * may target a different member of it (the group representative, or the member
+ * whose environment you are already working in). Comparing refs directly would
+ * silently find nothing in that case.
+ */
+export function prioritizeProjectItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+  preferredProjectRef: ScopedProjectRef | null,
+  groupMemberRefsByValue: ReadonlyMap<string, ReadonlyArray<ScopedProjectRef>>,
+): CommandPaletteActionItem[] {
+  if (preferredProjectRef === null) return [...items];
+
+  const preferredIndex = items.findIndex((item) =>
+    (groupMemberRefsByValue.get(item.value) ?? []).some(
+      (projectRef) =>
+        projectRef.environmentId === preferredProjectRef.environmentId &&
+        projectRef.projectId === preferredProjectRef.projectId,
+    ),
+  );
+  if (preferredIndex <= 0) return [...items];
+
+  return [
+    items[preferredIndex]!,
+    ...items.slice(0, preferredIndex),
+    ...items.slice(preferredIndex + 1),
+  ];
 }
 
 export type BuildThreadActionItemsThread = Pick<

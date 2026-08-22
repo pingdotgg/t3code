@@ -29,6 +29,7 @@ import {
   type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
+  type ScopedProjectRef,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
@@ -123,6 +124,7 @@ import {
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
   filterCommandPaletteGroups,
+  prioritizeProjectItems,
   filterPinnedBrowseEntries,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
@@ -402,7 +404,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     [],
   );
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
-  const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const openNewThreadIn = useCallback(
+    (preferredProjectRef: ScopedProjectRef | null) =>
+      dispatch({ _tag: "OpenNewThreadIn", preferredProjectRef }),
+    [],
+  );
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
@@ -474,7 +480,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     () =>
       onOpenCommandPalette((detail) => {
         if (detail.open === "new-thread-in") {
-          openNewThreadIn();
+          openNewThreadIn(detail.preferredProjectRef ?? null);
         } else if (detail.open === "add-project") {
           openAddProject();
         } else {
@@ -738,6 +744,16 @@ function OpenCommandPaletteDialog(props: {
         ...targetProject,
         title: group.displayName,
       })),
+    [projectPickerEntries],
+  );
+  const groupMemberRefsByItemValue = useMemo(
+    () =>
+      new Map(
+        projectPickerEntries.map(({ group, targetProject }) => [
+          `new-thread-in:${targetProject.environmentId}:${targetProject.id}`,
+          group.memberProjectRefs,
+        ]),
+      ),
     [projectPickerEntries],
   );
   const projectGroupByTargetKey = useMemo(
@@ -1454,16 +1470,15 @@ function OpenCommandPaletteDialog(props: {
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
-    const currentPrefix =
-      currentProjectEnvironmentId && currentProjectId
-        ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
-        : null;
-    const prioritized = currentPrefix
-      ? [
-          ...projectThreadItems.filter((item) => item.value === currentPrefix),
-          ...projectThreadItems.filter((item) => item.value !== currentPrefix),
-        ]
-      : projectThreadItems;
+    // The opener's preferred project wins: the sidebar button passes its
+    // project filter, so the picker opens on whatever the list is scoped to.
+    // Without one the items are already ordered viewed-project-first by
+    // buildSidebarProjectPickerEntries, so there is nothing to hoist.
+    const prioritized = prioritizeProjectItems(
+      projectThreadItems,
+      openIntent.preferredProjectRef,
+      groupMemberRefsByItemValue,
+    );
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [
@@ -1477,8 +1492,7 @@ function OpenCommandPaletteDialog(props: {
   }, [
     clearOpenIntent,
     browseNavigation,
-    currentProjectEnvironmentId,
-    currentProjectId,
+    groupMemberRefsByItemValue,
     openIntent,
     projectThreadItems,
     pushPaletteView,
