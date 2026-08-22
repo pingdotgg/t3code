@@ -24,13 +24,21 @@ describe("orderedListGutterStyle", () => {
   it("accounts for a non-default start attribute", () => {
     // start=95 + 9 items => last marker is "103", three digits.
     expect(orderedListGutterStyle(9, 95)).toEqual({ "--list-gutter": "4ch" });
+    expect(orderedListGutterStyle(5, "999995")).toEqual({ "--list-gutter": "7ch" });
   });
 
   it("scales further for four-digit markers", () => {
     expect(orderedListGutterStyle(1000, undefined)).toEqual({ "--list-gutter": "5ch" });
   });
 
+  it("uses the widest marker and includes a negative start's minus sign", () => {
+    expect(orderedListGutterStyle(1001, -1000)).toEqual({ "--list-gutter": "6ch" });
+    expect(orderedListGutterStyle(3, -15)).toEqual({ "--list-gutter": "4ch" });
+    expect(orderedListGutterStyle(3, -5)).toBeUndefined();
+  });
+
   it("treats a missing/zero item count as a single item", () => {
     expect(orderedListGutterStyle(0, undefined)).toBeUndefined();
+    expect(orderedListGutterStyle(0, 100)).toEqual({ "--list-gutter": "4ch" });
   });
 });
