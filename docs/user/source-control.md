@@ -42,7 +42,11 @@ T3 Code works with the platforms your team already uses:
 - While working in a thread, open linked reviews in the same compact right-panel tabs without
   leaving the conversation
 - Open the review directly in your browser with one click
-- Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in T3 Code
+- Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open
+  it in your browser instead of in T3 Code
+- **Code** opens with every directory in the file tree and every individual file diff expanded.
+  Use **Files** to hide or show the tree, or the tree header control to collapse and expand all
+  folders at once
 - Check out a teammate's branch to review code locally
 
 **Fix what you wrote, in place**

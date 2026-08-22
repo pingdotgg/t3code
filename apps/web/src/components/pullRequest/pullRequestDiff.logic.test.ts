@@ -1,7 +1,11 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  getPullRequestFileLoadState,
+  isFileDiffCollapsed,
+  isLineInFileDiff,
+} from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
@@ -50,12 +54,7 @@ describe("isLineInFileDiff", () => {
 describe("isFileDiffCollapsed", () => {
   const NO_TOGGLES: ReadonlySet<string> = new Set();
 
-  it("folds every file before the reader has touched anything", () => {
-    expect(isFileDiffCollapsed("a.ts", null, NO_TOGGLES)).toBe(true);
-    expect(isFileDiffCollapsed("b.ts", null, NO_TOGGLES)).toBe(true);
-  });
-
-  it("opens every file once the toolbar has asked for it", () => {
+  it("opens every file when the preference is expanded", () => {
     // Pressing the toolbar clears the reader's own toggles, which is why the set is empty here.
     expect(isFileDiffCollapsed("a.ts", "expanded", NO_TOGGLES)).toBe(false);
     expect(isFileDiffCollapsed("b.ts", "expanded", NO_TOGGLES)).toBe(false);
@@ -66,16 +65,47 @@ describe("isFileDiffCollapsed", () => {
     expect(isFileDiffCollapsed("b.ts", "folded", NO_TOGGLES)).toBe(true);
   });
 
-  it("keeps a file the reader opened open as the next slice arrives", () => {
-    // The file keys grow with every slice, so the answer for one already open must not depend on
+  it("keeps a file the reader folded folded as the next slice arrives", () => {
+    // The file keys grow with every slice, so the answer for one already folded must not depend on
     // how many of them there are by then.
     const toggled = new Set(["b.ts"]);
-    expect(isFileDiffCollapsed("b.ts", null, toggled)).toBe(false);
-    expect(isFileDiffCollapsed("c.ts", null, toggled)).toBe(true);
+    expect(isFileDiffCollapsed("b.ts", "expanded", toggled)).toBe(true);
+    expect(isFileDiffCollapsed("c.ts", "expanded", toggled)).toBe(false);
   });
 
   it("still answers to a toggle after either toolbar press", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  });
+});
+
+describe("getPullRequestFileLoadState", () => {
+  it("uses a reported total while it is still ahead of the loaded files", () => {
+    expect(getPullRequestFileLoadState(2, 80, true)).toEqual({
+      displayedFileCount: 80,
+      knownTotalFileCount: 80,
+      displayedCountIsLowerBound: false,
+    });
+  });
+
+  it("treats an exhausted reported count as a lower bound while more files remain", () => {
+    expect(getPullRequestFileLoadState(1_000, 1_000, true)).toEqual({
+      displayedFileCount: 1_000,
+      knownTotalFileCount: null,
+      displayedCountIsLowerBound: true,
+    });
+    expect(getPullRequestFileLoadState(1_001, 1_000, true)).toEqual({
+      displayedFileCount: 1_001,
+      knownTotalFileCount: null,
+      displayedCountIsLowerBound: true,
+    });
+  });
+
+  it("uses the loaded count as a lower bound when the host reports no total", () => {
+    expect(getPullRequestFileLoadState(23, null, true)).toEqual({
+      displayedFileCount: 23,
+      knownTotalFileCount: null,
+      displayedCountIsLowerBound: true,
+    });
   });
 });

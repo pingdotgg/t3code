@@ -1,5 +1,5 @@
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -16,6 +16,7 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   Columns2Icon,
+  FolderTreeIcon,
   MessageSquareIcon,
   MessageSquareOffIcon,
   Rows3Icon,
@@ -23,10 +24,12 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useClientSettings } from "~/hooks/useSettings";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useTheme } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
@@ -69,11 +72,15 @@ import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
+import {
+  PullRequestDiffFileTree,
+  type PullRequestDiffFileTreeHandle,
+} from "./PullRequestDiffFileTree";
 import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
-  type DiffFoldOverride,
+  type DiffFoldPreference,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import {
@@ -95,6 +102,8 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
 /** Commits per press of "Show more" in the scope menu. */
 const COMMIT_PAGE_SIZE = 10;
+
+const PR_DIFF_FILE_TREE_OPEN_STORAGE_KEY = "t3code.pullRequestDiffFileTreeOpen";
 
 /** One answer from the host: a whole number of files, and where the next one carries on. */
 interface DiffSlice {
@@ -214,10 +223,14 @@ export function PullRequestCodeTab({
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
   // than a choice. The rest arrive ten at a time, on request.
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
-  /** Set once the reader has asked for every file at once, until they pick a file apart again. */
-  const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
+  const [foldPreference, setFoldPreference] = useState<DiffFoldPreference>("expanded");
   const [diffRenderMode, setDiffRenderMode] = useState<"stacked" | "split">("stacked");
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
+  const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
+    PR_DIFF_FILE_TREE_OPEN_STORAGE_KEY,
+    true,
+    Schema.Boolean,
+  );
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -236,6 +249,8 @@ export function PullRequestCodeTab({
     readonly slices: ReadonlyArray<DiffSlice>;
   }>({ key: "", cursor: null, slices: NO_SLICES });
   const parseCache = useRef(new Map<string, RenderablePatch>());
+  const viewerRef = useRef<CodeViewHandle<ReviewAnnotationGroup> | null>(null);
+  const fileTreeRef = useRef<PullRequestDiffFileTreeHandle>(null);
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
@@ -248,7 +263,8 @@ export function PullRequestCodeTab({
     setDraft(null);
     setSelectedLines(null);
     setToggledFiles(new Set());
-    setFoldOverride(null);
+    setFoldPreference("expanded");
+    fileTreeRef.current?.setAllDirectoriesExpanded(true);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -470,7 +486,7 @@ export function PullRequestCodeTab({
           groupAt(anchor.side, anchor.line).draft = true;
         }
 
-        const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
+        const collapsed = isFileDiffCollapsed(fileKey, foldPreference, toggledFiles);
 
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
@@ -520,7 +536,7 @@ export function PullRequestCodeTab({
       detail.reviewThreads,
       draft,
       files,
-      foldOverride,
+      foldPreference,
       pendingComments,
       placedThreadIds,
       toggledFiles,
@@ -543,6 +559,22 @@ export function PullRequestCodeTab({
   );
   const allFilesCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys);
 
+  const loadNextDiffSlice = useCallback(() => {
+    if (
+      nextCursor === null ||
+      nextCursor === cursor ||
+      diffQuery.isPending ||
+      diffQuery.error !== null
+    ) {
+      return;
+    }
+    setSliceState((previous) =>
+      previous.key === scopeKey && previous.cursor !== nextCursor
+        ? { ...previous, cursor: nextCursor }
+        : previous,
+    );
+  }, [cursor, diffQuery.error, diffQuery.isPending, nextCursor, scopeKey]);
+
   // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
   // an effect reading a ref could run before that node exists and would never arm the observer.
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
@@ -561,7 +593,7 @@ export function PullRequestCodeTab({
     const observer = new IntersectionObserver(
       (observed) => {
         if (observed.some((entry) => entry.isIntersecting)) {
-          setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
+          loadNextDiffSlice();
         }
       },
       // Start the next slice slightly before the sentinel is on screen.
@@ -569,7 +601,7 @@ export function PullRequestCodeTab({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [cursor, diffQuery.error, diffQuery.isPending, nextCursor, sentinel]);
+  }, [cursor, diffQuery.error, diffQuery.isPending, loadNextDiffSlice, nextCursor, sentinel]);
 
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
@@ -587,12 +619,33 @@ export function PullRequestCodeTab({
     [],
   );
 
-  const toggleAllFiles = () => {
+  const revealFile = useCallback(
+    (path: string) => {
+      const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
+      if (item === undefined) return;
+      if (item.collapsed === true) {
+        toggleFile(item.id);
+      }
+      window.requestAnimationFrame(() => {
+        viewerRef.current?.scrollTo({
+          type: "item",
+          id: item.id,
+          align: "start",
+          behavior: "smooth-auto",
+        });
+      });
+    },
+    [items, toggleFile],
+  );
+
+  const toggleAllFilesAndDirectories = () => {
+    const expand = allFilesCollapsed;
     // Held as an override of the default rather than as the file keys on screen: a diff that is
     // still paging would otherwise bring its next slice in folded, moments after the reader
     // asked for everything to be open.
-    setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
+    setFoldPreference(expand ? "expanded" : "folded");
     setToggledFiles(new Set());
+    fileTreeRef.current?.setAllDirectoriesExpanded(expand);
   };
 
   // Newest first: the last commit is the one a reader coming back to a change is looking for.
@@ -1051,41 +1104,38 @@ export function PullRequestCodeTab({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        {/* One count, and the caveats as icons that carry their own words. Spelled out they
-            competed for a strip this narrow and every one of them truncated to nothing. */}
-        <PullRequestMetaLine>
-          <span className="shrink-0 tabular-nums">
-            {files.length} {files.length === 1 ? "file" : "files"}
-            {nextCursor === null ? "" : "+"}
-          </span>
-          {withheldContent ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                <TriangleAlertIcon
-                  aria-label="Some of this diff was not shown"
-                  className="size-3.5 text-amber-600 dark:text-amber-500"
-                />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                The host withheld part of this diff — a binary file, or a change too large to
-                inline.
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {commit !== null && review.inlineComment ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                <MessageSquareOffIcon
-                  aria-label="Line comments are written from the whole change"
-                  className="size-3.5"
-                />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                A comment is anchored to the whole change, so switch to All commits to write one.
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-        </PullRequestMetaLine>
+        {/* Caveats stay compact: spelling them out in this strip makes every control truncate. */}
+        {withheldContent || (commit !== null && review.inlineComment) ? (
+          <PullRequestMetaLine>
+            {withheldContent ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                  <TriangleAlertIcon
+                    aria-label="Some of this diff was not shown"
+                    className="size-3.5 text-amber-600 dark:text-amber-500"
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  The host withheld part of this diff — a binary file, or a change too large to
+                  inline.
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {commit !== null && review.inlineComment ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                  <MessageSquareOffIcon
+                    aria-label="Line comments are written from the whole change"
+                    className="size-3.5"
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  A comment is anchored to the whole change, so switch to All commits to write one.
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+          </PullRequestMetaLine>
+        ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <PullRequestDiffStat
@@ -1102,7 +1152,7 @@ export function PullRequestCodeTab({
                   size="icon-sm"
                   variant="ghost"
                   aria-label={allFilesCollapsed ? "Expand all files" : "Collapse all files"}
-                  onClick={toggleAllFiles}
+                  onClick={toggleAllFilesAndDirectories}
                 />
               }
             >
@@ -1153,6 +1203,24 @@ export function PullRequestCodeTab({
           </TooltipTrigger>
           <TooltipPopup side="top">
             {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={fileTreeOpen ? "Hide file explorer" : "Show file explorer"}
+                variant="ghost"
+                size="sm"
+                pressed={fileTreeOpen}
+                onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
+              />
+            }
+          >
+            <FolderTreeIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {fileTreeOpen ? "Hide file explorer" : "Show file explorer"}
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -1312,56 +1380,75 @@ export function PullRequestCodeTab({
         ) : null}
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it
             up; the viewer inside still owns its own scrolling. */}
-        <div
-          className="relative min-h-0 flex-1"
-          // The chevron answers this too, but the whole header row is the target a reader
-          // actually aims for. The header lives in the viewer's shadow tree, so the capture
-          // listener walks `composedPath` — the only way to see through the shadow boundary.
-          onClickCapture={(event) => {
-            const composedPath = event.nativeEvent.composedPath?.() ?? [];
-            for (const node of composedPath) {
-              if (!(node instanceof HTMLElement)) continue;
-              // A control inside the header — the collapse chevron — handles itself, and
-              // this capture listener fires before its own click does. Leave it alone or
-              // the two toggles cancel out.
-              if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
-                return;
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div
+            className="relative min-h-0 min-w-0 flex-1"
+            // The chevron answers this too, but the whole header row is the target a reader
+            // actually aims for. The header lives in the viewer's shadow tree, so the capture
+            // listener walks `composedPath` — the only way to see through the shadow boundary.
+            onClickCapture={(event) => {
+              const composedPath = event.nativeEvent.composedPath?.() ?? [];
+              for (const node of composedPath) {
+                if (!(node instanceof HTMLElement)) continue;
+                // A control inside the header — the collapse chevron — handles itself, and
+                // this capture listener fires before its own click does. Leave it alone or
+                // the two toggles cancel out.
+                if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
+                  return;
+                }
+                if (node.hasAttribute("data-diffs-header")) {
+                  const filePath = node.querySelector("[data-title]")?.textContent?.trim();
+                  if (filePath === undefined || filePath === "") return;
+                  const item = items.find(
+                    (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
+                  );
+                  if (item !== undefined) toggleFile(item.id);
+                  return;
+                }
               }
-              if (node.hasAttribute("data-diffs-header")) {
-                const filePath = node.querySelector("[data-title]")?.textContent?.trim();
-                if (filePath === undefined || filePath === "") return;
-                const item = items.find(
-                  (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
-                );
-                if (item !== undefined) toggleFile(item.id);
-                return;
-              }
-            }
-          }}
-        >
-          {/* The viewer virtualizes against the element it is told is scrolling and places its
+            }}
+          >
+            {/* The viewer virtualizes against the element it is told is scrolling and places its
               rows absolutely, so it has to own that element — the thread diff panel hands it the
               same one. Scrolling from a parent instead leaves it painting over its neighbours. */}
-          <StyledDiffCodeView<ReviewAnnotationGroup>
-            // Keep scrollbar space stable so file metadata and line numbers do not shift as a
-            // diff crosses the overflow boundary. The viewer is itself focusable for keyboard
-            // interaction, but its native host outline clips and competes with the focus
-            // indicators on its actual controls.
-            className="h-full overflow-auto [scrollbar-gutter:stable]"
-            items={items}
-            selectedLines={selectedLines}
-            onSelectedLinesChange={setSelectedLines}
-            options={diffViewOptions}
-            // The viewer owns the scroll container, so the sentinel that asks for the next slice
-            // has to live inside it — at the end of the files, where reaching it means the reader
-            // is running out of diff.
-            renderCodeViewFooter={renderCodeViewFooter}
-            renderHeaderPrefix={renderHeaderPrefix}
-            renderHeaderMetadata={renderHeaderMetadata}
-            renderAnnotation={renderAnnotation}
-            unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
-          />
-          {reviewOverlay}
+            <StyledDiffCodeView<ReviewAnnotationGroup>
+              // Keep scrollbar space stable so file metadata and line numbers do not shift as a
+              // diff crosses the overflow boundary. The viewer is itself focusable for keyboard
+              // interaction, but its native host outline clips and competes with the focus
+              // indicators on its actual controls.
+              className="h-full overflow-auto [scrollbar-gutter:stable]"
+              viewerRef={viewerRef}
+              items={items}
+              selectedLines={selectedLines}
+              onSelectedLinesChange={setSelectedLines}
+              options={diffViewOptions}
+              // The viewer owns the scroll container, so the sentinel that asks for the next slice
+              // has to live inside it — at the end of the files, where reaching it means the reader
+              // is running out of diff.
+              renderCodeViewFooter={renderCodeViewFooter}
+              renderHeaderPrefix={renderHeaderPrefix}
+              renderHeaderMetadata={renderHeaderMetadata}
+              renderAnnotation={renderAnnotation}
+              unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+            />
+            {reviewOverlay}
+          </div>
+          {fileTreeOpen ? (
+            <aside className="flex min-h-0 w-[min(22rem,46%)] min-w-0 shrink-0 border-l border-border/60 bg-background">
+              <PullRequestDiffFileTree
+                ref={fileTreeRef}
+                key={scopeKey}
+                files={files}
+                totalFileCount={commit === null ? detail.changedFiles : null}
+                hasMore={nextCursor !== null}
+                isLoadingMore={diffQuery.isPending}
+                loadMoreFailed={diffQuery.error !== null}
+                initiallyExpanded={foldPreference === "expanded"}
+                onLoadMore={diffQuery.error === null ? loadNextDiffSlice : diffQuery.refresh}
+                onSelectFile={revealFile}
+              />
+            </aside>
+          ) : null}
         </div>
         {unstructured}
       </div>
