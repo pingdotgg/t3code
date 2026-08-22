@@ -74,6 +74,7 @@ public struct ProviderModelPicker: View {
                 }
                 .font(T3Typography.supportingStrong)
                 .foregroundStyle(T3Colors.textSecondary)
+                .compositingGroup()
                 .frame(minHeight: T3Metrics.minimumTapTarget)
                 .contentShape(Rectangle())
             }

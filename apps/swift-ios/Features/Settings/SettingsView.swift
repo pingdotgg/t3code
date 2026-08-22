@@ -15,26 +15,44 @@ public struct SettingsView: View {
 
     public var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                settingsHeader
-
-                Divider()
-                    .overlay(T3Colors.border)
-
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 36) {
-                        connectionSection
-                        generalSection
-                        preferencesSection
-                        aboutSection
-                    }
-                    .padding(.top, 24)
-                    .padding(.bottom, 36)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 36) {
+                    connectionSection
+                    generalSection
+                    preferencesSection
+                    aboutSection
                 }
-                .scrollDismissesKeyboard(.interactively)
+                .padding(.top, 24)
+                .padding(.bottom, 36)
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(T3Colors.background)
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .t3NavigationChrome()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        if hasUnsavedChanges {
+                            showingDiscardConfirmation = true
+                        } else {
+                            dismiss()
+                        }
+                    }
+                    .disabled(isSaving)
+                    .accessibilityHint(
+                        hasUnsavedChanges
+                            ? "Asks before discarding unsaved changes"
+                            : "Closes settings"
+                    )
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "Saving" : "Save", action: save)
+                        .disabled(!canSave)
+                        .accessibilityHint("Saves your preferences")
+                }
+            }
             .alert(
                 "Couldn’t save settings",
                 isPresented: Binding(
@@ -74,49 +92,6 @@ public struct SettingsView: View {
         .interactiveDismissDisabled(isSaving || hasUnsavedChanges)
         .presentationBackground(T3Colors.background)
         .presentationDragIndicator(.visible)
-    }
-
-    private var settingsHeader: some View {
-        HStack(spacing: 12) {
-            Button("Close") {
-                if hasUnsavedChanges {
-                    showingDiscardConfirmation = true
-                } else {
-                    dismiss()
-                }
-            }
-            .frame(width: 76, height: 44, alignment: .leading)
-            .foregroundStyle(T3Colors.accent)
-            .disabled(isSaving)
-            .accessibilityHint(
-                hasUnsavedChanges
-                    ? "Asks before discarding unsaved changes"
-                    : "Closes settings"
-            )
-
-            Spacer(minLength: 0)
-
-            Text("Settings")
-                .font(T3Typography.navigationTitle)
-                .foregroundStyle(T3Colors.textPrimary)
-                .accessibilityAddTraits(.isHeader)
-
-            Spacer(minLength: 0)
-
-            Button(isSaving ? "Saving" : "Save") {
-                save()
-            }
-            .fontWeight(.semibold)
-            .frame(width: 76, height: 44, alignment: .trailing)
-            .foregroundStyle(canSave ? T3Colors.accent : T3Colors.textTertiary)
-            .disabled(!canSave)
-            .accessibilityHint("Saves your preferences")
-        }
-        .font(T3Typography.control)
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
-        .padding(.horizontal, 20)
-        .frame(minHeight: 60)
     }
 
     private var connectionSection: some View {
