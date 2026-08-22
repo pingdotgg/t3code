@@ -1375,10 +1375,39 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                   errorMessage: errorMessage ?? "Kimi prompt request failed.",
                 }),
               );
+            }).pipe(
+              // Every path through this finalizer accounts for the prompt
+              // slot, so the queued-interrupt compensation below must no-op.
+              Effect.ensuring(Ref.set(promptSettled, true)),
+              Effect.catch(() => Effect.void),
+            ),
+          ),
+        );
+        // The finalizer above only runs once runPrompt has started, which
+        // requires holding the permit. A fiber interrupted while still QUEUED
+        // on the semaphore (a steer waiting behind an active prompt when the
+        // client drops the request) would skip cleanup entirely, leaving
+        // promptsInFlight raised and the turn-activity tracker marked active,
+        // which defers provider probes until the session stops.
+        return yield* prepared.promptSemaphore.withPermit(runPrompt).pipe(
+          Effect.onInterrupt(() =>
+            Effect.gen(function* () {
+              if (yield* Ref.get(promptSettled)) {
+                return;
+              }
+              yield* Ref.set(promptSettled, true);
+              // With another prompt still in flight this only releases the
+              // slot; if the dropped steer was the last slot it settles the
+              // merged turn with an honest cancelled completion.
+              yield* withThreadLock(
+                input.threadId,
+                settlePromptInFlight(input.threadId, prepared.turnId, prepared.acpSessionId, {
+                  completedStopReason: "cancelled",
+                }),
+              );
             }).pipe(Effect.catch(() => Effect.void)),
           ),
         );
-        return yield* prepared.promptSemaphore.withPermit(runPrompt);
       });
 
     const interruptTurn: KimiAdapterShape["interruptTurn"] = (threadId, turnId) =>

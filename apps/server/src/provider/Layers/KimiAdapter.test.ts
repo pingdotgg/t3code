@@ -880,6 +880,89 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
     }),
   );
 
+  it.effect("settles the prompt slot when a queued steer fiber is interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-queued-steer-fiber-interrupt");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
+      );
+      const baseActivity = yield* makeKimiTurnActivity;
+      const activityMarks = yield* Ref.make(0);
+      const twoPromptsActive = yield* Deferred.make<void>();
+      const turnActivity: KimiTurnActivity = {
+        ...baseActivity,
+        markActive: (activeThreadId) =>
+          baseActivity
+            .markActive(activeThreadId)
+            .pipe(
+              Effect.andThen(
+                Ref.updateAndGet(activityMarks, (count) => count + 1).pipe(
+                  Effect.flatMap((count) =>
+                    count === 2
+                      ? Deferred.succeed(twoPromptsActive, undefined).pipe(Effect.asVoid)
+                      : Effect.void,
+                  ),
+                ),
+              ),
+            ),
+      };
+      const adapter = yield* makeTestAdapter(wrapperPath, { turnActivity });
+      const events: ProviderRuntimeEvent[] = [];
+      const firstRequest =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "request.opened") {
+            yield* Deferred.succeed(firstRequest, event).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* startTestSession(adapter, threadId);
+      const firstFiber = yield* adapter
+        .sendTurn({ threadId, input: "first prompt", attachments: [] })
+        .pipe(Effect.forkChild);
+      const firstOpened = yield* Deferred.await(firstRequest).pipe(Effect.timeout("5 seconds"));
+      const steerFiber = yield* adapter
+        .sendTurn({ threadId, input: "steer prompt", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(twoPromptsActive).pipe(Effect.timeout("5 seconds"));
+
+      // The steer is prepared (slot raised) but queued behind the running
+      // prompt's permit. Dropping its fiber here used to leak the slot, so
+      // the merged turn could never settle and probe deferral stuck forever.
+      // Let the steer preparation finish and queue on the prompt permit
+      // before dropping its fiber.
+      for (let yieldAttempt = 0; yieldAttempt < 64; yieldAttempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      // Forked interrupt: it must not block the test if the permit
+      // acquisition itself is not interruptible.
+      yield* Fiber.interrupt(steerFiber).pipe(Effect.forkChild);
+      for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      yield* adapter
+        .respondToRequest(threadId, ApprovalRequestId.make(String(firstOpened.requestId)), "accept")
+        .pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.join(firstFiber).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.await(steerFiber).pipe(Effect.timeout("5 seconds"));
+
+      assert.lengthOf(terminalEvents(events, threadId), 1);
+      assert.equal(yield* turnActivity.activeCount, 0);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("does not run a queued steer after the active turn is interrupted", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("kimi-queued-steer-after-interrupt");
