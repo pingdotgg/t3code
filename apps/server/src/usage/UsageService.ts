@@ -246,8 +246,8 @@ export const make = Effect.gen(function* () {
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
 
     // ZCode has no settings-driven home override; its usage store is always
-    // the app's own sqlite db. A missing install simply resolves to a dir
-    // that does not exist, which the scan reports as a missing source.
+    // the app's own sqlite db. A missing directory or db file is reported as a
+    // missing source.
     const zcodeDbDir = path.join(NodeOS.homedir(), ".zcode", "cli", "db");
 
     const sources: readonly TranscriptSource[] = [
