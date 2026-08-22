@@ -14,7 +14,7 @@ import * as Order from "effect/Order";
 
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
-  readonly requestKind: "command" | "file-read" | "file-change";
+  readonly requestKind: "command" | "file-read" | "file-change" | "permission";
   readonly createdAt: string;
   readonly detail?: string;
 }
@@ -48,6 +48,7 @@ export interface ThreadFeedActivity {
     | "eye"
     | "globe"
     | "hammer"
+    | "lock"
     | "message"
     | "warning"
     | "wrench"
@@ -147,6 +148,8 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "permission_approval":
+      return "permission";
     default:
       return null;
   }
@@ -632,6 +635,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
   if (entry.requestKind === "command") return "command";
   if (entry.requestKind === "file-read") return "eye";
   if (entry.requestKind === "file-change") return "edit";
+  if (entry.requestKind === "permission") return "lock";
   if (entry.itemType === "command_execution" || entry.command) return "command";
   if (entry.itemType === "file_change" || (entry.changedFiles?.length ?? 0) > 0) return "edit";
   if (entry.itemType === "web_search") return "globe";
@@ -967,7 +971,8 @@ function extractWorkLogRequestKind(
   if (
     payload?.requestKind === "command" ||
     payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
+    payload?.requestKind === "file-change" ||
+    payload?.requestKind === "permission"
   ) {
     return payload.requestKind;
   }
@@ -1367,7 +1372,8 @@ export function derivePendingApprovals(
     const requestKind =
       payload?.requestKind === "command" ||
       payload?.requestKind === "file-read" ||
-      payload?.requestKind === "file-change"
+      payload?.requestKind === "file-change" ||
+      payload?.requestKind === "permission"
         ? payload.requestKind
         : requestKindFromRequestType(payload?.requestType);
     const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
