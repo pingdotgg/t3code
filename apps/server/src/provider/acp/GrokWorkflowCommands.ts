@@ -83,11 +83,15 @@ function readWorkflowDir(dir: string, byName: Map<string, ServerProviderSlashCom
       if (!stat.isFile() || stat.size <= 0) {
         continue;
       }
-      const bytes = NodeFS.readFileSync(filePath, {
-        encoding: "utf8",
-        flag: "r",
-      });
-      source = bytes.length > SCRIPT_BYTE_CAP ? bytes.slice(0, SCRIPT_BYTE_CAP) : bytes;
+      const length = Math.min(stat.size, SCRIPT_BYTE_CAP);
+      const handle = NodeFS.openSync(filePath, "r");
+      try {
+        const buffer = Buffer.alloc(length);
+        const bytesRead = NodeFS.readSync(handle, buffer, 0, length, 0);
+        source = buffer.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        NodeFS.closeSync(handle);
+      }
     } catch {
       continue;
     }

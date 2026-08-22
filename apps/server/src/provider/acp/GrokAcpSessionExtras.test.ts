@@ -105,6 +105,10 @@ describe("GrokAcpSessionExtras", () => {
         },
       },
       {
+        type: "session.state.changed",
+        payload: { state: "running", reason: "compaction completed", detail: parsed },
+      },
+      {
         type: "thread.state.changed",
         payload: { state: "compacted", detail: parsed },
       },

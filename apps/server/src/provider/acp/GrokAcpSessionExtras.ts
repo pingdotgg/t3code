@@ -305,6 +305,10 @@ export function grokAutoCompactEvents(
     });
   }
   events.push({
+    type: "session.state.changed",
+    payload: { state: "running", reason: "compaction completed", detail: compact },
+  });
+  events.push({
     type: "thread.state.changed",
     payload: { state: "compacted", detail: compact },
   });

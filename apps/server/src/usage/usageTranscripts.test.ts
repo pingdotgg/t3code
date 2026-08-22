@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   GROK_COST_USD_TICKS_PER_DOLLAR,
   initialCodexScanState,
+  mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
@@ -315,6 +316,51 @@ describe("parseGrokLine", () => {
         }),
       ),
     ).toBeNull();
+  });
+
+  it("merges nested PromptUsage totals before extracting tokens", () => {
+    const record = parseGrokLine(
+      JSON.stringify({
+        timestamp: "2026-08-15T03:57:36.535Z",
+        params: {
+          sessionId: "sess-1",
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: "nested",
+            usage: {
+              totals: {
+                inputTokens: 40,
+                outputTokens: 10,
+                cachedReadTokens: 8,
+              },
+              costUsdTicks: 1_000_000_000,
+            },
+          },
+        },
+      }),
+    );
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 32,
+      cachedInputTokens: 8,
+      cacheCreationTokens: 0,
+      outputTokens: 10,
+      reasoningTokens: 0,
+    });
+    expect(record?.reportedCostUsd).toBeCloseTo(0.1);
+  });
+
+  it("does not treat a session id as a turn dedupe key", () => {
+    const record = parseGrokLine(grokTurnCompleted({ promptId: "" }));
+    expect(record?.dedupeKey).toBeNull();
+    expect(record?.sessionId).toBe("sess-1");
+  });
+});
+
+describe("mightCarryUsage", () => {
+  it("accepts camelCase Grok turnCompleted lines", () => {
+    expect(mightCarryUsage('{"sessionUpdate":"turnCompleted"}', "grok")).toBe(true);
+    expect(mightCarryUsage('{"sessionUpdate":"turn_completed"}', "grok")).toBe(true);
+    expect(mightCarryUsage('{"sessionUpdate":"agent_message_chunk"}', "grok")).toBe(false);
   });
 });
 

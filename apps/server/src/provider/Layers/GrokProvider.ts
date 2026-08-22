@@ -48,15 +48,18 @@ const FALLBACK_CAPABILITIES: ModelCapabilities = fallbackGrokReasoningEffortCapa
 
 function buildGrokServerProvider(
   input: Parameters<typeof buildServerProvider>[0],
-  environment: NodeJS.ProcessEnv = process.env,
+  discovery: {
+    readonly environment: NodeJS.ProcessEnv;
+    readonly projectRoot?: string;
+  },
 ): ServerProviderDraft {
   return buildServerProvider({
     ...input,
     slashCommands:
       input.slashCommands ??
       readGrokWorkflowSlashCommands({
-        projectRoot: process.cwd(),
-        homeDir: environment.HOME,
+        homeDir: discovery.environment.HOME,
+        projectRoot: discovery.projectRoot,
       }),
   });
 }
@@ -81,35 +84,42 @@ export function buildInitialGrokProviderSnapshot(
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = grokModelsFromSettings(grokSettings.customModels);
 
+    const discovery = { environment: process.env };
     if (!grokSettings.enabled) {
-      return buildGrokServerProvider({
+      return buildGrokServerProvider(
+        {
+          presentation: GROK_PRESENTATION,
+          enabled: false,
+          checkedAt,
+          models,
+          probe: {
+            installed: false,
+            version: null,
+            status: "warning",
+            auth: { status: "unknown" },
+            message: "Grok is disabled in T3 Code settings.",
+          },
+        },
+        discovery,
+      );
+    }
+
+    return buildGrokServerProvider(
+      {
         presentation: GROK_PRESENTATION,
-        enabled: false,
+        enabled: true,
         checkedAt,
         models,
         probe: {
-          installed: false,
+          installed: true,
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Grok is disabled in T3 Code settings.",
+          message: "Checking Grok CLI availability...",
         },
-      });
-    }
-
-    return buildGrokServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: true,
-      checkedAt,
-      models,
-      probe: {
-        installed: true,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Checking Grok CLI availability...",
       },
-    });
+      discovery,
+    );
   });
 }
 
@@ -189,6 +199,7 @@ const runGrokVersionCommand = (
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  projectRoot?: string,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -196,9 +207,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
+  const discovery = { environment, projectRoot };
+  const providerDraft = (input: Parameters<typeof buildServerProvider>[0]) =>
+    buildGrokServerProvider(input, discovery);
 
   if (!grokSettings.enabled) {
-    return buildGrokServerProvider({
+    return providerDraft({
       presentation: GROK_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -223,7 +237,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     yield* Effect.logWarning("Grok CLI health check failed.", {
       errorTag: error._tag,
     });
-    return buildGrokServerProvider({
+    return providerDraft({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -241,7 +255,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   if (Option.isNone(versionResult.success)) {
-    return buildGrokServerProvider({
+    return providerDraft({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -264,7 +278,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       stdoutLength: versionOutput.stdout.length,
       stderrLength: versionOutput.stderr.length,
     });
-    return buildGrokServerProvider({
+    return providerDraft({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -289,7 +303,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       errorTag: causeErrorTag(discoveryExit.cause),
       authFailed,
     });
-    return buildGrokServerProvider({
+    return providerDraft({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -309,7 +323,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     yield* Effect.logWarning(
       `Grok ACP model discovery timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
     );
-    return buildGrokServerProvider({
+    return providerDraft({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -329,7 +343,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
       : fallbackModels;
 
-  return buildGrokServerProvider({
+  return providerDraft({
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
     checkedAt,

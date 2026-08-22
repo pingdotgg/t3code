@@ -69,7 +69,9 @@ export function totalTokens(totals: UsageTokenTotals): number {
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
   if (provider === "claude") return line.includes('"usage"');
-  if (provider === "grok") return line.includes("turn_completed");
+  if (provider === "grok") {
+    return line.includes("turn_completed") || line.includes("turnCompleted");
+  }
   return line.includes('"token_count"');
 }
 
@@ -368,7 +370,12 @@ export function parseGrokLine(line: string): UsageRecord | null {
 
   const usageRaw = update.usage;
   if (typeof usageRaw !== "object" || usageRaw === null) return null;
-  const usage = usageRaw as Record<string, unknown>;
+  const usageRecord = usageRaw as Record<string, unknown>;
+  const nestedTotals = usageRecord.totals;
+  const usage =
+    typeof nestedTotals === "object" && nestedTotals !== null && !Array.isArray(nestedTotals)
+      ? { ...(nestedTotals as Record<string, unknown>), ...usageRecord }
+      : usageRecord;
 
   const timestampRaw =
     typeof record.timestamp === "string"
@@ -419,7 +426,7 @@ export function parseGrokLine(line: string): UsageRecord | null {
     sessionId,
     totals,
     reportedCostUsd: grokCompleteCostUsd(usage),
-    dedupeKey: promptId.length > 0 ? `${sessionId}:${promptId}` : sessionId || null,
+    dedupeKey: promptId.length > 0 ? `${sessionId}:${promptId}` : null,
   };
 }
 

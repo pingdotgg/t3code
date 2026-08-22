@@ -233,6 +233,12 @@ const resolveSessionCallbackTurnId = (
   return ctx ? resolveCallbackTurnId(ctx) : undefined;
 };
 
+function takeLastCompleteCostUsd(ctx: GrokSessionContext): number | undefined {
+  const cost = ctx.lastCompleteCostUsd;
+  ctx.lastCompleteCostUsd = undefined;
+  return cost;
+}
+
 function parseGrokResume(raw: unknown): { sessionId: string } | undefined {
   if (!isRecord(raw)) return undefined;
   if (raw.schemaVersion !== GROK_RESUME_VERSION) return undefined;
@@ -481,6 +487,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           }
           if (options?.emitTurnCompletion !== false) {
             if (options?.errorMessage !== undefined) {
+              const totalCostUsd = takeLastCompleteCostUsd(liveCtx);
               yield* offerRuntimeEvent({
                 type: "turn.completed",
                 ...(yield* makeEventStamp()),
@@ -490,9 +497,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 payload: {
                   state: "failed",
                   errorMessage: options.errorMessage,
+                  ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
                 },
               });
             } else if (options?.completedStopReason !== undefined) {
+              const totalCostUsd = takeLastCompleteCostUsd(liveCtx);
               yield* offerRuntimeEvent({
                 type: "turn.completed",
                 ...(yield* makeEventStamp()),
@@ -502,12 +511,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 payload: {
                   state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
                   stopReason: options.completedStopReason ?? null,
-                  ...(liveCtx.lastCompleteCostUsd !== undefined
-                    ? { totalCostUsd: liveCtx.lastCompleteCostUsd }
-                    : {}),
+                  ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
                 },
               });
-              liveCtx.lastCompleteCostUsd = undefined;
             }
           }
           return;
@@ -558,9 +564,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           updatedAt,
         };
         if (options?.emitTurnCompletion === false) {
+          liveCtx.lastCompleteCostUsd = undefined;
           return;
         }
         if (shouldEmitFailedTurn) {
+          const totalCostUsd = takeLastCompleteCostUsd(liveCtx);
           yield* offerRuntimeEvent({
             type: "turn.completed",
             ...(yield* makeEventStamp()),
@@ -570,9 +578,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             payload: {
               state: "failed",
               errorMessage: options.errorMessage,
+              ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
             },
           });
         } else if (shouldEmitCompletedTurn) {
+          const totalCostUsd = takeLastCompleteCostUsd(liveCtx);
           yield* offerRuntimeEvent({
             type: "turn.completed",
             ...(yield* makeEventStamp()),
@@ -582,11 +592,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             payload: {
               state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
               stopReason: options.completedStopReason ?? null,
-              ...(liveCtx.lastCompleteCostUsd !== undefined
-                ? { totalCostUsd: liveCtx.lastCompleteCostUsd }
-                : {}),
+              ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
             },
           });
+        } else {
           liveCtx.lastCompleteCostUsd = undefined;
         }
       });
@@ -797,6 +806,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             readonly method: GrokSessionNotificationMethod;
             readonly params: unknown;
           }> = [];
+          const pendingQueueChanges: Array<{
+            readonly method: (typeof GROK_QUEUE_CHANGED_METHODS)[number];
+            readonly params: unknown;
+          }> = [];
           let sessionNotificationsReady = false;
           const sessionNotificationLock = yield* Semaphore.make(1);
           const applySessionNotification = (
@@ -908,6 +921,29 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 specs: grokBackgroundTaskEvents(background),
               });
             });
+          const applyQueueChange = (
+            ctx: GrokSessionContext,
+            method: (typeof GROK_QUEUE_CHANGED_METHODS)[number],
+            params: unknown,
+          ) =>
+            Effect.gen(function* () {
+              const queue = parseXAiQueueChanged(params);
+              if (!queue || ctx.lastQueueLength === queue.entries.length) {
+                return;
+              }
+              ctx.lastQueueLength = queue.entries.length;
+              const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+              yield* emitGrokExtraSpecs({
+                threadId: input.threadId,
+                turnId,
+                method,
+                payload: params,
+                specs: grokQueueChangedEvents(
+                  queue,
+                  ctx.promptsInFlight > 0 || ctx.session.status === "running",
+                ),
+              });
+            });
           const started = yield* Effect.gen(function* () {
             yield* Effect.forEach(
               ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
@@ -997,26 +1033,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpCallbackFailure(
                     Effect.gen(function* () {
                       yield* logNative(input.threadId, method, params);
+                      if (!sessionNotificationsReady) {
+                        pendingQueueChanges.push({ method, params });
+                        return;
+                      }
                       const ctx = sessions.get(input.threadId);
                       if (!ctx) {
+                        pendingQueueChanges.push({ method, params });
                         return;
                       }
-                      const queue = parseXAiQueueChanged(params);
-                      if (!queue || ctx.lastQueueLength === queue.entries.length) {
-                        return;
-                      }
-                      ctx.lastQueueLength = queue.entries.length;
-                      const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
-                      yield* emitGrokExtraSpecs({
-                        threadId: input.threadId,
-                        turnId,
-                        method,
-                        payload: params,
-                        specs: grokQueueChangedEvents(
-                          queue,
-                          ctx.promptsInFlight > 0 || ctx.session.status === "running",
-                        ),
-                      });
+                      yield* sessionNotificationLock.withPermits(1)(
+                        applyQueueChange(ctx, method, params),
+                      );
                     }),
                   ),
                 ),
@@ -1301,9 +1329,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           yield* sessionNotificationLock.withPermits(1)(
             Effect.gen(function* () {
               const batch = pendingSessionNotifications.splice(0);
+              const queued = pendingQueueChanges.splice(0);
               sessionNotificationsReady = true;
               yield* Effect.forEach(batch, (pending) =>
                 applySessionNotification(ctx, pending.method, pending.params),
+              );
+              yield* Effect.forEach(queued, (pending) =>
+                applyQueueChange(ctx, pending.method, pending.params),
               );
             }),
           );
@@ -1631,6 +1663,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
                 };
                 const completedStopReason = completedStopReasonFromPromptResponse(result);
+                const totalCostUsd = takeLastCompleteCostUsd(ctx);
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),
@@ -1640,12 +1673,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   payload: {
                     state: result.stopReason === "cancelled" ? "cancelled" : "completed",
                     stopReason: completedStopReason,
-                    ...(ctx.lastCompleteCostUsd !== undefined
-                      ? { totalCostUsd: ctx.lastCompleteCostUsd }
-                      : {}),
+                    ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
                   },
                 });
-                ctx.lastCompleteCostUsd = undefined;
                 ctx.interruptedTurnIds.delete(prepared.turnId);
                 yield* Ref.set(promptSettled, true);
               } else if (remainingPrompts > 0) {
@@ -1936,43 +1966,41 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           }
           const rewindPoints = parseGrokRewindPoints(pointsPayload);
           const target = grokRewindTargetKeepingPromptCount(rewindPoints, keepPromptCount);
-          if (!target && rewindPoints.length === 0) {
+          if (!target) {
             return yield* new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "_x.ai/rewind/execute",
               detail: "Grok has no rewind point for that many turns.",
             });
           }
-          if (target) {
-            const executePayload = yield* liveCtx.acp
-              .request("_x.ai/rewind/execute", {
-                sessionId: acpSessionId,
-                targetPromptIndex: target.promptIndex,
-                mode: "conversation_only",
-                force: true,
-              })
-              .pipe(
-                Effect.mapError((error) =>
-                  mapAcpToAdapterError(PROVIDER, threadId, "_x.ai/rewind/execute", error),
-                ),
-              );
-            const committedCtx = yield* requireSession(threadId);
-            if (committedCtx.acpSessionId !== acpSessionId) {
-              return yield* new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method: "_x.ai/rewind/execute",
-                detail: "Grok session changed before rewind completed.",
-              });
-            }
-            const executed = parseGrokRewindExecute(executePayload);
-            if (!executed?.success) {
-              return yield* new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method: "_x.ai/rewind/execute",
-                detail: grokRewindFailureDetail(executed?.error),
-                ...(executed?.error ? { cause: executed.error } : {}),
-              });
-            }
+          const executePayload = yield* liveCtx.acp
+            .request("_x.ai/rewind/execute", {
+              sessionId: acpSessionId,
+              targetPromptIndex: target.promptIndex,
+              mode: "conversation_only",
+              force: true,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                mapAcpToAdapterError(PROVIDER, threadId, "_x.ai/rewind/execute", error),
+              ),
+            );
+          const committedCtx = yield* requireSession(threadId);
+          if (committedCtx.acpSessionId !== acpSessionId) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/rewind/execute",
+              detail: "Grok session changed before rewind completed.",
+            });
+          }
+          const executed = parseGrokRewindExecute(executePayload);
+          if (!executed?.success) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/rewind/execute",
+              detail: grokRewindFailureDetail(executed?.error),
+              ...(executed?.error ? { cause: executed.error } : {}),
+            });
           }
           const trimmedCtx = yield* requireSession(threadId);
           if (trimmedCtx.acpSessionId !== acpSessionId) {

@@ -123,4 +123,44 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+
+  it.effect("discovers workflow slash commands from injected home and project roots", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-wf-" });
+          const home = path.join(dir, "home");
+          const project = path.join(dir, "project");
+          const grokPath = path.join(dir, "grok");
+          yield* fs.makeDirectory(path.join(home, ".grok", "workflows"), { recursive: true });
+          yield* fs.makeDirectory(path.join(project, ".grok", "workflows"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(home, ".grok", "workflows", "from-home.rhai"),
+            `let meta = #{ name: "from-home", description: "home script" };\n`,
+          );
+          yield* fs.writeFileString(
+            path.join(project, ".grok", "workflows", "from-project.rhai"),
+            `let meta = #{ name: "from-project", description: "project script" };\n`,
+          );
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { HOME: home, PATH: process.env.PATH ?? "", XAI_API_KEY: "probe-only" },
+            project,
+          );
+        }),
+      );
+
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(
+        expect.arrayContaining(["workflow pause", "workflow from-home", "workflow from-project"]),
+      );
+    }),
+  );
 });

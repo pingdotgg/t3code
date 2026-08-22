@@ -75,4 +75,19 @@ describe("readGrokWorkflowSlashCommands", () => {
       description: "Write locked Playwright specs",
     });
   });
+
+  it("reads only the capped prefix of an oversized workflow script", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "grok-wf-cap-"));
+    const userDir = NodePath.join(root, ".grok", "workflows");
+    NodeFS.mkdirSync(userDir, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(userDir, "huge.rhai"),
+      `let meta = #{ name: "huge", description: "from prefix" };\n` + "x".repeat(80 * 1024),
+    );
+    const commands = readGrokWorkflowSlashCommands({ homeDir: root });
+    expect(commands).toContainEqual({
+      name: "workflow huge",
+      description: "from prefix",
+    });
+  });
 });
