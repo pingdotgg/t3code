@@ -1934,6 +1934,57 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.providersWorkspaceSkills]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providersWorkspaceSkills,
+            Effect.gen(function* () {
+              // The project root is the base; a persisted thread's worktree
+              // overrides it. Keyed on the project rather than the thread so a
+              // DRAFT thread still resolves — it has no server-side row yet,
+              // and that is exactly when the skill picker matters most.
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(input.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to load project for skill discovery",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: `Unknown project ${input.projectId}`,
+                });
+              }
+              // An unknown thread id is not an error: a draft thread has no row.
+              const worktreePath = input.threadId
+                ? yield* projectionSnapshotQuery.getThreadShellById(input.threadId).pipe(
+                    Effect.map((thread) =>
+                      Option.isSome(thread) ? thread.value.worktreePath : null,
+                    ),
+                    Effect.orElseSucceed(() => null),
+                  )
+                : null;
+              const workspaceRoot = worktreePath ?? project.value.workspaceRoot;
+              // Run both against the same resolved root. The skills scan is
+              // filesystem-only; the slash-command probe may spawn the CLI but
+              // is cached per directory by the driver.
+              const [skills, slashCommands] = yield* Effect.all(
+                [
+                  providerRegistry.discoverSkillsForInstance(input.instanceId, workspaceRoot),
+                  providerRegistry.discoverSlashCommandsForInstance(
+                    input.instanceId,
+                    workspaceRoot,
+                  ),
+                ],
+                { concurrency: 2 },
+              );
+              return { workspaceRoot, skills, slashCommands };
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
