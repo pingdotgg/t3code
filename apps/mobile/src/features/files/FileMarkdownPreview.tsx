@@ -7,6 +7,7 @@ import {
 } from "react-native-nitro-markdown";
 import { RefreshControl, ScrollView, Text as NativeText, View } from "react-native";
 
+import { createFallbackMarkdownImageRenderer } from "../../components/MarkdownWorkspaceImage";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useFontFamily } from "../../lib/useFontFamily";
 import {
@@ -18,6 +19,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
+  type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 
@@ -173,6 +175,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
 export function FileMarkdownPreview(props: {
   readonly markdown: string;
   readonly onRefresh?: () => Promise<void> | void;
+  readonly renderImage?: MarkdownImageRenderer;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
@@ -190,6 +193,15 @@ export function FileMarkdownPreview(props: {
   const onLinkPress = useCallback((href: string) => {
     void tryOpenExternalUrl(href, "markdown-link");
   }, []);
+  // The fallback renderer ignores SelectableMarkdownText's renderImage prop,
+  // so the workspace image flow rides its custom renderers instead.
+  const fallbackRenderers = useMemo(
+    () =>
+      props.renderImage
+        ? { ...styles.renderers, image: createFallbackMarkdownImageRenderer(props.renderImage) }
+        : styles.renderers,
+    [props.renderImage, styles.renderers],
+  );
 
   return (
     <ScrollView
@@ -210,11 +222,12 @@ export function FileMarkdownPreview(props: {
             markdown={props.markdown}
             onLinkPress={onLinkPress}
             textStyle={styles.nativeTextStyle}
+            renderImage={props.renderImage}
           />
         ) : (
           <Markdown
             options={{ gfm: true }}
-            renderers={styles.renderers}
+            renderers={fallbackRenderers}
             styles={styles.styles}
             theme={styles.theme}
           >

@@ -724,6 +724,11 @@ function RenderedMarkdownSurface({
     relativePath,
     onPendingChange,
   });
+  // Relative image sources resolve against the previewed document itself, not
+  // the project root — a nested README refers to its own folder.
+  const lastSeparator = Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"));
+  const documentDir =
+    lastSeparator >= 0 ? resolvePathLinkTarget(relativePath.slice(0, lastSeparator), cwd) : cwd;
 
   return (
     <ScrollArea className="min-h-0 flex-1">
@@ -731,6 +736,7 @@ function RenderedMarkdownSurface({
         text={contents}
         cwd={cwd}
         threadRef={threadRef}
+        imageBaseDir={documentDir}
         className="mx-auto max-w-4xl px-6 py-5"
         onTaskListChange={({ markerOffset, checked }) => {
           const currentContents =

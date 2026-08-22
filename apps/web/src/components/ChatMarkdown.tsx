@@ -74,12 +74,16 @@ import {
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
+  isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
+  rehypePreserveLocalImageSrc,
+  resolveMarkdownImagePath,
   rewriteMarkdownFileUriHref,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
+import { useAssetUrlState } from "../assets/assetUrls";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -119,6 +123,12 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
+  /**
+   * Directory that relative image sources resolve against; defaults to cwd.
+   * The file preview passes the previewed document's own directory so a
+   * nested README finds its images.
+   */
+  imageBaseDir?: string | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -182,6 +192,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
+    img: [...(defaultSchema.attributes?.img ?? []), "dataLocalSrc"],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -208,6 +219,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
+  rehypePreserveLocalImageSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -1355,6 +1367,35 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+/**
+ * A markdown image whose src points into the workspace. The browser cannot
+ * fetch workspace files by path, so the img waits for a signed asset URL and
+ * falls back to the original src (a broken image, as before) when the server
+ * refuses the path.
+ */
+function MarkdownWorkspaceImage({
+  threadRef,
+  absolutePath,
+  src,
+  ...imgProps
+}: Omit<React.ComponentProps<"img">, "src"> & {
+  threadRef: ScopedThreadRef;
+  absolutePath: string;
+  src: string;
+}) {
+  const assetUrl = useAssetUrlState(threadRef.environmentId, {
+    _tag: "workspace-file",
+    threadId: threadRef.threadId,
+    path: absolutePath,
+  });
+  if (assetUrl._tag === "Loading") {
+    // No src yet: an empty box holds any author-set width/height without
+    // flashing a broken-image glyph.
+    return <img {...imgProps} />;
+  }
+  return <img {...imgProps} src={assetUrl._tag === "Success" ? assetUrl.url : src} />;
+}
+
 function ChatMarkdown({
   text,
   cwd,
@@ -1365,6 +1406,7 @@ function ChatMarkdown({
   className,
   lineBreaks = false,
   parseRawHtml = true,
+  imageBaseDir,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1418,6 +1460,9 @@ function ChatMarkdown({
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
+    // Drive paths parse as a "c:" scheme and defaultUrlTransform would clear
+    // them; keep them so file links and workspace images can resolve.
+    if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
@@ -1712,8 +1757,30 @@ function ChatMarkdown({
           props.className,
         );
       },
-      img({ node: _node, title: _title, ...props }) {
-        return <img {...props} />;
+      img({ node: _node, title: _title, src, ...props }) {
+        // Relative and workspace-absolute sources are unreachable from the
+        // browser; swap them for a signed asset URL. External URLs pass
+        // through. Windows drive and file: srcs only survive sanitization as
+        // data-local-src (see rehypePreserveLocalImageSrc).
+        const preservedSrc = (props as Record<string, unknown>)["data-local-src"];
+        const localSrc = typeof preservedSrc === "string" ? preservedSrc : src;
+        if (threadRef && typeof localSrc === "string") {
+          const workspacePath = resolveMarkdownImagePath(localSrc, imageBaseDir ?? cwd);
+          if (workspacePath !== null) {
+            // The DOM src becomes an expiring signed URL (or is absent while
+            // loading); give the clipboard serializer the authored source.
+            return (
+              <MarkdownWorkspaceImage
+                threadRef={threadRef}
+                absolutePath={workspacePath}
+                src={localSrc}
+                data-markdown-copy={`![${typeof props.alt === "string" ? props.alt : ""}](${localSrc})`}
+                {...props}
+              />
+            );
+          }
+        }
+        return <img src={src} {...props} />;
       },
       code({ node, children, className, ...props }) {
         if (node?.properties?.dataInlineCode != null) {
@@ -1770,6 +1837,7 @@ function ChatMarkdown({
     cwd,
     diffThemeName,
     fileLinkParentSuffixByPath,
+    imageBaseDir,
     inlineCodeFileLinkMetaByText,
     isStreaming,
     markdownFileLinkMetaByHref,

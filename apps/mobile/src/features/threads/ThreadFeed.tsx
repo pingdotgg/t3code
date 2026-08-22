@@ -54,9 +54,14 @@ import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
+  type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
+import {
+  createFallbackMarkdownImageRenderer,
+  createWorkspaceImageRenderer,
+} from "../../components/MarkdownWorkspaceImage";
 
 import { AppText as Text } from "../../components/AppText";
 import { CopyTextButton } from "../../components/CopyTextButton";
@@ -209,6 +214,7 @@ interface MarkdownStyleSet {
   readonly styles: NodeStyleOverrides;
   readonly renderers: CustomRenderers;
   readonly nativeTextStyle: NativeMarkdownTextStyle;
+  readonly renderImage?: MarkdownImageRenderer;
 }
 
 interface ReviewCommentColors {
@@ -408,7 +414,10 @@ function useReviewCommentColors(): ReviewCommentColors {
   );
 }
 
-function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
+function useMarkdownStyles(
+  onLinkPress: (href: string) => void,
+  renderImage?: MarkdownImageRenderer,
+): MarkdownStyleSets {
   const { appearance, themeAppearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),
@@ -536,6 +545,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
     ): CustomRenderers => ({
+      ...(renderImage ? { image: createFallbackMarkdownImageRenderer(renderImage) } : {}),
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
@@ -699,6 +709,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       user: {
         theme: userTheme,
         styles: userStyles,
+        renderImage,
         renderers: createMarkdownRenderers(
           markdownUserCodeText,
           markdownUserInlineCodeText,
@@ -732,6 +743,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       assistant: {
         theme: assistantTheme,
         styles: assistantStyles,
+        renderImage,
         renderers: createMarkdownRenderers(
           markdownCodeText,
           markdownInlineCodeText,
@@ -786,6 +798,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     nativeMarkdownTypography,
     onLinkPress,
     regularFontFamily,
+    renderImage,
     themeMode,
     userBubbleForegroundMuted,
     userBubbleSkillForeground,
@@ -954,6 +967,7 @@ function renderFeedEntry(
               skills={props.skills}
               textStyle={styles.nativeTextStyle}
               onLinkPress={props.onMarkdownLinkPress}
+              renderImage={styles.renderImage}
             />
           ) : (
             <Markdown
@@ -1051,6 +1065,7 @@ function UserMessageContent(props: {
           textStyle={props.markdownStyles.nativeTextStyle}
           preserveSoftBreaks
           onLinkPress={props.onLinkPress}
+          renderImage={props.markdownStyles.renderImage}
         />
       );
     }
@@ -1092,6 +1107,7 @@ function UserMessageContent(props: {
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
             onLinkPress={props.onLinkPress}
+            renderImage={props.markdownStyles.renderImage}
           />
         ) : (
           <Markdown
@@ -1413,7 +1429,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [props.environmentId, props.threadId, props.workspaceRoot, navigation],
   );
-  const markdownStyles = useMarkdownStyles(onMarkdownLinkPress);
+  const renderWorkspaceImage = useMemo(
+    () =>
+      createWorkspaceImageRenderer({
+        environmentId: props.environmentId,
+        threadId: props.threadId,
+      }),
+    [props.environmentId, props.threadId],
+  );
+  const markdownStyles = useMarkdownStyles(onMarkdownLinkPress, renderWorkspaceImage);
   const reviewCommentColors = useReviewCommentColors();
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Keep row-local interaction props in extraData so disclosures and copy feedback repaint.
