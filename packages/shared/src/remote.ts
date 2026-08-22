@@ -185,6 +185,16 @@ export const readHostedPairingRequest = (url: URL): HostedPairingRequest | null 
   };
 };
 
+/**
+ * Repairs a pairing code a person typed. Issued codes only use
+ * `PAIRING_TOKEN_ALPHABET` (uppercase, no separators), so this cannot alter a
+ * real one. Call it where someone types and nowhere else: a pasted URL reaches
+ * `resolveRemotePairingTarget` through the same `pairingCode` field, and a
+ * hosted token has its own alphabet that normalizing would corrupt.
+ */
+export const normalizePairingCode = (code: string): string =>
+  code.replace(/[\s-]+/g, "").toUpperCase();
+
 export const resolveRemotePairingTarget = (input: {
   readonly pairingUrl?: string;
   readonly host?: string;
