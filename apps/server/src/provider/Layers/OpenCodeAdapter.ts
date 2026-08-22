@@ -8,6 +8,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadTokenUsageSnapshot,
   type ToolLifecycleItemType,
   TurnId,
   type UserInputQuestion,
@@ -23,7 +24,14 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  AssistantMessage,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  Provider,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -233,6 +241,8 @@ interface OpenCodeSessionContext {
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
+  readonly modelContextWindowById: Map<string, number>;
+  readonly tokenUsageEmittedMessageIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -481,6 +491,67 @@ const isoFromEpochMs = (value: number) =>
     }),
   );
 
+// Wire-shape tolerant: events from older OpenCode versions may omit the
+// token fields entirely, and the event pump must not die on them. The count
+// mirrors OpenCode's own overflow check (session/overflow.ts `isOverflow`):
+// the reported `total` when present, otherwise input + output + cached
+// input/write. Keeping the same formula means the meter agrees with when
+// OpenCode itself decides the context is full and compacts.
+function openCodeMessageTokensTotal(value: unknown): number {
+  if (!value || typeof value !== "object") {
+    return 0;
+  }
+  const tokens = value as AssistantMessage["tokens"];
+  if (typeof tokens.total === "number" && tokens.total > 0) {
+    return tokens.total;
+  }
+  const cache = tokens.cache;
+  return (
+    (typeof tokens.input === "number" ? tokens.input : 0) +
+    (typeof tokens.output === "number" ? tokens.output : 0) +
+    (cache && typeof cache.read === "number" ? cache.read : 0) +
+    (cache && typeof cache.write === "number" ? cache.write : 0)
+  );
+}
+
+/**
+ * Map a completed OpenCode assistant message's token usage into the adapter's
+ * thread token-usage snapshot. "Used" is the last request's token footprint,
+ * counted the same way OpenCode's own compaction check counts it, capped at
+ * the model's context window when known. Exported for unit testing.
+ */
+export function normalizeOpenCodeTokenUsage(
+  tokens: AssistantMessage["tokens"],
+  modelContextWindow?: number,
+): ThreadTokenUsageSnapshot | undefined {
+  const usedTokens = openCodeMessageTokensTotal(tokens);
+  if (usedTokens <= 0) {
+    return undefined;
+  }
+  const maxTokens =
+    modelContextWindow !== undefined && modelContextWindow > 0 ? modelContextWindow : undefined;
+  const cappedUsedTokens = maxTokens !== undefined ? Math.min(usedTokens, maxTokens) : usedTokens;
+  const cache = tokens.cache;
+  const inputTokens = typeof tokens.input === "number" ? tokens.input : 0;
+  const cachedInputTokens = cache && typeof cache.read === "number" ? cache.read : 0;
+  const outputTokens = typeof tokens.output === "number" ? tokens.output : 0;
+  const reasoningOutputTokens = typeof tokens.reasoning === "number" ? tokens.reasoning : 0;
+  return {
+    usedTokens: cappedUsedTokens,
+    lastUsedTokens: cappedUsedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(inputTokens > 0 ? { inputTokens, lastInputTokens: inputTokens } : {}),
+    ...(cachedInputTokens > 0
+      ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+      : {}),
+    ...(outputTokens > 0 ? { outputTokens, lastOutputTokens: outputTokens } : {}),
+    ...(reasoningOutputTokens > 0
+      ? { reasoningOutputTokens, lastReasoningOutputTokens: reasoningOutputTokens }
+      : {}),
+    compactsAutomatically: true,
+  };
+}
+
 function messageRoleForPart(
   context: OpenCodeSessionContext,
   part: Pick<Part, "messageID" | "type">,
@@ -683,6 +754,76 @@ export function makeOpenCodeAdapter(
       },
     ) => writeNativeEvent(threadId, event).pipe(Effect.catchCause(() => Effect.void));
 
+    // The model slug is per-message (the session can switch models in
+    // flight), so the context window is resolved lazily on the first
+    // completed assistant message and cached for the session lifetime.
+    // Best-effort: a failed lookup means "no percentage" on the meter,
+    // never a broken turn.
+    const resolveModelContextWindow = Effect.fn("resolveModelContextWindow")(function* (
+      context: OpenCodeSessionContext,
+      providerID: string,
+      modelID: string,
+    ) {
+      const key = `${providerID}/${modelID}`;
+      const cached = context.modelContextWindowById.get(key);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const providers = yield* runOpenCodeSdk("provider.list", () =>
+        context.client.provider.list(),
+      ).pipe(
+        Effect.map((response) => response.data?.all ?? []),
+        Effect.orElseSucceed((): Provider[] => []),
+      );
+      for (const provider of providers) {
+        for (const [id, model] of Object.entries(provider.models ?? {})) {
+          const contextWindow = model.limit?.context ?? 0;
+          if (contextWindow > 0) {
+            context.modelContextWindowById.set(`${provider.id}/${id}`, contextWindow);
+          }
+        }
+      }
+      return context.modelContextWindowById.get(key);
+    });
+
+    // OpenCode reports token usage on the `message.updated` event as the
+    // assistant message completes. Only completed messages (`time.completed`
+    // set) are counted, so a mid-completion update carrying a partial token
+    // footprint can never consume the message's one-shot emission.
+    const emitOpenCodeTokenUsage = Effect.fn("emitOpenCodeTokenUsage")(function* (
+      context: OpenCodeSessionContext,
+      info: AssistantMessage,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (info.time?.completed === undefined) {
+        return;
+      }
+      const messageTokens = openCodeMessageTokensTotal(info.tokens);
+      if (messageTokens <= 0 || context.tokenUsageEmittedMessageIds.has(info.id)) {
+        return;
+      }
+      context.tokenUsageEmittedMessageIds.add(info.id);
+      const modelContextWindow = yield* resolveModelContextWindow(
+        context,
+        info.providerID,
+        info.modelID,
+      );
+      const usage = normalizeOpenCodeTokenUsage(info.tokens, modelContextWindow);
+      if (usage === undefined) {
+        return;
+      }
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          raw,
+        })),
+        type: "thread.token-usage.updated",
+        payload: { usage },
+      });
+    });
+
     const emitUnexpectedExit = Effect.fn("emitUnexpectedExit")(function* (
       context: OpenCodeSessionContext,
       message: string,
@@ -851,12 +992,14 @@ export function makeOpenCodeAdapter(
               }
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
+            yield* emitOpenCodeTokenUsage(context, event.properties.info, turnId, event);
           }
           break;
         }
 
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
+          context.tokenUsageEmittedMessageIds.delete(event.properties.messageID);
           break;
         }
 
@@ -1398,6 +1541,8 @@ export function makeOpenCodeAdapter(
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
+          modelContextWindowById: new Map(),
+          tokenUsageEmittedMessageIds: new Set(),
           turns: [],
           activeTurnId: undefined,
           activeAgent: undefined,
