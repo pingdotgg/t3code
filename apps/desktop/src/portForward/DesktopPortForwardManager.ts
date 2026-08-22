@@ -457,7 +457,6 @@ export const make = Effect.gen(function* () {
         deferred,
       }),
     );
-    const listeners = yield* Ref.get(authorizationListeners);
     const request: DesktopPortForwardAuthorizationRequest = {
       requestId,
       forwardId: forward.snapshot.id,
@@ -465,21 +464,25 @@ export const make = Effect.gen(function* () {
       remoteHost: forward.snapshot.remoteHost,
       remotePort: forward.snapshot.remotePort,
     };
-    yield* Effect.forEach(listeners, (listener) => listener(request), { discard: true });
-    return yield* Deferred.await(deferred).pipe(
-      Effect.timeoutOption(AUTHORIZATION_TIMEOUT),
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(
-              new DesktopPortForwardError({
-                operation: "authorize",
-                detail: "Timed out waiting for renderer authorization.",
-              }),
-            ),
-          onSome: Effect.succeed,
-        }),
-      ),
+    return yield* Effect.gen(function* () {
+      const listeners = yield* Ref.get(authorizationListeners);
+      yield* Effect.forEach(listeners, (listener) => listener(request), { discard: true });
+      return yield* Deferred.await(deferred).pipe(
+        Effect.timeoutOption(AUTHORIZATION_TIMEOUT),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(
+                new DesktopPortForwardError({
+                  operation: "authorize",
+                  detail: "Timed out waiting for renderer authorization.",
+                }),
+              ),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+    }).pipe(
       Effect.ensuring(
         Ref.update(pendingAuthorizations, (current) => {
           const next = new Map(current);
