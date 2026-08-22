@@ -47,7 +47,7 @@ jobs:
         run: pacman -Syu --noconfirm --needed git github-cli jq namcap openssh sudo
 
       - name: Checkout packaging sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Create unprivileged build user
         run: |

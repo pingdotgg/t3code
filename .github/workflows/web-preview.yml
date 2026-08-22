@@ -46,7 +46,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           sparse-checkout: |
@@ -89,7 +89,7 @@ jobs:
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
 
       - name: Comment deployment URL
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment_url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
