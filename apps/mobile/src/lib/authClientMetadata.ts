@@ -1,9 +1,7 @@
 import type { AuthClientPresentationMetadata } from "@t3tools/contracts";
-import Constants from "expo-constants";
 import { Platform } from "react-native";
 
-export function authClientMetadata(): AuthClientPresentationMetadata {
-  const appVersion = Constants.expoConfig?.version;
+export function authClientMetadata(appVersion?: string): AuthClientPresentationMetadata {
   return {
     label: "T3 Code Mobile",
     deviceType: "mobile",
