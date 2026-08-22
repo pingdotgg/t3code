@@ -51,6 +51,36 @@ describe("buildInitialGrokProviderSnapshot", () => {
   );
 });
 
+it.layer(NodeServices.layer)("buildInitialGrokProviderSnapshot workflows", (it) => {
+  it.effect("includes project workflow slash commands on the initial snapshot", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-initial-wf-" });
+          const home = path.join(dir, "home");
+          const project = path.join(dir, "project");
+          yield* fs.makeDirectory(path.join(home, ".grok", "workflows"), { recursive: true });
+          yield* fs.makeDirectory(path.join(project, ".grok", "workflows"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(project, ".grok", "workflows", "from-project.rhai"),
+            `let meta = #{ name: "from-project", description: "project script" };\n`,
+          );
+          return yield* buildInitialGrokProviderSnapshot(decodeGrokSettings({ enabled: true }), {
+            environment: { HOME: home },
+            projectRoot: project,
+          });
+        }),
+      );
+
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(
+        expect.arrayContaining(["workflow pause", "workflow from-project"]),
+      );
+    }),
+  );
+});
+
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {

@@ -79,12 +79,19 @@ const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 
 export function buildInitialGrokProviderSnapshot(
   grokSettings: GrokSettings,
+  discovery?: {
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly projectRoot?: string;
+  },
 ): Effect.Effect<ServerProviderDraft> {
   return Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = grokModelsFromSettings(grokSettings.customModels);
 
-    const discovery = { environment: process.env };
+    const resolvedDiscovery = {
+      environment: discovery?.environment ?? process.env,
+      projectRoot: discovery?.projectRoot,
+    };
     if (!grokSettings.enabled) {
       return buildGrokServerProvider(
         {
@@ -100,7 +107,7 @@ export function buildInitialGrokProviderSnapshot(
             message: "Grok is disabled in T3 Code settings.",
           },
         },
-        discovery,
+        resolvedDiscovery,
       );
     }
 
@@ -118,7 +125,7 @@ export function buildInitialGrokProviderSnapshot(
           message: "Checking Grok CLI availability...",
         },
       },
-      discovery,
+      resolvedDiscovery,
     );
   });
 }

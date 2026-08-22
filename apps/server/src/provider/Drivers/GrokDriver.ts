@@ -113,11 +113,8 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkGrokProviderStatus(
-        effectiveConfig,
-        processEnv,
-        process.cwd(),
-      ).pipe(
+      const projectRoot = process.cwd();
+      const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, projectRoot).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -130,7 +127,10 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+          buildInitialGrokProviderSnapshot(settings.provider, {
+            environment: processEnv,
+            projectRoot,
+          }).pipe(Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichGrokSnapshot({
