@@ -1,12 +1,79 @@
-import { describe, expect, it } from "vite-plus/test";
+import { ThreadId } from "@t3tools/contracts";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+const { collectComposerInlineTokensSpy } = vi.hoisted(() => ({
+  collectComposerInlineTokensSpy: vi.fn(),
+}));
+
+vi.mock("@t3tools/shared/composerInlineTokens", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@t3tools/shared/composerInlineTokens")>();
+  return {
+    ...original,
+    collectComposerInlineTokens: (
+      ...args: Parameters<typeof original.collectComposerInlineTokens>
+    ) => {
+      collectComposerInlineTokensSpy();
+      return original.collectComposerInlineTokens(...args);
+    },
+  };
+});
 
 import {
   selectionTouchesMentionBoundary,
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
-import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import {
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+  type TerminalContextDraft,
+} from "./lib/terminalContext";
 
 describe("splitPromptIntoComposerSegments", () => {
+  it("scans an unchanged large prompt only once", () => {
+    const largePrompt =
+      '2026-08-16T12:00:00.000Z ERROR path=/api/workspaces message="operation failed"\n'.repeat(
+        1_000,
+      );
+    collectComposerInlineTokensSpy.mockClear();
+
+    const first = splitPromptIntoComposerSegments(largePrompt);
+    const second = splitPromptIntoComposerSegments(largePrompt);
+
+    expect(first).toEqual([{ type: "text", text: largePrompt }]);
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
+    expect(collectComposerInlineTokensSpy).toHaveBeenCalledOnce();
+
+    splitPromptIntoComposerSegments("");
+    splitPromptIntoComposerSegments(largePrompt);
+    expect(collectComposerInlineTokensSpy).toHaveBeenCalledTimes(2);
+
+    splitPromptIntoComposerSegments(`${largePrompt}next`);
+    expect(collectComposerInlineTokensSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps terminal context segments outside the prompt cache", () => {
+    const context = {
+      id: "context-1",
+      threadId: ThreadId.make("thread-1"),
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 1,
+      text: "first",
+      createdAt: "2026-08-16T12:00:00.000Z",
+    } satisfies TerminalContextDraft;
+    const prompt = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} inspect`;
+
+    expect(splitPromptIntoComposerSegments(prompt, [context])[0]).toEqual({
+      type: "terminal-context",
+      context,
+    });
+    expect(splitPromptIntoComposerSegments(prompt, [{ ...context, text: "second" }])[0]).toEqual({
+      type: "terminal-context",
+      context: { ...context, text: "second" },
+    });
+  });
+
   it("splits mention tokens followed by whitespace into mention segments", () => {
     expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md please")).toEqual([
       { type: "text", text: "Inspect " },

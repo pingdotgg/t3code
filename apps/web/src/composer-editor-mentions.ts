@@ -26,6 +26,9 @@ export type ComposerPromptSegment =
       context: TerminalContextDraft | null;
     };
 
+let cachedPrompt = "";
+let cachedSegments: ComposerPromptSegment[] = [];
+
 function rangeIncludesIndex(start: number, end: number, index: number): boolean {
   return start <= index && index < end;
 }
@@ -200,7 +203,12 @@ export function splitPromptIntoComposerSegments(
   terminalContexts: ReadonlyArray<TerminalContextDraft> = [],
 ): ComposerPromptSegment[] {
   if (!prompt) {
+    cachedPrompt = "";
+    cachedSegments = [];
     return [];
+  }
+  if (terminalContexts.length === 0 && prompt === cachedPrompt) {
+    return cachedSegments.map((segment) => ({ ...segment }));
   }
 
   const segments: ComposerPromptSegment[] = [];
@@ -219,5 +227,9 @@ export function splitPromptIntoComposerSegments(
     return false;
   });
 
+  if (terminalContexts.length === 0) {
+    cachedPrompt = prompt;
+    cachedSegments = segments.map((segment) => ({ ...segment }));
+  }
   return segments;
 }
