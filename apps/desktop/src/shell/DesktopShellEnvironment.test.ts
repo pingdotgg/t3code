@@ -347,6 +347,25 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  // cmd.exe reads a stray quote in PATH as opening a quoted region and stops
+  // resolving every entry after it, so `node` vanishes for npm lifecycle
+  // scripts launched from the integrated terminal. See issue #7543.
+  it.effect("strips stray quotes from the inherited Windows PATH", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        PATH: 'C:\\cloudflared.exe;C:";C:\\Program Files\\nodejs',
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: () => "",
+      });
+
+      assert.equal(env.PATH, "C:\\cloudflared.exe;C:;C:\\Program Files\\nodejs");
+    }),
+  );
+
   it.effect("prefers login-shell desktop session hints over inherited values on linux", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
