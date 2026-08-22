@@ -188,6 +188,91 @@ const makeTestPreviewWebContents = (
     capturePage,
   }) as never;
 
+const SNAPSHOT_PAGE = {
+  url: "https://example.com",
+  title: "Example",
+  loading: false,
+  visibleText: "Hello",
+  interactiveElements: [],
+};
+
+const makeSnapshotImage = () => {
+  const image = {
+    getSize: () => ({ width: 800, height: 600 }),
+    resize: vi.fn(() => image),
+    toPNG: () => Buffer.from("png"),
+  };
+  return image;
+};
+
+const makeAutomationWebContents = (options?: {
+  readonly capturePage?: () => Promise<ReturnType<typeof makeSnapshotImage>>;
+  readonly id?: number;
+}) => {
+  const debuggerListeners = new Map<string, (...args: never[]) => void>();
+  let attached = false;
+  const attach = vi.fn(() => {
+    attached = true;
+  });
+  const detach = vi.fn(() => {
+    attached = false;
+    debuggerListeners.get("detach")?.();
+  });
+  const sendCommand = vi.fn(async (method: string) => {
+    if (method === "Runtime.evaluate") {
+      return { result: { value: SNAPSHOT_PAGE } };
+    }
+    if (method === "Accessibility.getFullAXTree") {
+      return { nodes: [] };
+    }
+    return undefined;
+  });
+  const capturePage = options?.capturePage ?? (async () => makeSnapshotImage());
+  const emitDetach = () => {
+    attached = false;
+    debuggerListeners.get("detach")?.();
+  };
+  const webContents = {
+    id: options?.id ?? 42,
+    isDestroyed: () => false,
+    isDevToolsOpened: () => false,
+    getType: () => "webview",
+    getURL: () => "https://example.com",
+    getTitle: () => "Example",
+    isLoading: () => false,
+    getZoomFactor: () => 1,
+    setZoomFactor: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    ipc: { on: vi.fn(), off: vi.fn() },
+    send: webviewSend,
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    setWindowOpenHandler: vi.fn(),
+    debugger: {
+      isAttached: () => attached,
+      attach,
+      detach,
+      sendCommand,
+      on: vi.fn((event: string, listener: (...args: never[]) => void) => {
+        debuggerListeners.set(event, listener);
+      }),
+      off: vi.fn((event: string) => {
+        debuggerListeners.delete(event);
+      }),
+    },
+    capturePage: vi.fn(capturePage),
+  };
+  return {
+    attach,
+    detach,
+    emitDetach,
+    debuggerListeners,
+    sendCommand,
+    webContents: webContents as never,
+    capturePage: webContents.capturePage,
+  };
+};
+
 const TEST_FAVICON = "data:image/png;base64,cG5n";
 
 const makeSourcePng = (width = 1, height = 1): Buffer => {
@@ -3282,6 +3367,306 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+
+  effectIt.effect("does not detach a live tab when the same webview re-registers", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeAutomationWebContents();
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_leave_reregister");
+        yield* manager.registerWebview("tab_leave_reregister", 42);
+        yield* Effect.yieldNow;
+        const attachesAfterRegister = preview.attach.mock.calls.length;
+        expect(attachesAfterRegister).toBeGreaterThan(0);
+
+        yield* manager.registerWebview("tab_leave_reregister", 42);
+        yield* Effect.yieldNow;
+
+        expect(preview.detach).not.toHaveBeenCalled();
+        expect(preview.attach).toHaveBeenCalledTimes(attachesAfterRegister);
+
+        const snapshot = yield* manager.automationSnapshot("tab_leave_reregister");
+        expect(snapshot).toMatchObject(SNAPSHOT_PAGE);
+        expect(preview.capturePage).toHaveBeenCalledOnce();
+        expect(preview.detach).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "restores the control session on the next snapshot after a hidden-tab detach",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = makeAutomationWebContents();
+          fromId.mockReturnValue(preview.webContents);
+
+          yield* manager.createTab("tab_leave_reattach");
+          yield* manager.registerWebview("tab_leave_reattach", 42);
+          yield* Effect.yieldNow;
+          const attachesAfterRegister = preview.attach.mock.calls.length;
+
+          preview.emitDetach();
+          yield* Effect.yieldNow;
+
+          const snapshot = yield* manager.automationSnapshot("tab_leave_reattach");
+          expect(snapshot).toMatchObject(SNAPSHOT_PAGE);
+          expect(preview.attach.mock.calls.length).toBeGreaterThan(attachesAfterRegister);
+          expect(preview.capturePage).toHaveBeenCalledOnce();
+        }),
+      ),
+  );
+
+  effectIt.effect("reattaches when Chromium has detached before the session is forgotten", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeAutomationWebContents();
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_stale_session");
+        yield* manager.registerWebview("tab_stale_session", 42);
+        yield* Effect.yieldNow;
+        const attachesAfterRegister = preview.attach.mock.calls.length;
+
+        preview.emitDetach();
+        const snapshot = yield* manager.automationSnapshot("tab_stale_session");
+        expect(snapshot).toMatchObject(SNAPSHOT_PAGE);
+        expect(preview.attach.mock.calls.length).toBeGreaterThan(attachesAfterRegister);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not let a stale control-session detach tear down its replacement", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeAutomationWebContents();
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_session_race");
+        yield* manager.registerWebview("tab_session_race", 42);
+        yield* Effect.yieldNow;
+        const staleDetach = preview.debuggerListeners.get("detach");
+
+        preview.emitDetach();
+        yield* Effect.yieldNow;
+        const restored = yield* manager.automationSnapshot("tab_session_race");
+        expect(restored).toMatchObject(SNAPSHOT_PAGE);
+        const attachesAfterRestore = preview.attach.mock.calls.length;
+
+        staleDetach?.();
+        yield* Effect.yieldNow;
+        const reused = yield* manager.automationSnapshot("tab_session_race");
+        expect(reused).toMatchObject(SNAPSHOT_PAGE);
+        expect(preview.attach.mock.calls.length).toBe(attachesAfterRestore);
+      }),
+    ),
+  );
+
+  effectIt.effect("retries a snapshot against the live webview after the guest is replaced", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let resolveCaptureStarted: (() => void) | undefined;
+        let resolveAllowFailure: (() => void) | undefined;
+        const captureStarted = new Promise<void>((resolve) => {
+          resolveCaptureStarted = resolve;
+        });
+        const allowFailure = new Promise<void>((resolve) => {
+          resolveAllowFailure = resolve;
+        });
+        const original = makeAutomationWebContents({
+          id: 42,
+          capturePage: async () => {
+            resolveCaptureStarted?.();
+            await allowFailure;
+            throw new Error("UnknownVizError");
+          },
+        });
+        const replacement = makeAutomationWebContents({ id: 43 });
+        fromId.mockImplementation((id) => {
+          if (id === 42) return original.webContents;
+          if (id === 43) return replacement.webContents;
+          return null;
+        });
+
+        yield* manager.createTab("tab_retry_replaced");
+        yield* manager.registerWebview("tab_retry_replaced", 42);
+        yield* Effect.yieldNow;
+
+        const snapshot = yield* manager
+          .automationSnapshot("tab_retry_replaced")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => captureStarted);
+        yield* manager.registerWebview("tab_retry_replaced", 43);
+        resolveAllowFailure?.();
+
+        expect(yield* Fiber.join(snapshot)).toMatchObject(SNAPSHOT_PAGE);
+        expect(original.capturePage).toHaveBeenCalledOnce();
+        expect(replacement.capturePage).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("retries snapshot after UnknownVizError by restoring the control session", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeAutomationWebContents();
+        preview.capturePage.mockRejectedValueOnce(new Error("UnknownVizError"));
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_viz_retry");
+        yield* manager.registerWebview("tab_viz_retry", 42);
+        yield* Effect.yieldNow;
+        const attachesAfterRegister = preview.attach.mock.calls.length;
+
+        const snapshot = yield* manager.automationSnapshot("tab_viz_retry");
+        expect(snapshot).toMatchObject(SNAPSHOT_PAGE);
+        expect(preview.capturePage).toHaveBeenCalledTimes(2);
+        expect(preview.attach.mock.calls.length).toBeGreaterThan(attachesAfterRegister);
+      }),
+    ),
+  );
+
+  effectIt.effect("holds the restored session lock across a snapshot retry", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let captures = 0;
+        let resolveRetryStarted: (() => void) | undefined;
+        let resolveRetryRelease: (() => void) | undefined;
+        const retryStarted = new Promise<void>((resolve) => {
+          resolveRetryStarted = resolve;
+        });
+        const retryRelease = new Promise<void>((resolve) => {
+          resolveRetryRelease = resolve;
+        });
+        const preview = makeAutomationWebContents({
+          capturePage: async () => {
+            const n = ++captures;
+            if (n === 1) throw new Error("UnknownVizError");
+            if (n === 2) {
+              resolveRetryStarted?.();
+              await retryRelease;
+            }
+            return makeSnapshotImage();
+          },
+        });
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_viz_mutex");
+        yield* manager.registerWebview("tab_viz_mutex", 42);
+        yield* Effect.yieldNow;
+
+        const first = yield* manager
+          .automationSnapshot("tab_viz_mutex")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => retryStarted);
+
+        const second = yield* manager
+          .automationSnapshot("tab_viz_mutex")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        for (let i = 0; i < 8; i++) yield* Effect.yieldNow;
+        expect(captures).toBe(2);
+
+        resolveRetryRelease?.();
+        expect(yield* Fiber.join(first)).toMatchObject(SNAPSHOT_PAGE);
+        expect(yield* Fiber.join(second)).toMatchObject(SNAPSHOT_PAGE);
+        expect(captures).toBe(3);
+      }),
+    ),
+  );
+
+  effectIt.effect("fails a hung snapshot quickly instead of waiting minutes", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeAutomationWebContents({
+          capturePage: () => new Promise(() => undefined),
+        });
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_viz_timeout");
+        yield* manager.registerWebview("tab_viz_timeout", 42);
+        yield* Effect.yieldNow;
+
+        const fiber = yield* manager
+          .automationSnapshot("tab_viz_timeout")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(PreviewManager.AUTOMATION_CAPTURE_TIMEOUT_MS);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(PreviewManager.AUTOMATION_CAPTURE_TIMEOUT_MS);
+        const exit = yield* Fiber.await(fiber);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isSuccess(exit)) return;
+        const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
+        expect(PreviewManager.isPreviewCaptureUnavailableError(error)).toBe(true);
+        if (!PreviewManager.isPreviewCaptureUnavailableError(error)) return;
+        expect(error).toMatchObject({
+          _tag: "PreviewCaptureUnavailableError",
+          tabId: "tab_viz_timeout",
+          webContentsId: 42,
+        });
+        expect(Cause.isTimeoutError(error.cause)).toBe(true);
+        expect(error.message).not.toContain("UnknownVizError");
+        expect(preview.capturePage.mock.calls.length).toBeLessThanOrEqual(2);
+      }),
+    ),
+  );
+
+  effectIt.effect("clears agent controller after a snapshot capture miss", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeAutomationWebContents({
+          capturePage: () => new Promise(() => undefined),
+        });
+        fromId.mockReturnValue(preview.webContents);
+        const states: PreviewManager.PreviewTabState[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+
+        yield* manager.createTab("tab_viz_controller");
+        yield* manager.registerWebview("tab_viz_controller", 42);
+        yield* Effect.yieldNow;
+
+        const fiber = yield* manager
+          .automationSnapshot("tab_viz_controller")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(PreviewManager.AUTOMATION_CAPTURE_TIMEOUT_MS);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(PreviewManager.AUTOMATION_CAPTURE_TIMEOUT_MS);
+        const exit = yield* Fiber.await(fiber);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(states.some((state) => state.controller === "agent")).toBe(true);
+        expect(states.at(-1)?.controller).toBe("none");
+      }),
+    ),
+  );
+});
+
+describe("PreviewCaptureUnavailableError", () => {
+  it("keeps the real timeout as cause and retries from the tag", () => {
+    const cause = new Cause.TimeoutError();
+    const error = new PreviewManager.PreviewCaptureUnavailableError({
+      tabId: "tab_1",
+      webContentsId: 42,
+      cause,
+    });
+
+    expect(error._tag).toBe("PreviewCaptureUnavailableError");
+    expect(error.cause).toBe(cause);
+    expect(Cause.isTimeoutError(error.cause)).toBe(true);
+    expect(error.message).not.toContain("UnknownVizError");
+    expect(encodePreviewManagerError(error)).toMatchObject({
+      _tag: "PreviewCaptureUnavailableError",
+      tabId: "tab_1",
+      webContentsId: 42,
+    });
+  });
 });
 
 describe("PreviewOperationError", () => {

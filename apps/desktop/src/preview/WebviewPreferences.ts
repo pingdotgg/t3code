@@ -32,11 +32,12 @@
  *   `contextIsolation="no"` is truthy → contextIsolation stays ENABLED →
  *   react-grab can't see the React DevTools hook.
  *
- * Defense in depth: `apps/desktop/src/main.ts` also runs a
- * `will-attach-webview` handler that force-sets `sandbox: true` and
- * `nodeIntegration*: false` on the actual webPreferences object, gated on
- * the preview partition, so even if this string is ever wrong, the
- * security-critical flags can't regress on preview tabs.
+ * Defense in depth: `apps/desktop/src/window/DesktopWindow.ts` also runs a
+ * `will-attach-webview` handler that force-sets `sandbox: true`,
+ * `nodeIntegration*: false`, and `backgroundThrottling: false` on the actual
+ * webPreferences object, gated on the preview partition, so even if this
+ * string is ever wrong, the security-critical flags can't regress on preview
+ * tabs and hidden-thread guests keep a usable compositor.
  */
 export const PREVIEW_WEBVIEW_PREFERENCES =
   "contextIsolation=false,sandbox=true,nodeIntegration=false";

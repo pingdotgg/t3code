@@ -475,6 +475,9 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = false;
+      // Keep offscreen/background thread guests composited so CDP and
+      // capturePage stay usable after the user leaves the thread.
+      webPreferences.backgroundThrottling = false;
     });
 
     window.webContents.on("context-menu", (event, params) => {
