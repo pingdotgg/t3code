@@ -2373,11 +2373,11 @@ function ChatViewContent(props: ChatViewProps) {
     localDispatchStartedAt,
     latestUserMessageAt,
   );
-  // The session row is rewritten when the compacting detail is raised, so its
-  // updatedAt is when compaction started.
+  // The session carries the compaction clock on its own field; updatedAt is
+  // the fallback for sessions projected by builds without it.
   const compactingSince =
     activeThread?.session?.statusDetail === "compacting"
-      ? activeThread.session.updatedAt
+      ? (activeThread.session.compactingSince ?? activeThread.session.updatedAt)
       : null;
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;

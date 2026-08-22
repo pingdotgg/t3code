@@ -486,10 +486,12 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (entry) => entry.session?.status === "running" && entry.session?.statusDetail === "compacting",
     );
-    const compactingSince = thread.session?.updatedAt;
+    // The write raising the detail stamps the compaction clock.
+    expect(thread.session?.compactingSince).toBe("2026-01-01T00:00:00.500Z");
 
     // Compaction is not turn work: a completed turn settles the session to
-    // ready while the compacting overlay stays up on statusDetail.
+    // ready while the compacting overlay stays up on statusDetail, and the
+    // compaction clock does not move with the turn-end write.
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-while-compacting"),
@@ -507,12 +509,11 @@ describe("ProviderRuntimeIngestion", () => {
       (entry) => entry.session?.status === "ready" && entry.session?.activeTurnId === null,
     );
     expect(thread.session?.statusDetail).toBe("compacting");
-    const postTurnCompactingSince = thread.session?.updatedAt;
-    expect(postTurnCompactingSince).not.toBe(compactingSince);
+    expect(thread.session?.compactingSince).toBe("2026-01-01T00:00:00.500Z");
+    expect(thread.session?.updatedAt).toBe("2026-01-01T00:00:01.000Z");
 
     // A thread/session start notification landing mid-compaction (e.g. a
-    // reconnect) must not wipe the compacting overlay, and it keeps the
-    // session's updatedAt stable so the compacting timer does not reset.
+    // reconnect) must not wipe the compacting overlay or move its clock.
     harness.emit({
       type: "thread.started",
       eventId: asEventId("evt-thread-started-while-compacting"),
@@ -525,7 +526,7 @@ describe("ProviderRuntimeIngestion", () => {
     thread = await waitForThread(harness.readModel, (entry) => entry.session !== null);
     expect(thread.session?.status).toBe("ready");
     expect(thread.session?.statusDetail).toBe("compacting");
-    expect(thread.session?.updatedAt).toBe(postTurnCompactingSince);
+    expect(thread.session?.compactingSince).toBe("2026-01-01T00:00:00.500Z");
 
     harness.emit({
       type: "session.state.changed",
@@ -544,6 +545,7 @@ describe("ProviderRuntimeIngestion", () => {
       (entry) => entry.session?.status === "ready" && entry.session?.statusDetail === undefined,
     );
     expect(thread.session?.statusDetail).toBeUndefined();
+    expect(thread.session?.compactingSince).toBeUndefined();
   });
 
   it("keeps a turnless compaction on ready status", async () => {
@@ -595,6 +597,52 @@ describe("ProviderRuntimeIngestion", () => {
       (entry) => entry.session?.status === "ready" && entry.session?.statusDetail === undefined,
     );
     expect(thread.session?.statusDetail).toBeUndefined();
+  });
+
+  it("does not raise the compacting overlay on a terminal session", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "session.started",
+      eventId: asEventId("evt-session-started-terminal-compaction"),
+      provider: ProviderDriverKind.make("openCode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {},
+    });
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-terminal-error"),
+      provider: ProviderDriverKind.make("openCode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.500Z",
+      payload: {
+        state: "error",
+        reason: "provider exploded",
+      },
+    });
+
+    // A late compacting signal on an errored session: nothing is left to
+    // clear the overlay, so it must not mask the failure.
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-terminal-compacting"),
+      provider: ProviderDriverKind.make("openCode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        state: "compacting",
+        reason: "session.time.compacting",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.updatedAt === "2026-01-01T00:00:01.000Z",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.statusDetail).toBeUndefined();
+    expect(thread.session?.lastError).toBe("provider exploded");
   });
 
   it("clears active turn when provider session becomes ready", async () => {

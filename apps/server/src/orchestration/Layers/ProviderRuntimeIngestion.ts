@@ -1662,17 +1662,19 @@ const make = Effect.gen(function* () {
               : status === "ready"
                 ? null
                 : (thread.session?.lastError ?? null);
-        // The compacting state raises the detail. A turn completion and the
-        // start notifications say nothing about compaction, so they carry an
-        // in-flight detail forward — a turn ending mid-compaction settles the
-        // turn while the compacting overlay stays up. A turn START clears it
-        // on purpose: the new turn takes over the session's label, and a
-        // provider still compacting re-raises the detail with its next
-        // compacting signal. Terminal states (error, stopped) and every
-        // other write clear it.
+        // The compacting state raises the detail — but never over a terminal
+        // session: an errored or stopped session has nothing left to clear
+        // the overlay, so a late compacting signal would mask the failure
+        // forever. A turn completion and the start notifications say nothing
+        // about compaction, so they carry an in-flight detail forward — a
+        // turn ending mid-compaction settles the turn while the compacting
+        // overlay stays up. A turn START clears it on purpose: the new turn
+        // takes over the session's label, and a provider still compacting
+        // re-raises the detail with its next compacting signal. Terminal
+        // states (error, stopped) and every other write clear it.
         const statusDetail =
           event.type === "session.state.changed"
-            ? event.payload.state === "compacting"
+            ? event.payload.state === "compacting" && status !== "error" && status !== "stopped"
               ? ("compacting" as const)
               : undefined
             : (event.type === "turn.completed" ||
@@ -1682,16 +1684,17 @@ const make = Effect.gen(function* () {
                 status !== "stopped"
               ? thread.session?.statusDetail
               : undefined;
-        // Clients read the session's updatedAt as when compaction began, so a
-        // write that only re-affirms an in-flight compaction keeps it stable —
-        // except a turn completion, whose updatedAt is the projector's
-        // authoritative turn-end timestamp and must reflect the actual write.
+        // The compaction clock lives on its own field so unrelated session
+        // writes (a turn completing mid-compaction) do not move it: the write
+        // that raises the detail stamps it, and every write that keeps the
+        // detail up carries it forward. Rows projected by builds without the
+        // field fall back to their updatedAt.
         const compactingSince =
-          event.type !== "turn.completed" &&
-          statusDetail === "compacting" &&
-          thread.session?.statusDetail === "compacting"
-            ? thread.session.updatedAt
-            : null;
+          statusDetail === "compacting"
+            ? thread.session?.statusDetail === "compacting"
+              ? (thread.session.compactingSince ?? thread.session.updatedAt)
+              : now
+            : undefined;
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1722,6 +1725,7 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               status,
               ...(statusDetail !== undefined ? { statusDetail } : {}),
+              ...(compactingSince !== undefined ? { compactingSince } : {}),
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
@@ -1729,7 +1733,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
-              updatedAt: compactingSince ?? now,
+              updatedAt: now,
             },
             createdAt: now,
           });

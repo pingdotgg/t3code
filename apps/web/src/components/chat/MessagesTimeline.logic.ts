@@ -252,6 +252,8 @@ export type MessagesTimelineRow =
       createdAt: string;
       label: string;
       failed: boolean;
+      /** Provider failure reason; present only on failed compactions. */
+      detail: string | null;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -855,6 +857,8 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: timelineEntry.createdAt,
         label: timelineEntry.entry.label,
         failed: timelineEntry.entry.tone === "error",
+        detail:
+          timelineEntry.entry.tone === "error" ? (timelineEntry.entry.detail ?? null) : null,
       });
       continue;
     }
@@ -1122,7 +1126,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "compaction": {
       const bc = b as typeof a;
-      return a.createdAt === bc.createdAt && a.label === bc.label && a.failed === bc.failed;
+      return (
+        a.createdAt === bc.createdAt &&
+        a.label === bc.label &&
+        a.failed === bc.failed &&
+        a.detail === bc.detail
+      );
     }
 
     case "proposed-plan":

@@ -404,16 +404,21 @@ const make = Effect.gen(function* () {
       return;
     }
     const session = thread.session;
+    // Explicit fields, not a spread of the prior session: a session settled
+    // into error/stopped must not keep a compaction overlay that nothing
+    // will ever clear.
     yield* setThreadSession({
       threadId: input.threadId,
       session: {
-        ...(session ?? {
-          threadId: input.threadId,
-          providerName: null,
-          providerInstanceId: thread.modelSelection.instanceId,
-          runtimeMode: thread.runtimeMode,
-        }),
+        threadId: input.threadId,
         status: session?.status === "stopped" ? "stopped" : "error",
+        providerName: session?.providerName ?? null,
+        ...(session
+          ? session.providerInstanceId !== undefined
+            ? { providerInstanceId: session.providerInstanceId }
+            : {}
+          : { providerInstanceId: thread.modelSelection.instanceId }),
+        runtimeMode: session?.runtimeMode ?? thread.runtimeMode,
         activeTurnId: null,
         lastError: input.detail,
         updatedAt: input.createdAt,

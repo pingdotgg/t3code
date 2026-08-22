@@ -311,6 +311,10 @@ export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
   statusDetail: Schema.optional(OrchestrationSessionStatusDetail),
+  /** When the in-flight compaction began; present only while statusDetail is
+      "compacting". Kept separate from updatedAt so unrelated session writes
+      (a turn completing mid-compaction) do not move the compaction clock. */
+  compactingSince: Schema.optional(IsoDateTime),
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

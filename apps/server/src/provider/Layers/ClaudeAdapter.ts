@@ -3156,10 +3156,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // A `requesting` status during compaction is the compaction's own
         // model request, not the end of it (SDKStatus is
         // 'compacting' | 'requesting' | null); only a status that reports
-        // something other than active work lowers the flag.
+        // something other than active work lowers the flag. A `compact_result`
+        // always reports a finished compaction, so it ends the flag no matter
+        // which status rides along with it.
         context.compacting =
-          message.status === "compacting" ||
-          (context.compacting && message.status === "requesting");
+          message.compact_result === undefined &&
+          (message.status === "compacting" ||
+            (context.compacting && message.status === "requesting"));
         // A compaction that fails leaves no compact_boundary behind; the
         // closing status message is the only place the CLI admits it, so
         // surface it as a failed context_compaction item.

@@ -2242,6 +2242,82 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("a compact_result ends the compaction even when a busy status rides along", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/compact",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "session",
+        uuid: "status-compacting",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: "session",
+        uuid: "result-compact",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+
+      // The closing status reports the finished compaction while already
+      // busy with a follow-up request. The compact_result is the end of the
+      // compaction no matter which status rides along, so with no turn to
+      // own the trailing work the session lands on ready.
+      harness.query.emit({
+        type: "system",
+        subtype: "status",
+        status: "requesting",
+        compact_result: "success",
+        session_id: "session",
+        uuid: "status-compact-result",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const heartbeats = runtimeEvents
+        .filter(
+          (event) =>
+            event.type === "session.state.changed" &&
+            typeof event.payload.reason === "string" &&
+            event.payload.reason.startsWith("status:"),
+        )
+        .map((event) =>
+          event.type === "session.state.changed"
+            ? `${event.payload.state}:${event.payload.reason ?? ""}`
+            : "",
+        );
+      assert.deepEqual(heartbeats, [
+        "compacting:status:compacting",
+        "ready:status:requesting",
+      ]);
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("a new turn is not attributed to a compaction whose end signal was lost", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

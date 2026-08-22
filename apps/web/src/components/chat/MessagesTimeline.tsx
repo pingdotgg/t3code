@@ -1155,6 +1155,11 @@ function CompactionTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "com
       >
         {row.label}
       </div>
+      {row.detail ? (
+        <div className="whitespace-pre-wrap break-words px-1 text-xs leading-relaxed text-muted-foreground">
+          {row.detail}
+        </div>
+      ) : null}
     </div>
   );
 }

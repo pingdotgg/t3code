@@ -598,6 +598,39 @@ describe("deriveMessagesTimelineRows", () => {
       kind: "compaction",
       label: "Context compacted · 46k → 5.9k tokens · 23s",
       failed: false,
+      detail: null,
+    });
+  });
+
+  it("carries the provider failure reason on a failed compaction row", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-entry-compaction-failed",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:23Z",
+          entry: {
+            id: "work-compaction-failed",
+            createdAt: "2026-01-01T00:00:23Z",
+            turnId: "turn-1" as never,
+            label: "Context compaction failed",
+            detail: "Conversation too short to compact",
+            tone: "error" as const,
+            sourceActivityKind: "context-compaction",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows[0]).toMatchObject({
+      kind: "compaction",
+      label: "Context compaction failed",
+      failed: true,
+      detail: "Conversation too short to compact",
     });
   });
 

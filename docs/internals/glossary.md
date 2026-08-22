@@ -44,7 +44,7 @@ A user-visible log item attached to a thread. In [the contracts][1], activities 
 
 #### Compaction
 
-A provider summarizing a thread's context to reclaim its context window. While it runs, the session carries a `statusDetail` of `compacting` on top of whatever status the turn lifecycle produces (`running` during a turn, `ready` when compaction outlives it), which clients render as "Compacting context" instead of "Working". The result lands as a `context-compaction` activity — with token delta and duration when the provider reports them, and an error tone when compaction failed. Claude, Codex, and OpenCode report compaction; the ACP providers (Cursor, Grok) have no compaction concept. See [ProviderRuntimeIngestion.ts][5].
+A provider summarizing a thread's context to reclaim its context window. While it runs, the session carries a `statusDetail` of `compacting` on top of whatever status the turn lifecycle produces (`running` during a turn, `ready` when compaction outlives it), plus a `compactingSince` timestamp marking when it began, which clients render as "Compacting context" with its elapsed time instead of "Working". The result lands as a `context-compaction` activity — with token delta and duration when the provider reports them, and an error tone when compaction failed. Claude, Codex, and OpenCode report compaction; the ACP providers (Cursor, Grok) have no compaction concept. See [ProviderRuntimeIngestion.ts][5].
 
 ### Orchestration
 

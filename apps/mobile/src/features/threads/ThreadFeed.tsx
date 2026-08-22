@@ -830,16 +830,22 @@ function renderFeedEntry(
 
   if (entry.type === "compaction") {
     return (
-      <View className="mb-3 min-h-11 flex-row items-center border-b border-neutral-200/80 px-2 dark:border-white/[0.08]">
-        <Text
-          className={
-            entry.failed
-              ? "font-t3-medium text-sm tabular-nums text-danger-foreground"
-              : "font-t3-medium text-sm tabular-nums text-foreground-muted"
-          }
-        >
-          {entry.label}
-        </Text>
+      <View className="mb-3 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]">
+        <View className="min-h-11 flex-row items-center">
+          <Text
+            className={
+              entry.failed
+                ? "font-t3-medium text-sm tabular-nums text-danger-foreground"
+                : "font-t3-medium text-sm tabular-nums text-foreground-muted"
+            }
+            numberOfLines={1}
+          >
+            {entry.label}
+          </Text>
+        </View>
+        {entry.detail ? (
+          <Text className="mb-2 text-xs text-foreground-muted">{entry.detail}</Text>
+        ) : null}
       </View>
     );
   }
@@ -1801,8 +1807,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (entry: ThreadFeedEntry) => {
       switch (entry.type) {
         case "turn-fold":
-        case "compaction":
           return TURN_FOLD_HEIGHT;
+        case "compaction":
+          // A failure reason appends a variable detail block — fall back to
+          // measurement for those rows.
+          return entry.detail === null ? TURN_FOLD_HEIGHT : undefined;
         case "work-toggle":
           return WORK_GROUP_TOGGLE_HEIGHT;
         case "working":

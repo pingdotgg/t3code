@@ -759,6 +759,13 @@ function ThreadRouteContent(
     connectionState: routeConnectionState,
   });
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  // The session carries the compaction clock on its own field; updatedAt is
+  // the fallback for sessions projected by builds without it.
+  const compactingSince =
+    selectedThread?.session?.statusDetail === "compacting"
+      ? (selectedThread.session.compactingSince ?? selectedThread.session.updatedAt)
+      : null;
+
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
@@ -774,11 +781,7 @@ function ThreadRouteContent(
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           selectedThreadFeed={composer.selectedThreadFeed}
           activeWorkStartedAt={composer.activeWorkStartedAt}
-          compactingSince={
-            selectedThread.session?.statusDetail === "compacting"
-              ? selectedThread.session.updatedAt
-              : null
-          }
+          compactingSince={compactingSince}
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}

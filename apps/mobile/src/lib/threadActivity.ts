@@ -141,6 +141,8 @@ export type ThreadFeedEntry =
       readonly turnId: TurnId | null;
       readonly label: string;
       readonly failed: boolean;
+      /** Provider failure reason; present only on failed compactions. */
+      readonly detail: string | null;
     };
 
 export type ThreadFeedLatestTurn = Pick<
@@ -1165,6 +1167,7 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
         turnId: entry.turnId,
         label: entry.activity.summary,
         failed: entry.activity.status === "failure",
+        detail: entry.activity.status === "failure" ? entry.activity.detail : null,
       });
       openGroupActivities = null;
       continue;

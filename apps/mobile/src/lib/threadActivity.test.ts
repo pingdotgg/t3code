@@ -246,6 +246,36 @@ describe("buildThreadFeed", () => {
     expect(presented).toMatchObject([{ type: "compaction" }]);
   });
 
+  it("carries the provider failure reason on a failed compaction row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-compaction-failed"),
+      projectId: ProjectId.make("project-1"),
+      title: "Failed compaction thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-compaction-failed"),
+          kind: "context-compaction",
+          summary: "Context compaction failed",
+          tone: "error",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            state: "failed",
+            detail: "Conversation too short to compact",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toMatchObject([
+      {
+        type: "compaction",
+        failed: true,
+        detail: "Conversation too short to compact",
+      },
+    ]);
+  });
+
   it("folds a mixed turn's work around the compaction row without counting it", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-mixed-compaction"),
