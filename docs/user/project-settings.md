@@ -1,4 +1,6 @@
-# Customize a project icon
+# Project settings
+
+## Customize a project icon
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
 paths, and icon links in project HTML files.
@@ -14,3 +16,12 @@ T3 Code supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected pa
 each checkout in the project group and appears on your connected clients.
 
 To use automatic detection again, select **Automatic**.
+
+## Remove a project
+
+1. Open the project settings.
+2. Under **Danger**, select **Remove project**.
+3. Confirm the removal.
+
+Removing a project deletes its T3 Code entry and all associated conversation history, including
+archived threads. Files in the project's workspace remain on disk.

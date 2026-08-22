@@ -29,6 +29,7 @@ export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentI
 export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<EnvironmentId>): {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly error: string | null;
+  readonly failedEnvironmentIds: ReadonlyArray<EnvironmentId>;
   readonly isLoading: boolean;
   readonly refresh: () => void;
 } {
