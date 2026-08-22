@@ -72,6 +72,7 @@ import {
   serializeTableElementToCsv,
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
+import { resolveInlineCodeColor } from "../markdown-colors";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
   extractMarkdownLinkHrefs,
@@ -1721,6 +1722,17 @@ function ChatMarkdown({
             resolveInlineCodeFileLinkMeta(codeText, cwd);
           if (fileLinkMeta) {
             return fileLinkChip(fileLinkMeta, `\`${codeText}\``);
+          }
+          const color = resolveInlineCodeColor(codeText);
+          if (color) {
+            return (
+              <code {...props} className={className}>
+                <span className="chat-markdown-color-swatch" aria-hidden>
+                  <span style={{ background: color }} />
+                </span>
+                {children}
+              </code>
+            );
           }
         }
         return (
