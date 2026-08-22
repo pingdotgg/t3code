@@ -10,12 +10,14 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
@@ -52,9 +54,14 @@ const TestIntegrationNet = Layer.succeed(Net.NetService, {
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
 
+const successfulWebFetch: typeof globalThis.fetch = Object.assign(
+  async () => new Response("<html></html>", { headers: { "content-type": "text/html" } }),
+  { preconnect: () => undefined },
+);
+
 const makeProbeFailureLayer = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
-  fetch: typeof globalThis.fetch = globalThis.fetch,
+  fetch: typeof globalThis.fetch = successfulWebFetch,
 ) =>
   PortScanner.layer.pipe(
     Layer.provide(
@@ -233,12 +240,12 @@ effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fall
       const { port } = yield* commonDevServer;
       const received: number[] = [];
       const scanner = yield* PortScanner.PortDiscovery;
-      yield* scanner.subscribe({ configuredUrls: [], initialSnapshot: [] }, (servers) =>
+      yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
         Effect.sync(() => {
           for (const server of servers) received.push(server.port);
         }),
       );
-      yield* scanner.retain;
+      yield* scanner.retain();
       expect(received).toContain(port);
     }),
   );
@@ -359,13 +366,13 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
     const scanner = yield* PortScanner.PortDiscovery;
     const docsSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
     const adminSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
-    yield* scanner.subscribe({ configuredUrls: [docsUrl], initialSnapshot: [] }, (servers) =>
+    yield* scanner.subscribe({ configuredUrls: [docsUrl] }, (servers) =>
       Effect.sync(() => docsSnapshots.push(servers)),
     );
-    yield* scanner.subscribe({ configuredUrls: [adminUrl], initialSnapshot: [] }, (servers) =>
+    yield* scanner.subscribe({ configuredUrls: [adminUrl] }, (servers) =>
       Effect.sync(() => adminSnapshots.push(servers)),
     );
-    yield* scanner.retain;
+    yield* scanner.retain();
 
     expect(docsSnapshots.at(-1)?.[0]?.url).toBe(docsUrl);
     expect(adminSnapshots.at(-1)?.[0]?.url).toBe(adminUrl);
@@ -391,15 +398,11 @@ effectIt.effect(
     return Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
       const secondSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
-      yield* scanner.subscribe(
-        { configuredUrls: firstSubscriberUrls, initialSnapshot: [] },
-        () => Effect.void,
+      yield* scanner.subscribe({ configuredUrls: firstSubscriberUrls }, () => Effect.void);
+      yield* scanner.subscribe({ configuredUrls: [secondSubscriberUrl] }, (servers) =>
+        Effect.sync(() => secondSnapshots.push(servers)),
       );
-      yield* scanner.subscribe(
-        { configuredUrls: [secondSubscriberUrl], initialSnapshot: [] },
-        (servers) => Effect.sync(() => secondSnapshots.push(servers)),
-      );
-      yield* scanner.retain;
+      yield* scanner.retain();
 
       expect(secondSnapshots.at(-1)?.[0]?.url).toBe(secondSubscriberUrl);
     }).pipe(Effect.scoped, Effect.provide(layer));
@@ -425,19 +428,45 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     const scanner = yield* PortScanner.PortDiscovery;
     const docsScope = yield* Scope.make();
     yield* scanner
-      .subscribe({ configuredUrls: [docsUrl], initialSnapshot: [] }, () => Effect.void)
+      .subscribe({ configuredUrls: [docsUrl] }, () => Effect.void)
       .pipe(Effect.provideService(Scope.Scope, docsScope));
-    yield* scanner.subscribe(
-      { configuredUrls: [adminUrl], initialSnapshot: [] },
-      () => Effect.void,
-    );
-    yield* scanner.retain;
+    yield* scanner.subscribe({ configuredUrls: [adminUrl] }, () => Effect.void);
+    yield* scanner.retain();
     yield* Scope.close(docsScope, Exit.void);
 
     requests.length = 0;
-    yield* TestClock.adjust(Duration.seconds(15));
+    yield* TestClock.adjust(Duration.seconds(20));
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+effectIt.effect("reuses retained URL readiness on the first active tick", () => {
+  const configuredUrl = "http://localhost:43124/admin";
+  const requests: string[] = [];
+  const snapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const layer = makeProbeFailureLayer(processProbeFailure, fetchFn);
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain([configuredUrl]);
+    expect(requests).toEqual([configuredUrl]);
+
+    yield* scanner.subscribe({ configuredUrls: [configuredUrl] }, (servers) =>
+      Effect.sync(() => snapshots.push(servers)),
+    );
+    expect(snapshots.at(-1)?.[0]?.url).toBe(configuredUrl);
+    expect(requests).toEqual([configuredUrl]);
+
+    yield* TestClock.adjust(Duration.seconds(10));
+    expect(requests).toEqual([configuredUrl]);
+
+    yield* TestClock.adjust(Duration.seconds(10));
+    expect(requests).toEqual([configuredUrl, configuredUrl]);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 
@@ -663,5 +692,763 @@ effectIt.effect("does not swallow process probe interruption", () =>
     if (Exit.isFailure(exit)) {
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
+  }),
+);
+
+effectIt("does not swallow terminal-triggered scan interruption", () => {
+  const terminalScanStarted = Deferred.makeUnsafe<void>();
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() => {
+    probeCount += 1;
+    if (probeCount === 1) {
+      return Effect.succeed({
+        stdout: "",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      });
+    }
+    return Effect.gen(function* () {
+      yield* Deferred.succeed(terminalScanStarted, undefined).pipe(Effect.ignore);
+      return yield* Effect.never;
+    });
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain();
+    const registration = yield* scanner
+      .registerTerminalProcesses({
+        threadId: "thread-1",
+        terminalId: "terminal-1",
+        processIds: [42],
+      })
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(terminalScanStarted);
+
+    yield* Fiber.interrupt(registration);
+    const exit = yield* Fiber.await(registration);
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    }
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("rescans once after terminal PIDs settle without repeating unchanged probes", () => {
+  let probeCount = 0;
+  const replayedPorts: Array<ReadonlyArray<number>> = [];
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 3 ? "p42\ncnode\nn*:3000\n" : "",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.subscribe({ configuredUrls: [] }, () => Effect.void);
+    yield* scanner.retain();
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        replayedPorts.push(servers.map((server) => server.port));
+      }),
+    );
+
+    expect(probeCount).toBe(3);
+    expect(replayedPorts).toEqual([[3000]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("preserves the terminal settle scan while no client is retained", () => {
+  let probeCount = 0;
+  const replayedPorts: Array<ReadonlyArray<number>> = [];
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 2 ? "p42\ncnode\nn*:3000\n" : "",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    expect(probeCount).toBe(0);
+
+    yield* scanner.retain();
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [42],
+    });
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        replayedPorts.push(servers.map((server) => server.port));
+      }),
+    );
+
+    expect(probeCount).toBe(2);
+    expect(replayedPorts).toEqual([[3000]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("uses the active polling interval after the initial scan finds a server", () => {
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: "p100\ncnode\nn*:3000\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain();
+    expect(probeCount).toBe(1);
+
+    yield* TestClock.adjust("9 seconds");
+    expect(probeCount).toBe(1);
+
+    yield* TestClock.adjust("1 second");
+    expect(probeCount).toBe(2);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("uses the active interval after a terminal scan finds a server", () => {
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 1 ? "" : "p100\ncnode\nn*:3000\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain();
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [100],
+    });
+    expect(probeCount).toBe(2);
+
+    yield* TestClock.adjust("9 seconds");
+    expect(probeCount).toBe(2);
+
+    yield* TestClock.adjust("1 second");
+    expect(probeCount).toBe(3);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("serializes snapshot replay with concurrent broadcasts", () =>
+  Effect.gen(function* () {
+    const replayStarted = yield* Deferred.make<void>();
+    const releaseReplay = yield* Deferred.make<void>();
+    const secondProbeCompleted = yield* Deferred.make<void>();
+    const secondDeliveryStarted = yield* Deferred.make<void>();
+    const deliveries: Array<ReadonlyArray<number>> = [];
+    let probeCount = 0;
+    let deliveryCount = 0;
+    const layer = makeProbeFailureLayer(() =>
+      Effect.gen(function* () {
+        probeCount += 1;
+        if (probeCount === 2) {
+          yield* Deferred.succeed(secondProbeCompleted, undefined).pipe(Effect.ignore);
+        }
+        return {
+          stdout: probeCount === 1 ? "p100\ncnode\nn*:3000\n" : "p101\ncnode\nn*:3001\n",
+          stderr: "",
+          code: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.retain();
+
+      const subscription = yield* scanner
+        .subscribe({ configuredUrls: [] }, (servers) =>
+          Effect.gen(function* () {
+            deliveryCount += 1;
+            if (deliveryCount === 1) {
+              yield* Deferred.succeed(replayStarted, undefined).pipe(Effect.ignore);
+              yield* Deferred.await(releaseReplay);
+            } else {
+              yield* Deferred.succeed(secondDeliveryStarted, undefined).pipe(Effect.ignore);
+            }
+            deliveries.push(servers.map((server) => server.port));
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(replayStarted);
+
+      const registration = yield* scanner
+        .registerTerminalProcesses({
+          threadId: "thread-1",
+          terminalId: "terminal-1",
+          processIds: [101],
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(secondProbeCompleted);
+      yield* Effect.yieldNow;
+      expect(yield* Deferred.isDone(secondDeliveryStarted)).toBe(false);
+
+      yield* Deferred.succeed(releaseReplay, undefined);
+      yield* Fiber.join(subscription);
+      yield* Fiber.join(registration);
+
+      expect(deliveries).toEqual([[3000], [3001]]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt("allows snapshot listeners to trigger scans without deadlocking", () => {
+  const secondDeliveryCompleted = Deferred.makeUnsafe<void>();
+  const deliveries: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  let scanner: PortScanner.PortDiscovery["Service"];
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain();
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.gen(function* () {
+        deliveries.push(servers.map((server) => server.port));
+        if (deliveries.length === 1) {
+          yield* scanner.registerTerminalProcesses({
+            threadId: "thread-1",
+            terminalId: "terminal-1",
+            processIds: [101],
+          });
+        } else {
+          yield* Deferred.succeed(secondDeliveryCompleted, undefined).pipe(Effect.ignore);
+        }
+      }),
+    );
+    yield* Deferred.await(secondDeliveryCompleted);
+
+    expect(deliveries).toEqual([[3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("allows scan-broadcast listeners to trigger scans without deadlocking", () => {
+  const reentrantDeliveryCompleted = Deferred.makeUnsafe<void>();
+  const deliveries: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  let scanner: PortScanner.PortDiscovery["Service"];
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.gen(function* () {
+        deliveries.push(servers.map((server) => server.port));
+        if (deliveries.length === 2) {
+          yield* scanner.registerTerminalProcesses({
+            threadId: "thread-1",
+            terminalId: "terminal-1",
+            processIds: [101],
+          });
+        } else if (deliveries.length === 3) {
+          yield* Deferred.succeed(reentrantDeliveryCompleted, undefined).pipe(Effect.ignore);
+        }
+      }),
+    );
+    yield* scanner.retain();
+    yield* Deferred.await(reentrantDeliveryCompleted);
+
+    expect(deliveries).toEqual([[], [3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("allows scan-broadcast listeners to call scan without deadlocking", () => {
+  const reentrantScanCompleted = Deferred.makeUnsafe<void>();
+  const deliveries: Array<ReadonlyArray<number>> = [];
+  const reentrantScanResults: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  let scanner: PortScanner.PortDiscovery["Service"];
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.gen(function* () {
+        deliveries.push(servers.map((server) => server.port));
+        if (deliveries.length === 2) {
+          const scanned = yield* scanner.scan();
+          reentrantScanResults.push(scanned.map((server) => server.port));
+          yield* Deferred.succeed(reentrantScanCompleted, undefined).pipe(Effect.ignore);
+        }
+      }),
+    );
+    yield* scanner.retain();
+    yield* Deferred.await(reentrantScanCompleted);
+
+    expect(deliveries).toEqual([[], [3000]]);
+    expect(reentrantScanResults).toEqual([[3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("does not replay an earlier retained snapshot when the next retain scan fails", () => {
+  const defect = new Error("retain scan failed");
+  const replayedPorts: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() => {
+    probeCount += 1;
+    if (probeCount === 2) return Effect.die(defect);
+    return Effect.succeed({
+      stdout: "p100\ncnode\nn*:3000\n",
+      stderr: "",
+      code: null,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    });
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* Effect.scoped(scanner.retain());
+
+    yield* scanner.retain();
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        replayedPorts.push(servers.map((server) => server.port));
+      }),
+    );
+
+    expect(probeCount).toBe(2);
+    expect(replayedPorts).toEqual([[]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("serializes final-retainer invalidation with an in-flight scan", () => {
+  const secondProbeStarted = Deferred.makeUnsafe<void>();
+  const releaseSecondProbe = Deferred.makeUnsafe<void>();
+  const replayedPorts: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.gen(function* () {
+      probeCount += 1;
+      if (probeCount === 2) {
+        yield* Deferred.succeed(secondProbeStarted, undefined).pipe(Effect.ignore);
+        yield* Deferred.await(releaseSecondProbe);
+      }
+      return {
+        stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const retentionScope = yield* Scope.make();
+    yield* scanner.retain().pipe(Effect.provideService(Scope.Scope, retentionScope));
+
+    const scanFiber = yield* scanner
+      .registerTerminalProcesses({
+        threadId: "thread-1",
+        terminalId: "terminal-1",
+        processIds: [101],
+      })
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(secondProbeStarted);
+
+    const releaseFiber = yield* Scope.close(retentionScope, Exit.void).pipe(Effect.forkScoped);
+    yield* Effect.yieldNow;
+    expect(releaseFiber.pollUnsafe()).toBeUndefined();
+
+    yield* Deferred.succeed(releaseSecondProbe, undefined);
+    yield* Fiber.join(scanFiber);
+    yield* Fiber.join(releaseFiber);
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        replayedPorts.push(servers.map((server) => server.port));
+      }),
+    );
+
+    expect(probeCount).toBe(2);
+    expect(replayedPorts).toEqual([[]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("removes listeners when initial snapshot replay fails", () => {
+  const defect = new Error("snapshot replay failed");
+  const healthyDeliveries: Array<ReadonlyArray<number>> = [];
+  let failedListenerCalls = 0;
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 1 ? "p100\ncnode\nn*:3000\n" : "p101\ncnode\nn*:3001\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain();
+
+    const failedSubscription = yield* scanner
+      .subscribe({ configuredUrls: [] }, () =>
+        Effect.sync(() => {
+          failedListenerCalls += 1;
+          throw defect;
+        }),
+      )
+      .pipe(Effect.exit);
+    expect(Exit.isFailure(failedSubscription)).toBe(true);
+    if (Exit.isFailure(failedSubscription)) {
+      expect(Cause.squash(failedSubscription.cause)).toBe(defect);
+    }
+
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        healthyDeliveries.push(servers.map((server) => server.port));
+      }),
+    );
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [101],
+    });
+
+    expect(failedListenerCalls).toBe(1);
+    expect(healthyDeliveries).toEqual([[3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("removes listeners when initial snapshot replay is interrupted", () => {
+  const replayStarted = Deferred.makeUnsafe<void>();
+  const healthyDeliveries: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 1 ? "p100\ncnode\nn*:3000\n" : "p101\ncnode\nn*:3001\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain();
+    const subscriptionScope = yield* Scope.make();
+    const interruptedSubscription = yield* scanner
+      .subscribe({ configuredUrls: [] }, () =>
+        Deferred.succeed(replayStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      )
+      .pipe(Effect.provideService(Scope.Scope, subscriptionScope), Effect.forkScoped);
+    yield* Deferred.await(replayStarted);
+
+    yield* Scope.close(subscriptionScope, Exit.void);
+    yield* Fiber.await(interruptedSubscription);
+
+    yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+      Effect.sync(() => {
+        healthyDeliveries.push(servers.map((server) => server.port));
+      }),
+    );
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [101],
+    });
+
+    expect(healthyDeliveries).toEqual([[3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("interrupts blocked listeners when their subscription scope closes", () => {
+  const broadcastStarted = Deferred.makeUnsafe<void>();
+  let deliveryCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.succeed({
+      stdout: "p100\ncnode\nn*:3000\n",
+      stderr: "",
+      code: null,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const subscriptionScope = yield* Scope.make();
+    yield* scanner
+      .subscribe({ configuredUrls: [] }, () =>
+        Effect.gen(function* () {
+          deliveryCount += 1;
+          if (deliveryCount === 2) {
+            yield* Deferred.succeed(broadcastStarted, undefined).pipe(Effect.ignore);
+            return yield* Effect.never;
+          }
+        }),
+      )
+      .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
+
+    const retainFiber = yield* scanner.retain().pipe(Effect.forkScoped);
+    yield* Deferred.await(broadcastStarted);
+    const closeFiber = yield* Scope.close(subscriptionScope, Exit.void).pipe(Effect.forkScoped);
+    yield* Effect.yieldNow;
+
+    expect(closeFiber.pollUnsafe()).toBeDefined();
+    yield* Fiber.join(retainFiber);
+    expect(deliveryCount).toBe(2);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("acknowledges delivery when a listener stops after its callback completes", () => {
+  const callbackCompleted = Deferred.makeUnsafe<void>();
+  let deliveryCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.succeed({
+      stdout: "p100\ncnode\nn*:3000\n",
+      stderr: "",
+      code: null,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const subscriptionScope = yield* Scope.make();
+    yield* scanner
+      .subscribe({ configuredUrls: [] }, () => {
+        deliveryCount += 1;
+        return deliveryCount === 2
+          ? Deferred.succeed(callbackCompleted, undefined).pipe(Effect.asVoid)
+          : Effect.void;
+      })
+      .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
+
+    const closeFiber = yield* Deferred.await(callbackCompleted).pipe(
+      Effect.andThen(Scope.close(subscriptionScope, Exit.void)),
+      Effect.forkScoped,
+    );
+    const retainFiber = yield* scanner.retain().pipe(Effect.forkScoped);
+
+    yield* Fiber.join(retainFiber);
+    yield* Fiber.join(closeFiber);
+    expect(deliveryCount).toBe(2);
+  }).pipe(Effect.provide(layer), Effect.provideService(Scheduler.MaxOpsBeforeYield, 1));
+});
+
+effectIt("serializes concurrent scans before publishing snapshots", () =>
+  Effect.gen(function* () {
+    const secondProbeStarted = yield* Deferred.make<void>();
+    const releaseSecondProbe = yield* Deferred.make<void>();
+    const thirdProbeStarted = yield* Deferred.make<void>();
+    const deliveries: Array<ReadonlyArray<number>> = [];
+    let probeCount = 0;
+    const layer = makeProbeFailureLayer(() =>
+      Effect.gen(function* () {
+        probeCount += 1;
+        if (probeCount === 2) {
+          yield* Deferred.succeed(secondProbeStarted, undefined).pipe(Effect.ignore);
+          yield* Deferred.await(releaseSecondProbe);
+        }
+        if (probeCount === 3) {
+          yield* Deferred.succeed(thirdProbeStarted, undefined).pipe(Effect.ignore);
+        }
+        return {
+          stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+          stderr: "",
+          code: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.retain();
+      yield* scanner.subscribe({ configuredUrls: [] }, (servers) =>
+        Effect.sync(() => {
+          deliveries.push(servers.map((server) => server.port));
+        }),
+      );
+
+      const firstRegistration = yield* scanner
+        .registerTerminalProcesses({
+          threadId: "thread-1",
+          terminalId: "terminal-1",
+          processIds: [101],
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(secondProbeStarted);
+
+      const secondRegistration = yield* scanner
+        .registerTerminalProcesses({
+          threadId: "thread-1",
+          terminalId: "terminal-2",
+          processIds: [102],
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      expect(yield* Deferred.isDone(thirdProbeStarted)).toBe(false);
+
+      yield* Deferred.succeed(releaseSecondProbe, undefined);
+      yield* Fiber.join(firstRegistration);
+      yield* Fiber.join(secondRegistration);
+
+      expect(deliveries).toEqual([[3000], [3001], [3002]]);
+    }).pipe(Effect.provide(layer));
   }),
 );

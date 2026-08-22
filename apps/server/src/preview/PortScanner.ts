@@ -29,13 +29,16 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
-import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Scope from "effect/Scope";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -47,13 +50,12 @@ export class PortDiscovery extends Context.Service<
       configuredUrls?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
     readonly subscribe: (
-      input: {
-        readonly configuredUrls: ReadonlyArray<string>;
-        readonly initialSnapshot: ReadonlyArray<DiscoveredLocalServer>;
-      },
+      input: { readonly configuredUrls: ReadonlyArray<string> },
       listener: (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>,
     ) => Effect.Effect<void, never, Scope.Scope>;
-    readonly retain: Effect.Effect<void, never, Scope.Scope>;
+    readonly retain: (
+      configuredUrls?: ReadonlyArray<string>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
     readonly registerTerminalProcesses: (input: {
       readonly threadId: string;
       readonly terminalId: string;
@@ -70,7 +72,8 @@ export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
   3000, 3001, 3333, 4173, 4200, 4321, 5000, 5173, 5174, 5175, 5500, 8000, 8080, 8081, 8888, 9000,
 ]);
 
-const POLL_INTERVAL = Duration.seconds(3);
+const ACTIVE_POLL_INTERVAL = Duration.seconds(10);
+const IDLE_POLL_INTERVAL = Duration.seconds(20);
 const LSOF_TIMEOUT_MS = 5_000;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
@@ -80,18 +83,37 @@ const NAVIGATION_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
-interface ListenerSubscription {
-  readonly configuredUrls: ReadonlyArray<string>;
-  readonly lastSnapshot: ReadonlyArray<DiscoveredLocalServer>;
+interface ListenerNotification {
+  readonly servers: ReadonlyArray<DiscoveredLocalServer>;
+  readonly deliveryResult: Deferred.Deferred<Exit.Exit<void>>;
+  readonly isReplay: boolean;
 }
 
+interface ListenerRegistration {
+  readonly listener: Listener;
+  readonly configuredUrls: ReadonlyArray<string>;
+  readonly notifications: Queue.Queue<ListenerNotification>;
+  readonly stoppedRef: Ref.Ref<boolean>;
+}
+
+class CurrentListenerRegistration extends Context.Reference<ListenerRegistration | undefined>(
+  "t3/preview/PortScanner/CurrentListenerRegistration",
+  {
+    defaultValue: () => undefined,
+  },
+) {}
+
 interface ScannerState {
-  readonly listeners: ReadonlyMap<Listener, ListenerSubscription>;
+  readonly lastSnapshot: WebProbeSnapshot;
+  readonly lastScanConfiguredUrls: ReadonlySet<string>;
+  readonly listeners: ReadonlyMap<ListenerRegistration, ReadonlyArray<DiscoveredLocalServer>>;
+  readonly retainedConfiguredUrls: ReadonlyMap<string, number>;
   readonly terminalProcesses: ReadonlyMap<
     string,
     {
       readonly owner: TerminalProcessOwner;
       readonly processIds: ReadonlySet<number>;
+      readonly needsSettleScan: boolean;
     }
   >;
   readonly retainCount: number;
@@ -123,6 +145,9 @@ const terminalOwnerKey = (owner: {
   readonly threadId: string;
   readonly terminalId: string;
 }): string => `${owner.threadId}\u0000${owner.terminalId}`;
+
+const processIdsEqual = (left: ReadonlySet<number>, right: ReadonlySet<number>): boolean =>
+  left.size === right.size && [...left].every((processId) => right.has(processId));
 
 const parseConfiguredUrl = (raw: string): URL | null => {
   try {
@@ -293,14 +318,20 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
+  const scanLock = yield* Semaphore.make(1);
+  const notificationLock = yield* Semaphore.make(1);
+  const reentrantScanRequests = yield* Queue.sliding<void>(1);
+  const pollScheduleSignalRef = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined);
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
+    lastSnapshot: { discovered: [], configured: new Map() },
+    lastScanConfiguredUrls: new Set(),
     listeners: new Map(),
+    retainedConfiguredUrls: new Map(),
     terminalProcesses: new Map(),
     retainCount: 0,
   });
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
-  const scanSemaphore = yield* Semaphore.make(1);
 
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
     const results = yield* Effect.forEach(
@@ -535,91 +566,336 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return yield* probeWebServers(yield* probeCommonPorts(), configuredUrls);
   });
 
-  const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(
-    (configuredUrls: ReadonlyArray<string>) =>
-      scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls)),
-  );
+  const wakePollSchedule = Effect.gen(function* () {
+    const signal = yield* Ref.get(pollScheduleSignalRef);
+    if (signal !== undefined) {
+      yield* Deferred.succeed(signal, undefined).pipe(Effect.ignore);
+    }
+  });
+
+  const publishSnapshot = Effect.fn("PortDiscovery.publishSnapshot")(function* (
+    snapshot: WebProbeSnapshot,
+    configuredUrls: ReadonlyArray<string>,
+  ) {
+    const currentListener = yield* CurrentListenerRegistration;
+    const result = yield* notificationLock.withPermit(
+      Effect.gen(function* () {
+        const result = yield* Ref.modify(stateRef, (state) => {
+          const wasActive =
+            state.lastSnapshot.discovered.length > 0 || state.lastSnapshot.configured.size > 0;
+          const isActive = snapshot.discovered.length > 0 || snapshot.configured.size > 0;
+          const listeners = new Map(state.listeners);
+          const changed: Array<
+            readonly [ListenerRegistration, ReadonlyArray<DiscoveredLocalServer>]
+          > = [];
+          for (const [registration, previous] of listeners) {
+            const next = projectWebProbeSnapshot(snapshot, registration.configuredUrls);
+            if (serversEqual(previous, next)) continue;
+            listeners.set(registration, next);
+            changed.push([registration, next]);
+          }
+          return [
+            {
+              changed,
+              pollIntervalChanged: wasActive !== isActive,
+            },
+            {
+              ...state,
+              lastSnapshot: snapshot,
+              lastScanConfiguredUrls: new Set(configuredUrls),
+              listeners,
+            },
+          ];
+        });
+        const deliveries: Array<Deferred.Deferred<Exit.Exit<void>>> = [];
+        yield* Effect.forEach(
+          result.changed,
+          ([registration, servers]) =>
+            Effect.gen(function* () {
+              const deliveryResult = yield* Deferred.make<Exit.Exit<void>>();
+              deliveries.push(deliveryResult);
+              yield* Queue.offer(registration.notifications, {
+                servers,
+                deliveryResult,
+                isReplay: false,
+              });
+            }),
+          { discard: true },
+        );
+        return { pollIntervalChanged: result.pollIntervalChanged, deliveries };
+      }),
+    );
+    if (result.pollIntervalChanged) yield* wakePollSchedule;
+    return currentListener === undefined ? result.deliveries : [];
+  });
 
   const scanOnce: PortDiscovery["Service"]["scan"] = (configuredUrls = []) => {
     const normalized = normalizeConfiguredUrls(configuredUrls);
-    return scanSnapshot(normalized).pipe(
-      Effect.map((snapshot) => projectWebProbeSnapshot(snapshot, normalized)),
+    return scanLock.withPermit(
+      scanUnlocked(normalized).pipe(
+        Effect.map((snapshot) => projectWebProbeSnapshot(snapshot, normalized)),
+      ),
     );
   };
 
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
     function* () {
-      if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
-      const configuredUrls = [
-        ...new Set(
-          [...(yield* Ref.get(stateRef)).listeners.values()].flatMap(
-            (subscription) => subscription.configuredUrls,
-          ),
-        ),
-      ];
-      const snapshot = yield* scanSnapshot(configuredUrls);
-      const notifications = yield* Ref.modify(stateRef, (state) => {
-        const listeners = new Map(state.listeners);
-        const changed: Array<readonly [Listener, ReadonlyArray<DiscoveredLocalServer>]> = [];
-        for (const [listener, subscription] of listeners) {
-          const next = projectWebProbeSnapshot(snapshot, subscription.configuredUrls);
-          if (serversEqual(subscription.lastSnapshot, next)) continue;
-          listeners.set(listener, { ...subscription, lastSnapshot: next });
-          changed.push([listener, next]);
-        }
-        return [changed, { ...state, listeners }];
-      });
-      yield* Effect.forEach(notifications, ([listener, servers]) => listener(servers), {
+      const deliveries = yield* scanLock.withPermit(
+        Effect.gen(function* () {
+          const state = yield* Ref.get(stateRef);
+          if (state.retainCount <= 0) return [];
+          const configuredUrls = [
+            ...new Set([
+              ...state.retainedConfiguredUrls.keys(),
+              ...[...state.listeners.keys()].flatMap((registration) => registration.configuredUrls),
+            ]),
+          ];
+          const snapshot = yield* scanUnlocked(configuredUrls);
+          return yield* publishSnapshot(snapshot, configuredUrls);
+        }),
+      );
+      yield* Effect.forEach(deliveries, Deferred.await, {
+        concurrency: "unbounded",
         discard: true,
       });
     },
     Effect.catchCause((cause: Cause.Cause<never>) =>
-      Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
+      Cause.hasInterrupts(cause)
+        ? Effect.failCause(cause)
+        : Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
     ),
   );
 
-  // Single layer-scoped polling fiber. Ticks are no-ops when no client is
-  // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
-  yield* Effect.forkScoped(pollTick().pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+  yield* Effect.forkScoped(
+    Effect.gen(function* () {
+      while (true) {
+        yield* Queue.take(reentrantScanRequests);
+        yield* pollTick();
+      }
+    }),
+  );
 
-  const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
-    const wasIdle = yield* Ref.modify(stateRef, (state) => [
-      state.retainCount === 0,
-      { ...state, retainCount: state.retainCount + 1 },
-    ]);
-    if (wasIdle) {
-      // Run an immediate scan + broadcast so the new retainer doesn't have
-      // to wait up to POLL_INTERVAL for the first emission.
+  const pollAfterTerminalChange = Effect.fn("PortDiscovery.pollAfterTerminalChange")(function* () {
+    const currentListener = yield* CurrentListenerRegistration;
+    if (currentListener === undefined) {
       yield* pollTick();
+    } else {
+      yield* Queue.offer(reentrantScanRequests, undefined);
     }
   });
 
-  const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(acquireRetention(), () =>
-    Ref.update(stateRef, (state) => ({
-      ...state,
-      retainCount: Math.max(0, state.retainCount - 1),
-    })),
+  // Keep broad listener discovery as a fallback, but avoid a system-wide lsof
+  // process every three seconds while the app is otherwise idle. Terminal PID
+  // changes trigger immediate scans below; the periodic loop is only the
+  // safety net for listeners started outside a managed terminal.
+  yield* Effect.forkScoped(
+    Effect.gen(function* () {
+      while (true) {
+        const scheduleChanged = yield* Deferred.make<void>();
+        yield* Ref.set(pollScheduleSignalRef, scheduleChanged);
+        const state = yield* Ref.get(stateRef);
+        const shouldPoll = yield* Effect.race(
+          Effect.sleep(
+            state.retainCount > 0 &&
+              (state.lastSnapshot.discovered.length > 0 || state.lastSnapshot.configured.size > 0)
+              ? ACTIVE_POLL_INTERVAL
+              : IDLE_POLL_INTERVAL,
+          ).pipe(Effect.as(true)),
+          Deferred.await(scheduleChanged).pipe(Effect.as(false)),
+        );
+        yield* Ref.update(pollScheduleSignalRef, (current) =>
+          current === scheduleChanged ? undefined : current,
+        );
+        if (shouldPoll) yield* pollTick();
+      }
+    }),
   );
 
-  const subscribe: PortDiscovery["Service"]["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
-    (input, listener) =>
-      Effect.acquireRelease(
-        Ref.update(stateRef, (state) => {
-          const listeners = new Map(state.listeners);
-          listeners.set(listener, {
-            configuredUrls: normalizeConfiguredUrls(input.configuredUrls),
-            lastSnapshot: input.initialSnapshot,
-          });
-          return { ...state, listeners };
+  const acquireRetention = Effect.fn("PortDiscovery.acquireRetention")(function* (
+    configuredUrls: ReadonlyArray<string>,
+  ) {
+    const { shouldScan, wasIdle } = yield* Ref.modify(stateRef, (state) => {
+      const retainedConfiguredUrls = new Map(state.retainedConfiguredUrls);
+      for (const configuredUrl of configuredUrls) {
+        retainedConfiguredUrls.set(
+          configuredUrl,
+          (retainedConfiguredUrls.get(configuredUrl) ?? 0) + 1,
+        );
+      }
+      return [
+        {
+          shouldScan:
+            state.retainCount === 0 ||
+            configuredUrls.some((url) => !state.lastScanConfiguredUrls.has(url)),
+          wasIdle: state.retainCount === 0,
+        },
+        {
+          ...state,
+          retainCount: state.retainCount + 1,
+          retainedConfiguredUrls,
+        },
+      ];
+    });
+    if (shouldScan) {
+      // Run an immediate scan + broadcast so the new retainer doesn't have
+      // to wait for the periodic safety-net scan.
+      yield* pollTick();
+    }
+    if (wasIdle) {
+      yield* wakePollSchedule;
+    }
+  });
+
+  const releaseRetention = Effect.fn("PortDiscovery.releaseRetention")(function* (
+    configuredUrls: ReadonlyArray<string>,
+  ) {
+    const updateRetention = Ref.modify(stateRef, (state) => {
+      const retainCount = Math.max(0, state.retainCount - 1);
+      const retainedConfiguredUrls = new Map(state.retainedConfiguredUrls);
+      for (const configuredUrl of configuredUrls) {
+        const count = retainedConfiguredUrls.get(configuredUrl) ?? 0;
+        if (count <= 1) retainedConfiguredUrls.delete(configuredUrl);
+        else retainedConfiguredUrls.set(configuredUrl, count - 1);
+      }
+      const becameIdle = state.retainCount > 0 && retainCount === 0;
+      if (!becameIdle) {
+        return [false, { ...state, retainCount, retainedConfiguredUrls }] as const;
+      }
+      const listeners = new Map<ListenerRegistration, ReadonlyArray<DiscoveredLocalServer>>();
+      for (const registration of state.listeners.keys()) {
+        listeners.set(registration, []);
+      }
+      return [
+        true,
+        {
+          ...state,
+          lastSnapshot: { discovered: [], configured: new Map() },
+          lastScanConfiguredUrls: new Set<string>(),
+          listeners,
+          retainCount,
+          retainedConfiguredUrls,
+        },
+      ] as const;
+    });
+    const becameIdle = yield* scanLock.withPermit(updateRetention);
+    if (becameIdle) yield* wakePollSchedule;
+  });
+
+  const retain: PortDiscovery["Service"]["retain"] = (configuredUrls = []) => {
+    const normalized = normalizeConfiguredUrls(configuredUrls);
+    return Effect.acquireRelease(acquireRetention(normalized), () => releaseRetention(normalized));
+  };
+
+  const removeListener = (registration: ListenerRegistration) =>
+    Ref.update(stateRef, (state) => {
+      const listeners = new Map(state.listeners);
+      listeners.delete(registration);
+      return { ...state, listeners };
+    });
+
+  const stopListener = Effect.fn("PortDiscovery.stopListener")(function* (
+    registration: ListenerRegistration,
+    worker: Fiber.Fiber<void>,
+  ) {
+    const shouldStop = yield* Ref.modify(registration.stoppedRef, (stopped) =>
+      stopped ? [false, true] : [true, true],
+    );
+    if (!shouldStop) return;
+    const pending = yield* notificationLock.withPermit(
+      Effect.gen(function* () {
+        yield* removeListener(registration);
+        return yield* Queue.clear(registration.notifications);
+      }),
+    );
+    yield* Effect.forEach(
+      pending,
+      (notification) =>
+        Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore),
+      { discard: true },
+    );
+    yield* Fiber.interrupt(worker);
+    yield* Queue.shutdown(registration.notifications);
+  });
+
+  const runListenerNotifications = Effect.fn("PortDiscovery.runListenerNotifications")(function* (
+    registration: ListenerRegistration,
+  ) {
+    let replayFailed = false;
+    while (true) {
+      const result = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const notification = yield* restore(Queue.take(registration.notifications));
+          if (replayFailed) {
+            yield* Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore);
+            return undefined;
+          }
+          const delivery = yield* Effect.exit(
+            restore(
+              registration
+                .listener(notification.servers)
+                .pipe(Effect.provideService(CurrentListenerRegistration, registration)),
+            ),
+          );
+          yield* Deferred.succeed(notification.deliveryResult, delivery).pipe(Effect.ignore);
+          return { delivery, isReplay: notification.isReplay };
         }),
-        () =>
-          Ref.update(stateRef, (state) => {
-            const listeners = new Map(state.listeners);
-            listeners.delete(listener);
-            return { ...state, listeners };
+      );
+      if (result === undefined) continue;
+      if (result.isReplay) {
+        replayFailed = Exit.isFailure(result.delivery);
+      } else if (Exit.isFailure(result.delivery)) {
+        yield* Effect.logWarning(
+          "preview port snapshot listener failed",
+          Cause.pretty(result.delivery.cause),
+        );
+      }
+    }
+  });
+
+  const subscribeConfigured = Effect.fn("PortDiscovery.subscribe")(function* (
+    configuredUrls: ReadonlyArray<string>,
+    listener: Listener,
+  ) {
+    const { registration, replayResult, worker } = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const notifications = yield* Queue.unbounded<ListenerNotification>();
+        const replayResult = yield* Deferred.make<Exit.Exit<void>>();
+        const stoppedRef = yield* Ref.make(false);
+        const registration: ListenerRegistration = {
+          listener,
+          configuredUrls,
+          notifications,
+          stoppedRef,
+        };
+        yield* notificationLock.withPermit(
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.modify(stateRef, (state) => {
+              const replay = projectWebProbeSnapshot(state.lastSnapshot, configuredUrls);
+              const listeners = new Map(state.listeners);
+              listeners.set(registration, replay);
+              return [replay, { ...state, listeners }];
+            });
+            yield* Queue.offer(notifications, {
+              servers: snapshot,
+              deliveryResult: replayResult,
+              isReplay: true,
+            });
           }),
-      ),
-  );
+        );
+        const worker = yield* Effect.forkScoped(runListenerNotifications(registration));
+        yield* Effect.addFinalizer(() => stopListener(registration, worker));
+        return { registration, worker, replayResult };
+      }),
+    );
+    const replayExit = yield* Deferred.await(replayResult);
+    if (Exit.isFailure(replayExit)) {
+      yield* stopListener(registration, worker);
+      return yield* Effect.failCause(replayExit.cause);
+    }
+  });
+
+  const subscribe: PortDiscovery["Service"]["subscribe"] = (input, listener) =>
+    subscribeConfigured(normalizeConfiguredUrls(input.configuredUrls), listener);
 
   const registerTerminalProcesses: PortDiscovery["Service"]["registerTerminalProcesses"] =
     Effect.fn("PortDiscovery.registerTerminalProcesses")(function* (input) {
@@ -630,26 +906,36 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const processIds = new Set(
         input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
       );
-      yield* Ref.update(stateRef, (state) => {
+      const shouldScan = yield* Ref.modify(stateRef, (state) => {
         const terminalProcesses = new Map(state.terminalProcesses);
         const key = terminalOwnerKey(owner);
+        const existing = terminalProcesses.get(key);
+        if (existing && processIdsEqual(existing.processIds, processIds)) {
+          if (!existing.needsSettleScan) return [false, state] as const;
+          if (state.retainCount <= 0) return [false, state] as const;
+          terminalProcesses.set(key, { ...existing, needsSettleScan: false });
+          return [true, { ...state, terminalProcesses }] as const;
+        }
         if (processIds.size === 0) {
+          if (!existing) return [false, state] as const;
           terminalProcesses.delete(key);
         } else {
-          terminalProcesses.set(key, { owner, processIds });
+          terminalProcesses.set(key, { owner, processIds, needsSettleScan: true });
         }
-        return { ...state, terminalProcesses };
+        return [true, { ...state, terminalProcesses }] as const;
       });
+      if (shouldScan) yield* pollAfterTerminalChange();
     });
 
   const unregisterTerminal: PortDiscovery["Service"]["unregisterTerminal"] = Effect.fn(
     "PortDiscovery.unregisterTerminal",
   )(function* (input) {
-    yield* Ref.update(stateRef, (state) => {
+    const changed = yield* Ref.modify(stateRef, (state) => {
       const terminalProcesses = new Map(state.terminalProcesses);
-      terminalProcesses.delete(terminalOwnerKey(input));
-      return { ...state, terminalProcesses };
+      const removed = terminalProcesses.delete(terminalOwnerKey(input));
+      return [removed, removed ? { ...state, terminalProcesses } : state] as const;
     });
+    if (changed) yield* pollAfterTerminalChange();
   });
 
   return PortDiscovery.of({

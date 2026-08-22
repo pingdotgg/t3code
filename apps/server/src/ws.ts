@@ -2232,16 +2232,12 @@ const makeWsRpcLayer = (
             Stream.callback<DiscoveredLocalServerList>((queue) =>
               Effect.gen(function* () {
                 const configuredUrls = input.configuredUrls ?? [];
-                yield* portDiscovery.retain;
-                const initial = yield* portDiscovery.scan(configuredUrls);
-                const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
-                yield* Queue.offer(queue, {
-                  servers: initial,
-                  scannedAt: initialScannedAt,
-                  configuredUrlProbing: true,
-                });
+                // Retention performs one immediate scan when discovery was
+                // idle (or when this connection introduces configured URLs).
+                // Subscribe then replays that snapshot instead of rescanning.
+                yield* portDiscovery.retain(configuredUrls);
                 yield* portDiscovery.subscribe(
-                  { configuredUrls, initialSnapshot: initial },
+                  { configuredUrls },
                   (servers) =>
                     Effect.gen(function* () {
                       const scannedAt = DateTime.formatIso(yield* DateTime.now);
