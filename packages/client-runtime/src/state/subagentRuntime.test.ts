@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import {
+  TurnId,
+  classifyTaskAgentKind,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  foldSubagentActivitiesWithBatchCounts,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
   isAgentAttributedToolActivity,
@@ -256,6 +261,7 @@ describe("foldSubagentActivities", () => {
     // Consecutive identical summaries dedupe (truncation makes them equal).
     const summaries = agent.recentActivity.map((entry) => entry.summary);
     expect(new Set(summaries).size).toBe(summaries.length);
+    expect(agent.recentActivityTruncated).toBe(false);
   });
 
   it("plan tasks are not agents", () => {
@@ -467,6 +473,89 @@ describe("deriveAgentPanelModel", () => {
     expect(ids).toHaveLength(100);
     expect(ids.slice(0, 3)).toEqual(["capped-0", "capped-2", "capped-3"]);
     expect(ids.at(-1)).toBe("capped-100");
+  });
+
+  it("keeps detailed batch counts uncapped while preserving the 100-row web default", () => {
+    const turnId = TurnId.make("turn-fanout-101");
+    const starts = Array.from({ length: 101 }, (_, index) => ({
+      ...activity("task.started", { taskId: `fanout-${index}`, title: `Agent ${index}` }),
+      turnId,
+    }));
+
+    const detailed = foldSubagentActivitiesWithBatchCounts(starts);
+    const webRoster = foldSubagentActivities(starts);
+
+    expect(detailed.batchCounts.get(`direct:${turnId}`)).toMatchObject({
+      totalCount: 101,
+      workingCount: 101,
+    });
+    expect(detailed.agentTaskIds).toHaveLength(101);
+    expect(detailed.agents).toHaveLength(101);
+    expect(detailed.agents.length).toBe(detailed.batchCounts.get(`direct:${turnId}`)?.totalCount);
+    expect(webRoster).toHaveLength(100);
+  });
+
+  it("assigns a reactivated direct task to its later turn's spawn batch", () => {
+    const firstTurnId = TurnId.make("turn-first-activation");
+    const secondTurnId = TurnId.make("turn-second-activation");
+    const started = {
+      ...activity("task.started", { taskId: "reusable-agent" }),
+      turnId: firstTurnId,
+    };
+    const completed = {
+      ...activity("task.completed", { taskId: "reusable-agent", status: "completed" }),
+      turnId: firstTurnId,
+    };
+    const reactivated = {
+      ...activity("task.updated", { taskId: "reusable-agent", status: "running" }),
+      turnId: secondTurnId,
+    };
+
+    const detailed = foldSubagentActivitiesWithBatchCounts([started, completed, reactivated]);
+
+    expect(detailed.batchKeyByActivityId.get(started.id)).toBe(`direct:${firstTurnId}`);
+    expect(detailed.batchKeyByActivityId.get(completed.id)).toBe(`direct:${firstTurnId}`);
+    expect(detailed.batchKeyByActivityId.get(reactivated.id)).toBe(`direct:${secondTurnId}`);
+    expect(detailed.batchCounts.get(`direct:${firstTurnId}`)).toMatchObject({
+      totalCount: 1,
+      workingCount: 0,
+      completedCount: 1,
+    });
+    expect(detailed.batchCounts.get(`direct:${secondTurnId}`)).toMatchObject({
+      totalCount: 1,
+      workingCount: 1,
+      completedCount: 0,
+    });
+  });
+
+  it("keeps an uncapped 150-member workflow roster consistent with its batch counts", () => {
+    const workflowId = "workflow-fanout";
+    const rows = [
+      activity("task.started", {
+        taskId: workflowId,
+        taskType: "local_workflow",
+        workflowName: "Large audit",
+      }),
+      ...Array.from({ length: 150 }, (_, index) =>
+        activity("task.progress", {
+          taskId: `${workflowId}:wf:${index}`,
+          parentAgentId: workflowId,
+          agentKind: "agent",
+          agentIndex: index,
+          status: "running",
+        }),
+      ),
+    ];
+
+    const detailed = foldSubagentActivitiesWithBatchCounts(rows);
+    const webRoster = foldSubagentActivities(rows);
+    const batchCount = detailed.batchCounts.get(`wf:${workflowId}`);
+    const workflowMembers = detailed.agents.filter((agent) => agent.parentAgentId === workflowId);
+
+    expect(webRoster).toHaveLength(100);
+    expect(detailed.agents).toHaveLength(151);
+    expect(batchCount).toMatchObject({ totalCount: 150, workingCount: 150 });
+    expect(workflowMembers).toHaveLength(batchCount?.totalCount ?? 0);
   });
 
   it("a phase with only pending members never reads as running", () => {

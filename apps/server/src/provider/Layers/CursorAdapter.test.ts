@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -22,6 +23,7 @@ import {
   ProviderDriverKind,
   type ProviderRuntimeEvent,
   ThreadId,
+  TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
@@ -258,16 +260,34 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       // Keep the first prompt in flight long enough for the steer to land.
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockAgentWrapper({ T3_ACP_PROMPT_DELAY_MS: "1500" }),
+        makeMockAgentWrapper({ T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1" }),
       );
       yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.threadId === threadId),
-        Stream.takeUntil((event) => event.type === "turn.completed"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const secondTurnStarted = yield* Deferred.make<TurnId>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const startedCount = yield* Ref.make(0);
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (event.threadId !== threadId) {
+          return Effect.void;
+        }
+        return Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.started"
+              ? Ref.updateAndGet(startedCount, (count) => count + 1).pipe(
+                  Effect.flatMap((count) =>
+                    count === 2 && event.turnId !== undefined
+                      ? Deferred.succeed(secondTurnStarted, event.turnId).pipe(Effect.asVoid)
+                      : Effect.void,
+                  ),
+                )
+              : event.type === "turn.completed"
+                ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          ),
+        );
+      }).pipe(Effect.forkChild);
 
       yield* adapter.startSession({
         threadId,
@@ -277,51 +297,64 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
       });
 
+      const firstPromptRegistered = yield* Deferred.make<void>();
       const firstTurnFiber = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "run 5 commands",
-          attachments: [],
-        })
+        .sendTurn(
+          {
+            threadId,
+            input: "run 5 commands",
+            attachments: [],
+          },
+          {
+            onTurnStarted: Deferred.succeed(firstPromptRegistered, undefined).pipe(Effect.asVoid),
+          },
+        )
         .pipe(Effect.forkChild);
-
-      // Poll until the first prompt is in flight — sendTurn binds the active
-      // turn id before prompting. The mock agent runs on the real clock, so
-      // each TestClock.adjust just provides the scheduler hops for its stdio
-      // responses to land.
-      yield* Effect.gen(function* () {
-        for (let attempt = 0; attempt < 200; attempt += 1) {
-          const sessions = yield* adapter.listSessions();
-          const session = sessions.find((entry) => entry.threadId === threadId);
-          if (session?.activeTurnId !== undefined) {
-            return;
-          }
-          yield* TestClock.adjust("10 millis");
-        }
-        throw new Error("Timed out waiting for the first prompt to be in flight.");
-      });
+      yield* Deferred.await(firstPromptRegistered);
+      const firstTurnId = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      )?.activeTurnId;
+      assert.isDefined(firstTurnId);
 
       // Steer: a second sendTurn while the first prompt is still in flight
       // continues the same turn.
-      const steeredTurn = yield* adapter.sendTurn({
-        threadId,
-        input: "actually run 15",
-        attachments: [],
-      });
+      const secondPromptRegistered = yield* Deferred.make<void>();
+      const steeredTurnFiber = yield* adapter
+        .sendTurn(
+          {
+            threadId,
+            input: "actually run 15",
+            attachments: [],
+          },
+          {
+            onTurnStarted: Deferred.succeed(secondPromptRegistered, undefined).pipe(Effect.asVoid),
+          },
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(secondPromptRegistered);
+      const steeredTurnStartedId = yield* Deferred.await(secondTurnStarted);
+
+      assert.equal(String(steeredTurnStartedId), String(firstTurnId));
+
+      yield* adapter.interruptTurn(threadId, firstTurnId);
+      const steeredTurn = yield* Fiber.join(steeredTurnFiber);
       const firstTurn = yield* Fiber.join(firstTurnFiber);
       assert.equal(String(steeredTurn.turnId), String(firstTurn.turnId));
+      yield* Deferred.await(turnCompleted);
 
-      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
       const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
 
-      // One turn boundary for the whole run: the superseded first prompt
-      // resolving must not settle the merged turn.
-      assert.equal(turnStartedEvents.length, 1);
-      assert.equal(String(turnStartedEvents[0]?.turnId), String(firstTurn.turnId));
+      // Each registered prompt publishes a lifecycle snapshot even though the
+      // provider keeps one logical turn id for the merged run.
+      assert.equal(turnStartedEvents.length, 2);
+      assert.isTrue(
+        turnStartedEvents.every((event) => String(event.turnId) === String(firstTurn.turnId)),
+      );
       assert.equal(turnCompletedEvents.length, 1);
       assert.equal(String(turnCompletedEvents[0]?.turnId), String(firstTurn.turnId));
 
+      yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -1052,6 +1085,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-stop-pending-approval");
+      const turnStarted = yield* Deferred.make<void>();
       const approvalRequested = yield* Deferred.make<void>();
 
       const wrapperPath = yield* Effect.promise(() =>
@@ -1075,13 +1109,17 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
 
       const sendTurnFiber = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "run a tool call and then stop",
-          attachments: [],
-        })
+        .sendTurn(
+          {
+            threadId,
+            input: "run a tool call and then stop",
+            attachments: [],
+          },
+          { onTurnStarted: Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid) },
+        )
         .pipe(Effect.forkChild);
 
+      yield* Deferred.await(turnStarted);
       yield* Deferred.await(approvalRequested);
       yield* adapter.stopSession(threadId);
       yield* Fiber.await(sendTurnFiber);
@@ -1095,6 +1133,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-stop-pending-user-input");
+      const turnStarted = yield* Deferred.make<void>();
       const userInputRequested = yield* Deferred.make<void>();
 
       const wrapperPath = yield* Effect.promise(() =>
@@ -1118,13 +1157,17 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
 
       const sendTurnFiber = yield* adapter
-        .sendTurn({
-          threadId,
-          input: "ask me a question and then stop",
-          attachments: [],
-        })
+        .sendTurn(
+          {
+            threadId,
+            input: "ask me a question and then stop",
+            attachments: [],
+          },
+          { onTurnStarted: Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid) },
+        )
         .pipe(Effect.forkChild);
 
+      yield* Deferred.await(turnStarted);
       yield* Deferred.await(userInputRequested);
       yield* adapter.stopSession(threadId);
       yield* Fiber.await(sendTurnFiber);

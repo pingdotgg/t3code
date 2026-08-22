@@ -1,4 +1,5 @@
 import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
+import type { FoldSubagentActivitiesOptions } from "@t3tools/client-runtime/state/subagentRuntime";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -11,6 +12,10 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+
+import { agentTaskIdFromActivity, deriveAgentSpawnRows } from "./threadAgentActivity";
+
+export { memoizedFoldSubagentActivities, sortThreadActivities } from "./threadAgentActivity";
 
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
@@ -75,12 +80,12 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  agentLive?: boolean;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
-  /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
 }
 
@@ -282,11 +287,9 @@ function isTerminalBypassUpdate(activity: OrchestrationThreadActivity): boolean 
 
 /**
  * Quiet-timeline guarantee (mirrors web's session-logic): agent-internal
- * activity lives in the Agents sheet, not the work log. Terminal rows are
- * kept — with no Agents surface on mobile they are the terminal signal
- * (a surface that hides rows must keep its own terminal signal). That means
- * task.completed (Claude) AND terminal bypassed task.updated (Codex, whose
- * children never emit task.completed — review finding).
+ * detail stays out of the work log. Recognized task lifecycles are replaced
+ * by spawn-batch summaries before this filter; terminal rows remain a
+ * defensive fallback when malformed or legacy rows cannot join a batch.
  */
 function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean {
   const payload =
@@ -300,11 +303,6 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
   if (payload.timelineBypass === true && !isTerminalTaskRow) {
     return true;
   }
-  // agentId marks ownership, not "hide me": a NESTED AGENT's terminal row is
-  // the only signal mobile gets (no Agents sheet), so it stays. Only an
-  // agent's own background work (stamped "background") is internal — same
-  // rule as web (review finding: hiding on agentId alone dropped nested
-  // completions with no replacement UI).
   const ownedByAgent = typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
   if (!ownedByAgent) {
     return false;
@@ -314,10 +312,20 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
 
 function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: FoldSubagentActivitiesOptions,
 ): DerivedWorkLogEntry[] {
-  const ordered = Arr.sort(activities, activityOrder);
+  const { orderedActivities, agentTaskIds, rowsByAnchorActivityId } = deriveAgentSpawnRows(
+    activities,
+    options,
+  );
   const entries: DerivedWorkLogEntry[] = [];
-  for (const activity of ordered) {
+  for (const activity of orderedActivities) {
+    const spawnBatch = rowsByAnchorActivityId.get(activity.id);
+    if (spawnBatch) {
+      entries.push(spawnBatch);
+    }
+    const taskId = agentTaskIdFromActivity(activity);
+    if (taskId && agentTaskIds.has(taskId)) continue;
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     // Terminal bypassed updates pass: Codex children's only terminal signal.
@@ -622,6 +630,7 @@ function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
 }
 
 function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
+  if (entry.id.startsWith("agent-spawn:")) return "agent";
   if (
     entry.activityKind === "user-input.requested" ||
     entry.activityKind === "user-input.resolved"
@@ -710,6 +719,9 @@ function capitalizePhrase(value: string): string {
 }
 
 function workEntryHeading(workEntry: WorkLogEntry): string {
+  if (workEntry.id.startsWith("agent-spawn:")) {
+    return workEntry.label;
+  }
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
@@ -1038,26 +1050,6 @@ function extractChangedFiles(payload: Record<string, unknown> | null): string[] 
   return changedFiles;
 }
 
-function compareActivityLifecycleRank(kind: string): number {
-  if (kind.endsWith(".started") || kind === "tool.started") {
-    return 0;
-  }
-  if (kind.endsWith(".progress") || kind.endsWith(".updated")) {
-    return 1;
-  }
-  if (kind.endsWith(".completed") || kind.endsWith(".resolved")) {
-    return 2;
-  }
-  return 1;
-}
-
-const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
-  Order.mapInput(Order.Number, (activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
-  Order.mapInput(Order.String, (activity) => activity.createdAt),
-  Order.mapInput(Order.Number, (activity) => compareActivityLifecycleRank(activity.kind)),
-  Order.mapInput(Order.String, (activity) => activity.id),
-]);
-
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   if (entry.type !== "message") {
     return false;
@@ -1084,6 +1076,20 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     if (entry.type !== "activity") {
       grouped.push(entry);
       openGroupActivities = null;
+      continue;
+    }
+
+    // Keep spawn summaries outside settled-turn folding.
+    if (isAgentSpawnActivity(entry.activity)) {
+      grouped.push({
+        type: "activity-group",
+        id: entry.id,
+        createdAt: entry.createdAt,
+        turnId: entry.turnId,
+        activities: [entry.activity],
+      });
+      openGroupActivities = null;
+      openGroupTurnId = null;
       continue;
     }
 
@@ -1131,6 +1137,10 @@ function deriveUnsettledTurnId(latestTurn: ThreadFeedLatestTurn | null): TurnId 
   }
   const settled = latestTurn.completedAt !== null && latestTurn.state !== "running";
   return settled ? null : latestTurn.turnId;
+}
+
+function isAgentSpawnActivity(activity: ThreadFeedActivity): boolean {
+  return activity.id.startsWith("agent-spawn:");
 }
 
 interface ThreadFeedTurnFold {
@@ -1196,7 +1206,13 @@ function deriveThreadFeedTurnFolds(
 
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
     const hiddenEntryIds = new Set(
-      entries.filter((entry) => entry.id !== terminalAssistantMessageId).map((entry) => entry.id),
+      entries
+        .filter(
+          (entry) =>
+            entry.id !== terminalAssistantMessageId &&
+            !(entry.type === "activity-group" && entry.activities.some(isAgentSpawnActivity)),
+        )
+        .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {
       continue;
@@ -1307,18 +1323,28 @@ function appendPresentedFeedEntry(
   if (activities.length === 0) {
     return;
   }
-  if (activities.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+  const pinnedActivities = activities.filter(isAgentSpawnActivity);
+  const latestOrdinaryActivities = activities
+    .filter((activity) => !isAgentSpawnActivity(activity))
+    .slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+  const collapsedActivityIds = new Set(
+    [...pinnedActivities, ...latestOrdinaryActivities].map((activity) => activity.id),
+  );
+  const collapsedActivities = activities.filter((activity) =>
+    collapsedActivityIds.has(activity.id),
+  );
+  const hiddenActivities = activities.filter((activity) => !collapsedActivityIds.has(activity.id));
+  if (hiddenActivities.length === 0) {
     result.push({
       ...entry,
-      activities,
+      activities: collapsedActivities,
     });
     return;
   }
 
   const groupId = entry.id;
   const expanded = expandedWorkGroupIds.has(groupId);
-  const hiddenCount = activities.length - MAX_VISIBLE_WORK_LOG_ENTRIES;
-  const visibleActivities = expanded ? activities : activities.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+  const visibleActivities = expanded ? activities : collapsedActivities;
 
   for (const activity of visibleActivities) {
     result.push({
@@ -1335,22 +1361,10 @@ function appendPresentedFeedEntry(
     createdAt: entry.createdAt,
     turnId: entry.turnId,
     groupId,
-    hiddenCount,
+    hiddenCount: hiddenActivities.length,
     expanded,
-    onlyToolActivities: activities.every((activity) => activity.toolLike),
+    onlyToolActivities: hiddenActivities.every((activity) => activity.toolLike),
   });
-}
-
-/**
- * Sorts activities into lifecycle order. `derivePendingApprovals` and
- * `derivePendingUserInputs` both expect this ordering; sorting once and
- * passing the result to both avoids re-sorting the full activity history
- * per derivation.
- */
-export function sortThreadActivities(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): ReadonlyArray<OrchestrationThreadActivity> {
-  return Arr.sort(activities, activityOrder);
 }
 
 export function derivePendingApprovals(
@@ -1520,7 +1534,12 @@ export function buildThreadFeed(
   const loadedMessages = options?.loadedMessages ?? thread.messages;
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
-  const workLogEntries = deriveWorkLogEntries(thread.activities);
+  const sessionLive =
+    thread.session !== null &&
+    thread.session.status !== "stopped" &&
+    thread.session.status !== "interrupted" &&
+    thread.session.status !== "error";
+  const workLogEntries = deriveWorkLogEntries(thread.activities, { sessionLive });
   const entries = Arr.sortWith(
     [
       ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
@@ -1535,7 +1554,9 @@ export function buildThreadFeed(
             return true;
           }
           return (
-            oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
+            entry.agentLive === true ||
+            oldestLoadedMessageCreatedAt === null ||
+            entry.createdAt >= oldestLoadedMessageCreatedAt
           );
         })
         .map<RawThreadFeedEntry>((entry) => {

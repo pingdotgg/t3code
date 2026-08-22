@@ -19,6 +19,20 @@
  */
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
+import {
+  capSubagentRoster,
+  deriveSubagentBatchCounts,
+  isActiveSubagentStatus,
+  type FoldedSubagentActivitiesWithBatchCounts,
+  type FoldSubagentActivitiesOptions,
+} from "./subagentBatches.ts";
+
+export type {
+  FoldedSubagentActivitiesWithBatchCounts,
+  FoldSubagentActivitiesOptions,
+} from "./subagentBatches.ts";
+export { isActiveSubagentStatus } from "./subagentBatches.ts";
+
 export type RuntimeSubagentStatus =
   | "pending"
   | "running"
@@ -40,6 +54,7 @@ export interface SubagentUsage {
 }
 
 export interface SubagentActivityEntry {
+  readonly id: string;
   readonly at: string;
   readonly summary: string;
 }
@@ -80,6 +95,7 @@ export interface RuntimeSubagent {
   readonly phases: ReadonlyArray<SubagentWorkflowPhase>;
   readonly runHandles: SubagentRunHandles | null;
   readonly recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  readonly recentActivityTruncated: boolean;
   /** First retained observation, used as the roster's stable display order. */
   readonly firstSeenAt: string;
   readonly startedAt: string | null;
@@ -98,15 +114,8 @@ export function isTerminalSubagentStatus(status: RuntimeSubagentStatus): boolean
   return TERMINAL_STATUSES.has(status);
 }
 
-/** Active = the user may still need to care while it runs. Idle is settled-ish
- * but resumable; waiting counts as active because it needs the user. */
-export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
-}
-
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
-const ROSTER_LIMIT = 100;
 
 /**
  * True when this activity's payload does NOT belong on the Agents surface.
@@ -127,6 +136,7 @@ function bounded(value: string): string {
 /** Appends to the ring buffer, deduping consecutive identical summaries. */
 function appendActivity(
   entries: ReadonlyArray<SubagentActivityEntry>,
+  id: string,
   at: string,
   summary: string,
 ): ReadonlyArray<SubagentActivityEntry> {
@@ -134,7 +144,7 @@ function appendActivity(
   if (entries.length > 0 && entries[entries.length - 1]?.summary === boundedSummary) {
     return entries;
   }
-  const next = [...entries, { at, summary: boundedSummary }];
+  const next = [...entries, { id, at, summary: boundedSummary }];
   return next.length > RECENT_ACTIVITY_LIMIT ? next.slice(-RECENT_ACTIVITY_LIMIT) : next;
 }
 
@@ -249,6 +259,11 @@ interface MutableAgent {
   phases: ReadonlyArray<SubagentWorkflowPhase>;
   runHandles: SubagentRunHandles | null;
   recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  recentActivityTruncated: boolean;
+  activations: Array<{
+    readonly turnId: string | null;
+    status: RuntimeSubagentStatus;
+  }>;
   firstSeenAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -303,6 +318,8 @@ function getOrCreate(
     phases: [],
     runHandles: null,
     recentActivity: [],
+    recentActivityTruncated: false,
+    activations: [],
     firstSeenAt: at,
     startedAt: null,
     completedAt: null,
@@ -310,6 +327,14 @@ function getOrCreate(
   };
   agents.set(id, created);
   return created;
+}
+
+function recordActivity(agent: MutableAgent, id: string, at: string, summary: string): void {
+  const next = appendActivity(agent.recentActivity, id, at, summary);
+  if (next !== agent.recentActivity && agent.recentActivity.length === RECENT_ACTIVITY_LIMIT) {
+    agent.recentActivityTruncated = true;
+  }
+  agent.recentActivity = next;
 }
 
 /** Metadata fill from any payload: never downgrades known values to null. */
@@ -458,9 +483,17 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
  */
 export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-  options?: { readonly sessionLive?: boolean },
+  options?: FoldSubagentActivitiesOptions,
 ): ReadonlyArray<RuntimeSubagent> {
+  return capSubagentRoster(foldSubagentActivitiesWithBatchCounts(activities, options).agents);
+}
+
+export function foldSubagentActivitiesWithBatchCounts(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: FoldSubagentActivitiesOptions,
+): FoldedSubagentActivitiesWithBatchCounts {
   const agents = new Map<string, MutableAgent>();
+  const activityActivations = new Map<string, readonly [MutableAgent, number]>();
 
   for (const activity of activities) {
     if (typeof activity.payload !== "object" || activity.payload === null) {
@@ -468,6 +501,7 @@ export function foldSubagentActivities(
     }
     const payload = activity.payload as Record<string, unknown>;
     const at = activity.createdAt;
+    let taskIdForBatch: string | null = null;
 
     switch (activity.kind) {
       case "task.started": {
@@ -477,6 +511,7 @@ export function foldSubagentActivities(
         // tasks are background work — they render in the ordinary work log,
         // not the Agents surface (a "Run 12s stall" shell is not a subagent).
         if (isBackgroundTaskActivity(payload)) break;
+        taskIdForBatch = taskId;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         // Order-robustness: a start row arriving after a terminal state is a
@@ -506,6 +541,7 @@ export function foldSubagentActivities(
         // first row's classification instead of being re-judged.
         const existed = agents.has(taskId);
         if (!existed && isBackgroundTaskActivity(payload)) break;
+        taskIdForBatch = taskId;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
@@ -522,13 +558,13 @@ export function foldSubagentActivities(
         const summary = asString(payload.summary);
         if (summary) {
           agent.progress = bounded(summary);
-          agent.recentActivity = appendActivity(agent.recentActivity, at, summary);
+          recordActivity(agent, activity.id, at, summary);
         }
         const lastToolName = asString(payload.lastToolName);
         if (lastToolName) {
           agent.lastToolName = lastToolName;
           if (!summary) {
-            agent.recentActivity = appendActivity(agent.recentActivity, at, `▸ ${lastToolName}`);
+            recordActivity(agent, activity.id, at, `▸ ${lastToolName}`);
           }
         }
         const error = asString(payload.error);
@@ -544,6 +580,7 @@ export function foldSubagentActivities(
         // rows often carry only taskId+status, no marker fields) inherit the
         // first row's classification instead of being re-judged.
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
+        taskIdForBatch = taskId;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         // A task first seen via task.updated (start row aged out) has run at
@@ -572,6 +609,7 @@ export function foldSubagentActivities(
         // rows often carry only taskId+status, no marker fields) inherit the
         // first row's classification instead of being re-judged.
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
+        taskIdForBatch = taskId;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
@@ -616,13 +654,27 @@ export function foldSubagentActivities(
         const toolName = asString(payload.toolName);
         if (toolName) {
           agent.lastToolName = toolName;
-          agent.recentActivity = appendActivity(agent.recentActivity, at, `▸ ${toolName}`);
+          recordActivity(agent, activity.id, at, `▸ ${toolName}`);
         }
         agent.updatedAt = at;
         break;
       }
       default:
         break;
+    }
+
+    if (taskIdForBatch !== null) {
+      const agent = agents.get(taskIdForBatch);
+      if (agent && agent.activationCount > 0) {
+        const activationIndex = agent.activationCount - 1;
+        const activation = agent.activations[activationIndex];
+        if (activation) {
+          activation.status = agent.status;
+        } else {
+          agent.activations[activationIndex] = { turnId: activity.turnId, status: agent.status };
+        }
+        activityActivations.set(activity.id, [agent, activationIndex]);
+      }
     }
   }
 
@@ -660,18 +712,29 @@ export function foldSubagentActivities(
     }
   }
 
-  let roster = Array.from(agents.values());
-  if (roster.length > ROSTER_LIMIT) {
-    // Prefer live, then waiting/idle, then newest settled.
-    const rank = (agent: MutableAgent): number =>
-      isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
-    roster = roster
-      .slice()
-      .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, ROSTER_LIMIT);
+  for (const agent of agents.values()) {
+    const latestActivation = agent.activations.at(-1);
+    if (latestActivation) {
+      latestActivation.status = agent.status;
+    }
   }
 
-  return roster.map((agent) => ({ ...agent }));
+  const agentTaskIds = new Set(agents.keys());
+  const { batchKeyByActivityId, batchCounts } = deriveSubagentBatchCounts(
+    agents.values(),
+    activityActivations,
+  );
+
+  return {
+    agents: Array.from(agents.values(), (agent) => {
+      const { activations, ...runtimeAgent } = agent;
+      void activations;
+      return runtimeAgent;
+    }),
+    agentTaskIds,
+    batchKeyByActivityId,
+    batchCounts,
+  };
 }
 
 export interface AgentPanelWorkflowGroup {

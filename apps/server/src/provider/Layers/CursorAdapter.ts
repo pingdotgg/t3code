@@ -913,7 +913,7 @@ export function makeCursorAdapter(
         }).pipe(Effect.scoped),
       );
 
-    const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
+    const sendTurn: CursorAdapterShape["sendTurn"] = (input, observer) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);
         // A sendTurn while a prompt is in flight is a steer: the agent folds
@@ -954,17 +954,6 @@ export function makeCursorAdapter(
             activeTurnId: turnId,
             updatedAt: yield* nowIso,
           };
-
-          if (steeringTurnId === undefined) {
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: { model: resolvedModel },
-            });
-          }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
@@ -1010,10 +999,24 @@ export function makeCursorAdapter(
             });
           }
 
+          const turnStartedStamp = yield* makeEventStamp();
+          const publishTurnStarted = offerRuntimeEvent({
+            type: "turn.started",
+            ...turnStartedStamp,
+            provider: PROVIDER,
+            threadId: input.threadId,
+            turnId,
+            payload: { model: resolvedModel },
+          });
           const result = yield* ctx.acp
-            .prompt({
-              prompt: promptParts,
-            })
+            .prompt(
+              { prompt: promptParts },
+              {
+                onRegistered: (observer?.onTurnStarted ?? Effect.void).pipe(
+                  Effect.andThen(publishTurnStarted),
+                ),
+              },
+            )
             .pipe(
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),

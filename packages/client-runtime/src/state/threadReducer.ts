@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
+import * as Predicate from "effect/Predicate";
 import type {
   MessageId,
   OrchestrationCheckpointSummary,
@@ -258,6 +259,12 @@ export function applyThreadDetailEvent(
       };
 
     case "thread.turn-interrupt-requested": {
+      if (
+        event.payload.expectedTurnId !== undefined ||
+        event.payload.expectedSessionUpdatedAt !== undefined
+      ) {
+        return { kind: "unchanged" };
+      }
       if (event.payload.turnId === undefined) {
         return { kind: "unchanged" };
       }
@@ -585,10 +592,26 @@ export function applyThreadDetailEvent(
         Arr.append(activity),
         Arr.sort(activityOrder),
       );
+      const interruptResolved =
+        activity.kind === "provider.turn.interrupt.resolved" &&
+        Predicate.isObjectOrArray(activity.payload) &&
+        Predicate.hasProperty(activity.payload, "outcome") &&
+        activity.payload.outcome === "interrupted";
+      const latestTurn =
+        interruptResolved &&
+        activity.turnId !== null &&
+        thread.latestTurn?.turnId === activity.turnId
+          ? {
+              ...thread.latestTurn,
+              state: "interrupted" as const,
+              startedAt: thread.latestTurn.startedAt ?? activity.createdAt,
+              completedAt: activity.createdAt,
+            }
+          : thread.latestTurn;
 
       return {
         kind: "updated",
-        thread: { ...thread, activities, updatedAt: event.occurredAt },
+        thread: { ...thread, activities, latestTurn, updatedAt: event.occurredAt },
       };
     }
 

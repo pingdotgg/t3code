@@ -16,15 +16,22 @@
  * @module ThreadBackgroundLivenessService
  */
 import { INERT_TASK_TYPES, MONITOR_TASK_TYPES } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 
 export type ThreadBackgroundLiveness = "working" | "monitoring" | null;
 
+interface ThreadLiveAgentActivityIds {
+  readonly startedActivityId?: string;
+  readonly latestUpdatedActivityId?: string;
+}
+
 interface ThreadLivenessState {
-  readonly agents: Set<string>;
-  readonly monitors: Set<string>;
+  readonly agents: Map<string, ThreadLiveAgentActivityIds>;
+  readonly monitors: Map<string, string | undefined>;
 }
 
 // Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
@@ -40,6 +47,18 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "cancelled",
   "interrupted",
 ]);
+const TERMINAL_TOMBSTONE_CAPACITY = 10_000;
+const TERMINAL_TOMBSTONE_TTL_MS = 2 * 60 * 60 * 1_000;
+
+interface TerminalTombstone {
+  readonly threadId: string;
+  readonly expiresAt: number;
+}
+
+export interface ThreadLiveAgentAnchors {
+  readonly taskId: string;
+  readonly activityIds: ReadonlyArray<string>;
+}
 
 export class ThreadBackgroundLivenessService extends Context.Service<
   ThreadBackgroundLivenessService,
@@ -59,28 +78,72 @@ export class ThreadBackgroundLivenessService extends Context.Service<
       readonly status: string | undefined;
       readonly kind: "started" | "progress" | "updated" | "completed";
       readonly agentId?: string | undefined;
+      readonly activityId?: string | undefined;
     }) => void;
 
     /** Session death orphans all of a thread's background work. */
     readonly clearThreadLiveness: (threadId: string) => void;
+
+    /** Rebuild one thread after revert from the lifecycle rows that survived pruning. */
+    readonly rebuildThreadLiveness: (
+      threadId: string,
+      activities: ReadonlyArray<{
+        readonly activityId: string;
+        readonly kind: string;
+        readonly payload: unknown;
+      }>,
+    ) => void;
 
     /**
      * Two-state vocabulary by design: any live agent work is "working";
      * "monitoring" only when watch loops are the ONLY live work.
      */
     readonly getThreadBackgroundLiveness: (threadId: string) => ThreadBackgroundLiveness;
+
+    /** Stable copy of live agent task IDs for cold-start projection anchors. */
+    readonly getThreadLiveAgentIds: (threadId: string) => ReadonlySet<string>;
+
+    /** Indexed lifecycle row IDs retained at constant cost per live agent. */
+    readonly getThreadLiveAgentActivityIds: (threadId: string) => ReadonlySet<string>;
+
+    /** Stable copy of all live task IDs for cold-start liveness reconciliation. */
+    readonly getThreadLiveTaskIds: (threadId: string) => ReadonlySet<string>;
+
+    /** Indexed lifecycle row IDs retained at constant cost per live task. */
+    readonly getThreadLiveTaskActivityIds: (threadId: string) => ReadonlySet<string>;
+
+    /** Live-agent anchors grouped newest-first for bounded projection reads. */
+    readonly getThreadLiveAgentAnchors: (threadId: string) => ReadonlyArray<ThreadLiveAgentAnchors>;
   }
 >()("t3/orchestration/ThreadBackgroundLiveness/ThreadBackgroundLivenessService") {}
 
-export function make(): ThreadBackgroundLivenessService["Service"] {
+export function make(
+  currentTimeMillis: () => number = () => 0,
+): ThreadBackgroundLivenessService["Service"] {
   const stateByThreadId = new Map<string, ThreadLivenessState>();
+  const terminalTombstones = new Map<string, TerminalTombstone>();
+
+  const taskKey = (threadId: string, taskId: string) => `${threadId}\0${taskId}`;
+
+  const rememberTerminal = (threadId: string, taskId: string, now: number) => {
+    const key = taskKey(threadId, taskId);
+    terminalTombstones.delete(key);
+    terminalTombstones.set(key, { threadId, expiresAt: now + TERMINAL_TOMBSTONE_TTL_MS });
+    while (terminalTombstones.size > TERMINAL_TOMBSTONE_CAPACITY) {
+      const oldestKey = terminalTombstones.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      terminalTombstones.delete(oldestKey);
+    }
+  };
 
   const stateFor = (threadId: string): ThreadLivenessState => {
     const existing = stateByThreadId.get(threadId);
     if (existing) {
       return existing;
     }
-    const created: ThreadLivenessState = { agents: new Set(), monitors: new Set() };
+    const created: ThreadLivenessState = { agents: new Map(), monitors: new Map() };
     stateByThreadId.set(threadId, created);
     return created;
   };
@@ -101,57 +164,150 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     }
   };
 
-  return {
-    recordTaskLiveness: (input) => {
-      const taskType = input.taskType;
-      if (taskType !== undefined && INERT_TASK_TYPES.has(taskType)) {
-        drop(input.threadId, input.taskId);
-        return;
-      }
-      // A subagent's internal non-agent work (its own shells/monitors) is
-      // covered by the owning agent's liveness. Nested agents fall through:
-      // they can outlive their parent (review finding).
-      if (
-        input.agentId !== undefined &&
-        (taskType === undefined || MONITOR_TASK_TYPES.has(taskType))
-      ) {
-        drop(input.threadId, input.taskId);
-        return;
-      }
-
-      // Idle counts as not-live: a resting (resumable) Codex child isn't
-      // doing anything, and an all-idle fleet must not pin Working.
-      const terminal =
-        input.kind === "completed" ||
-        input.status === "idle" ||
-        (input.status !== undefined && TERMINAL_STATUSES.has(input.status));
-      if (terminal) {
-        drop(input.threadId, input.taskId);
-        return;
-      }
-
-      // Status-free progress is a description tick, not a restart. A delayed
-      // progress event after idle must not put the task back in the live set
-      // (#7128).
-      if (input.kind === "progress" && input.status === undefined) {
-        const existing = stateByThreadId.get(input.threadId);
-        const stillLive =
-          existing !== undefined &&
-          (existing.agents.has(input.taskId) || existing.monitors.has(input.taskId));
-        if (!stillLive) {
-          return;
-        }
-      }
-
+  const recordTaskLiveness: ThreadBackgroundLivenessService["Service"]["recordTaskLiveness"] = (
+    input,
+  ) => {
+    const now = currentTimeMillis();
+    const tombstoneKey = taskKey(input.threadId, input.taskId);
+    const tombstone = terminalTombstones.get(tombstoneKey);
+    if (tombstone !== undefined && tombstone.expiresAt <= now) {
+      terminalTombstones.delete(tombstoneKey);
+    }
+    const previousState = stateByThreadId.get(input.threadId);
+    const previousAgent = previousState?.agents.get(input.taskId);
+    const previousMonitorActivityId = previousState?.monitors.get(input.taskId);
+    const wasLive =
+      previousState?.agents.has(input.taskId) === true ||
+      previousState?.monitors.has(input.taskId) === true;
+    // Idle counts as not-live: a resting (resumable) Codex child isn't doing
+    // anything, and an all-idle fleet must not pin Working. Unlike terminal
+    // statuses this records no tombstone, so a later explicit running update
+    // or a new start can resume it.
+    if (input.status === "idle") {
       drop(input.threadId, input.taskId);
-      const state = stateFor(input.threadId);
-      const bucket =
-        taskType !== undefined && MONITOR_TASK_TYPES.has(taskType) ? state.monitors : state.agents;
-      bucket.add(input.taskId);
-    },
+      return;
+    }
+    const terminal =
+      input.kind === "completed" ||
+      (input.status !== undefined && TERMINAL_STATUSES.has(input.status));
+    if (terminal) {
+      drop(input.threadId, input.taskId);
+      rememberTerminal(input.threadId, input.taskId, now);
+      return;
+    }
 
-    clearThreadLiveness: (threadId) => {
+    if (terminalTombstones.has(tombstoneKey)) {
+      if (input.kind !== "started") {
+        return;
+      }
+      terminalTombstones.delete(tombstoneKey);
+    }
+
+    // Status-free progress is a description tick, not a restart. A delayed
+    // progress event after idle must not put the task back in the live set
+    // (#7128).
+    if (input.kind === "progress" && input.status === undefined && !wasLive) {
+      return;
+    }
+
+    const taskType = input.taskType;
+    if (taskType !== undefined && INERT_TASK_TYPES.has(taskType)) {
+      drop(input.threadId, input.taskId);
+      return;
+    }
+    // Nested agents can outlive their parents; only their internal work is covered.
+    if (
+      input.agentId !== undefined &&
+      (taskType === undefined || MONITOR_TASK_TYPES.has(taskType))
+    ) {
+      drop(input.threadId, input.taskId);
+      return;
+    }
+
+    drop(input.threadId, input.taskId);
+    const state = stateFor(input.threadId);
+    if (taskType !== undefined && MONITOR_TASK_TYPES.has(taskType)) {
+      state.monitors.set(input.taskId, input.activityId ?? previousMonitorActivityId);
+    } else {
+      const startedActivityId =
+        previousAgent?.startedActivityId ??
+        (input.kind === "started" ? input.activityId : undefined);
+      const latestUpdatedActivityId =
+        input.kind === "updated" && input.activityId
+          ? input.activityId
+          : previousAgent?.latestUpdatedActivityId;
+      const activityIds: ThreadLiveAgentActivityIds = {};
+      if (startedActivityId) {
+        Object.assign(activityIds, { startedActivityId });
+      }
+      if (latestUpdatedActivityId) {
+        Object.assign(activityIds, { latestUpdatedActivityId });
+      }
+      state.agents.set(input.taskId, activityIds);
+    }
+  };
+
+  const clearThreadLiveness = (threadId: string) => {
+    const state = stateByThreadId.get(threadId);
+    if (state) {
+      const now = currentTimeMillis();
+      for (const taskId of state.agents.keys()) {
+        rememberTerminal(threadId, taskId, now);
+      }
+      for (const taskId of state.monitors.keys()) {
+        rememberTerminal(threadId, taskId, now);
+      }
+    }
+    stateByThreadId.delete(threadId);
+  };
+
+  const clearThreadTombstones = (threadId: string) => {
+    for (const [key, tombstone] of terminalTombstones) {
+      if (tombstone.threadId === threadId) {
+        terminalTombstones.delete(key);
+      }
+    }
+  };
+
+  return {
+    recordTaskLiveness,
+
+    clearThreadLiveness,
+
+    rebuildThreadLiveness: (threadId, activities) => {
       stateByThreadId.delete(threadId);
+      clearThreadTombstones(threadId);
+      for (const activity of activities) {
+        const kind =
+          activity.kind === "task.started"
+            ? "started"
+            : activity.kind === "task.progress"
+              ? "progress"
+              : activity.kind === "task.updated"
+                ? "updated"
+                : activity.kind === "task.completed"
+                  ? "completed"
+                  : null;
+        if (kind === null || !Predicate.isObject(activity.payload)) {
+          continue;
+        }
+        const taskId = activity.payload.taskId;
+        if (!Predicate.isString(taskId)) {
+          continue;
+        }
+        const taskType = activity.payload.taskType;
+        const status = activity.payload.status;
+        const agentId = activity.payload.agentId;
+        recordTaskLiveness({
+          threadId,
+          taskId,
+          taskType: Predicate.isString(taskType) ? taskType : undefined,
+          status: Predicate.isString(status) ? status : undefined,
+          agentId: Predicate.isString(agentId) ? agentId : undefined,
+          activityId: activity.activityId,
+          kind,
+        });
+      }
     },
 
     getThreadBackgroundLiveness: (threadId) => {
@@ -167,7 +323,56 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
       }
       return null;
     },
+
+    getThreadLiveAgentIds: (threadId) =>
+      new Set(stateByThreadId.get(threadId)?.agents.keys() ?? []),
+
+    getThreadLiveAgentActivityIds: (threadId) => {
+      const activityIds = new Set<string>();
+      for (const agent of stateByThreadId.get(threadId)?.agents.values() ?? []) {
+        if (agent.startedActivityId) activityIds.add(agent.startedActivityId);
+        if (agent.latestUpdatedActivityId) activityIds.add(agent.latestUpdatedActivityId);
+      }
+      return activityIds;
+    },
+
+    getThreadLiveTaskIds: (threadId) => {
+      const state = stateByThreadId.get(threadId);
+      return new Set([...(state?.agents.keys() ?? []), ...(state?.monitors.keys() ?? [])]);
+    },
+
+    getThreadLiveTaskActivityIds: (threadId) => {
+      const activityIds = new Set<string>();
+      const state = stateByThreadId.get(threadId);
+      for (const agent of state?.agents.values() ?? []) {
+        if (agent.startedActivityId) activityIds.add(agent.startedActivityId);
+        if (agent.latestUpdatedActivityId) activityIds.add(agent.latestUpdatedActivityId);
+      }
+      for (const monitorActivityId of state?.monitors.values() ?? []) {
+        if (monitorActivityId) activityIds.add(monitorActivityId);
+      }
+      return activityIds;
+    },
+
+    getThreadLiveAgentAnchors: (threadId) => {
+      const agents = stateByThreadId.get(threadId)?.agents;
+      if (!agents) {
+        return [];
+      }
+      return [...agents.entries()].toReversed().map(([taskId, agent]) => ({
+        taskId,
+        activityIds: [agent.latestUpdatedActivityId, agent.startedActivityId].filter(
+          (activityId): activityId is string => activityId !== undefined,
+        ),
+      }));
+    },
   };
 }
 
-export const layer = Layer.effect(ThreadBackgroundLivenessService, Effect.sync(make));
+export const layer = Layer.effect(
+  ThreadBackgroundLivenessService,
+  Effect.gen(function* () {
+    const clock = yield* Clock.Clock;
+    return make(() => clock.currentTimeMillisUnsafe());
+  }),
+);

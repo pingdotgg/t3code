@@ -42,6 +42,16 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+/**
+ * Facade-owned lifecycle hook invoked once a provider has made a new or
+ * steered turn observable in its session state. Adapters whose start call
+ * awaits prompt completion invoke it immediately before that wait; the facade
+ * observes non-blocking adapters when sendTurn returns.
+ */
+export interface ProviderTurnStartObserver {
+  readonly onTurnStarted: Effect.Effect<void>;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -61,6 +71,7 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
+    observer?: ProviderTurnStartObserver,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
   /**

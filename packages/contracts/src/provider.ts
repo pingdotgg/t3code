@@ -88,6 +88,13 @@ export type ProviderTurnStartResult = typeof ProviderTurnStartResult.Type;
 export const ProviderInterruptTurnInput = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  /**
+   * Provider-session snapshot used for an atomic guarded interrupt. These
+   * fields are internal to the server facade: when present, the adapter
+   * session must still match immediately before the interrupt is dispatched.
+   */
+  expectedTurnId: Schema.optional(Schema.NullOr(TurnId)),
+  expectedSessionUpdatedAt: Schema.optional(IsoDateTime),
 });
 export type ProviderInterruptTurnInput = typeof ProviderInterruptTurnInput.Type;
 

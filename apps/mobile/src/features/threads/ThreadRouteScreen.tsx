@@ -7,15 +7,16 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { CommandId, EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
@@ -27,6 +28,7 @@ import {
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 
@@ -50,6 +52,11 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
+import {
+  buildBackgroundWorkInterruptInput,
+  createBackgroundWorkStopGuard,
+  findBackgroundWorkStopResolution,
+} from "./backgroundWorkStop";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -192,6 +199,9 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
+    selectedThread?.environmentId ?? null,
+  );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -214,6 +224,15 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const [pendingStopCommandId, setPendingStopCommandId] = useState<CommandId | null>(null);
+  const stopThreadCapabilityPending = selectedEnvironmentServerConfig === null;
+  const [stopThreadGuard] = useState(() =>
+    createBackgroundWorkStopGuard(setPendingStopCommandId, {
+      onTimeout: (outcome) => {
+        Alert.alert(outcome.title, outcome.message);
+      },
+    }),
+  );
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -233,6 +252,28 @@ function ThreadRouteContent(
     }
     return null;
   })();
+  useEffect(() => {
+    if (pendingStopCommandId === null || selectedThreadDetail === null) {
+      return;
+    }
+    const resolution = findBackgroundWorkStopResolution(
+      selectedThreadDetail.activities,
+      pendingStopCommandId,
+    );
+    if (resolution !== null) {
+      stopThreadGuard.resolve();
+      if (resolution.alert !== null) {
+        Alert.alert(resolution.alert.title, resolution.alert.message);
+      }
+    }
+  }, [pendingStopCommandId, selectedThreadDetail, stopThreadGuard]);
+
+  useEffect(() => {
+    return () => {
+      stopThreadGuard.resolve();
+    };
+  }, [stopThreadGuard]);
+
   useEffect(() => {
     if (
       fileInspector.supported &&
@@ -479,23 +520,49 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (
-      !selectedThread ||
-      (selectedThread.session?.status !== "running" &&
-        selectedThread.session?.status !== "starting")
-    ) {
+    if (!selectedThread) {
       return;
     }
-    return interruptThreadTurn({
-      environmentId: selectedThread.environmentId,
-      input: {
-        threadId: selectedThread.id,
-        ...(selectedThread.session.activeTurnId
-          ? { turnId: selectedThread.session.activeTurnId }
-          : {}),
-      },
+    if (selectedEnvironmentServerConfig === null) {
+      Alert.alert(
+        "Server configuration loading",
+        "Wait for the environment configuration to load before stopping work.",
+      );
+      return;
+    }
+    const commandId = CommandId.make(uuidv4());
+    const guardedInterrupt =
+      selectedEnvironmentServerConfig.environment.capabilities.guardedInterrupt === true;
+    if (!guardedInterrupt) {
+      Alert.alert(
+        "Server update required",
+        "Update this environment before stopping background work safely.",
+      );
+      return;
+    }
+    const interruptInput = buildBackgroundWorkInterruptInput(
+      selectedThread,
+      commandId,
+      guardedInterrupt,
+    );
+    if (interruptInput === null) {
+      Alert.alert(
+        "Turn still starting",
+        "Try Stop again once the turn is running so the latest work can be interrupted safely.",
+      );
+      return;
+    }
+    return stopThreadGuard.run(commandId, async (attempt) => {
+      const result = await interruptThreadTurn({
+        environmentId: selectedThread.environmentId,
+        input: interruptInput,
+      });
+      if (result._tag === "Failure") {
+        attempt.resolve();
+      }
+      return result;
     });
-  }, [interruptThreadTurn, selectedThread]);
+  }, [interruptThreadTurn, selectedEnvironmentServerConfig, selectedThread, stopThreadGuard]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -798,6 +865,8 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
+          stopThreadCapabilityPending={stopThreadCapabilityPending}
+          stopThreadInFlight={pendingStopCommandId !== null}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}

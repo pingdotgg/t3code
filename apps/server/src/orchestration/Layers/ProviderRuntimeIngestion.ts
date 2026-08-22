@@ -15,6 +15,7 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
+  type OrchestrationSession,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
@@ -359,6 +360,26 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
   return fields;
 }
 
+function hasTaskProgressState(
+  event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
+): boolean {
+  return (
+    event.payload.typedUsage === undefined ||
+    event.payload.summary !== undefined ||
+    event.payload.lastToolName !== undefined ||
+    event.payload.status !== undefined ||
+    event.payload.error !== undefined
+  );
+}
+
+function taskProgressActivityId(
+  event: Extract<ProviderRuntimeEvent, { type: "task.progress" }>,
+): EventId {
+  return EventId.make(
+    `${hasTaskProgressState(event) ? "task-progress" : "task-usage"}:${event.threadId}:${event.payload.taskId}`,
+  );
+}
+
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
@@ -579,12 +600,7 @@ export function runtimeEventToActivities(
         event.payload.description.trim().length > 0
           ? { title: truncateDetail(event.payload.description, 120) }
           : {};
-      const hasProgressState =
-        event.payload.typedUsage === undefined ||
-        event.payload.summary !== undefined ||
-        event.payload.lastToolName !== undefined ||
-        event.payload.status !== undefined ||
-        event.payload.error !== undefined;
+      const hasProgressState = hasTaskProgressState(event);
       return [
         ...(hasProgressState
           ? [
@@ -1635,24 +1651,69 @@ const make = Effect.gen(function* () {
             );
           }
 
-          yield* orchestrationEngine.dispatch({
-            type: "thread.session.set",
-            commandId: yield* providerCommandId(event, "thread-session-set"),
+          const providerSession =
+            event.type === "turn.started"
+              ? (yield* providerService.listSessions()).find(
+                  (session) => session.threadId === thread.id,
+                )
+              : undefined;
+          const providerLifecycleUpdatedAt =
+            providerSession !== undefined && sameId(providerSession.activeTurnId, eventTurnId)
+              ? providerSession.updatedAt
+              : undefined;
+          const nextSession: OrchestrationSession = {
             threadId: thread.id,
-            session: {
+            status,
+            providerName: event.provider,
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: nextActiveTurnId,
+            lastError,
+            updatedAt: now,
+          };
+          if (event.providerInstanceId !== undefined) {
+            Object.assign(nextSession, { providerInstanceId: event.providerInstanceId });
+          }
+          const authoritativeLifecycleUpdatedAt =
+            providerLifecycleUpdatedAt ?? thread.session?.providerLifecycleUpdatedAt;
+          if (authoritativeLifecycleUpdatedAt !== undefined) {
+            Object.assign(nextSession, {
+              providerLifecycleUpdatedAt: authoritativeLifecycleUpdatedAt,
+            });
+          }
+          const currentSession = thread.session;
+          const sessionStateUnchanged =
+            currentSession !== null &&
+            currentSession.status === nextSession.status &&
+            currentSession.providerName === nextSession.providerName &&
+            currentSession.providerInstanceId === nextSession.providerInstanceId &&
+            currentSession.runtimeMode === nextSession.runtimeMode &&
+            currentSession.activeTurnId === nextSession.activeTurnId &&
+            currentSession.lastError === nextSession.lastError &&
+            currentSession.providerLifecycleUpdatedAt === nextSession.providerLifecycleUpdatedAt;
+
+          if (!sessionStateUnchanged) {
+            const command = {
+              type: "thread.session.set",
+              commandId: yield* providerCommandId(event, "thread-session-set"),
               threadId: thread.id,
-              status,
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: nextActiveTurnId,
-              lastError,
-              updatedAt: now,
-            },
-            createdAt: now,
-          });
+              session: nextSession,
+              createdAt: now,
+            } as const;
+            if (thread.session !== null) {
+              Object.assign(command, {
+                expectedSessionUpdatedAt: thread.session.updatedAt,
+              });
+            }
+            yield* orchestrationEngine.dispatch(command).pipe(
+              Effect.catchTags({
+                OrchestrationCommandInvariantError: (error) =>
+                  error.commandType === "thread.session.set" &&
+                  error.detail === "Command produced no events."
+                    ? Effect.void
+                    : Effect.fail(error),
+              }),
+            );
+          }
         }
       }
 
@@ -1885,22 +1946,28 @@ const make = Effect.gen(function* () {
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
+          const errorSession: OrchestrationSession = {
+            threadId: thread.id,
+            status: "error",
+            providerName: event.provider,
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: eventTurnId ?? null,
+            lastError: runtimeErrorMessage,
+            updatedAt: now,
+          };
+          if (event.providerInstanceId !== undefined) {
+            Object.assign(errorSession, { providerInstanceId: event.providerInstanceId });
+          }
+          if (thread.session?.providerLifecycleUpdatedAt !== undefined) {
+            Object.assign(errorSession, {
+              providerLifecycleUpdatedAt: thread.session.providerLifecycleUpdatedAt,
+            });
+          }
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "runtime-error-session-set"),
             threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "error",
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: eventTurnId ?? null,
-              lastError: runtimeErrorMessage,
-              updatedAt: now,
-            },
+            session: errorSession,
             createdAt: now,
           });
         }
@@ -1994,6 +2061,9 @@ const make = Effect.gen(function* () {
             taskType: payload.taskType,
             status: payload.status,
             agentId: payload.agentId,
+            activityId: String(
+              event.type === "task.progress" ? taskProgressActivityId(event) : event.eventId,
+            ),
             kind:
               event.type === "task.started"
                 ? "started"

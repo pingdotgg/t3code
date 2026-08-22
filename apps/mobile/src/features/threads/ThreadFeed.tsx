@@ -800,6 +800,7 @@ function renderFeedEntry(
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: TurnId | null;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
+    readonly onOpenAgents: () => void;
     readonly onToggleWorkGroup: (groupId: string) => void;
     readonly onToggleWorkRow: (rowId: string) => void;
     readonly onToggleTurnFold: (turnId: TurnId) => void;
@@ -1002,6 +1003,7 @@ function renderFeedEntry(
       expandedRows={props.expandedWorkRows}
       iconSubtleColor={iconSubtleColor}
       onCopyRow={props.onCopyWorkRow}
+      onOpenAgents={props.onOpenAgents}
       onToggleRow={props.onToggleWorkRow}
     />
   );
@@ -1758,6 +1760,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setExpandedImage({ uri, headers });
   }, []);
 
+  const onOpenAgents = useCallback(() => {
+    navigation.navigate("ThreadAgents", {
+      environmentId: String(props.environmentId),
+      threadId: String(props.threadId),
+    });
+  }, [navigation, props.environmentId, props.threadId]);
+
   // Rows whose height is known before they ever render. Without this, every
   // row above the viewport is assumed to be estimatedItemSize tall, and
   // scrolling up through unmeasured content corrects each row's height as it
@@ -1799,6 +1808,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         terminalAssistantMessageIds,
         unsettledTurnId,
         onCopyWorkRow,
+        onOpenAgents,
         onToggleWorkGroup,
         onToggleWorkRow,
         onToggleTurnFold,
@@ -1824,6 +1834,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentBubbleWidth,
       userBubbleMaxWidth,
       onCopyWorkRow,
+      onOpenAgents,
       onMarkdownLinkPress,
       onPressImage,
       onToggleTurnFold,

@@ -1037,11 +1037,48 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const hasGuard =
+        command.expectedTurnId !== undefined || command.expectedSessionUpdatedAt !== undefined;
+      const actualTurnId = thread.session?.activeTurnId ?? null;
+      const guardDecision = hasGuard
+        ? {
+            outcome:
+              (command.expectedTurnId !== undefined &&
+                (command.expectedSessionUpdatedAt === undefined ||
+                  command.expectedTurnId !== actualTurnId)) ||
+              (command.expectedSessionUpdatedAt !== undefined &&
+                command.expectedSessionUpdatedAt !== thread.session?.providerLifecycleUpdatedAt)
+                ? ("work-changed" as const)
+                : ("matched" as const),
+            actualTurnId,
+          }
+        : undefined;
+      const payload: Extract<
+        OrchestrationEvent,
+        { type: "thread.turn-interrupt-requested" }
+      >["payload"] = {
+        threadId: command.threadId,
+        createdAt: command.createdAt,
+      };
+      if (command.turnId !== undefined) {
+        Object.assign(payload, { turnId: command.turnId });
+      }
+      if (command.expectedTurnId !== undefined) {
+        Object.assign(payload, { expectedTurnId: command.expectedTurnId });
+      }
+      if (command.expectedSessionUpdatedAt !== undefined) {
+        Object.assign(payload, {
+          expectedSessionUpdatedAt: command.expectedSessionUpdatedAt,
+        });
+      }
+      if (guardDecision !== undefined) {
+        Object.assign(payload, { guardDecision });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1050,11 +1087,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           commandId: command.commandId,
         })),
         type: "thread.turn-interrupt-requested",
-        payload: {
-          threadId: command.threadId,
-          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
-          createdAt: command.createdAt,
-        },
+        payload,
       };
     }
 
@@ -1180,6 +1213,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (
+        command.expectedSessionUpdatedAt !== undefined &&
+        command.expectedSessionUpdatedAt !== thread.session?.updatedAt
+      ) {
+        return [];
+      }
       const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
