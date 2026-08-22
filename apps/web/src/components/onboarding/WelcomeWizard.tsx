@@ -34,7 +34,7 @@ import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import { partitionOnboardingProjects } from "../../onboarding/projectImport.logic";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { newProjectId } from "../../lib/utils";
+import { newProjectId, randomUUID } from "../../lib/utils";
 import { resolveDefaultProviderModelSelection } from "../../providerInstances";
 import { agentSessionScan } from "../../state/agentSessions";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
@@ -463,11 +463,19 @@ function PairDirectStep({
   const [pairingUrl, setPairingUrl] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isPairing, setIsPairing] = useState(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const submit = async () => {
     setIsPairing(true);
     setErrorMessage("");
     const result = await connectPairingEnvironment({ pairingUrl });
+    if (!mountedRef.current) return;
     setIsPairing(false);
     if (result._tag === "Success") {
       onPaired();
@@ -767,11 +775,6 @@ function AgentCard({
  * the server validates only the cwd) and pre-types the install or login
  * command without submitting, so the user reviews and presses Enter.
  */
-// Each drawer mount gets its own PTY: install and sign-in for the same
-// driver must not share a session, or the second open would reattach and
-// either duplicate the pre-typed command or feed it to a running process.
-let onboardingTerminalSequence = 0;
-
 function AgentInstallTerminal({
   environmentId,
   driver,
@@ -796,10 +799,7 @@ function AgentInstallTerminal({
   const writeTerminal = useAtomCommand(terminalEnvironment.write, { reportFailure: false });
   const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
   const preparedRef = useRef(false);
-  const [terminalId] = useState(() => {
-    onboardingTerminalSequence += 1;
-    return `onboarding-${driver}-${onboardingTerminalSequence}`;
-  });
+  const [terminalId] = useState(() => `onboarding-${driver}-${randomUUID()}`);
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID),
     [environmentId],
