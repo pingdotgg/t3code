@@ -733,6 +733,46 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("matches Chrome-style thread traversal shortcuts", () => {
+    const keybindings = compile([
+      {
+        shortcut: {
+          key: "tab",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          modKey: false,
+        },
+        command: "thread.next",
+      },
+      {
+        shortcut: {
+          key: "tab",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: false,
+          modKey: false,
+        },
+        command: "thread.previous",
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "Tab", ctrlKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "thread.next",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "Tab", ctrlKey: true, shiftKey: true }), keybindings, {
+        platform: "Linux",
+      }),
+      "thread.previous",
+    );
+  });
+
   it("matches Option-modified letters using the physical key code on macOS", () => {
     assert.strictEqual(
       resolveShortcutCommand(
