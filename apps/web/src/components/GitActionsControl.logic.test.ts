@@ -381,7 +381,7 @@ describe("when: ref has diverged from upstream", () => {
   it("resolveQuickAction returns a disabled sync hint", () => {
     const quick = resolveQuickAction(status({ aheadCount: 2, behindCount: 1 }), false);
     assert.deepEqual(quick, {
-      label: "Sync ref",
+      label: "Sync branch",
       disabled: true,
       kind: "show_hint",
       hint: "Branch has diverged from upstream. Rebase/merge first.",
@@ -895,9 +895,9 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     });
 
     assert.deepEqual(copy, {
-      title: "Push to default ref?",
+      title: "Push to default branch?",
       description:
-        'This action will push local commits on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will push local commits on "main". You can continue on this branch or create a feature branch and run the same action there.',
       continueLabel: "Push to main",
     });
   });
@@ -910,9 +910,9 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     });
 
     assert.deepEqual(copy, {
-      title: "Push & create PR from default ref?",
+      title: "Push & create PR from default branch?",
       description:
-        'This action will push local commits and create a pull request on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will push local commits and create a pull request on "main". You can continue on this branch or create a feature branch and run the same action there.',
       continueLabel: "Push & create PR",
     });
   });
@@ -925,9 +925,9 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     });
 
     assert.deepEqual(copy, {
-      title: "Commit, push & create PR from default ref?",
+      title: "Commit, push & create PR from default branch?",
       description:
-        'This action will commit, push, and create a pull request on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will commit, push, and create a pull request on "main". You can continue on this branch or create a feature branch and run the same action there.',
       continueLabel: "Commit, push & create PR",
     });
   });
