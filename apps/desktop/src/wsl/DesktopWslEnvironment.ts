@@ -24,6 +24,7 @@ const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
 const RUNTIME_INSTALL_TIMEOUT = Duration.minutes(2);
 const RUNTIME_PRUNE_TIMEOUT = Duration.seconds(30);
+const RUNTIME_INVALIDATE_TIMEOUT = Duration.seconds(15);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
@@ -106,6 +107,8 @@ export class DesktopWslEnvironment extends Context.Service<
       archive: WslRuntimeArchive,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+    // Marks a staged runtime as unusable so the next launch reinstalls it.
+    readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     readonly ensureNodePty: (
       distro: string | null,
       linuxAppRoot: string,
@@ -402,6 +405,20 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     // behavior instead of failing a launch.
     `find "$runtime_parent" -maxdepth 1 -type d \\( -name '.*.tmp.*' -o -name '.*.stale.*' \\) -mmin +${String(ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES)} -exec rm -rf -- {} +`,
   ].join("\n");
+};
+
+// Drops the ready marker so the next launch reinstalls the runtime from the
+// archive. Readiness is a presence check by design, so a cached tree whose
+// native payload is present but unloadable (truncated pty.node, a distro whose
+// glibc the binary needs and the tree was copied from another machine) stays
+// ready forever and fails the probe on every launch. Only the probe can see
+// that, so the probe is what revokes the marker. The tree itself is left in
+// place: the install script moves an unready root aside before extracting.
+export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
+  const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
+  return ["set -eu", `rm -f "$HOME/.t3/runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`].join(
+    "\n",
+  );
 };
 
 export const parseWslRuntimeRoot = (stdout: string): string | null => {
@@ -835,6 +852,28 @@ const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function
   });
 });
 
+const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(function* (
+  distro: string | null,
+  runtimeId: string,
+): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const result = yield* runWslShell(
+    distro,
+    buildWslRuntimeInvalidateScript(runtimeId),
+    RUNTIME_INVALIDATE_TIMEOUT,
+    { resolveNode: false },
+  );
+  if (result.transportFailure === null && result.exitCode === 0) return;
+
+  const detail = `${result.stdout}${result.stderr}`.trim().slice(-500);
+  // Best effort: the caller has already fallen back to the mounted tree, so a
+  // failure here only costs the reinstall that would have repaired the cache.
+  yield* Effect.logWarning("Could not invalidate the staged WSL runtime cache.", {
+    distro,
+    runtimeId,
+    detail: detail || `exit ${result.exitCode}`,
+  });
+});
+
 export const probeWslDistros: Effect.Effect<
   readonly WslDistro[],
   DesktopWslDistroListError,
@@ -1034,6 +1073,7 @@ export interface DesktopWslEnvironmentTestStub {
     archive: WslRuntimeArchive,
   ) => PrepareWslRuntimeResult;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly invalidateRuntime?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
   readonly ensureNodePty?: (
     distro: string | null,
     linuxAppRoot: string,
@@ -1064,6 +1104,8 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
           },
         ),
       pruneRuntimes: (distro, runtimeId) => stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void,
+      invalidateRuntime: (distro, runtimeId) =>
+        stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void,
       ensureNodePty: (distro, linuxAppRoot, options) =>
         Effect.succeed(
           stub.ensureNodePty?.(distro, linuxAppRoot, options) ?? {
@@ -1153,6 +1195,10 @@ export const layer = Layer.effect(
       pruneRuntimes: (distro, runtimeId) =>
         provideSpawner(pruneWslRuntimesImpl(distro, runtimeId)).pipe(
           Effect.withSpan("desktop.wsl.pruneRuntimes"),
+        ),
+      invalidateRuntime: (distro, runtimeId) =>
+        provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId)).pipe(
+          Effect.withSpan("desktop.wsl.invalidateRuntime"),
         ),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(

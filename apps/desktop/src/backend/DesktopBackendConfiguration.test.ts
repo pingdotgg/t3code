@@ -496,6 +496,221 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolveWsl retires a staged runtime that cannot load node-pty", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const archiveHash = "c".repeat(64);
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(archivePath, "archive");
+      yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
+
+      const stagedAppRoot = `/home/test/.t3/runtime/1.2.3-x64-${archiveHash}`;
+      const mountedAppRoot = "/mnt/c/app.asar.unpacked";
+      const observedNodePtyRoots: string[] = [];
+      const invalidatedRuntimeIds: string[] = [];
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslServerTree.layerTest({
+                result: { ok: true, root: path.join(baseDir, "app.asar.unpacked") },
+              }),
+            ),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some(mountedAppRoot),
+                prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
+                invalidateRuntime: (_distro, runtimeId) =>
+                  Effect.sync(() => {
+                    invalidatedRuntimeIds.push(runtimeId);
+                  }),
+                // The staged tree passes the install's presence check but its
+                // pty.node will not load, which only the probe can detect.
+                ensureNodePty: (_distro, root) => {
+                  observedNodePtyRoots.push(root);
+                  return root === stagedAppRoot
+                    ? { ok: false, reason: "pty.node could not be loaded", fatal: true }
+                    : { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                },
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(observedNodePtyRoots, [stagedAppRoot, mountedAppRoot]);
+      assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
+      assert.equal(config.entryPath, entryPath);
+      assert.isUndefined(config.wslRuntimeId);
+      assert.isTrue(Option.isNone(config.preflightFailure));
+      // Without this the broken cache stays ready and every later launch
+      // repeats the failed probe instead of reinstalling.
+      assert.deepEqual(invalidatedRuntimeIds, [`1.2.3-x64-${archiveHash}`]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl keeps the staged runtime when the mounted tree fails too", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const archiveHash = "d".repeat(64);
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(archivePath, "archive");
+      yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
+
+      const invalidatedRuntimeIds: string[] = [];
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+        const failure = Option.getOrThrow(config.preflightFailure);
+
+        // Both copies ship the same prebuilt, so the distro is what is wrong.
+        // Reporting the staged verdict keeps the actionable message and leaves
+        // the cache alone rather than reinstalling hundreds of MB every launch.
+        assert.isTrue(failure.fatal);
+        assert.include(failure.reason, "unsupported CPU architecture");
+        assert.deepEqual(invalidatedRuntimeIds, []);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslServerTree.layerTest({
+                result: { ok: true, root: path.join(baseDir, "app.asar.unpacked") },
+              }),
+            ),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
+                prepareRuntime: () => ({ ok: true, linuxAppRoot: "/home/test/.t3/runtime/cache" }),
+                invalidateRuntime: (_distro, runtimeId) =>
+                  Effect.sync(() => {
+                    invalidatedRuntimeIds.push(runtimeId);
+                  }),
+                ensureNodePty: (_distro, root) => ({
+                  ok: false,
+                  reason:
+                    root === "/home/test/.t3/runtime/cache"
+                      ? "unsupported CPU architecture or incompatible system libraries"
+                      : "mounted tree is broken in some other way",
+                  fatal: true,
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl retries the staged runtime after a transient probe failure", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const archiveHash = "e".repeat(64);
+      yield* fileSystem.writeFileString(archivePath, "archive");
+      yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
+
+      const invalidatedRuntimeIds: string[] = [];
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+        const failure = Option.getOrThrow(config.preflightFailure);
+
+        assert.isFalse(failure.fatal);
+        assert.equal(failure.retryLimit, 12);
+        assert.include(failure.reason, "timed out");
+        assert.deepEqual(invalidatedRuntimeIds, []);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              Layer.succeed(
+                DesktopWslServerTree.DesktopWslServerTree,
+                DesktopWslServerTree.DesktopWslServerTree.of({
+                  // A transport failure says nothing about the staged tree, so
+                  // the retry belongs on the cache, not on the mounted copy.
+                  ensure: Effect.die("A transient probe failure must not extract the fallback"),
+                }),
+              ),
+            ),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
+                prepareRuntime: () => ({ ok: true, linuxAppRoot: "/home/test/.t3/runtime/cache" }),
+                invalidateRuntime: (_distro, runtimeId) =>
+                  Effect.sync(() => {
+                    invalidatedRuntimeIds.push(runtimeId);
+                  }),
+                ensureNodePty: () => ({
+                  ok: false,
+                  reason: "WSL backend preflight timed out while probing for Node.js.",
+                  fatal: false,
+                  retryLimit: 12,
+                }),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "resolveWsl preserves inherited PATH with quote-sensitive values as separate args",
     () =>

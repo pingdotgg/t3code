@@ -248,6 +248,11 @@ export const parseWslRuntimeArchiveHash = (value: string): string | null => {
   return SHA256_HEX_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
 };
 
+type FailedNodePtyResult = Extract<
+  DesktopWslEnvironment.EnsureWslNodePtyResult,
+  { readonly ok: false }
+>;
+
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
   readonly runtimeArchive: DesktopWslEnvironment.WslRuntimeArchive | null;
@@ -304,14 +309,82 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
-  let linuxAppRoot: string | undefined;
-  let windowsEntryPath = environment.backendEntryPath;
-  let runtimeId: string | undefined;
+  const nodePtyOptions = {
+    allowBuild: input.allowBuild,
+    nodeEngineRange: serverPackageJson.engines.node,
+  };
+  const failedNodePty = (result: FailedNodePtyResult) =>
+    ({
+      _tag: "Failed",
+      reason: `WSL node-pty unavailable: ${result.reason}`,
+      fatal: result.fatal,
+      ...(result.retryLimit === undefined ? {} : { retryLimit: result.retryLimit }),
+    }) as const;
+
+  // The mounted server tree is the fallback runtime: the Windows-side copy the
+  // distro reads over /mnt. Slower to launch from, but always installed.
+  const resolveMountedAppRoot = Effect.gen(function* () {
+    const serverTree = yield* wslServerTree.ensure;
+    if (!serverTree.ok) {
+      return { ok: false, reason: serverTree.reason, fatal: serverTree.fatal } as const;
+    }
+    const windowsEntryPath = environment.path.join(serverTree.root, "apps/server/dist/bin.mjs");
+    const entryExists = yield* fileSystem
+      .exists(windowsEntryPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!entryExists) {
+      return {
+        ok: false,
+        reason: `missing server entry at ${windowsEntryPath}`,
+        fatal: true,
+      } as const;
+    }
+    const mountedAppRoot = yield* wslEnv.windowsToWslPath(runningDistro, serverTree.root);
+    return Option.isNone(mountedAppRoot)
+      ? ({
+          ok: false,
+          reason: `wslpath conversion failed for ${serverTree.root}`,
+          fatal: false,
+        } as const)
+      : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
+  });
+
+  // Set once a staged runtime has been ruled out by the probe, and carried
+  // through the mounted attempt: if the mounted tree works the cache is the
+  // broken part and gets invalidated, and if it doesn't the cached verdict is
+  // the one worth reporting, since the fallback can only ever add information.
+  let stagedFailure:
+    | { readonly runtimeId: string; readonly nodePty: FailedNodePtyResult }
+    | undefined;
+
   if (input.runtimeArchive !== null) {
     const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
     if (runtime.ok) {
-      linuxAppRoot = runtime.linuxAppRoot;
-      runtimeId = input.runtimeArchive.runtimeId;
+      const stagedNodePty = yield* wslEnv.ensureNodePty(
+        runningDistro,
+        runtime.linuxAppRoot,
+        nodePtyOptions,
+      );
+      if (stagedNodePty.ok) {
+        return {
+          _tag: "Ready",
+          runningDistro,
+          windowsEntryPath: environment.backendEntryPath,
+          linuxEntryPath: `${runtime.linuxAppRoot}/apps/server/dist/bin.mjs`,
+          nodePath: stagedNodePty.nodePath,
+          resolvedPath: stagedNodePty.resolvedPath,
+          runtimeId: input.runtimeArchive.runtimeId,
+        } as const;
+      }
+      // A transport failure says nothing about the staged tree, so it is
+      // retried against the same cache rather than spending a second probe on
+      // the mounted tree and risking a needless reinstall.
+      if (!stagedNodePty.fatal) return failedNodePty(stagedNodePty);
+      yield* Effect.logWarning(
+        "The staged WSL runtime could not load node-pty; retrying from the mounted server tree.",
+        { reason: stagedNodePty.reason },
+      );
+      stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, nodePty: stagedNodePty };
     } else {
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted server tree instead.",
@@ -320,58 +393,36 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     }
   }
 
-  if (linuxAppRoot === undefined) {
-    const serverTree = yield* wslServerTree.ensure;
-    if (!serverTree.ok) {
-      return {
-        _tag: "Failed",
-        reason: serverTree.reason,
-        fatal: serverTree.fatal,
-      } as const;
-    }
-    windowsEntryPath = environment.path.join(serverTree.root, "apps/server/dist/bin.mjs");
-    const entryExists = yield* fileSystem
-      .exists(windowsEntryPath)
-      .pipe(Effect.orElseSucceed(() => false));
-    if (!entryExists) {
-      return {
-        _tag: "Failed",
-        reason: `missing server entry at ${windowsEntryPath}`,
-        fatal: true,
-      } as const;
-    }
-    const mountedAppRoot = yield* wslEnv.windowsToWslPath(runningDistro, serverTree.root);
-    if (Option.isNone(mountedAppRoot)) {
-      return {
-        _tag: "Failed",
-        reason: `wslpath conversion failed for ${serverTree.root}`,
-        fatal: false,
-      } as const;
-    }
-    linuxAppRoot = mountedAppRoot.value;
+  const mounted = yield* resolveMountedAppRoot;
+  if (!mounted.ok) {
+    return stagedFailure
+      ? failedNodePty(stagedFailure.nodePty)
+      : ({ _tag: "Failed", reason: mounted.reason, fatal: mounted.fatal } as const);
   }
 
-  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, linuxAppRoot, {
-    allowBuild: input.allowBuild,
-    nodeEngineRange: serverPackageJson.engines.node,
-  });
+  const nodePtyResult = yield* wslEnv.ensureNodePty(
+    runningDistro,
+    mounted.linuxAppRoot,
+    nodePtyOptions,
+  );
   if (!nodePtyResult.ok) {
-    return {
-      _tag: "Failed",
-      reason: `WSL node-pty unavailable: ${nodePtyResult.reason}`,
-      fatal: nodePtyResult.fatal,
-      ...(nodePtyResult.retryLimit === undefined ? {} : { retryLimit: nodePtyResult.retryLimit }),
-    } as const;
+    return failedNodePty(stagedFailure ? stagedFailure.nodePty : nodePtyResult);
+  }
+
+  // The mounted tree runs what the cache could not, so the cache is the broken
+  // copy: revoke its ready marker so the next launch reinstalls it instead of
+  // reusing a tree that has already been proven unloadable.
+  if (stagedFailure) {
+    yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
   }
 
   return {
     _tag: "Ready",
     runningDistro,
-    windowsEntryPath,
-    linuxEntryPath: `${linuxAppRoot}/apps/server/dist/bin.mjs`,
+    windowsEntryPath: mounted.windowsEntryPath,
+    linuxEntryPath: `${mounted.linuxAppRoot}/apps/server/dist/bin.mjs`,
     nodePath: nodePtyResult.nodePath,
     resolvedPath: nodePtyResult.resolvedPath,
-    ...(runtimeId === undefined ? {} : { runtimeId }),
   } as const;
 });
 

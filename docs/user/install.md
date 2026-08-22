@@ -56,7 +56,8 @@ When the desktop app runs a WSL backend, it installs the matching server runtime
 may take a little longer while that runtime is extracted. Later launches reuse the Linux-local
 copy so startup does not depend on reading application files through `/mnt/c`. After a successful
 launch, T3 Code keeps the current runtime and one previous version for rollback and removes older
-runtime caches automatically.
+runtime caches automatically. If a cached runtime stops working, T3 Code launches from the
+application files under `/mnt/c` instead and reinstalls the runtime on the next launch.
 
 ## Providers
 

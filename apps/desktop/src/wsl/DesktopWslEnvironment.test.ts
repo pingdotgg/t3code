@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeInstallScript,
   buildWslNodeEnvPreamble,
@@ -290,6 +291,17 @@ describe("WSL runtime cache", () => {
     );
     // Age guard: a scratch directory younger than this belongs to a live install.
     expect(script).toContain("-mmin +120 -exec rm -rf -- {} +");
+  });
+
+  it("invalidates a cache by dropping its ready marker, not the tree", () => {
+    const script = buildWslRuntimeInvalidateScript("1.2.3/x64");
+
+    // Readiness is a presence check, so a tree whose pty.node is present but
+    // unloadable stays ready forever unless the probe can revoke the marker.
+    expect(script).toContain('rm -f "$HOME/.t3/runtime/1.2.3_x64/.t3code-wsl-runtime-ready"');
+    // Deleting the tree here would pull it out from under any backend still
+    // running from it; the next install moves an unready root aside instead.
+    expect(script).not.toContain("rm -rf");
   });
 });
 
