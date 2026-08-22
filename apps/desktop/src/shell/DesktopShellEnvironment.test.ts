@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
@@ -69,6 +70,7 @@ function runShellEnvironment(input: {
   readonly platform: NodeJS.Platform;
   readonly handler: (command: ChildProcess.Command) => string;
   readonly failure?: PlatformError.PlatformError;
+  readonly fs?: FileSystem.FileSystem;
 }) {
   const environmentLayer = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -85,16 +87,22 @@ function runShellEnvironment(input: {
     ),
   );
 
-  const program = Effect.gen(function* () {
+  const coreProgram = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
     yield* shellEnvironment.installIntoProcess;
   }).pipe(
-    Effect.provide(
-      DesktopShellEnvironment.layer.pipe(
-        Layer.provide(Layer.mergeAll(environmentLayer, NodeServices.layer, spawnerLayer)),
-      ),
-    ),
+    Effect.provide(DesktopShellEnvironment.layer),
+    Effect.provide(Layer.mergeAll(environmentLayer, spawnerLayer)),
   );
+
+  const program = input.fs
+    ? coreProgram.pipe(
+        Effect.provideService(FileSystem.FileSystem, input.fs),
+        Effect.provide(NodeServices.layer)
+      )
+    : coreProgram.pipe(
+        Effect.provide(NodeServices.layer)
+      );
 
   return withProcessEnv(input.env, program);
 }
@@ -336,6 +344,7 @@ describe("DesktopShellEnvironment", () => {
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
+          "C:\\Users\\testuser\\.cargo\\bin",
           "C:\\Custom\\Bin",
         ].join(";"),
       );
@@ -445,4 +454,151 @@ describe("DesktopShellEnvironment", () => {
       Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
     );
   });
+
+  it.effect("skips ALL PowerShell probes when node is available statically with quotes and no fnm", () =>
+    Effect.gen(function* () {
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = { PATH: `"${mockDir}"`, USERPROFILE: "C:\\Users\\test" };
+      const commands: ChildProcess.Command[] = [];
+
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe")),
+        readFile: () => Effect.fail(PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "readFile", pathOrDescriptor: "" })),
+      } as unknown as FileSystem.FileSystem;
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: mockDir });
+        },
+      });
+
+      assert.equal(commands.length, 0);
+      assert.isTrue(env.PATH!.includes(`"${mockDir}"`));
+    }),
+  );
+
+  it.effect("runs PowerShell probes when node is available but profile references fnm", () =>
+    Effect.gen(function* () {
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = { PATH: mockDir, USERPROFILE: "C:\\Users\\test" };
+      const commands: ChildProcess.Command[] = [];
+
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe")),
+        readFile: () => Effect.succeed(textEncoder.encode('Invoke-Expression "fnm env"')),
+      } as unknown as FileSystem.FileSystem;
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: mockDir, FNM_DIR: "C:\\mock\\fnm" });
+        },
+      });
+
+      assert.equal(commands.length, 2);
+      
+      const noProfileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && c.args.includes("-NoProfile"));
+      const profileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && !c.args.includes("-NoProfile"));
+      assert.isTrue(noProfileIdx !== -1);
+      assert.isTrue(profileIdx !== -1);
+      assert.equal(env.FNM_DIR, "C:\\mock\\fnm");
+    }),
+  );
+
+  it.effect("runs PowerShell probes when fnm is referenced only in an OneDrive-redirected profile", () =>
+    Effect.gen(function* () {
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = {
+        PATH: mockDir,
+        USERPROFILE: "C:\\Users\\test",
+        OneDrive: "C:\\Users\\test\\OneDrive",
+      };
+      const commands: ChildProcess.Command[] = [];
+
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe")),
+        readFile: (path: string) =>
+          path.includes("OneDrive")
+            ? Effect.succeed(textEncoder.encode('Invoke-Expression "fnm env"'))
+            : Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "readFile",
+                  pathOrDescriptor: "",
+                }),
+              ),
+      } as unknown as FileSystem.FileSystem;
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: mockDir });
+        },
+      });
+
+      assert.equal(commands.length, 2);
+    }),
+  );
+
+  it.effect("skips ALL PowerShell probes when node is available and profile exists without fnm", () =>
+    Effect.gen(function* () {
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = { PATH: mockDir, USERPROFILE: "C:\\Users\\test" };
+      const commands: ChildProcess.Command[] = [];
+
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe")),
+        readFile: () => Effect.succeed(textEncoder.encode('Write-Host "Hello World"')),
+      } as unknown as FileSystem.FileSystem;
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: mockDir });
+        },
+      });
+
+      assert.equal(commands.length, 0);
+    }),
+  );
+
+  it.effect("skips PowerShell probes when node is in knownWindowsCliDirs but not on PATH", () =>
+    Effect.gen(function* () {
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", LOCALAPPDATA: mockDir, USERPROFILE: "C:\\Users\\test" };
+      const commands: ChildProcess.Command[] = [];
+
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe") && path.includes(mockDir)),
+        readFile: () => Effect.fail(PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "readFile", pathOrDescriptor: "" })),
+      } as unknown as FileSystem.FileSystem;
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "C:\\Windows\\System32" });
+        },
+      });
+
+      assert.equal(commands.length, 0);
+      assert.isTrue(env.PATH!.includes("nodejs"));
+    }),
+  );
 });

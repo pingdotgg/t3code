@@ -212,7 +212,7 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.USERPROFILE).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\.local\\bin`, `${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
+      onSome: (value) => [`${value}\\.local\\bin`, `${value}\\.bun\\bin`, `${value}\\scoop\\shims`, `${value}\\.cargo\\bin`],
     }),
   ),
 ];
@@ -383,12 +383,88 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
 const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWindowsEnvironment")(
   function* (
     config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
+  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> {
+    const fileSystem = yield* FileSystem.FileSystem;
+
+    // Fast pre-check using static paths (no PowerShell required)
+    const staticPaths = mergePaths("win32", [
+      trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
+      readEnvPath(config.env),
+    ]);
+
+    const checkNodeStatically = Effect.gen(function* () {
+      if (Option.isNone(staticPaths)) return false;
+      for (const dir of staticPaths.value.split(";")) {
+        const cleanDir = dir.trim().replace(/^"+|"+$/g, "");
+        if (cleanDir.length === 0) continue;
+        const hasNode = yield* fileSystem.exists(`${cleanDir}\\node.exe`).pipe(
+          Effect.orElseSucceed(() => false)
+        );
+        if (hasNode) return true;
+      }
+      return false;
+    }).pipe(
+      Effect.timeoutOption(Duration.millis(250)),
+      Effect.map(Option.getOrElse(() => false))
+    );
+
+    const checkProfileMentionsFnm = Effect.gen(function* () {
+      const userProfile = config.env.USERPROFILE;
+      if (!userProfile) return true; // unsafe to skip if we can't find the profile
+      const documentsDirs = [`${userProfile}\\Documents`];
+      const oneDrive = trimNonEmpty(config.env.OneDrive);
+      if (Option.isSome(oneDrive)) {
+        documentsDirs.push(`${oneDrive.value}\\Documents`);
+      }
+      const profilePaths = documentsDirs.flatMap((documentsDir) => [
+        `${documentsDir}\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`,
+        `${documentsDir}\\PowerShell\\Microsoft.PowerShell_profile.ps1`,
+        `${documentsDir}\\WindowsPowerShell\\profile.ps1`,
+        `${documentsDir}\\PowerShell\\profile.ps1`,
+      ]);
+      for (const p of profilePaths) {
+        const bytes = yield* fileSystem.readFile(p).pipe(
+          Effect.catchIf(
+            (err) => err.reason._tag === "NotFound",
+            () => Effect.succeed(new Uint8Array(0))
+          )
+        );
+        if (bytes.length > 0) {
+          const textUtf8 = new TextDecoder("utf-8").decode(bytes);
+          const textUtf16 = new TextDecoder("utf-16le").decode(bytes);
+          if (textUtf8.toLowerCase().includes("fnm") || textUtf16.toLowerCase().includes("fnm")) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }).pipe(
+      Effect.orElseSucceed(() => true), // On permission or other errors, assume unsafe to skip
+      Effect.timeoutOption(Duration.millis(250)),
+      Effect.map(Option.getOrElse(() => true))
+    );
+
+    const [nodeFound, profileMentionsFnm] = yield* Effect.all([
+      checkNodeStatically,
+      checkProfileMentionsFnm
+    ], { concurrency: 2 });
+
+    const skipProfile = nodeFound && !profileMentionsFnm;
+
+    // If node is found statically and no fnm profile refs exist, we can skip BOTH PowerShell probes entirely!
+    if (skipProfile) {
+      if (Option.isSome(staticPaths)) {
+        config.env.PATH = staticPaths.value;
+      }
+      return; // Exit early, 0ms startup!
+    }
+
     // Concurrent, not sequential: these two probes are independent (only their
     // results are combined below) and each spawns its own PowerShell. Run in
     // series they sit at offset 0 of desktop.startup, before anything else, and
     // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
-    // startup span, of which desktop.bootstrap is ~30ms.
+    // startup span, of which desktop.bootstrap is ~30ms. Total cost here is
+    // therefore bounded by the slowest single probe.
     const [noProfile, profile] = yield* Effect.all(
       [
         readWindowsEnvironment(["PATH"], { loadProfile: false }),
@@ -396,11 +472,16 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
       ],
       { concurrency: 2 },
     );
-    const mergedPath = mergePaths("win32", [
-      trimNonEmpty(profile.PATH),
+
+    const fastMergedPath = mergePaths("win32", [
       trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
       trimNonEmpty(noProfile.PATH),
       readEnvPath(config.env),
+    ]);
+
+    const mergedPath = mergePaths("win32", [
+      trimNonEmpty(profile.PATH),
+      fastMergedPath,
     ]);
 
     if (Option.isSome(mergedPath)) {
