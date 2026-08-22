@@ -117,6 +117,14 @@ export function managedEndpointForHostname(hostname: string): RelayManagedEndpoi
   };
 }
 
+export function t3RelayEndpointForHostname(hostname: string): RelayManagedEndpoint {
+  return {
+    httpBaseUrl: `https://${hostname}/`,
+    wsBaseUrl: `wss://${hostname}/ws`,
+    providerKind: "t3_relay",
+  };
+}
+
 export function managedEndpointTunnelName(stage: string, hash: string): string {
   return `${MANAGED_ENDPOINT_TUNNEL_PREFIX}-${relayStageSlug(stage)}-${stableSuffix(hash)}`;
 }

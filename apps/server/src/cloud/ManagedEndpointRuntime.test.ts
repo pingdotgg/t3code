@@ -13,6 +13,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as T3RelayConnector from "./T3RelayConnector.ts";
 
 const relayClientAvailableLayer = Layer.succeed(
   RelayClient.RelayClient,
@@ -43,10 +44,11 @@ const runtimeDependencies = (
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = relayClientAvailableLayer,
+  t3RelayConnectorLayer = T3RelayConnector.layer,
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
-      ManagedEndpointRuntime.layer.pipe(
+      ManagedEndpointRuntime.layerWithT3RelayConnectorFactory(t3RelayConnectorLayer).pipe(
         Layer.provide(runtimeDependencies(spawner, relayClientLayer)),
       ),
     );
@@ -201,6 +203,63 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(killed).toEqual([200]);
     }),
   );
+
+  it.effect("starts, rotates, deduplicates, and stops the built-in T3 relay connector", () => {
+    const configs: Array<T3RelayConnector.T3RelayConnectorConfig> = [];
+    const closed: Array<number> = [];
+    const socket = (index: number): T3RelayConnector.RelayConnectorSocket => ({
+      binaryType: "arraybuffer",
+      readyState: 1,
+      send: () => undefined,
+      close: () => {
+        closed.push(index);
+      },
+      addEventListener: () => undefined,
+    });
+    const factoryLayer = Layer.succeed(
+      T3RelayConnector.T3RelayConnectorFactory,
+      T3RelayConnector.T3RelayConnectorFactory.of({
+        make: (config) => {
+          const index = configs.push(config);
+          return new T3RelayConnector.T3RelayConnectorSession(
+            config,
+            () => socket(index),
+            async () =>
+              Response.json({
+                ticket: `single-use-ticket-${index}`,
+                expiresAt: "2099-01-01T00:00:00.000Z",
+              }),
+          );
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(() => Effect.die("unused")),
+        relayClientAvailableLayer,
+        factoryLayer,
+      );
+      const first = {
+        providerKind: "t3_relay" as const,
+        connectorToken: "token-1",
+        connectorUrl: "wss://env.edge.test/.well-known/t3-relay/connect",
+        originUrl: "http://127.0.0.1:7331",
+      };
+      expect(yield* runtime.applyConfig(first)).toEqual({
+        status: "running",
+        providerKind: "t3_relay",
+      });
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      yield* runtime.applyConfig(first);
+      yield* runtime.applyConfig({ ...first, connectorToken: "token-2" });
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      yield* runtime.applyConfig(null);
+
+      expect(configs.map((config) => config.connectorToken)).toEqual(["token-1", "token-2"]);
+      expect(closed).toEqual([1, 2]);
+    });
+  });
 
   it.effect("restarts the connector when the active process has exited", () =>
     Effect.gen(function* () {

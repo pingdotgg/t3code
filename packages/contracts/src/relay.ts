@@ -135,10 +135,14 @@ export const RelayManagedEndpointProviderKind = Schema.Literals([
 ]);
 export type RelayManagedEndpointProviderKind = typeof RelayManagedEndpointProviderKind.Type;
 
+export const RelayManagedEndpointProvider = Schema.Literals(["cloudflare_tunnel", "t3_relay"]);
+export type RelayManagedEndpointProvider = typeof RelayManagedEndpointProvider.Type;
+
 export const RelayManagedEndpoint = Schema.Struct({
   httpBaseUrl: TrimmedNonEmptyString,
   wsBaseUrl: TrimmedNonEmptyString,
   providerKind: RelayManagedEndpointProviderKind,
+  connectorLeaseId: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayManagedEndpoint = typeof RelayManagedEndpoint.Type;
 
@@ -154,6 +158,9 @@ export type RelayManagedEndpointOrigin = typeof RelayManagedEndpointOrigin.Type;
 export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
   providerKind: RelayManagedEndpointProviderKind,
   connectorToken: TrimmedNonEmptyString,
+  connectorUrl: Schema.optional(TrimmedNonEmptyString),
+  originUrl: Schema.optional(TrimmedNonEmptyString),
+  connectorLeaseId: Schema.optional(TrimmedNonEmptyString),
   tunnelId: Schema.optional(TrimmedNonEmptyString),
   tunnelName: Schema.optional(TrimmedNonEmptyString),
 });
@@ -237,12 +244,19 @@ export const RelayEnvironmentLinkChallengeRequest = Schema.Struct({
   managedTunnelsEnabled: Schema.Boolean.annotate({
     description: "Whether the relay should provision a managed tunnel for this environment.",
   }),
+  supportedManagedEndpointProviders: Schema.optional(
+    Schema.Array(RelayManagedEndpointProvider).annotate({
+      description:
+        "Managed endpoint transports supported by this environment host. Omitted by legacy Cloudflare-only hosts.",
+    }),
+  ),
 }).annotate({ description: "Requested capabilities for a new environment-link challenge." });
 export type RelayEnvironmentLinkChallengeRequest = typeof RelayEnvironmentLinkChallengeRequest.Type;
 
 export const RelayEnvironmentLinkChallengeResponse = Schema.Struct({
   challenge: TrimmedNonEmptyString,
   expiresAt: TrimmedNonEmptyString,
+  managedEndpointProvider: Schema.optional(RelayManagedEndpointProvider),
 });
 export type RelayEnvironmentLinkChallengeResponse =
   typeof RelayEnvironmentLinkChallengeResponse.Type;
@@ -259,6 +273,7 @@ export const RelayEnvironmentLinkRequest = Schema.Struct({
   notificationsEnabled: Schema.Boolean,
   liveActivitiesEnabled: Schema.Boolean,
   managedTunnelsEnabled: Schema.Boolean,
+  managedEndpointProvider: Schema.optional(RelayManagedEndpointProvider),
 }).annotate({ description: "Links an authenticated cloud user to a T3 environment." });
 export type RelayEnvironmentLinkRequest = typeof RelayEnvironmentLinkRequest.Type;
 
@@ -296,6 +311,7 @@ export type RelayEnvironmentLinkFailedReason = typeof RelayEnvironmentLinkFailed
 export const RelayEnvironmentLinkUnavailableReason = Schema.Literals([
   "managed_endpoint_not_configured",
   "managed_endpoint_provisioning_failed",
+  "managed_endpoint_provider_unsupported",
 ]);
 export type RelayEnvironmentLinkUnavailableReason =
   typeof RelayEnvironmentLinkUnavailableReason.Type;
@@ -701,6 +717,11 @@ export const RelayBearerRequestHeaders = Schema.Struct({
   authorization: TrimmedNonEmptyString,
 });
 
+export const RelayManagedEndpointReleaseHeaders = Schema.Struct({
+  authorization: TrimmedNonEmptyString,
+  "x-t3-relay-connector-lease-id": Schema.optional(TrimmedNonEmptyString),
+});
+
 export const RelayDpopProofRequestHeaders = Schema.Struct({
   dpop: TrimmedNonEmptyString,
 });
@@ -971,7 +992,7 @@ export const RelayClientGroup = HttpApiGroup.make("client")
         headers: RelayBearerRequestHeaders,
         payload: RelayEnvironmentLinkChallengeRequest,
         success: RelayEnvironmentLinkChallengeResponse,
-        error: RelayAuthAndInternalErrors,
+        error: [RelayAuthInvalidError, RelayEnvironmentLinkUnavailableError, RelayInternalError],
       },
     ).annotate(OpenApi.Summary, "Create an environment-link challenge"),
     HttpApiEndpoint.delete("unlinkEnvironment", "/v1/client/environment-links/:environmentId", {
@@ -984,7 +1005,7 @@ export const RelayClientGroup = HttpApiGroup.make("client")
       "releaseEnvironmentTunnel",
       "/v1/client/environment-links/:environmentId/tunnel",
       {
-        headers: RelayBearerRequestHeaders,
+        headers: RelayManagedEndpointReleaseHeaders,
         params: RelayEnvironmentUnlinkParams,
         success: RelayOkResponse,
         error: RelayAuthAndInternalErrors,
@@ -993,7 +1014,7 @@ export const RelayClientGroup = HttpApiGroup.make("client")
       .annotate(OpenApi.Summary, "Release an environment's managed tunnel")
       .annotate(
         OpenApi.Description,
-        "Deletes the provisioned Cloudflare tunnel while keeping the environment link and its hostname reservation, so a later link re-provisions the tunnel under the same URL. Environments call this when they shut down; Cloudflare bills per provisioned tunnel, so idle tunnels should not outlive their environment.",
+        "Releases the environment's current managed connector while keeping its link and hostname. Cloudflare Tunnel allocations delete their billed tunnel; T3 relay connectors revoke only the lease supplied by the shutting-down environment, so a concurrent relink remains active.",
       ),
   )
   .annotate(OpenApi.Description, "Cloud-user environment links and registered devices.")

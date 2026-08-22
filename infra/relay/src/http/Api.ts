@@ -48,6 +48,8 @@ import {
   type RelayEnvironmentConnectRequest,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
+  type RelayManagedEndpointProvider,
+  type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
 import { normalizeRelayIssuer } from "@t3tools/shared/relayJwt";
 
@@ -64,6 +66,7 @@ import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher
 import * as EnvironmentConnector from "../environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import { selectManagedEndpointProvider } from "../environments/ManagedEndpointSelection.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
@@ -123,6 +126,15 @@ const appendRelayTraceContextResponseHeader = Effect.gen(function* () {
     Effect.succeed(HttpServerResponse.setHeader(response, "traceparent", traceparent)),
   );
 }).pipe(Effect.ignore);
+
+export function resolveManagedEndpointReleaseProvider(input: {
+  readonly persistedProvider?: RelayManagedEndpointProviderKind;
+  readonly connectorLeaseId?: string;
+}): RelayManagedEndpointProvider | null {
+  if (input.persistedProvider === "t3_relay") return "t3_relay";
+  if (input.persistedProvider !== undefined && input.connectorLeaseId !== undefined) return null;
+  return input.connectorLeaseId === undefined ? "cloudflare_tunnel" : "t3_relay";
+}
 
 export const relayCors = HttpRouter.middleware(
   Effect.fnUntraced(function* <E, R>(
@@ -409,6 +421,7 @@ export const revokeEnvironmentLinkRecord = Effect.fn(
   readonly userId: string;
   readonly environmentId: string;
   readonly environmentPublicKey: string;
+  readonly linkUpdatedAt?: string;
 }) {
   const transactions = yield* RelayDb.RelayTransactions;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
@@ -418,6 +431,7 @@ export const revokeEnvironmentLinkRecord = Effect.fn(
       const revoked = yield* links.revokeForUser({
         userId: input.userId,
         environmentId: input.environmentId,
+        ...(input.linkUpdatedAt === undefined ? {} : { expectedUpdatedAt: input.linkUpdatedAt }),
       });
       if (revoked) {
         yield* credentials.revokeForEnvironmentPublicKey({
@@ -434,14 +448,30 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
   function* (input: { readonly userId: string; readonly environmentId: string }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-    const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-    });
     const link = yield* links.getForUser({
       userId: input.userId,
       environmentId: input.environmentId,
     });
+    const cleanupLink =
+      link ??
+      (yield* links.getForUser({
+        userId: input.userId,
+        environmentId: input.environmentId,
+        includeRevoked: true,
+      }));
+    const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision({
+      userId: input.userId,
+      environmentId: input.environmentId,
+    });
+    if (
+      link === null &&
+      (yield* links.getForUser({
+        userId: input.userId,
+        environmentId: input.environmentId,
+      })) !== null
+    ) {
+      return false;
+    }
     const unlinked =
       link === null
         ? false
@@ -449,7 +479,14 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             userId: input.userId,
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
+            linkUpdatedAt: link.updatedAt,
           });
+
+    // A generation mismatch means a relink replaced the row after our lookup.
+    // Its endpoint and connector belong to the newer link and must survive.
+    if (link !== null && !unlinked) {
+      return false;
+    }
 
     // External teardown cannot share the SQL transaction. Run it only after
     // revocation commits so a database failure leaves a fully usable active
@@ -459,6 +496,9 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
+      ...(cleanupLink?.endpoint.connectorLeaseId === undefined
+        ? {}
+        : { connectorLeaseId: cleanupLink.endpoint.connectorLeaseId }),
     });
     return unlinked;
   },
@@ -632,6 +672,17 @@ export const clientApi = HttpApiBuilder.group(
           const { userId } = yield* RelayClientPrincipal;
           const now = yield* DateTime.now;
           const expiresAt = DateTime.add(now, { minutes: 5 });
+          const managedEndpointProvider = selectManagedEndpointProvider({
+            request: args.payload,
+            preferredProvider: config.preferredManagedEndpointProvider,
+          });
+          if (args.payload.managedTunnelsEnabled && managedEndpointProvider === null) {
+            return yield* new RelayEnvironmentLinkUnavailableError({
+              code: "environment_link_unavailable",
+              reason: "managed_endpoint_provider_unsupported",
+              traceId: yield* currentTraceId,
+            });
+          }
           const jti = yield* crypto.randomUUIDv4.pipe(
             Effect.catch(() => relayInternalErrorResponse("internal_error")),
           );
@@ -642,9 +693,14 @@ export const clientApi = HttpApiBuilder.group(
               jti,
               issuedAtEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
               expiresAtEpochSeconds: Math.floor(expiresAt.epochMilliseconds / 1_000),
+              ...(managedEndpointProvider === null ? {} : { managedEndpointProvider }),
             })
             .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
-          return { challenge, expiresAt: DateTime.formatIso(expiresAt) };
+          return {
+            challenge,
+            expiresAt: DateTime.formatIso(expiresAt),
+            ...(managedEndpointProvider === null ? {} : { managedEndpointProvider }),
+          };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
@@ -673,10 +729,34 @@ export const clientApi = HttpApiBuilder.group(
           // ok mirrors whether the connector token is now dead: false means a
           // concurrent provision kept the recorded tunnel alive, so the caller
           // must not discard its runtime config.
+          const connectorLeaseId = args.headers["x-t3-relay-connector-lease-id"];
+          const link = yield* links
+            .getForUser({
+              userId,
+              environmentId: params.environmentId,
+              includeRevoked: true,
+            })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          // Provider selection is persisted as part of the link. The optional
+          // lease header proves which T3 connector generation the host owns;
+          // it must never be allowed to redirect a Cloudflare tunnel release.
+          // A stale T3 host can race a relink that selected Cloudflare, so do
+          // not let its lease-bearing shutdown delete the new tunnel either.
+          const providerKind = resolveManagedEndpointReleaseProvider({
+            ...(link === null ? {} : { persistedProvider: link.endpoint.providerKind }),
+            ...(connectorLeaseId === undefined ? {} : { connectorLeaseId }),
+          });
+          if (providerKind === null) {
+            return { ok: false };
+          }
           const released = yield* managedEndpointProvider
             .release({
               userId,
               environmentId: params.environmentId,
+              providerKind,
+              ...(providerKind !== "t3_relay" || connectorLeaseId === undefined
+                ? {}
+                : { connectorLeaseId }),
             })
             .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
           return { ok: released };

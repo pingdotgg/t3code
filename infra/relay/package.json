@@ -16,7 +16,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "alchemy": "2.0.0-beta.65",
+    "alchemy": "2.0.0-beta.68",
     "drizzle-orm": "1.0.0-rc.4",
     "effect": "catalog:"
   },

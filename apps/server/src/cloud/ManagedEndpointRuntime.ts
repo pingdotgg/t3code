@@ -15,6 +15,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
+import * as T3RelayConnector from "./T3RelayConnector.ts";
 
 function bytesToString(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
@@ -48,6 +49,10 @@ export type CloudManagedEndpointRuntimeStatus =
       readonly tunnelName?: string;
     }
   | {
+      readonly status: "running";
+      readonly providerKind: "t3_relay";
+    }
+  | {
       readonly status: "unsupported";
       readonly providerKind: RelayManagedEndpointRuntimeConfig["providerKind"];
     };
@@ -68,6 +73,11 @@ interface ActiveConnector {
   readonly config: RelayManagedEndpointRuntimeConfig;
 }
 
+interface ActiveT3Connector {
+  readonly session: T3RelayConnector.T3RelayConnectorSession;
+  readonly configKey: string;
+}
+
 export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
@@ -82,6 +92,9 @@ function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
   return JSON.stringify({
     providerKind: config.providerKind,
     connectorToken: config.connectorToken,
+    connectorLeaseId: config.connectorLeaseId ?? null,
+    connectorUrl: config.connectorUrl ?? null,
+    originUrl: config.originUrl ?? null,
     tunnelId: config.tunnelId ?? null,
     tunnelName: config.tunnelName ?? null,
   });
@@ -100,17 +113,46 @@ const stopConnector = (connector: ActiveConnector | null) =>
     : Effect.void;
 
 export const make = Effect.gen(function* () {
+  const context = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(context);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const t3RelayConnectorFactory = yield* T3RelayConnector.T3RelayConnectorFactory;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
+  const activeT3Ref = yield* Ref.make<ActiveT3Connector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const reconcileSemaphore = yield* Semaphore.make(1);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
+
+  const observeT3RelayConnector = (
+    event: T3RelayConnector.T3RelayConnectorLifecycleEvent,
+  ): void => {
+    const log =
+      event.type === "connected"
+        ? Effect.logInfo("T3 relay connector connected")
+        : event.type === "connecting"
+          ? Effect.logDebug("T3 relay connector connecting")
+          : event.type === "disconnected"
+            ? Effect.logWarning("T3 relay connector disconnected", {
+                code: event.code,
+                reason: event.reason,
+              })
+            : Effect.logWarning("T3 relay connector retry scheduled", {
+                attempt: event.attempt,
+                delayMillis: event.delayMillis,
+                reason: event.reason,
+              });
+    runFork(log);
+  };
 
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
     yield* stopConnector(active);
   });
+
+  const stopActiveT3 = Ref.getAndSet(activeT3Ref, null).pipe(
+    Effect.tap((active) => Effect.sync(() => active?.session.close())),
+  );
 
   const superviseConnector = (connector: ActiveConnector) =>
     Effect.gen(function* () {
@@ -185,6 +227,48 @@ export const make = Effect.gen(function* () {
     );
 
   reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
+    if (config?.providerKind === "t3_relay") {
+      yield* stopActive;
+      const nextConfigKey = runtimeConfigKey(config);
+      const active = yield* Ref.get(activeT3Ref);
+      if (active?.configKey === nextConfigKey) {
+        return { status: "running", providerKind: "t3_relay" };
+      }
+      yield* stopActiveT3;
+      const connectorUrl = config.connectorUrl;
+      const originUrl = config.originUrl;
+      if (!connectorUrl || !originUrl) {
+        return {
+          status: "failed",
+          providerKind: "t3_relay",
+          reason: "The T3 relay connector URL or local origin is missing.",
+        };
+      }
+      const started = yield* Effect.try(() => {
+        const session = t3RelayConnectorFactory.make(
+          {
+            connectorUrl,
+            connectorToken: config.connectorToken,
+            originUrl,
+          },
+          observeT3RelayConnector,
+        );
+        session.start();
+        return session;
+      }).pipe(Effect.result);
+      if (Result.isFailure(started)) {
+        return {
+          status: "failed",
+          providerKind: "t3_relay",
+          reason: "Failed to start the T3 relay connector.",
+        };
+      }
+      const session = started.success;
+      yield* Ref.set(activeT3Ref, { session, configKey: nextConfigKey });
+      return { status: "running", providerKind: "t3_relay" };
+    }
+
+    yield* stopActiveT3;
     if (!config || config.providerKind !== "cloudflare_tunnel") {
       yield* stopActive;
       return config
@@ -319,4 +403,8 @@ export const make = Effect.gen(function* () {
   return runtime;
 });
 
-export const layer = Layer.effect(CloudManagedEndpointRuntime, make);
+export const layerWithT3RelayConnectorFactory = (
+  factory: Layer.Layer<T3RelayConnector.T3RelayConnectorFactory>,
+) => Layer.effect(CloudManagedEndpointRuntime, make).pipe(Layer.provide(factory));
+
+export const layer = layerWithT3RelayConnectorFactory(T3RelayConnector.layer);

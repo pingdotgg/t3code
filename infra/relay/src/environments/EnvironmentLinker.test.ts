@@ -90,7 +90,7 @@ const makeRequest = Effect.gen(function* () {
     endpoint: {
       httpBaseUrl: "https://env.example.test/",
       wsBaseUrl: "wss://env.example.test/",
-      providerKind: "manual",
+      providerKind: "cloudflare_tunnel",
     },
     origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
     scopes: ["agent_activity_notifications", "managed_tunnels"],
@@ -108,8 +108,11 @@ const makeRequest = Effect.gen(function* () {
 
 function testLayer(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
+  readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
+  readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
+  readonly release?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["release"];
 }) {
   return EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer),
@@ -127,7 +130,7 @@ function testLayer(input?: {
           listDeliveryUsersForEnvironment: () => Effect.succeed([]),
           listPublicKeysForEnvironment: () => Effect.succeed([]),
           listForUser: () => Effect.succeed([]),
-          getForUser: () => Effect.succeed(null),
+          getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
           revokeForUser: () => Effect.succeed(false),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
@@ -138,16 +141,18 @@ function testLayer(input?: {
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           prepareDeprovision: () => Effect.succeed(null),
           deprovision: input?.deprovision ?? (() => Effect.void),
-          release: () => Effect.succeed(true),
-          provision: () =>
-            Effect.succeed({
-              endpoint: {
-                httpBaseUrl: "https://managed.example.test/",
-                wsBaseUrl: "wss://managed.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
-            }),
+          release: input?.release ?? (() => Effect.succeed(true)),
+          provision:
+            input?.provision ??
+            (() =>
+              Effect.succeed({
+                endpoint: {
+                  httpBaseUrl: "https://managed.example.test/",
+                  wsBaseUrl: "wss://managed.example.test/ws",
+                  providerKind: "cloudflare_tunnel",
+                },
+                runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
+              })),
         }),
       ),
     ),
@@ -155,6 +160,130 @@ function testLayer(input?: {
 }
 
 describe("EnvironmentLinker", () => {
+  it.effect("does not replace a link when its previous connector lease cannot be loaded", () => {
+    const calls: Array<string> = [];
+    const failure = new EnvironmentLinks.EnvironmentLinkLookupPersistenceError({
+      userId: "user_123",
+      environmentId: "env-link-test",
+      cause: "database unavailable",
+    });
+    return Effect.gen(function* () {
+      const { request } = yield* makeRequest;
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      expect(
+        yield* Effect.flip(
+          linker.link({
+            userId: "user_123",
+            request: { ...request, managedTunnelsEnabled: true },
+          }),
+        ),
+      ).toBe(failure);
+      expect(calls).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          getForUser: () => Effect.fail(failure),
+          provision: () =>
+            Effect.sync(() => {
+              calls.push("provision");
+              throw new Error("must not provision");
+            }),
+          upsert: () => Effect.sync(() => calls.push("upsert")),
+        }),
+      ),
+    );
+  });
+
+  it.effect("uses the challenge generation as the managed connector lease", () => {
+    let connectorLeaseId: string | undefined;
+    return Effect.gen(function* () {
+      const { request } = yield* makeRequest;
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      yield* linker.link({
+        userId: "user_123",
+        request: { ...request, managedTunnelsEnabled: true },
+      });
+      expect(connectorLeaseId).toBe("challenge-jti");
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          provision: (input) => {
+            connectorLeaseId = input.connectorLeaseId;
+            return Effect.succeed({
+              endpoint: {
+                httpBaseUrl: "https://managed.example.test/",
+                wsBaseUrl: "wss://managed.example.test/ws",
+                providerKind: "cloudflare_tunnel",
+              },
+              runtime: { providerKind: "cloudflare_tunnel", connectorToken: "connector-token" },
+            });
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("revokes the previous T3 relay lease after switching back to Cloudflare", () => {
+    const lifecycle: Array<string> = [];
+    const lookupInputs: Array<{ readonly includeRevoked?: boolean }> = [];
+    return Effect.gen(function* () {
+      const { request } = yield* makeRequest;
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      yield* linker.link({
+        userId: "user_123",
+        request: { ...request, managedTunnelsEnabled: true },
+      });
+      expect(lifecycle).toEqual(["provision", "upsert", "release:old-relay-lease"]);
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          getForUser: (input) =>
+            Effect.sync(() => {
+              lookupInputs.push(
+                input.includeRevoked === undefined ? {} : { includeRevoked: input.includeRevoked },
+              );
+              return {
+                environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+                label: "Link Test Environment",
+                endpoint: {
+                  httpBaseUrl: "https://old-t3-relay.example.test/",
+                  wsBaseUrl: "wss://old-t3-relay.example.test/ws",
+                  providerKind: "t3_relay",
+                  connectorLeaseId: "old-relay-lease",
+                },
+                environmentPublicKey: environmentKeyPair.publicKey.trim(),
+                linkedAt: "2026-08-18T00:00:00.000Z",
+                updatedAt: "2026-08-18T00:00:00.000Z",
+              };
+            }),
+          provision: () =>
+            Effect.sync(() => {
+              lifecycle.push("provision");
+              return {
+                endpoint: {
+                  httpBaseUrl: "https://managed.example.test/",
+                  wsBaseUrl: "wss://managed.example.test/ws",
+                  providerKind: "cloudflare_tunnel" as const,
+                },
+                runtime: {
+                  providerKind: "cloudflare_tunnel" as const,
+                  connectorToken: "connector-token",
+                },
+              };
+            }),
+          upsert: () => Effect.sync(() => lifecycle.push("upsert")),
+          release: (input) =>
+            Effect.sync(() => {
+              lifecycle.push(`release:${input.connectorLeaseId}`);
+              expect(input.providerKind).toBe("t3_relay");
+              return true;
+            }),
+        }),
+      ),
+      Effect.tap(() => Effect.sync(() => expect(lookupInputs).toEqual([{ includeRevoked: true }]))),
+    );
+  });
+
   it.effect("uses verified JWT claims when linking an environment", () => {
     let persistedEnvironmentId: string | null = null;
     return Effect.gen(function* () {

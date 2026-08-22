@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
 import * as RelayConfiguration from "../Config.ts";
+import { T3RelayEndpointControl } from "../transport/T3RelayEndpointControl.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
@@ -274,10 +275,15 @@ function providerLayer(
   dnsClient = makeDnsClient(),
   allocations = makeAllocations(),
   tunnelLimits = makeTunnelLimits(),
+  t3RelayEndpointControl: T3RelayEndpointControl["Service"] | null = T3RelayEndpointControl.of({
+    configure: () => Effect.void,
+    revoke: () => Effect.succeed(true),
+  }),
+  relayConfig = config,
 ) {
-  return ManagedEndpointProvider.layer.pipe(
+  const base = ManagedEndpointProvider.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
-    Layer.provide(RelayConfiguration.layer(config)),
+    Layer.provide(RelayConfiguration.layer(relayConfig)),
     Layer.provide(ManagedEndpointProvider.layerTunnelClient(tunnelClient)),
     Layer.provide(ManagedEndpointProvider.layerDnsClient(dnsClient)),
     Layer.provide(
@@ -285,6 +291,9 @@ function providerLayer(
     ),
     Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, tunnelLimits)),
   );
+  return t3RelayEndpointControl === null
+    ? base
+    : base.pipe(Layer.provide(Layer.succeed(T3RelayEndpointControl, t3RelayEndpointControl)));
 }
 
 function expectedManagedHostname(environmentId: string, userId = "user_ABC"): string {
@@ -421,6 +430,118 @@ describe("ManagedEndpointProvider", () => {
         ),
       ),
     );
+  });
+
+  it.effect("provisions a T3 relay endpoint without creating a Cloudflare tunnel", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const dnsCalls: DnsCall[] = [];
+    const configured: Array<{
+      readonly endpointKey: string;
+      readonly connectorToken: string;
+      readonly connectorLeaseId: string;
+    }> = [];
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const result = yield* provider.provision({
+        userId: "user_ABC",
+        environmentId: "env_EDGE",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        providerKind: "t3_relay",
+        connectorLeaseId: "lease-edge-1",
+      });
+
+      const hash = NodeCrypto.createHash("sha256")
+        .update("dev_julius:user_ABC:env_EDGE")
+        .digest("hex")
+        .slice(0, 16);
+      const hostname = `${hash}-t3r-dev-julius.t3code.test`;
+      expect(result.endpoint).toEqual({
+        httpBaseUrl: `https://${hostname}/`,
+        wsBaseUrl: `wss://${hostname}/ws`,
+        providerKind: "t3_relay",
+        connectorLeaseId: "lease-edge-1",
+      });
+      expect(result.runtime).toMatchObject({
+        providerKind: "t3_relay",
+        connectorLeaseId: "lease-edge-1",
+        connectorUrl: `wss://${hostname}/.well-known/t3-relay/connect`,
+        originUrl: "http://127.0.0.1:3773",
+      });
+      expect(result.runtime.connectorToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+      expect(configured).toEqual([
+        {
+          endpointKey: hash,
+          connectorToken: result.runtime.connectorToken,
+          connectorLeaseId: "lease-edge-1",
+        },
+      ]);
+      expect(tunnelCalls).toEqual([]);
+      expect(dnsCalls).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        providerLayer(
+          makeTunnelClient(tunnelCalls),
+          makeDnsClient(dnsCalls),
+          makeAllocations(),
+          makeTunnelLimits(),
+          T3RelayEndpointControl.of({
+            configure: (input) => Effect.sync(() => configured.push(input)),
+            revoke: () => Effect.succeed(true),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports missing T3 endpoint control as configuration", () => {
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_EDGE",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          providerKind: "t3_relay",
+          connectorLeaseId: "lease-edge-1",
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningNotConfigured",
+        missingSettings: ["t3RelayEndpointControl"],
+      });
+    }).pipe(
+      Effect.provide(
+        providerLayer(
+          makeTunnelClient(),
+          makeDnsClient(),
+          makeAllocations(),
+          makeTunnelLimits(),
+          null,
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports a missing T3 connector lease as a validation stage", () => {
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_EDGE",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          providerKind: "t3_relay",
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "validate-relay-connector-lease",
+      });
+      expect("cause" in error).toBe(false);
+    }).pipe(Effect.provide(providerLayer()));
   });
 
   it.effect("checks the managed tunnel limit before reserving an allocation", () => {
@@ -803,6 +924,43 @@ describe("ManagedEndpointProvider", () => {
     },
   );
 
+  it.effect("revokes the T3 relay when deprovisioning a retained Cloudflare allocation", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const dnsCalls: DnsCall[] = [];
+    const allocationCalls: AllocationCall[] = [];
+    const revoked: Array<{ readonly endpointKey: string; readonly connectorLeaseId?: string }> = [];
+    const layer = providerLayer(
+      makePersistentTunnelClient(tunnelCalls),
+      makeDnsClient(dnsCalls),
+      makeAllocations(allocationCalls),
+      makeTunnelLimits(),
+      T3RelayEndpointControl.of({
+        configure: () => Effect.void,
+        revoke: (input) =>
+          Effect.sync(() => {
+            revoked.push(input);
+            return true;
+          }),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      yield* provider.deprovision({ ...key, connectorLeaseId: "lease-edge-1" });
+
+      expect(revoked).toHaveLength(1);
+      expect(revoked[0]).toMatchObject({ connectorLeaseId: "lease-edge-1" });
+      expect(revoked[0]?.endpointKey).toMatch(/^[a-f0-9]{16}$/u);
+      expect(tunnelCalls.at(-1)?.operation).toBe("delete");
+      expect(dnsCalls.at(-1)?.operation).toBe("deleteRecord");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("does not deprovision an allocation superseded by a concurrent relink", () => {
     const tunnelCalls: TunnelCall[] = [];
     const dnsCalls: DnsCall[] = [];
@@ -841,6 +999,42 @@ describe("ManagedEndpointProvider", () => {
       expect(allocationCalls.slice(allocationCallCount).map((call) => call.operation)).toEqual([
         "claimDeprovision",
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not tear down retained canary state for a stale T3 lease", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const dnsCalls: DnsCall[] = [];
+    const allocationCalls: AllocationCall[] = [];
+    const layer = providerLayer(
+      makePersistentTunnelClient(tunnelCalls),
+      makeDnsClient(dnsCalls),
+      makeAllocations(allocationCalls),
+      makeTunnelLimits(),
+      T3RelayEndpointControl.of({
+        configure: () => Effect.void,
+        revoke: () => Effect.succeed(false),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      const counts = {
+        tunnels: tunnelCalls.length,
+        dns: dnsCalls.length,
+        allocations: allocationCalls.length,
+      };
+
+      yield* provider.deprovision({ ...key, connectorLeaseId: "lease-old" });
+
+      expect(tunnelCalls).toHaveLength(counts.tunnels);
+      expect(dnsCalls).toHaveLength(counts.dns);
+      expect(allocationCalls).toHaveLength(counts.allocations);
     }).pipe(Effect.provide(layer));
   });
 
@@ -885,6 +1079,124 @@ describe("ManagedEndpointProvider", () => {
         "updateRecord",
       ]);
       expect(allocationCalls.map((call) => call.operation)).not.toContain("remove");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("releases a T3 connector without deleting a retained Cloudflare canary tunnel", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const revoked: Array<{ readonly endpointKey: string; readonly connectorLeaseId?: string }> = [];
+    const layer = providerLayer(
+      makePersistentTunnelClient(tunnelCalls),
+      makeDnsClient(),
+      makeAllocations(),
+      makeTunnelLimits(),
+      T3RelayEndpointControl.of({
+        configure: () => Effect.void,
+        revoke: (input) =>
+          Effect.sync(() => {
+            revoked.push(input);
+            return true;
+          }),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      const callsBeforeRelease = tunnelCalls.length;
+      const released = yield* provider.release({
+        ...key,
+        providerKind: "t3_relay",
+        connectorLeaseId: "lease-edge-1",
+      });
+
+      expect(released).toBe(true);
+      expect(tunnelCalls).toHaveLength(callsBeforeRelease);
+      expect(revoked).toEqual([
+        {
+          endpointKey: expectedManagedHostname("env_ABC").split(".")[0]!.split("-").at(-1),
+          connectorLeaseId: "lease-edge-1",
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a newer T3 connector when a stale lease releases", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const revokeRequests: Array<{
+      readonly endpointKey: string;
+      readonly connectorLeaseId?: string;
+    }> = [];
+    const layer = providerLayer(
+      makePersistentTunnelClient(tunnelCalls),
+      makeDnsClient(),
+      makeAllocations(),
+      makeTunnelLimits(),
+      T3RelayEndpointControl.of({
+        configure: () => Effect.void,
+        revoke: (input) =>
+          Effect.sync(() => {
+            revokeRequests.push(input);
+            return false;
+          }),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      const callsBeforeRelease = tunnelCalls.length;
+      const released = yield* provider.release({
+        ...key,
+        providerKind: "t3_relay",
+        connectorLeaseId: "lease-old",
+      });
+
+      expect(released).toBe(false);
+      expect(revokeRequests).toHaveLength(1);
+      expect(revokeRequests[0]).toMatchObject({ connectorLeaseId: "lease-old" });
+      expect(tunnelCalls).toHaveLength(callsBeforeRelease);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails a T3 release when endpoint control is not configured", () => {
+    const layer = providerLayer(
+      makeTunnelClient(),
+      makeDnsClient(),
+      makeAllocations(),
+      makeTunnelLimits(),
+      T3RelayEndpointControl.of({
+        configure: () => Effect.void,
+        revoke: () => Effect.succeed(true),
+      }),
+      RelayConfiguration.RelayConfiguration.of({
+        ...config,
+        managedEndpointBaseDomain: undefined,
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.release({
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          providerKind: "t3_relay",
+          connectorLeaseId: "lease-edge-1",
+        }),
+      );
+
+      expect(error.stage).toBe("revoke-relay-endpoint");
+      expect(error.missingSettings).toEqual(["managedEndpointBaseDomain"]);
+      expect("cause" in error).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

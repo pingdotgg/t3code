@@ -66,6 +66,7 @@ export type EnvironmentLinkError =
   | EnvironmentLinkProofExpired
   | EnvironmentLinkProofInvalid
   | DpopProofs.DpopProofReplayPersistenceError
+  | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
   | EnvironmentLinks.EnvironmentLinkUpsertPersistenceError
   | EnvironmentCredentials.EnvironmentCredentialCreatePersistenceError
   | ManagedEndpointProvider.ManagedEndpointProviderError;
@@ -232,6 +233,9 @@ const make = Effect.gen(function* () {
           liveActivitiesEnabled: input.request.liveActivitiesEnabled,
           managedTunnelsEnabled: input.request.managedTunnelsEnabled,
         },
+        ...(input.request.managedEndpointProvider === undefined
+          ? {}
+          : { managedEndpointProvider: input.request.managedEndpointProvider }),
         nowEpochSeconds: nowSeconds,
       });
       if (challenge === null) {
@@ -240,6 +244,18 @@ const make = Effect.gen(function* () {
           environmentId: verified.environmentId,
           reason: "challenge_invalid",
           stage: "verify_challenge",
+        });
+      }
+      if (
+        input.request.managedTunnelsEnabled &&
+        verified.endpoint.providerKind !==
+          (challenge.managedEndpointProvider ?? "cloudflare_tunnel")
+      ) {
+        return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
+          environmentId: verified.environmentId,
+          reason: "invalid_signature_or_scope",
+          stage: "authorize_capabilities",
         });
       }
       const expiresAt = DateTime.make(verified.exp * 1_000);
@@ -287,6 +303,11 @@ const make = Effect.gen(function* () {
           stage: "validate_origin",
         });
       }
+      const previousLink = yield* links.getForUser({
+        userId: input.userId,
+        environmentId: verified.environmentId,
+        includeRevoked: true,
+      });
       // Downgrading a managed link to publish-only must release the tunnel and
       // DNS that were provisioned for it — nothing else cleans them up until a
       // full unlink. Best effort: a cleanup failure must not block the link
@@ -297,6 +318,9 @@ const make = Effect.gen(function* () {
           .deprovision({
             userId: input.userId,
             environmentId: verified.environmentId,
+            ...(previousLink?.endpoint.connectorLeaseId === undefined
+              ? {}
+              : { connectorLeaseId: previousLink.endpoint.connectorLeaseId }),
           })
           .pipe(
             Effect.tapError((error) =>
@@ -313,6 +337,8 @@ const make = Effect.gen(function* () {
             userId: input.userId,
             environmentId: verified.environmentId,
             origin: verified.origin,
+            providerKind: challenge.managedEndpointProvider ?? "cloudflare_tunnel",
+            connectorLeaseId: challenge.jti,
           })
         : null;
       const endpoint = provisioned?.endpoint ?? verified.endpoint;
@@ -329,6 +355,33 @@ const make = Effect.gen(function* () {
         });
       }
       yield* links.upsert({ ...input, proof: verified, endpoint });
+      // A Cloudflare allocation is retained while T3 relay is canaried, but a
+      // T3 relay connector credential should not survive a switch back to
+      // Cloudflare. Revoke only the previous lease after the replacement link
+      // commits; a concurrent T3 relink installs a different lease and wins.
+      if (
+        input.request.managedTunnelsEnabled &&
+        endpoint.providerKind === "cloudflare_tunnel" &&
+        previousLink?.endpoint.providerKind === "t3_relay" &&
+        previousLink.endpoint.connectorLeaseId !== undefined
+      ) {
+        yield* managedEndpointProvider
+          .release({
+            userId: input.userId,
+            environmentId: verified.environmentId,
+            providerKind: "t3_relay",
+            connectorLeaseId: previousLink.endpoint.connectorLeaseId,
+          })
+          .pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("superseded T3 relay connector cleanup failed", {
+                environmentId: verified.environmentId,
+                errorTag: error._tag,
+              }),
+            ),
+            Effect.ignore,
+          );
+      }
       const environmentCredential = yield* credentials.create({
         environmentId: verified.environmentId,
         environmentPublicKey: verified.environmentPublicKey,
