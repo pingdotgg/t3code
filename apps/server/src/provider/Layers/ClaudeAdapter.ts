@@ -15,6 +15,7 @@ import {
   type PermissionUpdate,
   type SDKMessage,
   type SDKControlGetContextUsageResponse,
+  type SDKRateLimitInfo,
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
@@ -22,6 +23,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
+  type AccountRateLimitsUpdatedPayload,
   ApprovalRequestId,
   type CanonicalItemType,
   type CanonicalRequestType,
@@ -1554,6 +1556,35 @@ function sdkMessageSubtype(value: unknown): string | undefined {
   }
   const record = value as { subtype?: unknown };
   return typeof record.subtype === "string" ? record.subtype : undefined;
+}
+
+const CLAUDE_RATE_LIMIT_STATUS = {
+  allowed: "allowed",
+  allowed_warning: "warning",
+  rejected: "rejected",
+} as const satisfies Record<SDKRateLimitInfo["status"], AccountRateLimitsUpdatedPayload["status"]>;
+
+/**
+ * Normalizes the SDK rate-limit snapshot onto the canonical payload. Claude
+ * reports the one window currently governing the account rather than a full
+ * set, so `windows` holds at most one entry, and none at all when the SDK
+ * sends a bare status. `utilization` is a 0-100 percentage, matching the
+ * `rate_limits` windows the SDK documents on its usage response.
+ */
+function rateLimitsPayloadFromSdk(info: SDKRateLimitInfo): AccountRateLimitsUpdatedPayload {
+  const window =
+    info.rateLimitType !== undefined && info.utilization !== undefined
+      ? {
+          kind: info.rateLimitType,
+          usedPercent: info.utilization,
+          ...(info.resetsAt !== undefined ? { resetsAt: info.resetsAt } : {}),
+        }
+      : undefined;
+
+  return {
+    status: CLAUDE_RATE_LIMIT_STATUS[info.status],
+    windows: window ? [window] : [],
+  };
 }
 
 function sdkNativeMethod(message: SDKMessage): string {
@@ -3508,9 +3539,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
-        payload: {
-          rateLimits: message,
-        },
+        payload: rateLimitsPayloadFromSdk(message.rate_limit_info),
       });
       return;
     }

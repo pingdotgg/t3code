@@ -2142,6 +2142,64 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("normalizes Claude rate limit events onto canonical usage windows", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "allowed_warning",
+          rateLimitType: "five_hour",
+          utilization: 82,
+          resetsAt: 1_800_000_000,
+        },
+        session_id: "session",
+        uuid: "rate-limit-1",
+      } as unknown as SDKMessage);
+      // A bare status carries no usage figures and must not invent a window.
+      harness.query.emit({
+        type: "rate_limit_event",
+        rate_limit_info: { status: "allowed" },
+        session_id: "session",
+        uuid: "rate-limit-2",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const rateLimitEvents = runtimeEvents.filter(
+        (event) => event.type === "account.rate-limits.updated",
+      );
+      assert.deepEqual(
+        rateLimitEvents.map((event) =>
+          event.type === "account.rate-limits.updated" ? event.payload : undefined,
+        ),
+        [
+          {
+            status: "warning",
+            windows: [{ kind: "five_hour", usedPercent: 82, resetsAt: 1_800_000_000 }],
+          },
+          { status: "allowed", windows: [] },
+        ],
+      );
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("consumes undeclared and UX-internal system subtypes without warning rows", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
