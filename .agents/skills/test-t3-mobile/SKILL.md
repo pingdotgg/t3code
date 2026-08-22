@@ -182,7 +182,7 @@ Keep local verification focused. Do not turn this workflow into a full repositor
 - **The environment remains empty:** verify the platform-specific HTTP origin, use a fresh token, and confirm project seeding used the identical base directory.
 - **A second client cannot pair:** pairing tokens are single-use; issue another token.
 - **The pairing form opens but does not connect:** confirm the deep link uses the existing `connections/new` route, includes `autoConnect=1`, and carries a freshly minted encoded `pairingUrl`.
-- **Pairing text changes case or punctuation:** do not retry semantic typing. Use `scripts/pair-client.sh`; the simulator keyboard layout and HID input path are not reliable for credentials.
+- **Pairing text changes case or punctuation:** do not retry semantic typing. Use `.agents/skills/test-t3-mobile/scripts/pair-client.sh`; the simulator keyboard layout and HID input path are not reliable for credentials.
 - **iOS semantic actions fail:** set explicit XcodeBuildMCP defaults and refresh with `snapshot_ui`.
 - **Android cannot reach Metro:** verify `adb reverse` for the exact Metro port and relaunch the development-client URL.
 - **Android cannot reach the backend:** use `10.0.2.2`, not `127.0.0.1`, for the Android Emulator.

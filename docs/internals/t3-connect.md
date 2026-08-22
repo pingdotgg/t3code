@@ -223,7 +223,7 @@ installed app executable with `VITE_DEV_SERVER_URL` and `T3CODE_PORT` set. Rebui
 after native dependency, main-process, preload, entitlement, provisioning, or signing changes;
 renderer-only changes can reuse the installed app.
 
-For the default development ports, run `pnpm dev:web` in one terminal and launch the installed
+For the default development ports, run `vp run dev:web` in one terminal and launch the installed
 binary from another:
 
 ```sh

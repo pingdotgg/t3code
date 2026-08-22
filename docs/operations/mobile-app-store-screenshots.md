@@ -17,7 +17,7 @@ Environments screen. The local environment cards always come from real paired se
 
 From the repository root:
 
-    pnpm screenshots:mobile
+    vp run screenshots:mobile
 
 The command:
 
@@ -44,7 +44,7 @@ active. Both platforms record readiness in the simulator/emulator app container.
 delay allows native terminal and Git review data to finish rendering.
 
 A full capture regenerates the selected native project with Expo's clean production prebuild before
-building it. Use --skip-build for repeated captures after the first build.
+building it. Use `--skip-build` for repeated captures after the first build.
 
 The harness uses fixed Metro port `8199`, which separates it from Expo's normal default port but is
 shared across every checkout. The readiness check only verifies that the port is open; it does not
@@ -52,7 +52,7 @@ verify process ownership. Concurrent screenshot harnesses in different worktrees
 collide or attach to the wrong Metro process.
 
 Every configured device defaults to dark appearance and the `t3-code` palette, so plain
-`pnpm screenshots:mobile` produces 30 dark PNGs. Pass `--appearance light`, `--appearance dark`, or
+`vp run screenshots:mobile` produces 30 dark PNGs. Pass `--appearance light`, `--appearance dark`, or
 `--appearance both` to override the configured appearance; `both` produces 60 PNGs.
 
 Pass `--theme <id>` (repeatable) or `--theme all` to capture the app's other palettes: `t3-code`,
@@ -122,46 +122,46 @@ debug APK matches its accelerated emulator.
 
 Capture one scene or device:
 
-    pnpm screenshots:mobile --device iphone-6.9 --scene thread
-    pnpm screenshots:mobile --platform android --scene review
+    vp run screenshots:mobile --device iphone-6.9 --scene thread
+    vp run screenshots:mobile --platform android --scene review
 
 Override the configured appearance or capture both variants:
 
-    pnpm screenshots:mobile --appearance light
-    pnpm screenshots:mobile --appearance dark
-    pnpm screenshots:mobile --appearance both
+    vp run screenshots:mobile --appearance light
+    vp run screenshots:mobile --appearance dark
+    vp run screenshots:mobile --appearance both
 
 Capture other palettes:
 
-    pnpm screenshots:mobile --device iphone-6.9 --theme ocean
-    pnpm screenshots:mobile --device iphone-6.9 --theme ocean --theme ember
-    pnpm screenshots:mobile --device iphone-6.9 --theme all
+    vp run screenshots:mobile --device iphone-6.9 --theme ocean
+    vp run screenshots:mobile --device iphone-6.9 --theme ocean --theme ember
+    vp run screenshots:mobile --device iphone-6.9 --theme all
 
 Reuse the native build and retain the disposable environment:
 
-    pnpm screenshots:mobile --device ipad-13 --skip-build --keep-running
+    vp run screenshots:mobile --device ipad-13 --skip-build --keep-running
 
 By default, let the screenshot runner start Metro on port `8199`. To keep Metro in a separate
 terminal, start it with the same showcase environment and explicit harness port:
 
     cd apps/mobile
-    APP_VARIANT=development EXPO_PUBLIC_SHOWCASE=1 pnpm exec expo start --dev-client --port 8199
+    APP_VARIANT=development EXPO_PUBLIC_SHOWCASE=1 vp exec expo start --dev-client --port 8199
 
 Then run the capture from the repository root:
 
-    pnpm screenshots:mobile --skip-build --skip-metro --device iphone-6.9
+    vp run screenshots:mobile --skip-build --skip-metro --device iphone-6.9
 
-`pnpm --filter @t3tools/mobile showcase` starts Expo on its normal port, so it is not compatible with
-the harness's `--skip-metro` mode.
+`vp run --filter @t3tools/mobile showcase` starts Expo on its normal port, so it is not compatible
+with the harness's `--skip-metro` mode.
 
 List the matrix and flags:
 
-    pnpm screenshots:mobile --list
+    vp run screenshots:mobile --list
 
 Validate existing files without starting Metro, servers, simulators, or emulators:
 
-    pnpm screenshots:mobile --validate-only
-    pnpm screenshots:mobile --platform ios --validate-only
+    vp run screenshots:mobile --validate-only
+    vp run screenshots:mobile --platform ios --validate-only
 
 ## Customize the seeded environment
 
