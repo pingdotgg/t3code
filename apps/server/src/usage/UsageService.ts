@@ -14,6 +14,9 @@
 import * as NodeOS from "node:os";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
+  type ServerSettings as ServerSettingsConfig,
   USAGE_CONTRACT_VERSION,
   type UsageProviderKind,
   type UsageSource,
@@ -85,6 +88,51 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+
+export const resolveTranscriptDirsForSettings = Effect.fn(
+  "UsageService.resolveTranscriptDirsForSettings",
+)(function* (settings: ServerSettingsConfig) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const codexConfigs = [settings.providers.codex];
+  const claudeConfigs = [settings.providers.claudeAgent];
+
+  for (const instance of Object.values(settings.providerInstances)) {
+    if (instance.enabled === false) continue;
+    if (instance.driver === "codex") {
+      const config = decodeCodexSettings(instance.config ?? {});
+      if (Option.isSome(config) && (instance.enabled ?? config.value.enabled)) {
+        codexConfigs.push(config.value);
+      }
+    } else if (instance.driver === "claudeAgent") {
+      const config = decodeClaudeSettings(instance.config ?? {});
+      if (Option.isSome(config) && (instance.enabled ?? config.value.enabled)) {
+        claudeConfigs.push(config.value);
+      }
+    }
+  }
+
+  const dirs: Array<{ readonly provider: UsageProviderKind; readonly dir: string }> = [];
+  for (const config of claudeConfigs) {
+    const homePath = yield* resolveClaudeHomePath(config);
+    const nested = path.join(homePath, ".claude", "projects");
+    const nestedExists = yield* fileSystem
+      .exists(nested)
+      .pipe(Effect.catchCause(() => Effect.succeed(false)));
+    dirs.push({
+      provider: "claude",
+      dir: nestedExists ? nested : path.join(homePath, "projects"),
+    });
+  }
+  for (const config of codexConfigs) {
+    const layout = yield* resolveCodexHomeLayout(config);
+    dirs.push({ provider: "codex", dir: path.join(layout.sharedHomePath, "sessions") });
+  }
+
+  return [...new Map(dirs.map((entry) => [`${entry.provider}\0${entry.dir}`, entry])).values()];
+});
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -184,19 +232,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
-
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
@@ -215,14 +250,9 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
-
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-    ];
+    return yield* resolveTranscriptDirsForSettings(settings).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
   });
 
   /**
