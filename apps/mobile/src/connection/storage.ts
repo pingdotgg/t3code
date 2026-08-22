@@ -3,6 +3,7 @@ import {
   ConnectionRegistrationStore,
   ConnectionTargetStore,
   registerConnectionInCatalog,
+  removeConnectionRouteFromCatalog,
   removeConnectionFromCatalog,
   removeCatalogValue,
   replaceCatalogValue,
@@ -27,6 +28,7 @@ function targetPersistenceError(
     | "list-routes"
     | "register-connection"
     | "select-connection-route"
+    | "remove-connection-route"
     | "remove-connection",
   error: ConnectionTransientError,
 ) {
@@ -60,6 +62,12 @@ export const connectionStorageLayer = Layer.effectContext(
           .update((document) => selectConnectionRouteInCatalog(document, target))
           .pipe(
             Effect.mapError((error) => targetPersistenceError("select-connection-route", error)),
+          ),
+      removeRoute: (target, fallback) =>
+        catalog
+          .update((document) => removeConnectionRouteFromCatalog(document, target, fallback))
+          .pipe(
+            Effect.mapError((error) => targetPersistenceError("remove-connection-route", error)),
           ),
       remove: (target) =>
         catalog

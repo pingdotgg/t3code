@@ -179,6 +179,37 @@ export function removeConnectionFromCatalog(
   };
 }
 
+export function removeConnectionRouteFromCatalog(
+  document: ConnectionCatalogDocument,
+  target: ConnectionCatalogDocument["routes"][number],
+  fallback: ConnectionCatalogDocument["routes"][number],
+): ConnectionCatalogDocument {
+  const cleaned = removeRouteMetadata(document, target);
+  const selected = document.targets.find(
+    (candidate) => candidate.environmentId === target.environmentId,
+  );
+  return {
+    ...cleaned,
+    targets:
+      selected !== undefined && connectionRouteId(selected) === connectionRouteId(target)
+        ? replaceCatalogValue(cleaned.targets, (value) => value.environmentId, fallback)
+        : cleaned.targets,
+    routes: connectionRoutes(cleaned).filter(
+      (candidate) =>
+        candidate.environmentId !== target.environmentId ||
+        connectionRouteId(candidate) !== connectionRouteId(target),
+    ),
+    remoteDpopTokens:
+      target._tag === "RelayConnectionTarget"
+        ? removeCatalogValue(
+            cleaned.remoteDpopTokens,
+            (value) => value.environmentId,
+            target.environmentId,
+          )
+        : cleaned.remoteDpopTokens,
+  };
+}
+
 export function selectConnectionRouteInCatalog(
   document: ConnectionCatalogDocument,
   target: ConnectionCatalogDocument["routes"][number],

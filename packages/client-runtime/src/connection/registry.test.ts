@@ -242,6 +242,32 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         next.set(target.environmentId, target);
         return next;
       }),
+    removeRoute: (target, fallback) =>
+      Effect.gen(function* () {
+        yield* options?.beforeRegistrationRemove?.(target) ?? Effect.void;
+        yield* Ref.update(storedTargets, (current) => {
+          const next = new Map(current);
+          if (
+            connectionRouteId(next.get(target.environmentId) ?? fallback) ===
+            connectionRouteId(target)
+          ) {
+            next.set(target.environmentId, fallback);
+          }
+          return next;
+        });
+        yield* Ref.update(storedRoutes, (current) => {
+          const next = new Map(current);
+          next.delete(connectionRouteId(target));
+          return next;
+        });
+        if (target._tag === "RelayConnectionTarget") {
+          yield* Ref.update(storedRemoteTokens, (current) => {
+            const next = new Map(current);
+            next.delete(target.environmentId);
+            return next;
+          });
+        }
+      }),
     remove: (target) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRemove?.(target) ?? Effect.void;
@@ -449,6 +475,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   return {
     layer,
     storedTargets,
+    storedRoutes,
     shellCache,
     cacheClears,
     ownedDataClears,
@@ -838,6 +865,64 @@ describe("EnvironmentRegistry", () => {
         expect(
           (yield* SubscriptionRef.get(registry.entries)).has(BEARER_TARGET.environmentId),
         ).toBe(true);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("removes a remembered relay route without disconnecting the selected SSH route", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [SSH_CONNECTION],
+        [SSH_PROFILE],
+        [[SSH_CONNECTION.connectionId, BEARER_CREDENTIAL]],
+        { initialRoutes: [SSH_RELAY_TARGET, SSH_CONNECTION] },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.removeRelayEnvironments();
+
+        expect((yield* Ref.get(harness.storedTargets)).get(SSH_CONNECTION.environmentId)).toEqual(
+          SSH_CONNECTION,
+        );
+        expect([...(yield* Ref.get(harness.storedRoutes)).values()]).toEqual([SSH_CONNECTION]);
+        expect((yield* Ref.get(harness.storedProfiles)).has(SSH_CONNECTION.connectionId)).toBe(
+          true,
+        );
+        expect((yield* Ref.get(harness.storedCredentials)).has(SSH_CONNECTION.connectionId)).toBe(
+          true,
+        );
+        expect((yield* Ref.get(harness.storedRemoteTokens)).has(SSH_CONNECTION.environmentId)).toBe(
+          false,
+        );
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+        expect(yield* Ref.get(harness.disconnectedSshTargets)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("falls back to SSH when signing out while the relay route is selected", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [SSH_RELAY_TARGET],
+        [SSH_PROFILE],
+        [[SSH_CONNECTION.connectionId, BEARER_CREDENTIAL]],
+        { initialRoutes: [SSH_RELAY_TARGET, SSH_CONNECTION] },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.removeRelayEnvironments();
+
+        expect((yield* Ref.get(harness.storedTargets)).get(SSH_CONNECTION.environmentId)).toEqual(
+          SSH_CONNECTION,
+        );
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)?.target,
+        ).toEqual(SSH_CONNECTION);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

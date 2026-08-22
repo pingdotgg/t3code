@@ -28,6 +28,8 @@ import type {
   ConnectionAttemptError,
   ConnectionTarget,
   NetworkStatus,
+  PersistedConnectionTarget,
+  RelayConnectionTarget,
   SupervisorConnectionState,
 } from "./model.ts";
 import { connectionRouteId } from "./model.ts";
@@ -712,16 +714,60 @@ export const make = Effect.gen(function* () {
 
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
     function* () {
-      const relayEnvironmentIds = [...(yield* SubscriptionRef.get(entries)).values()]
-        .filter((entry) => entry.target._tag === "RelayConnectionTarget")
-        .map((entry) => entry.target.environmentId);
+      const relayEnvironments = [...(yield* SubscriptionRef.get(routes))].flatMap(
+        ([environmentId, environmentRoutes]) => {
+          const relay = environmentRoutes.find(
+            (entry): entry is ConnectionCatalogEntry & { readonly target: RelayConnectionTarget } =>
+              entry.target._tag === "RelayConnectionTarget",
+          );
+          if (relay === undefined) return [];
+          const fallback = environmentRoutes.find(
+            (
+              entry,
+            ): entry is ConnectionCatalogEntry & {
+              readonly target: Exclude<PersistedConnectionTarget, RelayConnectionTarget>;
+            } =>
+              entry.target._tag === "BearerConnectionTarget" ||
+              entry.target._tag === "SshConnectionTarget",
+          );
+          return [{ environmentId, relay, fallback }];
+        },
+      );
 
       yield* Effect.forEach(
-        relayEnvironmentIds,
-        (environmentId) =>
-          remove(environmentId).pipe(
-            Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
-          ),
+        relayEnvironments,
+        ({ environmentId, relay, fallback }) => {
+          if (fallback === undefined) {
+            return remove(environmentId).pipe(
+              Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+            );
+          }
+          return withLeaseLock(
+            environmentId,
+            Effect.gen(function* () {
+              if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+                return yield* new PlatformEnvironmentRemovalError({ environmentId });
+              }
+              const selected = yield* getEntry(environmentId);
+              yield* registrations.removeRoute(relay.target, fallback.target);
+              yield* SubscriptionRef.update(routes, (current) => {
+                const next = new Map(current);
+                const remaining = (next.get(environmentId) ?? []).filter(
+                  (entry) => connectionRouteId(entry.target) !== connectionRouteId(relay.target),
+                );
+                next.set(environmentId, remaining);
+                return next;
+              });
+              if (selected.target._tag !== "RelayConnectionTarget") return;
+              yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+                const next = new Map(current);
+                next.set(environmentId, fallback.target);
+                return next;
+              });
+              yield* installEntryLocked(fallback);
+            }),
+          ).pipe(Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void));
+        },
         {
           concurrency: "unbounded",
           discard: true,

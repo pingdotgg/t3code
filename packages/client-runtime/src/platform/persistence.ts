@@ -22,6 +22,7 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
       "list-routes",
       "register-connection",
       "select-connection-route",
+      "remove-connection-route",
       "remove-connection",
       "load-shell",
       "save-shell",
@@ -56,6 +57,10 @@ export class ConnectionRegistrationStore extends Context.Service<
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly select: (
       target: PersistedConnectionTarget,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    readonly removeRoute: (
+      target: PersistedConnectionTarget,
+      fallback: PersistedConnectionTarget,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly remove: (target: ConnectionTarget) => Effect.Effect<void, ConnectionPersistenceError>;
   }
