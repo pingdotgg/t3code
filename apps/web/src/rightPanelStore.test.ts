@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -21,6 +21,71 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("opens one durable file tab per invoked skill and refreshes it when reopened", () => {
+    const target = {
+      messageId: MessageId.make("message-1"),
+      name: "github:gh-fix-ci",
+      path: "/skills/gh-fix-ci/SKILL.md",
+      relativePath: "SKILL.md",
+    };
+
+    useRightPanelStore.getState().openSkillFile(refA, target);
+    const first = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    useRightPanelStore.getState().openSkillFile(refA, target);
+    const second = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+
+    const expectedSkill = {
+      messageId: target.messageId,
+      name: target.name,
+      path: target.path,
+    };
+    expect(first).toMatchObject({ kind: "file", relativePath: "SKILL.md", skill: expectedSkill });
+    expect(second).toMatchObject({ kind: "file", relativePath: "SKILL.md", skill: expectedSkill });
+    expect(second?.kind === "file" ? second.revealRequestId : 0).toBe(2);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toHaveLength(1);
+  });
+
+  it("keeps skill tabs distinct from workspace files with matching paths", () => {
+    const target = {
+      messageId: MessageId.make("message-1"),
+      name: "review",
+      path: "/skills/review/SKILL.md",
+      relativePath: "SKILL.md",
+    };
+
+    useRightPanelStore.getState().openFile(refA, "skill:message-1:review:SKILL.md");
+    useRightPanelStore.getState().openSkillFile(refA, target);
+
+    const surfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces;
+    expect(surfaces).toHaveLength(2);
+    expect(surfaces.map((surface) => surface.id)).toEqual([
+      "file:skill:message-1:review:SKILL.md",
+      "skill-file:message-1:review:SKILL.md",
+    ]);
+  });
+
+  it("keeps skill tabs when the workspace is unavailable", () => {
+    useRightPanelStore.getState().openSkillFile(refA, {
+      messageId: MessageId.make("message-1"),
+      name: "review",
+      path: "/skills/review/SKILL.md",
+      relativePath: "SKILL.md",
+    });
+    useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      isOpen: true,
+      surfaces: [{ kind: "file", relativePath: "SKILL.md", skill: { name: "review" } }],
+    });
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({
@@ -100,6 +165,38 @@ describe("rightPanelStore", () => {
               revealRequestId: 0,
             },
           ],
+        },
+      },
+    });
+  });
+
+  it("moves persisted skill tabs into their own ID namespace", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "file:skill:message-1:review:SKILL.md",
+            surfaces: [
+              {
+                id: "file:skill:message-1:review:SKILL.md",
+                kind: "file",
+                relativePath: "SKILL.md",
+                skill: {
+                  messageId: MessageId.make("message-1"),
+                  name: "review",
+                  path: "/skills/review/SKILL.md",
+                },
+              },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({
+      byThreadKey: {
+        "env-1:thread-A": {
+          activeSurfaceId: "skill-file:message-1:review:SKILL.md",
+          surfaces: [{ id: "skill-file:message-1:review:SKILL.md", kind: "file" }],
         },
       },
     });

@@ -12,6 +12,7 @@ import type {
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
+  OrchestrationMessage,
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
@@ -19,6 +20,7 @@ import type {
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
+  MessageId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -158,10 +160,21 @@ export interface ProjectionSnapshotQueryShape {
 
   /**
    * Read a single active thread shell row by id.
+   *
+   * Pass `{ includeArchived: true }` for a non-deleted archived thread. Live
+   * shell streams must keep the default so archived threads stay out of
+   * navigation state.
    */
   readonly getThreadShellById: (
     threadId: ThreadId,
+    options?: { readonly includeArchived?: boolean },
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /** Read one projected message without hydrating the rest of its thread. */
+  readonly getThreadMessageById: (
+    threadId: ThreadId,
+    messageId: MessageId,
+  ) => Effect.Effect<Option.Option<OrchestrationMessage>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.

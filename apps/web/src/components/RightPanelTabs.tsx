@@ -41,6 +41,7 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanel
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { skillRootPath } from "./files/skillPreviewPaths";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -498,7 +499,9 @@ function surfaceTitle(
     case "files":
       return "Files";
     case "file":
-      return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
+      return surface.skill && surface.relativePath === "SKILL.md"
+        ? `$${surface.skill.name}`
+        : surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??
@@ -718,7 +721,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
       switch (action) {
         case "copy-path":
-          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
+          if (surface.kind === "file") {
+            props.onCopyFilePath(
+              surface.skill
+                ? `${skillRootPath(surface.skill.path)}/${surface.relativePath}`
+                : surface.relativePath,
+            );
+          }
           break;
         case "toggle-mute": {
           // menuOverlay repeats the disabled gate above: the desktop tab must

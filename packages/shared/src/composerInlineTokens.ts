@@ -19,6 +19,7 @@ export interface CollectComposerInlineTokensOptions {
 }
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
+const SUBMITTED_SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
  * The label body is bounded rather than `*`. Unbounded, every whitespace in
@@ -40,6 +41,36 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 // Autocomplete emits canonical file links, so ambiguous bare @scope/package text stays a package.
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
+
+function withoutMarkdownContainerPrefix(line: string): string {
+  let remainder = line;
+  while (true) {
+    const blockQuote = remainder.match(/^ {0,3}>[ \t]?/);
+    if (blockQuote) {
+      remainder = remainder.slice(blockQuote[0].length);
+      continue;
+    }
+    const listItem = remainder.match(/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/);
+    if (listItem) {
+      remainder = remainder.slice(listItem[0].length);
+      continue;
+    }
+    return remainder;
+  }
+}
+
+function fenceStart(line: string): { readonly marker: "`" | "~"; readonly length: number } | null {
+  const fence = withoutMarkdownContainerPrefix(line).match(/^ {0,3}(`{3,}|~{3,})/);
+  const value = fence?.[1];
+  if (!value) return null;
+  return { marker: value[0] as "`" | "~", length: value.length };
+}
+
+function isFenceClose(line: string, marker: "`" | "~", minimumLength: number): boolean {
+  const fence = withoutMarkdownContainerPrefix(line).match(/^ {0,3}(`+|~+)[ \t]*(?:\r?\n)?$/);
+  const value = fence?.[1];
+  return value !== undefined && value[0] === marker && value.length >= minimumLength;
+}
 
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
@@ -132,4 +163,75 @@ export function collectComposerInlineTokens(
   }
 
   return [...matches].sort((left, right) => left.start - right.start);
+}
+
+/**
+ * Finds skill calls in submitted Markdown while ignoring code. The composer
+ * tokenizer intentionally accepts a trailing in-progress token; persisted
+ * messages use this stricter, Markdown-aware pass when the server records the
+ * skills that actually affected a turn.
+ */
+export function collectSubmittedSkillNames(text: string): ReadonlyArray<string> {
+  // String indexing and `line.length` use UTF-16 code units, so this must too.
+  // `Array.from` would instead use code points and drift after astral characters.
+  const searchable = text.split("");
+  let fencedMarker: "`" | "~" | null = null;
+  let fencedLength = 0;
+  let offset = 0;
+
+  for (const line of text.split(/(?<=\n)/)) {
+    const content = withoutMarkdownContainerPrefix(line);
+    if (fencedMarker !== null) {
+      searchable.fill(" ", offset, offset + line.length);
+      if (isFenceClose(line, fencedMarker, fencedLength)) {
+        fencedMarker = null;
+        fencedLength = 0;
+      }
+    } else {
+      const opener = fenceStart(line);
+      if (opener) {
+        searchable.fill(" ", offset, offset + line.length);
+        fencedMarker = opener.marker;
+        fencedLength = opener.length;
+      } else if (/^(?: {4}|\t)/.test(content)) {
+        searchable.fill(" ", offset, offset + line.length);
+      }
+    }
+    offset += line.length;
+  }
+
+  const withoutFences = searchable.join("");
+  for (let index = 0; index < withoutFences.length; index += 1) {
+    if (withoutFences[index] !== "`") continue;
+    let runLength = 1;
+    while (withoutFences[index + runLength] === "`") runLength += 1;
+    let closingIndex = -1;
+    for (let candidate = index + runLength; candidate < withoutFences.length; candidate += 1) {
+      if (withoutFences[candidate] !== "`") continue;
+      let candidateLength = 1;
+      while (withoutFences[candidate + candidateLength] === "`") candidateLength += 1;
+      if (candidateLength === runLength) {
+        closingIndex = candidate;
+        break;
+      }
+      candidate += candidateLength - 1;
+    }
+    if (closingIndex === -1) {
+      index += runLength - 1;
+      continue;
+    }
+    searchable.fill(" ", index, closingIndex + runLength);
+    index = closingIndex + runLength - 1;
+  }
+
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const match of searchable.join("").matchAll(SUBMITTED_SKILL_TOKEN_REGEX)) {
+    const name = match[2];
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  }
+  return names;
 }

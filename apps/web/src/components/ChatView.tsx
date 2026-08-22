@@ -3360,6 +3360,32 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeProject, activeThreadRef],
   );
+  const openSkillSurface = useCallback(
+    (messageId: MessageId, skill: { readonly name: string; readonly path: string }) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().openSkillFile(activeThreadRef, {
+        messageId,
+        name: skill.name,
+        path: skill.path,
+        relativePath: "SKILL.md",
+      });
+    },
+    [activeThreadRef],
+  );
+  const openLinkedSkillFileSurface = useCallback(
+    (relativePath: string) => {
+      if (!activeThreadRef || activeRightPanelSurface?.kind !== "file") return;
+      const skill = activeRightPanelSurface.skill;
+      if (!skill) return;
+      useRightPanelStore.getState().openSkillFile(activeThreadRef, {
+        messageId: skill.messageId,
+        name: skill.name,
+        path: skill.path,
+        relativePath,
+      });
+    },
+    [activeRightPanelSurface, activeThreadRef],
+  );
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const threadRepository = activeProject?.repositoryIdentity?.displayName ?? null;
@@ -6377,15 +6403,17 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
-    ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
-      activeProject &&
-      activeWorkspaceRoot ? (
+    ) : activeThreadRef &&
+      ((activeRightPanelSurface?.kind === "file" && activeRightPanelSurface.skill) ||
+        ((activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
+          activeProject &&
+          activeWorkspaceRoot)) ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
-          key={`${activeProject.environmentId}:${activeWorkspaceRoot}`}
-          environmentId={activeProject.environmentId}
-          cwd={activeWorkspaceRoot}
-          projectName={activeProject.title}
+          key={`${activeProject?.environmentId ?? activeThreadRef.environmentId}:${activeWorkspaceRoot ?? "skill"}`}
+          environmentId={activeProject?.environmentId ?? activeThreadRef.environmentId}
+          cwd={activeProject ? (activeWorkspaceRoot ?? "") : ""}
+          projectName={activeProject?.title ?? ""}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
@@ -6393,9 +6421,13 @@ function ChatViewContent(props: ChatViewProps) {
           relativePath={
             activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.relativePath : null
           }
+          skill={
+            activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.skill : undefined
+          }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
           onOpenFile={openFileSurface}
+          onOpenSkillFile={openLinkedSkillFileSurface}
           onPendingChange={handleFilePendingChange}
         />
       </Suspense>
@@ -6528,6 +6560,7 @@ function ChatViewContent(props: ChatViewProps) {
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                onOpenSkill={openSkillSurface}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerOverlayHeight}

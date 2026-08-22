@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import { AssetPreviewTypeValidationError, MessageId, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -31,6 +31,40 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect("issues exact skill image URLs constrained to the resolved skill directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-skill-asset-" });
+      const skillPath = path.join(root, "SKILL.md");
+      const imagePath = path.join(root, "icon.png");
+      yield* fileSystem.writeFileString(skillPath, "# Skill");
+      yield* fileSystem.writeFile(imagePath, new Uint8Array([1, 2, 3]));
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "skill-file",
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-1"),
+          skillName: "review",
+          path: "icon.png",
+        },
+        skillPath,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "icon.png")).toEqual({
+        kind: "file",
+        path: yield* fileSystem.realPath(imagePath),
+        cacheControl: "no-store",
+      });
+      expect(yield* resolveAsset(token, "other.png")).toBeNull();
+      expect(yield* resolveAsset(token, "../icon.png")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

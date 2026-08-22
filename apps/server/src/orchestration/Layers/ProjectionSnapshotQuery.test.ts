@@ -122,6 +122,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           turn_id,
           role,
           text,
+          resolved_skills_json,
           is_streaming,
           created_at,
           updated_at
@@ -132,6 +133,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'turn-1',
           'assistant',
           'hello from projection',
+          '[{"name":"implementor","path":"/tmp/skills/implementor/SKILL.md"}]',
           0,
           '2026-02-24T00:00:04.000Z',
           '2026-02-24T00:00:05.000Z'
@@ -332,6 +334,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               id: asMessageId("message-1"),
               role: "assistant",
               text: "hello from projection",
+              resolvedSkills: [{ name: "implementor", path: "/tmp/skills/implementor/SKILL.md" }],
               turnId: asTurnId("turn-1"),
               streaming: false,
               createdAt: "2026-02-24T00:00:04.000Z",
@@ -478,6 +481,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
       yield* sql`DELETE FROM projection_state`;
 
       yield* sql`
@@ -552,7 +556,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'default',
             NULL,
             NULL,
-            NULL,
+            'turn-archived',
             NULL,
             0,
             0,
@@ -562,6 +566,41 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-04-06T00:00:06.000Z',
             NULL
           )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-archived',
+          'turn-archived',
+          'message-archived',
+          NULL,
+          NULL,
+          NULL,
+          'completed',
+          '2026-04-06T00:00:04.000Z',
+          '2026-04-06T00:00:04.500Z',
+          '2026-04-06T00:00:05.000Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
       `;
 
       yield* sql`
@@ -588,6 +627,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+
+      const archivedThreadId = ThreadId.make("thread-archived");
+      const activeOnly = yield* snapshotQuery.getThreadShellById(archivedThreadId);
+      assert.equal(activeOnly._tag, "None");
+      const stored = yield* snapshotQuery.getThreadShellById(archivedThreadId, {
+        includeArchived: true,
+      });
+      assert.equal(stored._tag, "Some");
+      if (stored._tag === "Some") {
+        assert.equal(stored.value.id, archivedThreadId);
+        assert.equal(stored.value.archivedAt, "2026-04-06T00:00:06.000Z");
+        assert.equal(stored.value.latestTurn?.turnId, asTurnId("turn-archived"));
+        assert.equal(stored.value.latestTurn?.state, "completed");
+      }
     }),
   );
 

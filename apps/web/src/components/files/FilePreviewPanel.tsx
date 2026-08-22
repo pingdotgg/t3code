@@ -1,6 +1,7 @@
 import type {
   EditorId,
   EnvironmentId,
+  MessageId,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -59,11 +60,17 @@ import { fileBreadcrumbs } from "./filePath";
 import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
+  relativePathWithinRoot,
+  relativePathWithinSkill,
+  skillRootPath,
+} from "./skillPreviewPaths";
+import {
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+import { useSkillFileQuery } from "./skillFileQueryState";
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -78,11 +85,22 @@ interface FilePreviewPanelProps {
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
+  skill?:
+    | {
+        readonly messageId: MessageId;
+        readonly name: string;
+        readonly path: string;
+      }
+    | undefined;
+  onOpenSkillFile?: ((relativePath: string) => void) | undefined;
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
+const SKILL_RENDER_MARKDOWN_STORAGE_KEY = "t3code.skillRenderMarkdown";
 const FILE_SAVE_DEBOUNCE_MS = 500;
+const FILE_PREVIEW_SUBHEADER_CLASS_NAME =
+  "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
@@ -755,7 +773,7 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
+function WorkspaceFilePreviewPanel({
   environmentId,
   cwd,
   projectName,
@@ -859,10 +877,7 @@ export default function FilePreviewPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
-        <div
-          className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
-          data-surface-subheader
-        >
+        <div className={FILE_PREVIEW_SUBHEADER_CLASS_NAME} data-surface-subheader>
           <ScrollArea
             ref={breadcrumbRef}
             hideScrollbars
@@ -1086,5 +1101,268 @@ export default function FilePreviewPanel({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function resolveSkillRelativePath(currentPath: string, target: string): string {
+  const currentSegments = currentPath.replaceAll("\\", "/").split("/").slice(0, -1);
+  const targetSegments = target.replaceAll("\\", "/").split("/");
+  const resolved = [...currentSegments];
+  for (const segment of targetSegments) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (resolved.length === 0) return target.replaceAll("\\", "/");
+      resolved.pop();
+    } else {
+      resolved.push(segment);
+    }
+  }
+  return resolved.join("/");
+}
+
+function SkillMarkdownImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly skill: NonNullable<FilePreviewPanelProps["skill"]>;
+  readonly relativePath: string;
+  readonly alt: string;
+  readonly refreshKey: number;
+}) {
+  const asset = useAssetUrlState(props.environmentId, {
+    _tag: "skill-file",
+    threadId: props.threadRef.threadId,
+    messageId: props.skill.messageId,
+    skillName: props.skill.name,
+    path: props.relativePath,
+  });
+  if (asset._tag === "Success") {
+    return <img src={`${asset.url}?refresh=${props.refreshKey}`} alt={props.alt} />;
+  }
+  if (asset._tag === "Failure") {
+    return <span className="text-destructive text-xs">{props.alt || "Image unavailable"}</span>;
+  }
+  return <span className="text-muted-foreground text-xs">Loading image…</span>;
+}
+
+function SkillTextFilePreviewPanel(
+  props: FilePreviewPanelProps & {
+    readonly skill: NonNullable<FilePreviewPanelProps["skill"]>;
+  },
+) {
+  const file = useSkillFileQuery({
+    environmentId: props.environmentId,
+    threadId: props.threadRef.threadId,
+    messageId: props.skill.messageId,
+    skillName: props.skill.name,
+    relativePath: props.relativePath ?? "SKILL.md",
+  });
+  const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
+    SKILL_RENDER_MARKDOWN_STORAGE_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const { resolvedTheme } = useTheme();
+  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const relativePath = props.relativePath ?? "SKILL.md";
+  const isMarkdown = isMarkdownPreviewFile(relativePath);
+  const renderMarkdown = isMarkdown && renderMarkdownPreferred;
+
+  useEffect(() => {
+    file.refresh();
+  }, [file.refresh, props.revealRequestId]);
+
+  const openRelativeFile = useCallback(
+    (target: string) => {
+      const withinSkill = relativePathWithinSkill(props.skill.path, target);
+      if (withinSkill !== null) {
+        props.onOpenSkillFile?.(withinSkill);
+        return;
+      }
+      const withinWorkspace = relativePathWithinRoot(props.cwd, target);
+      if (withinWorkspace !== null) {
+        props.onOpenFile(withinWorkspace);
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "This file is outside the skill",
+          description: target,
+        }),
+      );
+    },
+    [props.cwd, props.onOpenFile, props.onOpenSkillFile, props.skill.path],
+  );
+  const currentDirectory = [
+    skillRootPath(props.skill.path),
+    ...relativePath.replaceAll("\\", "/").split("/").slice(0, -1),
+  ].join("/");
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className={FILE_PREVIEW_SUBHEADER_CLASS_NAME} data-surface-subheader>
+        <div
+          className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
+          title={props.skill.path}
+        >
+          {relativePath === "SKILL.md" ? `$${props.skill.name}` : relativePath}
+        </div>
+        {isMarkdown ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={renderMarkdown}
+                  onPressedChange={setRenderMarkdownPreferred}
+                  aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+                  variant="ghost"
+                  size="sm"
+                >
+                  {renderMarkdown ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
+                </Toggle>
+              }
+            />
+            <TooltipPopup>
+              {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </div>
+      {file.data?.truncated ? (
+        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
+          Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
+        </div>
+      ) : null}
+      {file.error && file.data === null ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-xs leading-relaxed text-destructive">
+          <span>{file.error}</span>
+          <span className="font-mono text-[10px] text-muted-foreground">{props.skill.path}</span>
+        </div>
+      ) : file.data === null ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+          <LoaderCircle className="size-5 animate-spin" />
+        </div>
+      ) : isMarkdown && renderMarkdown ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <ChatMarkdown
+            text={file.data.contents ?? ""}
+            cwd={currentDirectory}
+            threadRef={props.threadRef}
+            className="mx-auto max-w-4xl px-6 py-5"
+            onOpenFileLink={openRelativeFile}
+            renderLocalImage={(target, alt) => (
+              <SkillMarkdownImage
+                environmentId={props.environmentId}
+                threadRef={props.threadRef}
+                skill={props.skill}
+                relativePath={resolveSkillRelativePath(relativePath, target)}
+                alt={alt}
+                refreshKey={props.revealRequestId}
+              />
+            )}
+          />
+        </ScrollArea>
+      ) : (
+        <Virtualizer
+          key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
+          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+          config={{
+            overscrollSize: 600,
+            intersectionObserverMargin: 1200,
+          }}
+        >
+          <File
+            file={{
+              name: relativePath,
+              contents: file.data.contents ?? "",
+              cacheKey: projectFileCacheKey(
+                skillRootPath(props.skill.path),
+                relativePath,
+                file.data.contents ?? "",
+              ),
+            }}
+            options={{
+              disableFileHeader: true,
+              overflow: wordWrap ? "wrap" : "scroll",
+              theme: resolveDiffThemeName(resolvedTheme),
+              themeType: resolvedTheme,
+            }}
+            className="min-h-full"
+          />
+        </Virtualizer>
+      )}
+    </div>
+  );
+}
+
+function SkillImageFilePreviewPanel(
+  props: FilePreviewPanelProps & {
+    readonly skill: NonNullable<FilePreviewPanelProps["skill"]>;
+  },
+) {
+  const relativePath = props.relativePath ?? "SKILL.md";
+  const asset = useAssetUrlState(props.environmentId, {
+    _tag: "skill-file",
+    threadId: props.threadRef.threadId,
+    messageId: props.skill.messageId,
+    skillName: props.skill.name,
+    path: relativePath,
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const src = asset._tag === "Success" ? `${asset.url}?refresh=${props.revealRequestId}` : null;
+  const loadFailed = asset._tag === "Failure" || (src !== null && failedUrl === src);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className={FILE_PREVIEW_SUBHEADER_CLASS_NAME} data-surface-subheader>
+        <div
+          className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
+          title={props.skill.path}
+        >
+          {relativePath}
+        </div>
+      </div>
+      {loadFailed ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-xs text-destructive">
+          <span>This skill image is no longer available.</span>
+          <span className="font-mono text-[10px] text-muted-foreground">{props.skill.path}</span>
+        </div>
+      ) : src ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+          <img
+            src={src}
+            alt={relativePath}
+            className="max-h-full max-w-full object-contain"
+            onError={() => setFailedUrl(src)}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+          <LoaderCircle className="size-5 animate-spin" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SkillFilePreviewPanel(
+  props: FilePreviewPanelProps & {
+    readonly skill: NonNullable<FilePreviewPanelProps["skill"]>;
+  },
+) {
+  const relativePath = props.relativePath ?? "SKILL.md";
+  return isWorkspaceImagePreviewPath(relativePath) ? (
+    <SkillImageFilePreviewPanel key={relativePath} {...props} />
+  ) : (
+    <SkillTextFilePreviewPanel {...props} />
+  );
+}
+
+export default function FilePreviewPanel(props: FilePreviewPanelProps) {
+  return props.skill ? (
+    <SkillFilePreviewPanel {...props} skill={props.skill} />
+  ) : (
+    <WorkspaceFilePreviewPanel {...props} />
   );
 }

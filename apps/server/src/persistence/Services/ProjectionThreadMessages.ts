@@ -13,6 +13,7 @@ import {
   ThreadId,
   TurnId,
   IsoDateTime,
+  ResolvedSkillReference,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -28,6 +29,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  resolvedSkills: Schema.optional(Schema.Array(ResolvedSkillReference)),
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

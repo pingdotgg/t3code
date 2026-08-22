@@ -307,8 +307,9 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           message: {
             messageId: asMessageId("message-user-1"),
             role: "user",
-            text: "hello",
+            text: "$implementor hello",
             attachments: [],
+            resolvedSkills: [{ name: "implementor", path: "/tmp/skills/implementor/SKILL.md" }],
           },
           modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
             { id: "reasoningEffort", value: "high" },
@@ -325,6 +326,10 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       const events = Array.isArray(result) ? result : [result];
       expect(events).toHaveLength(2);
       expect(events[0]?.type).toBe("thread.message-sent");
+      expect(events[0]?.payload).toMatchObject({
+        text: "$implementor hello",
+        resolvedSkills: [{ name: "implementor", path: "/tmp/skills/implementor/SKILL.md" }],
+      });
       const turnStartEvent = events[1];
       expect(turnStartEvent?.type).toBe("thread.turn-start-requested");
       expect(turnStartEvent?.causationEventId).toBe(events[0]?.eventId ?? null);

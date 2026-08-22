@@ -9,11 +9,50 @@ import {
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import { collectSubmittedSkillNames } from "@t3tools/shared/composerInlineTokens";
 
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+
+type SkillProvider = {
+  readonly instanceId: string;
+  readonly skills: ReadonlyArray<{
+    readonly name: string;
+    readonly path: string;
+    readonly enabled: boolean;
+  }>;
+};
+
+export function resolveInvokedSkills(
+  text: string,
+  skills: ReadonlyArray<{
+    readonly name: string;
+    readonly path: string;
+    readonly enabled: boolean;
+  }>,
+) {
+  return collectSubmittedSkillNames(text).flatMap((name) => {
+    const skill = skills.find((candidate) => candidate.enabled && candidate.name === name);
+    return skill ? [{ name: skill.name, path: skill.path }] : [];
+  });
+}
+
+export function resolveTurnStartSkills(
+  command: Extract<ClientOrchestrationCommand, { type: "thread.turn.start" }>,
+  providers: ReadonlyArray<SkillProvider>,
+  existingProviderInstanceId?: string,
+) {
+  const providerInstanceId =
+    command.modelSelection?.instanceId ??
+    command.bootstrap?.createThread?.modelSelection.instanceId ??
+    existingProviderInstanceId;
+  const provider = providerInstanceId
+    ? providers.find((candidate) => candidate.instanceId === providerInstanceId)
+    : undefined;
+  return resolveInvokedSkills(command.message.text, provider?.skills ?? []);
+}
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -43,7 +82,11 @@ export const canonicalizeClientCommandTimestamps = (
   };
 };
 
-export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
+export const normalizeDispatchCommand = (
+  command: ClientOrchestrationCommand,
+  providers: ReadonlyArray<SkillProvider> = [],
+  existingProviderInstanceId?: string,
+) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
@@ -169,11 +212,21 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     );
 
+    const resolvedSkills = resolveTurnStartSkills(
+      canonicalCommand,
+      providers,
+      existingProviderInstanceId,
+    );
+
     return {
       ...canonicalCommand,
       message: {
         ...canonicalCommand.message,
         attachments: normalizedAttachments,
+        // This is always server-derived, including an explicit empty list.
+        // Omitting it would turn newly submitted unresolved skills into legacy
+        // messages and let a later provider change make them clickable.
+        resolvedSkills,
       },
     } satisfies OrchestrationCommand;
   });

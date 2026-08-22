@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import { collectComposerInlineTokens, collectSubmittedSkillNames } from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -149,5 +149,47 @@ describe("collectComposerInlineTokens", () => {
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("collectSubmittedSkillNames", () => {
+  it("collects unique qualified skill calls from submitted prose", () => {
+    expect(collectSubmittedSkillNames("Use $github:gh-fix-ci then $review and $review")).toEqual([
+      "github:gh-fix-ci",
+      "review",
+    ]);
+  });
+
+  it("ignores skill-shaped text in inline and fenced code", () => {
+    expect(
+      collectSubmittedSkillNames(
+        "Use $review not `$inline`.\n```sh\n$inside-fence\n```\n~~~\n$also-code\n~~~\n$final",
+      ),
+    ).toEqual(["review", "final"]);
+  });
+
+  it("keeps code masking aligned after astral characters", () => {
+    expect(collectSubmittedSkillNames("😀 `$inside` then $outside")).toEqual(["outside"]);
+  });
+
+  it("requires exact inline delimiters", () => {
+    expect(collectSubmittedSkillNames("`` $visible ``` then $outside")).toEqual([
+      "visible",
+      "outside",
+    ]);
+  });
+
+  it("masks container and indented code blocks", () => {
+    expect(
+      collectSubmittedSkillNames(
+        "`` $inline ``\n> ```\n> $quoted\n> ```\n- ```\n  $listed\n  ```\n    $indented\n\t$tabbed\n$outside",
+      ),
+    ).toEqual(["outside"]);
+  });
+
+  it("keeps fenced code masked until a valid closing line", () => {
+    expect(
+      collectSubmittedSkillNames("```\n$inside\n``` not-a-close\n$still-inside\n```\n$outside"),
+    ).toEqual(["outside"]);
   });
 });

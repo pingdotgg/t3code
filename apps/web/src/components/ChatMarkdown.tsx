@@ -116,6 +116,9 @@ interface ChatMarkdownProps {
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  onSkillClick?: ((skill: Pick<ServerProviderSkill, "name" | "displayName">) => void) | undefined;
+  onOpenFileLink?: ((targetPath: string) => void) | undefined;
+  renderLocalImage?: ((relativePath: string, alt: string) => ReactNode) | undefined;
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
@@ -826,6 +829,8 @@ interface MarkdownFileLinkProps {
   onOpen: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
   onOpenInPanel: (workspaceRelativePath: string, line: number | undefined) => void;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  onOpenInFilePreview?: (() => void) | undefined;
+  readOnlyPreview?: boolean | undefined;
   className?: string | undefined;
 }
 
@@ -1121,6 +1126,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpen,
   onOpenInPanel,
   onOpenInBrowser,
+  onOpenInFilePreview,
+  readOnlyPreview = false,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
@@ -1159,12 +1166,23 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   }, [onOpen, targetPath]);
 
   const handleOpenInFilePreview = useCallback(() => {
+    if (onOpenInFilePreview) {
+      onOpenInFilePreview();
+      return;
+    }
     if (!threadRef || !workspaceRelativePath) {
       handleOpenInEditor();
       return;
     }
     onOpenInPanel(workspaceRelativePath, line);
-  }, [handleOpenInEditor, line, onOpenInPanel, threadRef, workspaceRelativePath]);
+  }, [
+    handleOpenInEditor,
+    line,
+    onOpenInFilePreview,
+    onOpenInPanel,
+    threadRef,
+    workspaceRelativePath,
+  ]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -1254,7 +1272,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       try {
         const clicked = await api.contextMenu.show(
           [
-            { id: "open", label: "Open in editor" },
+            ...(!readOnlyPreview ? ([{ id: "open", label: "Open in editor" }] as const) : []),
             ...(onOpenInBrowser
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
@@ -1286,7 +1304,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     },
-    [displayPath, handleCopy, handleOpenInBrowser, handleOpenInEditor, onOpenInBrowser, targetPath],
+    [
+      displayPath,
+      handleCopy,
+      handleOpenInBrowser,
+      handleOpenInEditor,
+      onOpenInBrowser,
+      readOnlyPreview,
+      targetPath,
+    ],
   );
 
   return (
@@ -1348,6 +1374,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
+    previous.onOpenInFilePreview === next.onOpenInFilePreview &&
+    previous.readOnlyPreview === next.readOnlyPreview &&
     previous.className === next.className
   );
 }
@@ -1359,6 +1387,9 @@ function ChatMarkdown({
   onTaskListChange,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  onSkillClick,
+  onOpenFileLink,
+  renderLocalImage,
   className,
   lineBreaks = false,
   parseRawHtml = true,
@@ -1540,7 +1571,12 @@ function ChatMarkdown({
           threadRef={threadRef}
           onOpen={openInPreferredEditor}
           onOpenInPanel={openFileInPanel}
+          onOpenInFilePreview={
+            onOpenFileLink ? () => onOpenFileLink(fileLinkMeta.filePath) : undefined
+          }
+          readOnlyPreview={onOpenFileLink !== undefined}
           onOpenInBrowser={
+            !onOpenFileLink &&
             threadRef &&
             isPreviewSupportedInRuntime() &&
             isBrowserPreviewFile(fileLinkMeta.filePath)
@@ -1554,7 +1590,49 @@ function ChatMarkdown({
 
     return {
       p({ node: _node, children, ...props }) {
-        return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+        return (
+          <p {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</p>
+        );
+      },
+      h1({ node: _node, children, ...props }) {
+        return (
+          <h1 {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</h1>
+        );
+      },
+      h2({ node: _node, children, ...props }) {
+        return (
+          <h2 {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</h2>
+        );
+      },
+      h3({ node: _node, children, ...props }) {
+        return (
+          <h3 {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</h3>
+        );
+      },
+      h4({ node: _node, children, ...props }) {
+        return (
+          <h4 {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</h4>
+        );
+      },
+      h5({ node: _node, children, ...props }) {
+        return (
+          <h5 {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</h5>
+        );
+      },
+      h6({ node: _node, children, ...props }) {
+        return (
+          <h6 {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</h6>
+        );
+      },
+      td({ node: _node, children, ...props }) {
+        return (
+          <td {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</td>
+        );
+      },
+      th({ node: _node, children, ...props }) {
+        return (
+          <th {...props}>{renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}</th>
+        );
       },
       blockquote({ node: _node, children, ...props }) {
         const alert =
@@ -1591,9 +1669,21 @@ function ChatMarkdown({
           typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
-            {renderSkillInlineMarkdownChildren(children, skills)}
+            {renderSkillInlineMarkdownChildren(children, skills, onSkillClick)}
           </li>
         );
+      },
+      img({ node: _node, src, alt, title: _title, ...props }) {
+        if (
+          renderLocalImage &&
+          typeof src === "string" &&
+          !src.startsWith("/") &&
+          !src.startsWith("#") &&
+          !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(src)
+        ) {
+          return renderLocalImage(src, alt ?? "");
+        }
+        return <img {...props} src={src} alt={alt ?? ""} />;
       },
       input({ node: _node, type, checked, disabled: _disabled, ...props }) {
         if (type !== "checkbox" || !onTaskListChange) {
@@ -1712,9 +1802,6 @@ function ChatMarkdown({
           props.className,
         );
       },
-      img({ node: _node, title: _title, ...props }) {
-        return <img {...props} />;
-      },
       code({ node, children, className, ...props }) {
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
@@ -1774,12 +1861,15 @@ function ChatMarkdown({
     isStreaming,
     markdownFileLinkMetaByHref,
     onTaskListChange,
+    onOpenFileLink,
+    onSkillClick,
     openFileInPanel,
     openInPreferredEditor,
     openExternalLinkInPreview,
     openMarkdownFileInPreview,
     resolvedTheme,
     skills,
+    renderLocalImage,
     text,
     threadRef,
   ]);

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProjectFaviconPath } from "./orchestration.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
@@ -12,6 +12,12 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
+  Schema.TaggedStruct("skill-file", {
+    threadId: ThreadId,
+    messageId: MessageId,
+    skillName: TrimmedNonEmptyString,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
