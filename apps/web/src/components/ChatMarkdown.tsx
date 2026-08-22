@@ -1908,7 +1908,9 @@ function ChatMarkdown({
             />
           );
         }
-        return <ChatMarkdownImageFallback alt={altText} />;
+        return (
+          <ChatMarkdownImageFallback alt={altText} copyMarkdown={`![${altText}](${srcString})`} />
+        );
       },
       table({ node: _node, ...props }) {
         return <MarkdownTable {...props} />;

@@ -202,6 +202,12 @@ describe("ChatMarkdown workspace images", () => {
     },
   );
 
+  it("copies the authored workspace source when no thread can sign it", () => {
+    const html = renderWithoutThread("![diagram](images/diagram.png)");
+
+    expect(copiedMarkdownFrom(html)).toBe("![diagram](images/diagram.png)");
+  });
+
   it("uses a static placeholder while a signed asset URL loads", () => {
     testState.assetState = "loading";
 
