@@ -3383,4 +3383,45 @@ describe("Preview automation diagnostics", () => {
     expect(JSON.stringify(error)).not.toContain(selector);
     expect("locator" in error).toBe(false);
   });
+
+  it("names hidden, disabled, and ambiguous click failures without leaking the locator", () => {
+    const selector = "role=button[name='target-secret']";
+    const hidden = new PreviewManager.PreviewAutomationTargetHiddenError({
+      operation: "click",
+      tabId: "tab_1",
+      selectorKind: "locator",
+      selectorLength: selector.length,
+    });
+    const disabled = new PreviewManager.PreviewAutomationTargetDisabledError({
+      operation: "click",
+      tabId: "tab_1",
+      selectorKind: "locator",
+      selectorLength: selector.length,
+    });
+    const ambiguous = new PreviewManager.PreviewAutomationTargetAmbiguousError({
+      operation: "click",
+      tabId: "tab_1",
+      selectorKind: "locator",
+      selectorLength: selector.length,
+      matchCount: 3,
+    });
+    expect(hidden.message).toContain("not visible");
+    expect(disabled.message).toContain("disabled");
+    expect(ambiguous.message).toContain("matched 3 elements");
+    expect(hidden.message).not.toContain("secret");
+    expect(disabled.message).not.toContain("secret");
+    expect(ambiguous.message).not.toContain("secret");
+
+    const fromAmbiguous = PreviewManager.PreviewAutomationTargetNotFoundError.fromLookupFailure({
+      operation: "click",
+      tabId: "tab_1",
+      selectorKind: "locator",
+      selectorLength: selector.length,
+      failureKind: "ambiguous",
+      matchCount: 3,
+    });
+    expect(fromAmbiguous).toBeInstanceOf(PreviewManager.PreviewAutomationTargetAmbiguousError);
+    expect(fromAmbiguous.message).toContain("matched 3 elements");
+    expect(fromAmbiguous.message).not.toContain("secret");
+  });
 });

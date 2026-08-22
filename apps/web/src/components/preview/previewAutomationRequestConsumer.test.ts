@@ -291,6 +291,52 @@ describe("previewAutomationRequestConsumer", () => {
     });
   });
 
+  it("maps hidden click targets to a named execution failure without leaking the locator", () => {
+    expect(
+      serializePreviewAutomationError(
+        {
+          _tag: "PreviewAutomationTargetHiddenError",
+          selector: "role=button[name='target-secret']",
+        },
+        {
+          requestId: "request-click",
+          operation: "click",
+          environmentId,
+          threadId,
+          tabId,
+        },
+      ),
+    ).toEqual({
+      _tag: "PreviewAutomationExecutionError",
+      message:
+        "Preview automation click request request-click found a target in tab tab-1, but it is not visible.",
+      detail: {
+        requestId: "request-click",
+        operation: "click",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        tabId: "tab-1",
+      },
+    });
+    expect(
+      JSON.stringify(
+        serializePreviewAutomationError(
+          {
+            _tag: "PreviewAutomationTargetHiddenError",
+            selector: "role=button[name='target-secret']",
+          },
+          {
+            requestId: "request-click",
+            operation: "click",
+            environmentId,
+            threadId,
+            tabId,
+          },
+        ),
+      ),
+    ).not.toContain("secret");
+  });
+
   it("maps desktop non-editable targets to the public typed response", () => {
     expect(
       serializePreviewAutomationError(
