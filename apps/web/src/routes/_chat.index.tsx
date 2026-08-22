@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -10,6 +10,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
@@ -21,10 +22,11 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
-  const { environments } = useEnvironments();
+  const { environments, isReady } = useEnvironments();
 
-  if (authGateState.status === "hosted-static" && environments.length === 0) {
-    return <HostedStaticOnboardingState />;
+  if (authGateState.status === "hosted-static") {
+    if (!isReady) return null;
+    if (environments.length === 0) return <HostedStaticFirstRun />;
   }
 
   return <IndexDraftLanding />;
@@ -79,6 +81,8 @@ function IndexDraftLanding() {
       />
     ) : null;
   }
+  // First-run routing to the welcome wizard happens in FirstRunGate at the
+  // root, before this route ever renders.
   return <NoProjectsHero />;
 }
 
@@ -135,6 +139,24 @@ function NoProjectsHero() {
 export const Route = createFileRoute("/_chat/")({
   component: ChatIndexRouteView,
 });
+
+function HostedStaticFirstRun() {
+  const navigate = useNavigate();
+  const hydrated = useClientSettingsHydrated();
+  const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
+
+  useEffect(() => {
+    if (hydrated && onboardingCompletedAt === null) {
+      void navigate({ to: "/welcome", replace: true });
+    }
+  }, [hydrated, navigate, onboardingCompletedAt]);
+
+  if (!hydrated || onboardingCompletedAt === null) {
+    return null;
+  }
+
+  return <HostedStaticOnboardingState />;
+}
 
 function HostedStaticOnboardingState() {
   const cloudEnabled = hasCloudPublicConfig();
