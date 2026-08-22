@@ -31,6 +31,7 @@ import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerE
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
+const EMPTY_SNAPSHOTS: ComposerNativeEventSnapshot[] = [];
 
 type NativeEditorEvent = NativeSyntheticEvent<{
   readonly value: string;
@@ -109,6 +110,23 @@ export function ComposerEditor({
   // first controlled payload must be a non-echo so a restored draft (or a
   // recycled native view) is applied rather than skipped.
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([]);
+  const documentKeyRef = useRef(props.documentKey);
+  // A replaced document (thread switch, send clearing the draft) must not be
+  // matched against the previous document's snapshots: an empty draft matches
+  // an old empty snapshot and gets stamped behind the native revision, which
+  // the editor rejects — it keeps showing the previous document's text while
+  // the send button reads the new document's empty draft, and nothing recovers
+  // until the next keystroke. Snapshots only survive to this point when renders
+  // lag behind native events (an agent streaming into a heavy thread), which is
+  // why the wedge needs a busy app.
+  //
+  // Derived rather than mutated: React can discard a render, and a ref written
+  // during one is not rolled back. Advancing the key here would let a native
+  // event for the still-committed old document repopulate the history before
+  // the retry, which would then skip the reset and match the replacement
+  // against that stale snapshot — the very wedge this guards against.
+  const documentReplaced = documentKeyRef.current !== props.documentKey;
+  const nativeEventSnapshots = documentReplaced ? EMPTY_SNAPSHOTS : nativeEventSnapshotsRef.current;
   const [initialConfirmedTokens] = useState(() => collectComposerInlineTokens(props.value));
   const confirmedTokensRef = useRef(initialConfirmedTokens);
   const textColor = useThemeColor("--color-foreground");
@@ -164,13 +182,13 @@ export function ComposerEditor({
     props.value,
     selection ?? null,
     mostRecentEventCount,
-    nativeEventSnapshotsRef.current,
+    nativeEventSnapshots,
   );
   const acknowledgesLatestNativeEvent = isComposerNativeEcho(
     props.value,
     selection ?? null,
     mostRecentEventCount,
-    nativeEventSnapshotsRef.current,
+    nativeEventSnapshots,
   );
   const isNativeEcho =
     controlledEventCount === mostRecentEventCount && acknowledgesLatestNativeEvent;
@@ -181,6 +199,13 @@ export function ComposerEditor({
     mostRecentEventCount: controlledEventCount,
     isNativeEcho,
   });
+  // Commits the transition the render derived. Declared before the prune and
+  // assume effects so the history is dropped before either rewrites it.
+  useEffect(() => {
+    if (documentKeyRef.current === props.documentKey) return;
+    documentKeyRef.current = props.documentKey;
+    nativeEventSnapshotsRef.current = [];
+  }, [props.documentKey]);
   useEffect(() => {
     if (!acknowledgesLatestNativeEvent) return;
     nativeEventSnapshotsRef.current = pruneAcknowledgedComposerNativeEvents(

@@ -290,6 +290,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  // Identifies the controlled document handed to the editor: a thread switch
+  // or a send replaces the document rather than editing it, and the editor
+  // must not classify the replacement against the previous document's
+  // revision history (see documentKey in T3ComposerEditor.types.ts).
+  const [sendEpoch, setSendEpoch] = useState(0);
+  const composerDocumentKey = `${scopedThreadKey(props.environmentId, props.selectedThread.id)}:${sendEpoch}`;
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   // Opening and presentation count as active so the composer stays expanded
   // while focus moves between its native editor and the settings picker.
@@ -551,6 +557,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
+    // Sending replaces the controlled document (the draft clears). Bump the
+    // document identity before the cleared draft can render, so the editor
+    // applies the empty document instead of stamping it behind a stale
+    // revision and rejecting it.
+    setSendEpoch((epoch) => epoch + 1);
     try {
       await onSendMessage();
       // Sending a prompt starts agent work: arm the lock-screen card while the
@@ -793,6 +804,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             <ComposerEditor
               ref={inputRef}
               multiline
+              documentKey={composerDocumentKey}
               value={props.draftMessage}
               skills={selectedProviderStatus?.skills ?? []}
               selection={composerSelection}
