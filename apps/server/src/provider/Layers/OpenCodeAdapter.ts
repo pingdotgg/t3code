@@ -1499,14 +1499,41 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      yield* runOpenCodeSdk("session.promptAsync", () =>
-        context.client.session.promptAsync({
-          sessionID: context.openCodeSessionId,
-          model: parsedModel,
-          ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-          ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-          parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
-        }),
+      // A steer sends into the busy session. Use the v2 prompt endpoint with
+      // `delivery: "steer"` so opencode promotes the message at the next safe
+      // provider-turn boundary (i.e. after the current tool call) instead of
+      // deferring it until the whole turn finishes — matching the behavior of
+      // typing into a native opencode session. Fresh turns keep the legacy
+      // async prompt since they start the agent loop themselves.
+      const sendPrompt =
+        steeringTurnId !== undefined
+          ? context.client.v2.session.prompt({
+              sessionID: context.openCodeSessionId,
+              prompt: {
+                text: text ?? "",
+                ...(fileParts.length > 0
+                  ? {
+                      files: fileParts.map((part) => ({
+                        uri: part.url,
+                        mime: part.mime,
+                        ...(part.filename !== undefined ? { name: part.filename } : {}),
+                      })),
+                    }
+                  : {}),
+              },
+              delivery: "steer",
+            })
+          : context.client.session.promptAsync({
+              sessionID: context.openCodeSessionId,
+              model: parsedModel,
+              ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+              ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+              parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+            });
+
+      yield* runOpenCodeSdk(
+        steeringTurnId !== undefined ? "session.prompt" : "session.promptAsync",
+        () => sendPrompt,
       ).pipe(
         Effect.mapError(toRequestError),
         // On failure of a fresh turn: clear active-turn state, flip the

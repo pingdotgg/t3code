@@ -183,6 +183,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             throw runtimeMock.state.promptAsyncError;
           }
         },
+        prompt: async (input: unknown) => {
+          runtimeMock.state.promptCalls.push(input);
+          if (runtimeMock.state.promptAsyncError) {
+            throw runtimeMock.state.promptAsyncError;
+          }
+        },
         messages: async () => ({ data: runtimeMock.state.messages }),
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
           runtimeMock.state.revertCalls.push({
@@ -211,6 +217,16 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             }
           })(),
         }),
+      },
+      v2: {
+        session: {
+          prompt: async (input: unknown) => {
+            runtimeMock.state.promptCalls.push(input);
+            if (runtimeMock.state.promptAsyncError) {
+              throw runtimeMock.state.promptAsyncError;
+            }
+          },
+        },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -750,7 +766,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
 
       // Steer: OpenCode queues the prompt into the busy session, so the
-      // active turn id is reused instead of opening a new turn.
+      // active turn id is reused instead of opening a new turn. The steer is
+      // delivered via the v2 prompt endpoint with steer delivery so the
+      // message rides along with the next tool boundary.
       const steeredTurn = yield* adapter.sendTurn({
         threadId,
         input: "actually run 15",
@@ -766,6 +784,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(session?.status, "running");
       NodeAssert.equal(String(session?.activeTurnId), String(turn.turnId));
       NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
+      const steerCall = runtimeMock.state.promptCalls.at(-1) as Record<string, unknown>;
+      NodeAssert.equal(steerCall.delivery, "steer");
+      NodeAssert.deepEqual(steerCall.prompt, { text: "actually run 15" });
     }),
   );
 
