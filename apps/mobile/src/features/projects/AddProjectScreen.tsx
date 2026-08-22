@@ -7,6 +7,11 @@ import {
   canCreateProjectInEnvironment,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getCloneDestinationBrowsePath,
+  getCloneDestinationPath,
+  getCloneDirectoryName,
+  getDefaultCloneUrl,
+  normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
@@ -23,8 +28,8 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
-  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
+  isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
 import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
@@ -236,11 +241,18 @@ function ProjectPathInput(props: {
   );
 }
 
-function useBrowsePathInput(environment: EnvironmentOption | null) {
+// `pinnedDirectoryName` is the repository folder the clone destination keeps
+// appended to whatever folder the user browses to. The plain add-project flow
+// passes nothing, so it keeps proposing the browsed folder itself.
+function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
+  const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
   const [pathInput, commitPathInput] = useState(() =>
-    getAddProjectInitialQuery(environmentBaseDirectory),
+    getCloneDestinationPath(
+      getAddProjectInitialQuery(environmentBaseDirectory),
+      pinnedDirectoryName,
+    ),
   );
   const previousEnvironmentIdRef = useRef(environmentId);
   const environmentRuntime = useRemoteEnvironmentRuntime(environmentId);
@@ -259,33 +271,60 @@ function useBrowsePathInput(environment: EnvironmentOption | null) {
     [browseNavigation],
   );
   const navigateToBrowsePath = useCallback(
-    async (path: string) => {
+    async (input: {
+      readonly browseDirectoryPath: string;
+      readonly selectedDirectoryName?: string;
+    }) => {
+      const selectedDirectoryPath = input.selectedDirectoryName
+        ? appendBrowsePathSegment(input.browseDirectoryPath, input.selectedDirectoryName)
+        : input.browseDirectoryPath;
+      const nextPathInput =
+        pinnedDirectoryName && input.selectedDirectoryName
+          ? getCloneDestinationBrowsePath({
+              browseDirectoryPath: input.browseDirectoryPath,
+              selectedDirectoryName: input.selectedDirectoryName,
+              cloneDirectoryName: pinnedDirectoryName,
+              caseSensitive: clonePathCaseSensitive,
+            })
+          : getCloneDestinationPath(selectedDirectoryPath, pinnedDirectoryName);
       setIsBrowseNavigating(true);
       const committed = await browseNavigation.run(
         async () => {
           if (environment && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
             await loadBrowsePath({
               environmentId: environment.environmentId,
-              input: { partialPath: path },
+              input: { partialPath: selectedDirectoryPath },
             });
           }
         },
-        () => commitPathInput(path),
+        () => commitPathInput(nextPathInput),
       );
       if (committed) {
         setIsBrowseNavigating(false);
       }
       return committed;
     },
-    [browseNavigation, environment, environmentRuntime?.connectionState, loadBrowsePath],
+    [
+      browseNavigation,
+      clonePathCaseSensitive,
+      environment,
+      environmentRuntime?.connectionState,
+      loadBrowsePath,
+      pinnedDirectoryName,
+    ],
   );
 
   useEffect(() => {
     if (environmentId !== null && environmentId !== previousEnvironmentIdRef.current) {
       previousEnvironmentIdRef.current = environmentId;
-      setPathInput(getAddProjectInitialQuery(environmentBaseDirectory));
+      setPathInput(
+        getCloneDestinationPath(
+          getAddProjectInitialQuery(environmentBaseDirectory),
+          pinnedDirectoryName,
+        ),
+      );
     }
-  }, [environmentBaseDirectory, environmentId, setPathInput]);
+  }, [environmentBaseDirectory, environmentId, pinnedDirectoryName, setPathInput]);
 
   useEffect(
     () => () => {
@@ -625,13 +664,14 @@ export function AddProjectRepositoryScreen(props: {
     setIsSubmitting(true);
     const provider = addProjectRemoteSourceProvider(source);
     if (!provider) {
-      const remoteUrl = repositoryInput.trim();
+      const remoteUrl = normalizePastedCloneUrl(repositoryInput);
       navigation.dispatch(
         StackActions.push("AddProjectDestination", {
           environmentId: environment.environmentId,
           source,
           remoteUrl,
           repositoryTitle: remoteUrl,
+          repositoryName: getCloneDirectoryName(remoteUrl),
         }),
       );
       setIsSubmitting(false);
@@ -653,8 +693,9 @@ export function AddProjectRepositoryScreen(props: {
         StackActions.push("AddProjectDestination", {
           environmentId: environment.environmentId,
           source,
-          remoteUrl: repository.sshUrl,
+          remoteUrl: getDefaultCloneUrl(repository),
           repositoryTitle: repository.nameWithOwner,
+          repositoryName: getCloneDirectoryName(repository.nameWithOwner),
         }),
       );
     }
@@ -698,7 +739,11 @@ function FolderBrowser(props: {
   readonly environment: EnvironmentOption;
   readonly pathInput: string;
   readonly setPathInput: (path: string) => void;
-  readonly navigateToBrowsePath: (path: string) => Promise<boolean>;
+  readonly navigateToBrowsePath: (input: {
+    readonly browseDirectoryPath: string;
+    readonly selectedDirectoryName?: string;
+  }) => Promise<boolean>;
+  readonly pinnedDirectoryName?: string;
 }) {
   const accentColor = useThemeColor("--color-icon-muted");
   const browsePath = useMemo(
@@ -717,9 +762,16 @@ function FolderBrowser(props: {
           input: browseInput,
         }),
   );
+  // A pinned repository folder does not exist yet, so filtering the listing by
+  // it would empty the folder picker. Anything the user typed still filters.
+  const pinnedDirectoryName = props.pinnedDirectoryName ?? "";
+  const pinnedDirectoryMatches = isWindowsPlatform(props.environment.platform)
+    ? browsePath.filterQuery.toLowerCase() === pinnedDirectoryName.toLowerCase()
+    : browsePath.filterQuery === pinnedDirectoryName;
+  const browseFilterQuery = pinnedDirectoryMatches ? "" : browsePath.filterQuery;
   const { visibleEntries: visibleBrowseEntries } = useMemo(
-    () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browsePath.filterQuery),
-    [browsePath.filterQuery, browseState.data?.entries],
+    () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browseFilterQuery),
+    [browseFilterQuery, browseState.data?.entries],
   );
 
   return (
@@ -747,7 +799,9 @@ function FolderBrowser(props: {
             right={null}
             onPress={() => {
               if (browsePath.parentPath) {
-                void props.navigateToBrowsePath(browsePath.parentPath);
+                void props.navigateToBrowsePath({
+                  browseDirectoryPath: browsePath.parentPath,
+                });
               }
             }}
           />
@@ -760,11 +814,10 @@ function FolderBrowser(props: {
             isFirst={index === 0 && !browsePath.canBrowseUp}
             right={null}
             onPress={() => {
-              const nextPath =
-                browsePath.directoryPath.length > 0
-                  ? appendBrowsePathSegment(browsePath.directoryPath, entry.name)
-                  : ensureBrowseDirectoryPath(entry.fullPath);
-              void props.navigateToBrowsePath(nextPath);
+              void props.navigateToBrowsePath({
+                browseDirectoryPath: browsePath.directoryPath,
+                selectedDirectoryName: entry.name,
+              });
             }}
           />
         ))}
@@ -836,6 +889,7 @@ export function AddProjectDestinationScreen(props: {
   readonly environmentId?: string | string[];
   readonly remoteUrl?: string | string[];
   readonly repositoryTitle?: string | string[];
+  readonly repositoryName?: string | string[];
 }) {
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
@@ -844,8 +898,15 @@ export function AddProjectDestinationScreen(props: {
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
-  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
-    useBrowsePathInput(environment);
+  // A lookup derives this from "owner/repo", a pasted clone URL from its own
+  // last segment. Older links without the param keep the browsed folder.
+  // Trim once here: the path input and the folder-list filter must compare the
+  // same value, or a deep link with a padded param empties the folder picker.
+  const repositoryName = stringParam(props.repositoryName)?.trim() ?? "";
+  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(
+    environment,
+    repositoryName,
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -918,6 +979,7 @@ export function AddProjectDestinationScreen(props: {
             navigateToBrowsePath={navigateToBrowsePath}
             pathInput={pathInput}
             setPathInput={setPathInput}
+            pinnedDirectoryName={repositoryName}
           />
         </>
       ) : (

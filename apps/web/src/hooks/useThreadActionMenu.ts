@@ -9,7 +9,7 @@ import {
   canSnooze,
   effectiveSettled,
   effectiveSnoozed,
-  type ChangeRequestStateLike,
+  type ChangeRequestSettleSource,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useCallback } from "react";
@@ -60,11 +60,11 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  /** PR state feeding auto-settle classification, as resolved by the caller. */
-  readonly changeRequestState: ChangeRequestStateLike | null;
+  /** PR feeding auto-settle classification, as resolved by the caller. */
+  readonly changeRequest: ChangeRequestSettleSource | null;
   readonly onStartRename: () => void;
 }) {
-  const { threadRef, projectCwd, changeRequestState, onStartRename } = input;
+  const { threadRef, projectCwd, changeRequest, onStartRename } = input;
   const {
     settleThread,
     unsettleThread,
@@ -72,6 +72,7 @@ export function useThreadActionMenu(input: {
     unsnoozeThread,
     pinThread,
     unpinThread,
+    archiveThread,
     deleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -82,6 +83,7 @@ export function useThreadActionMenu(input: {
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+  const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
@@ -134,11 +136,12 @@ export function useThreadActionMenu(input: {
               now: `${now.toISOString().slice(0, 16)}:00.000Z`,
               autoSettleAfterDays,
               autoSettleOnMerge,
-              changeRequestState,
+              changeRequest,
             }),
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
+          isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
         });
@@ -253,6 +256,27 @@ export function useThreadActionMenu(input: {
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
+          case "archive": {
+            if (confirmThreadArchive) {
+              const confirmed = await settlePromise(() =>
+                api.dialogs.confirm(`Archive thread "${thread.title}"?`),
+              );
+              if (confirmed._tag === "Failure" || !confirmed.value) return;
+            }
+            let didArchive = false;
+            const result = await archiveThread(threadRef, {
+              onArchived: () => {
+                didArchive = true;
+              },
+            });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              failureToast(
+                didArchive ? "Thread archived, but navigation failed" : "Failed to archive thread",
+                squashAtomCommandFailure(result),
+              );
+            }
+            return;
+          }
           case "delete": {
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
@@ -285,9 +309,11 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
+      archiveThread,
       autoSettleAfterDays,
       autoSettleOnMerge,
-      changeRequestState,
+      changeRequest,
+      confirmThreadArchive,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
@@ -309,5 +335,9 @@ export function useThreadActionMenu(input: {
     ],
   );
 
-  return { openMenu };
+  const closeMenu = useCallback(() => {
+    void readLocalApi()?.contextMenu.close();
+  }, []);
+
+  return { openMenu, closeMenu };
 }

@@ -16,6 +16,7 @@ import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
   DesktopPreviewScreenshotArtifact,
+  DesktopPreviewTabDefaults,
   PreviewAutomationClickInput,
   PreviewAutomationActionEvent,
   PreviewAutomationConsoleEntry,
@@ -58,6 +59,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
+  MOUSE_NAVIGATE_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
@@ -86,6 +88,10 @@ export interface PreviewTabState {
   zoomFactor: number;
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
+  /** User intent to silence this tab. Re-applied to each guest that attaches. */
+  audioMuted: boolean;
+  /** Observed from Chromium. Stays true while a muted tab keeps playing. */
+  audible: boolean;
   controller: "human" | "agent" | "none";
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
@@ -333,6 +339,21 @@ const findZoomStep = (current: number): number => {
   return Math.abs(ZOOM_LEVELS[index]! - current) < ZOOM_EPSILON ? index : index - 1;
 };
 
+/**
+ * Clamp a client-supplied zoom factor onto the discrete ladder. The setting is
+ * chosen from the same ladder, but it arrives over IPC from a schema that only
+ * guarantees a positive number, so an out-of-band value snaps to the nearest
+ * step rather than leaving the guest at a zoom the zoom controls can't reach.
+ */
+const normalizeZoomFactor = (value: number | undefined): number => {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_ZOOM_FACTOR;
+  let closest = ZOOM_LEVELS[0]!;
+  for (const level of ZOOM_LEVELS) {
+    if (Math.abs(level - value) < Math.abs(closest - value)) closest = level;
+  }
+  return closest;
+};
+
 const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
   const step = findZoomStep(current);
   if (direction === "in") {
@@ -505,6 +526,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+  let frameCaptureWindowOpen = true;
+  let currentMainWindow: BrowserWindow | undefined;
+  let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
     { readonly semaphore: Semaphore.Semaphore; users: number }
@@ -562,35 +586,67 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ),
       );
     });
+  const setWindowBackgroundThrottling = Effect.fnUntraced(function* (
+    window: BrowserWindow,
+    enabled: boolean,
+  ) {
+    if (window.isDestroyed()) return;
+    yield* attempt({ operation: "frameCapture.setBackgroundThrottling" }, () =>
+      window.webContents.setBackgroundThrottling(enabled),
+    );
+  });
+  const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
+    const mainWindow = yield* Ref.get(mainWindowRef);
+    if (Option.isNone(mainWindow)) return;
+    yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
+  });
   const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
   ) {
-    const captureScope = yield* SynchronizedRef.modify(frameCaptureSessionsRef, (sessions) => {
-      const current = sessions.get(tabId);
-      if (!current || !current.consumers.has(consumer)) {
-        return [undefined, sessions] as const;
-      }
-      const consumers = new Set(current.consumers);
-      consumers.delete(consumer);
-      if (consumers.size > 0) {
-        return [
-          undefined,
-          replaceMap(sessions, (copy) => {
-            copy.set(tabId, { ...current, consumers });
-          }),
-        ] as const;
-      }
-      return [
-        current.scope,
-        replaceMap(sessions, (copy) => {
+    yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+      Effect.gen(function* () {
+        const current = sessions.get(tabId);
+        if (!current || !current.consumers.has(consumer)) {
+          return [undefined, sessions] as const;
+        }
+        const consumers = new Set(current.consumers);
+        consumers.delete(consumer);
+        if (consumers.size > 0) {
+          return [
+            undefined,
+            replaceMap(sessions, (copy) => {
+              copy.set(tabId, { ...current, consumers });
+            }),
+          ] as const;
+        }
+        const remainingSessions = replaceMap(sessions, (copy) => {
           copy.delete(tabId);
-        }),
-      ] as const;
+        });
+        if (remainingSessions.size === 0) {
+          yield* setFrameCaptureBackgroundThrottling(true).pipe(
+            Effect.retry({ times: 2 }),
+            Effect.catch((error) =>
+              Effect.logWarning("Failed to restore preview frame capture throttling.", { error }),
+            ),
+          );
+        }
+        return [current.scope, remainingSessions] as const;
+      }),
+    ).pipe(
+      Effect.flatMap((captureScope) =>
+        captureScope ? Scope.close(captureScope, Exit.void).pipe(Effect.ignore) : Effect.void,
+      ),
+      Effect.uninterruptible,
+    );
+  });
+
+  const stopAllRecordings = Effect.fn("PreviewManager.stopAllRecordings")(function* () {
+    const sessions = yield* SynchronizedRef.get(frameCaptureSessionsRef);
+    yield* Effect.forEach(sessions.keys(), (tabId) => stopFrameCapture(tabId, "recording"), {
+      concurrency: "unbounded",
+      discard: true,
     });
-    if (captureScope) {
-      yield* Scope.close(captureScope, Exit.void).pipe(Effect.ignore);
-    }
   });
 
   const deliverEvent = (
@@ -644,7 +700,83 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ] as const;
     });
-    if (Option.isSome(next)) yield* emit(tabId, next.value);
+    // emitIfCurrent, not emit: an event-driven writer such as syncTabAudible
+    // can commit between the modify above and here, and republishing this
+    // snapshot would roll the UI back to a value that writer will not send
+    // again because it suppresses unchanged audibility.
+    if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
+  });
+
+  /**
+   * Pushes a tab's zoom factor onto whichever guest it currently owns, reading
+   * both at call time. Anything that applies zoom after an await goes through
+   * here: a snapshot taken before the await can be older than a zoom action that
+   * landed in between, and re-applying it would roll that action back.
+   */
+  const assertTabZoom = Effect.fn("PreviewManager.assertTabZoom")(function* (tabId: string) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab || tab.webContentsId == null) return;
+    const wc = webContents.fromId(tab.webContentsId);
+    if (!wc || wc.isDestroyed()) return;
+    yield* attempt({ operation: "assertTabZoom", tabId, webContentsId: wc.id }, () =>
+      wc.setZoomFactor(tab.zoomFactor),
+    ).pipe(Effect.ignore);
+  });
+
+  /**
+   * Mute counterpart to {@link assertTabZoom}: pushes the tab's committed mute
+   * onto whichever guest it currently owns, reading both at call time so an
+   * older snapshot can never roll back a mute action that landed after it.
+   *
+   * Failures propagate so the user-facing setter can roll its commit back.
+   * Reconciliation callers, where a guest going away mid-attach is expected,
+   * discard the error at their own call site.
+   */
+  const assertTabAudioMuted = Effect.fn("PreviewManager.assertTabAudioMuted")(function* (
+    tabId: string,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab || tab.webContentsId == null) return;
+    const wc = webContents.fromId(tab.webContentsId);
+    if (!wc || wc.isDestroyed()) return;
+    yield* attempt({ operation: "assertTabAudioMuted", tabId, webContentsId: wc.id }, () =>
+      wc.setAudioMuted(tab.audioMuted),
+    );
+  });
+
+  /**
+   * Publishes an observed audibility value for the guest that reported it.
+   * Shared by the `audio-state-changed` handler and the post-attach reconcile
+   * so both drop values from a guest the tab no longer owns, and both skip
+   * unchanged values: Chromium re-emits per media element, and republishing
+   * would cost an IPC push per element rather than per real transition.
+   */
+  const syncTabAudible = Effect.fn("PreviewManager.syncTabAudible")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    audible: boolean,
+  ) {
+    if (wc.isDestroyed()) return;
+    const updatedAt = yield* currentIso;
+    const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const current = tabs.get(tabId);
+      if (
+        !current ||
+        current.webContentsId !== wc.id ||
+        webContents.fromId(wc.id) !== wc ||
+        current.audible === audible
+      ) {
+        return [Option.none<PreviewTabState>(), tabs] as const;
+      }
+      const state: PreviewTabState = { ...current, audible, updatedAt };
+      return [
+        Option.some(state),
+        replaceMap(tabs, (copy) => {
+          copy.set(tabId, state);
+        }),
+      ] as const;
+    });
+    if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
   });
 
   const requireWebContents = Effect.fn("PreviewManager.requireWebContents")(function* (
@@ -1305,10 +1437,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       confirmedNavigation = false,
     ) {
       if (wc.isDestroyed()) return;
-      const zoomFactor = yield* attempt(
-        { operation: "syncWebContentsState.getZoomFactor", tabId, webContentsId: wc.id },
-        () => wc.getZoomFactor(),
-      ).pipe(Effect.option);
       const computedNavStatus = computeNavStatus(wc);
       const canGoBack = wc.navigationHistory.canGoBack();
       const canGoForward = wc.navigationHistory.canGoForward();
@@ -1338,7 +1466,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus,
           canGoBack,
           canGoForward,
-          ...(Option.isSome(zoomFactor) ? { zoomFactor: zoomFactor.value } : {}),
+          // zoomFactor is deliberately not read back from the guest: Chromium
+          // reports the level it inherited from the app window, so mirroring it
+          // would turn an app zoom into the preview's own zoom.
           updatedAt,
         };
         return [
@@ -1358,6 +1488,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) => {
       if (event.isMainFrame && !event.isSameDocument) cancelFaviconCapture();
     };
+    const audioStateChanged = (
+      event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
+    ) => runFork(syncTabAudible(tabId, wc, event.audible));
     const publishFavicon = Effect.fn("PreviewManager.publishFavicon")(function* (input: {
       readonly captureDocumentId: number;
       readonly dataUrl: string;
@@ -1492,6 +1625,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
       runFork(handleHumanInput(rawSignal));
     };
+    const mouseNavigate = (_event: unknown, payload?: unknown): void => {
+      const direction =
+        typeof payload === "object" && payload !== null && "direction" in payload
+          ? (payload as { direction?: unknown }).direction
+          : undefined;
+      if (direction !== "back" && direction !== "forward") return;
+      runFork(
+        attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () => {
+          if (direction === "back") {
+            if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+          } else if (wc.navigationHistory.canGoForward()) {
+            wc.navigationHistory.goForward();
+          }
+        }).pipe(Effect.ignore),
+      );
+    };
     const forwardShortcut = Effect.fn("PreviewManager.forwardShortcut")(function* (
       event: Electron.Event,
       input: Electron.Input,
@@ -1536,8 +1685,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-start-loading", sync);
         wc.off("did-stop-loading", sync);
         wc.off("did-fail-load", failed as never);
+        wc.off("audio-state-changed", audioStateChanged);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
       }).pipe(Effect.ignore),
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
@@ -1550,7 +1701,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-start-loading", sync);
         wc.on("did-stop-loading", sync);
         wc.on("did-fail-load", failed as never);
+        wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler(({ url }) => {
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
@@ -1573,14 +1726,37 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const setMainWindow = Effect.fn("PreviewManager.setMainWindow")(function* (
     window: BrowserWindow,
   ) {
-    yield* Ref.set(mainWindowRef, Option.some(window));
-    window.once("closed", () => {
-      runFork(closeAllPictureInPicture());
-    });
+    if (mainWindowCleanupFiber) {
+      yield* Fiber.join(mainWindowCleanupFiber);
+      mainWindowCleanupFiber = undefined;
+    }
+    yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+      Effect.gen(function* () {
+        if (sessions.size > 0) {
+          yield* setWindowBackgroundThrottling(window, false);
+        }
+        yield* Ref.set(mainWindowRef, Option.some(window));
+        currentMainWindow = window;
+        frameCaptureWindowOpen = true;
+        window.once("closed", () => {
+          if (currentMainWindow !== window) return;
+          currentMainWindow = undefined;
+          frameCaptureWindowOpen = false;
+          mainWindowCleanupFiber = runFork(
+            Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
+              concurrency: "unbounded",
+              discard: true,
+            }).pipe(Effect.ignore),
+          );
+        });
+        return [undefined, sessions] as const;
+      }),
+    ).pipe(Effect.uninterruptible);
   });
 
   const createTabUnlocked = Effect.fn("PreviewManager.createTabUnlocked")(function* (
     tabId: string,
+    defaults?: DesktopPreviewTabDefaults,
   ) {
     const updatedAt = yield* currentIso;
     const result = yield* SynchronizedRef.modify(
@@ -1599,9 +1775,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus: { kind: "Idle" },
           canGoBack: false,
           canGoForward: false,
-          zoomFactor: DEFAULT_ZOOM_FACTOR,
+          zoomFactor: normalizeZoomFactor(defaults?.zoomFactor),
           pictureInPicture: false,
-          colorScheme: "system",
+          colorScheme: defaults?.colorScheme ?? "system",
+          audioMuted: false,
+          audible: false,
           controller: "none",
           updatedAt,
         };
@@ -1620,8 +1798,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return result.state;
   });
 
-  const createTab = Effect.fn("PreviewManager.createTab")(function* (tabId: string) {
-    return yield* withTabLifecycleLock(tabId, createTabUnlocked(tabId));
+  const createTab = Effect.fn("PreviewManager.createTab")(function* (
+    tabId: string,
+    defaults?: DesktopPreviewTabDefaults,
+  ) {
+    return yield* withTabLifecycleLock(tabId, createTabUnlocked(tabId, defaults));
   });
 
   const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
@@ -1665,6 +1846,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       zoomFactor: DEFAULT_ZOOM_FACTOR,
       pictureInPicture: false,
       colorScheme: "system",
+      audioMuted: false,
+      audible: false,
       controller: "none",
       updatedAt,
     };
@@ -1716,11 +1899,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     const currentAttachment = attached.get(webContentsId);
     if (tab.webContentsId === webContentsId && currentAttachment?.webContents === wc) {
-      const zoomFactor = yield* attempt(
-        { operation: "registerWebview.getZoomFactor", tabId, webContentsId },
-        () => wc.getZoomFactor(),
-      );
-      yield* update(tabId, { zoomFactor });
+      // The guest we already own re-announced itself, so nothing about the tab
+      // changed. Only push its zoom back down — Chromium may have just handed
+      // this guest the app window's zoom level.
+      yield* assertTabZoom(tabId);
       yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
         wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
       );
@@ -1749,19 +1931,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
-    const zoomFactor =
-      replacedWebContentsId !== null
-        ? yield* attempt(
-            { operation: "registerWebview.restoreZoomFactor", tabId, webContentsId },
-            () => {
-              wc.setZoomFactor(currentTab.zoomFactor);
-              return currentTab.zoomFactor;
-            },
-          )
-        : yield* attempt({ operation: "registerWebview.getZoomFactor", tabId, webContentsId }, () =>
-            wc.getZoomFactor(),
-          );
+    // Always assert the tab's own zoom rather than reading the guest's: a guest
+    // attaching while the app UI is zoomed starts at the embedder's inherited
+    // zoom level, which is not the preview's zoom. Done before the guest is
+    // published so it never paints a frame at the inherited zoom.
+    yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
+      wc.setZoomFactor(currentTab.zoomFactor),
+    );
+    // A replacement guest attaches unmuted, so reassert the tab's mute before it
+    // is published rather than letting it emit audio the user already silenced.
+    // Settled again after attach, below, the same way zoom is.
+    yield* attempt({ operation: "registerWebview.restoreAudioMuted", tabId, webContentsId }, () =>
+      wc.setAudioMuted(currentTab.audioMuted),
+    );
     yield* attachListeners(tabId, wc);
+    const readAudible = attempt(
+      { operation: "registerWebview.readAudible", tabId, webContentsId },
+      () => wc.isCurrentlyAudible(),
+    ).pipe(Effect.orElseSucceed(() => false));
+    const attachedAudible = yield* readAudible;
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
       Effect.gen(function* () {
@@ -1784,7 +1972,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
           canGoBack: wc.navigationHistory.canGoBack(),
           canGoForward: wc.navigationHistory.canGoForward(),
-          zoomFactor,
+          audible: attachedAudible,
           updatedAt: registeredAt,
         };
         return [
@@ -1806,8 +1994,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const { state: registered, pendingUrl } = registration.value;
+    // A zoom or mute action that landed while this attach was in flight
+    // addressed the guest this one replaced, so settle the new guest on the
+    // committed values.
+    yield* assertTabZoom(tabId);
+    // Best-effort here, unlike in setAudioMuted: a guest that dies mid-attach
+    // must not fail the registration it was attaching for.
+    yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
     runFork(restoreControlSession(tabId, wc));
-    yield* emit(tabId, registered);
+    // emitIfCurrent, not emit: audio-state-changed can land between the commit
+    // above and here, and republishing this snapshot would roll the UI back to
+    // a superseded audibility that syncTabAudible will not re-send.
+    yield* emitIfCurrent(tabId, registered);
+    // Transitions that fired before the tab owned this guest were dropped by
+    // syncTabAudible's ownership check, so re-read and reconcile through the
+    // same path the event uses.
+    yield* syncTabAudible(tabId, wc, yield* readAudible);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
       wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
     );
@@ -1857,6 +2059,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         zoomFactor: current?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
         pictureInPicture: current?.pictureInPicture ?? false,
         colorScheme: current?.colorScheme ?? "system",
+        // Both carry across navigation. Mute is user intent, and the old
+        // document keeps playing until loadURL actually replaces it, so
+        // clearing audibility here would drop the speaker with no transition
+        // left to restore it. Chromium reports the change when it happens.
+        audioMuted: current?.audioMuted ?? false,
+        audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
         ...(current?.favicon ? { favicon: current.favicon } : {}),
         updatedAt,
@@ -1868,7 +2076,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ] as const;
     });
-    yield* emit(tabId, pending);
+    // emitIfCurrent for the same reason as update: this snapshot carries
+    // audibility forward, and an audio-state-changed landing in between would
+    // otherwise be rolled back with no follow-up transition to correct it.
+    yield* emitIfCurrent(tabId, pending);
     if (pending.webContentsId == null) return;
     const webContentsId = pending.webContentsId;
     const wc = webContents.fromId(webContentsId);
@@ -2099,6 +2310,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  /**
+   * Chromium hands every guest `<webview>` the embedder's zoom level, so zooming
+   * the app UI drags the previewed page along with it. The preview browser owns
+   * its own zoom factor, so re-assert it on each attached guest whenever the main
+   * window's zoom changes (see DesktopWindow.zoomMain).
+   */
+  const reapplyZoom = Effect.fn("PreviewManager.reapplyZoom")(function* () {
+    const tabIds = Array.from((yield* SynchronizedRef.get(tabsRef)).keys());
+    yield* Effect.forEach(tabIds, assertTabZoom, { discard: true });
+  });
+
   const applyZoom = Effect.fn("PreviewManager.applyZoom")(function* (
     tabId: string,
     transform: (current: number) => number,
@@ -2189,6 +2411,39 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) return;
     yield* applyColorScheme(tabId, wc, colorScheme);
+  });
+
+  const setAudioMuted = Effect.fn("PreviewManager.setAudioMuted")(function* (
+    tabId: string,
+    audioMuted: boolean,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    // Commit and apply under the tab's lifecycle lock, then assert the
+    // committed value rather than this call's argument. Two overlapping toggles
+    // would otherwise be free to commit in one order and reach Chromium in the
+    // other, leaving the icon disagreeing with the guest.
+    yield* withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        // Record the intent even when no guest is attached yet — it is
+        // re-applied by registerWebview when one arrives.
+        const previous = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.audioMuted;
+        const committed = previous !== undefined && previous !== audioMuted;
+        if (committed) {
+          yield* update(tabId, { audioMuted });
+        }
+        // Roll the commit back if Chromium refused: reporting success here
+        // would leave the tab drawn as muted while it keeps playing.
+        yield* assertTabAudioMuted(tabId).pipe(
+          Effect.tapError(() =>
+            committed ? update(tabId, { audioMuted: previous }) : Effect.void,
+          ),
+        );
+      }),
+    );
   });
 
   const captureScreenshot = Effect.fn("PreviewManager.captureScreenshot")(function* (
@@ -2399,6 +2654,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const created = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
       return Effect.gen(function* () {
+        if (!frameCaptureWindowOpen) {
+          return yield* new PreviewMainWindowClosedError({ tabId });
+        }
         const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
         if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
           return yield* new PreviewTabNotFoundError({ tabId });
@@ -2418,6 +2676,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }),
           ] as const;
         }
+        if (sessions.size === 0) {
+          yield* setFrameCaptureBackgroundThrottling(false);
+        }
         const scope = yield* Scope.fork(parentScope, "sequential");
         yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
         return [
@@ -2430,7 +2691,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         ] as const;
       });
-    });
+    }).pipe(Effect.uninterruptible);
     if (!created) return;
     yield* capturePreviewFrame(tabId).pipe(
       Effect.catch((error) =>
@@ -3476,12 +3737,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     openPictureInPicture,
     openDevTools,
     pickElement,
+    reapplyZoom,
     refresh,
     registerWebview,
     resetZoom: (tabId: string) => applyZoom(tabId, () => DEFAULT_ZOOM_FACTOR),
     revealArtifact,
     saveRecording,
     setAnnotationTheme,
+    setAudioMuted,
     setColorScheme,
     setMainWindow,
     startRecording,
@@ -3521,6 +3784,15 @@ export class PreviewWebviewNotInitializedError extends Schema.TaggedErrorClass<P
 ) {
   override get message(): string {
     return `Preview tab "${this.tabId}" has no webview registered`;
+  }
+}
+
+export class PreviewMainWindowClosedError extends Schema.TaggedErrorClass<PreviewMainWindowClosedError>()(
+  "PreviewMainWindowClosedError",
+  { tabId: Schema.String },
+) {
+  override get message(): string {
+    return `Cannot start preview frame capture while the main window is closed: ${this.tabId}`;
   }
 }
 
@@ -3730,6 +4002,7 @@ export const PreviewManagerError = Schema.Union([
   PreviewTabNotFoundError,
   PreviewWebContentsNotFoundError,
   PreviewWebviewNotInitializedError,
+  PreviewMainWindowClosedError,
   PreviewOperationError,
   PreviewArtifactPathOutsideDirectoryError,
   PreviewArtifactImageLoadError,
@@ -3761,7 +4034,10 @@ export class PreviewManager extends Context.Service<
     readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
     readonly getBrowserSession: (scope?: string) => Effect.Effect<Session, PreviewManagerError>;
     readonly isBrowserPartition: (partition: string) => boolean;
-    readonly createTab: (tabId: string) => Effect.Effect<PreviewTabState, PreviewManagerError>;
+    readonly createTab: (
+      tabId: string,
+      defaults?: DesktopPreviewTabDefaults,
+    ) => Effect.Effect<PreviewTabState, PreviewManagerError>;
     readonly closeTab: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly registerWebview: (
       tabId: string,
@@ -3774,10 +4050,17 @@ export class PreviewManager extends Context.Service<
     readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    // Re-applies every attached guest's own zoom factor, undoing the zoom level
+    // Chromium inherits from the embedder when the app UI zooms.
+    readonly reapplyZoom: () => Effect.Effect<void>;
     readonly hardReload: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly setColorScheme: (
       tabId: string,
       colorScheme: DesktopPreviewColorScheme,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setAudioMuted: (
+      tabId: string,
+      audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
@@ -3874,8 +4157,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     zoomIn: operations.zoomIn,
     zoomOut: operations.zoomOut,
     resetZoom: operations.resetZoom,
+    reapplyZoom: operations.reapplyZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
+    setAudioMuted: operations.setAudioMuted,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* () {
       yield* browserSession
