@@ -115,11 +115,19 @@ export interface CursorAdapterLiveOptions {
 
 interface PendingApproval {
   readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+  readonly resolutionOffered: Deferred.Deferred<void>;
   readonly kind: string | "unknown";
 }
 
 interface PendingUserInput {
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+  readonly resolutionOffered: Deferred.Deferred<void>;
+}
+
+interface CallbackLifecycle {
+  readonly semaphore: Semaphore.Semaphore;
+  generation: number;
+  admissionOpen: boolean;
 }
 
 interface CursorSessionContext {
@@ -137,33 +145,32 @@ interface CursorSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  readonly callbackLifecycle: CallbackLifecycle;
   stopped: boolean;
 }
 
-function settlePendingApprovalsAsCancelled(
-  pendingApprovals: ReadonlyMap<ApprovalRequestId, PendingApproval>,
+function settlePendingCallbacks(
+  approvals: ReadonlyArray<PendingApproval>,
+  userInputs: ReadonlyArray<PendingUserInput>,
 ): Effect.Effect<void> {
-  const pendingEntries = Array.from(pendingApprovals.values());
-  return Effect.forEach(
-    pendingEntries,
-    (pending) => Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore),
-    {
+  return Effect.gen(function* () {
+    yield* Effect.forEach(
+      approvals,
+      (pending) => Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore),
+      { discard: true },
+    );
+    yield* Effect.forEach(
+      userInputs,
+      (pending) => Deferred.succeed(pending.answers, {}).pipe(Effect.ignore),
+      { discard: true },
+    );
+    yield* Effect.forEach(approvals, (pending) => Deferred.await(pending.resolutionOffered), {
       discard: true,
-    },
-  );
-}
-
-function settlePendingUserInputsAsEmptyAnswers(
-  pendingUserInputs: ReadonlyMap<ApprovalRequestId, PendingUserInput>,
-): Effect.Effect<void> {
-  const pendingEntries = Array.from(pendingUserInputs.values());
-  return Effect.forEach(
-    pendingEntries,
-    (pending) => Deferred.succeed(pending.answers, {}).pipe(Effect.ignore),
-    {
+    });
+    yield* Effect.forEach(userInputs, (pending) => Deferred.await(pending.resolutionOffered), {
       discard: true,
-    },
-  );
+    });
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -458,10 +465,21 @@ export function makeCursorAdapter(
 
     const stopSessionInternal = (ctx: CursorSessionContext) =>
       Effect.gen(function* () {
-        if (ctx.stopped) return;
-        ctx.stopped = true;
-        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        const shouldStop = yield* Effect.uninterruptible(
+          ctx.callbackLifecycle.semaphore.withPermit(
+            Effect.gen(function* () {
+              if (ctx.stopped) return false;
+              ctx.stopped = true;
+              ctx.callbackLifecycle.admissionOpen = false;
+              yield* settlePendingCallbacks(
+                Array.from(ctx.pendingApprovals.values()),
+                Array.from(ctx.pendingUserInputs.values()),
+              );
+              return true;
+            }),
+          ),
+        );
+        if (!shouldStop) return;
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -505,6 +523,11 @@ export function makeCursorAdapter(
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+          const callbackLifecycle: CallbackLifecycle = {
+            semaphore: yield* Semaphore.make(1),
+            generation: 0,
+            admissionOpen: false,
+          };
           const sessionScope = yield* Scope.make("sequential");
           let sessionScopeTransferred = false;
           yield* Effect.addFinalizer(() =>
@@ -571,47 +594,77 @@ export function makeCursorAdapter(
             ),
           );
           const started = yield* Effect.gen(function* () {
-            yield* acp.handleExtRequest("cursor/ask_question", CursorAskQuestionRequest, (params) =>
-              mapExtensionFailure(
-                Effect.gen(function* () {
-                  yield* logNative(
-                    input.threadId,
-                    "cursor/ask_question",
-                    params,
-                    "acp.cursor.extension",
-                  );
-                  const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
-                  const runtimeRequestId = RuntimeRequestId.make(requestId);
-                  const answers = yield* Deferred.make<ProviderUserInputAnswers>();
-                  pendingUserInputs.set(requestId, { answers });
-                  yield* offerRuntimeEvent({
-                    type: "user-input.requested",
-                    ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    turnId: ctx?.activeTurnId,
-                    requestId: runtimeRequestId,
-                    payload: { questions: extractAskQuestions(params) },
-                    raw: {
-                      source: "acp.cursor.extension",
-                      method: "cursor/ask_question",
-                      payload: params,
-                    },
-                  });
-                  const resolved = yield* Deferred.await(answers);
-                  pendingUserInputs.delete(requestId);
-                  yield* offerRuntimeEvent({
-                    type: "user-input.resolved",
-                    ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    turnId: ctx?.activeTurnId,
-                    requestId: runtimeRequestId,
-                    payload: { answers: resolved },
-                  });
-                  return { answers: resolved };
-                }),
-              ),
+            yield* acp.handleExtRequest(
+              "cursor/ask_question",
+              CursorAskQuestionRequest,
+              (params) => {
+                const callbackGeneration = callbackLifecycle.generation;
+                return mapExtensionFailure(
+                  Effect.gen(function* () {
+                    yield* logNative(
+                      input.threadId,
+                      "cursor/ask_question",
+                      params,
+                      "acp.cursor.extension",
+                    );
+                    const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                    const runtimeRequestId = RuntimeRequestId.make(requestId);
+                    const answers = yield* Deferred.make<ProviderUserInputAnswers>();
+                    const resolutionOffered = yield* Deferred.make<void>();
+                    const pending: PendingUserInput = { answers, resolutionOffered };
+                    return yield* Effect.gen(function* () {
+                      const admitted = yield* callbackLifecycle.semaphore.withPermit(
+                        Effect.gen(function* () {
+                          if (
+                            !callbackLifecycle.admissionOpen ||
+                            callbackLifecycle.generation !== callbackGeneration ||
+                            ctx?.stopped
+                          ) {
+                            return false;
+                          }
+                          pendingUserInputs.set(requestId, pending);
+                          yield* offerRuntimeEvent({
+                            type: "user-input.requested",
+                            ...(yield* makeEventStamp()),
+                            provider: PROVIDER,
+                            threadId: input.threadId,
+                            turnId: ctx?.activeTurnId,
+                            requestId: runtimeRequestId,
+                            payload: { questions: extractAskQuestions(params) },
+                            raw: {
+                              source: "acp.cursor.extension",
+                              method: "cursor/ask_question",
+                              payload: params,
+                            },
+                          });
+                          return true;
+                        }),
+                      );
+                      if (!admitted) {
+                        return { answers: {} };
+                      }
+                      const resolved = yield* Deferred.await(answers);
+                      yield* offerRuntimeEvent({
+                        type: "user-input.resolved",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: ctx?.activeTurnId,
+                        requestId: runtimeRequestId,
+                        payload: { answers: resolved },
+                      });
+                      return { answers: resolved };
+                    }).pipe(
+                      Effect.ensuring(
+                        Effect.sync(() => pendingUserInputs.delete(requestId)).pipe(
+                          Effect.andThen(Deferred.succeed(resolutionOffered, undefined)),
+                          Effect.ignore,
+                        ),
+                      ),
+                    );
+                  }),
+                );
+              },
             );
             yield* acp.handleExtRequest("cursor/create_plan", CursorCreatePlanRequest, (params) =>
               mapExtensionFailure(
@@ -663,8 +716,9 @@ export function makeCursorAdapter(
                   }),
                 ),
             );
-            yield* acp.handleRequestPermission((params) =>
-              mapExtensionFailure(
+            yield* acp.handleRequestPermission((params) => {
+              const callbackGeneration = callbackLifecycle.generation;
+              return mapExtensionFailure(
                 Effect.gen(function* () {
                   yield* logNative(
                     input.threadId,
@@ -675,6 +729,17 @@ export function makeCursorAdapter(
                   if (input.runtimeMode === "full-access") {
                     const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {
+                      const admitted = yield* callbackLifecycle.semaphore.withPermit(
+                        Effect.sync(
+                          () =>
+                            callbackLifecycle.admissionOpen &&
+                            callbackLifecycle.generation === callbackGeneration &&
+                            !ctx?.stopped,
+                        ),
+                      );
+                      if (!admitted) {
+                        return { outcome: { outcome: "cancelled" as const } };
+                      }
                       return {
                         outcome: {
                           outcome: "selected" as const,
@@ -687,53 +752,79 @@ export function makeCursorAdapter(
                   const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                   const runtimeRequestId = RuntimeRequestId.make(requestId);
                   const decision = yield* Deferred.make<ProviderApprovalDecision>();
-                  pendingApprovals.set(requestId, {
+                  const resolutionOffered = yield* Deferred.make<void>();
+                  const pending: PendingApproval = {
                     decision,
+                    resolutionOffered,
                     kind: permissionRequest.kind,
-                  });
-                  yield* offerRuntimeEvent(
-                    makeAcpRequestOpenedEvent({
-                      stamp: yield* makeEventStamp(),
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      turnId: ctx?.activeTurnId,
-                      requestId: runtimeRequestId,
-                      permissionRequest,
-                      detail:
-                        permissionRequest.detail ??
-                        encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
-                        "[unserializable params]",
-                      args: params,
-                      source: "acp.jsonrpc",
-                      method: "session/request_permission",
-                      rawPayload: params,
-                    }),
-                  );
-                  const resolved = yield* Deferred.await(decision);
-                  pendingApprovals.delete(requestId);
-                  yield* offerRuntimeEvent(
-                    makeAcpRequestResolvedEvent({
-                      stamp: yield* makeEventStamp(),
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      turnId: ctx?.activeTurnId,
-                      requestId: runtimeRequestId,
-                      permissionRequest,
-                      decision: resolved,
-                    }),
-                  );
-                  return {
-                    outcome:
-                      resolved === "cancel"
-                        ? ({ outcome: "cancelled" } as const)
-                        : {
-                            outcome: "selected" as const,
-                            optionId: acpPermissionOutcome(resolved),
-                          },
                   };
+                  return yield* Effect.gen(function* () {
+                    const admitted = yield* callbackLifecycle.semaphore.withPermit(
+                      Effect.gen(function* () {
+                        if (
+                          !callbackLifecycle.admissionOpen ||
+                          callbackLifecycle.generation !== callbackGeneration ||
+                          ctx?.stopped
+                        ) {
+                          return false;
+                        }
+                        pendingApprovals.set(requestId, pending);
+                        yield* offerRuntimeEvent(
+                          makeAcpRequestOpenedEvent({
+                            stamp: yield* makeEventStamp(),
+                            provider: PROVIDER,
+                            threadId: input.threadId,
+                            turnId: ctx?.activeTurnId,
+                            requestId: runtimeRequestId,
+                            permissionRequest,
+                            detail:
+                              permissionRequest.detail ??
+                              encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
+                              "[unserializable params]",
+                            args: params,
+                            source: "acp.jsonrpc",
+                            method: "session/request_permission",
+                            rawPayload: params,
+                          }),
+                        );
+                        return true;
+                      }),
+                    );
+                    if (!admitted) {
+                      return { outcome: { outcome: "cancelled" as const } };
+                    }
+                    const resolved = yield* Deferred.await(decision);
+                    yield* offerRuntimeEvent(
+                      makeAcpRequestResolvedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: ctx?.activeTurnId,
+                        requestId: runtimeRequestId,
+                        permissionRequest,
+                        decision: resolved,
+                      }),
+                    );
+                    return {
+                      outcome:
+                        resolved === "cancel"
+                          ? ({ outcome: "cancelled" } as const)
+                          : {
+                              outcome: "selected" as const,
+                              optionId: acpPermissionOutcome(resolved),
+                            },
+                    };
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => pendingApprovals.delete(requestId)).pipe(
+                        Effect.andThen(Deferred.succeed(resolutionOffered, undefined)),
+                        Effect.ignore,
+                      ),
+                    ),
+                  );
                 }),
-              ),
-            );
+              );
+            });
             return yield* acp.start();
           }).pipe(
             Effect.mapError((error) =>
@@ -779,6 +870,7 @@ export function makeCursorAdapter(
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             promptsInFlight: 0,
+            callbackLifecycle,
             stopped: false,
           };
 
@@ -916,15 +1008,60 @@ export function makeCursorAdapter(
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);
-        // A sendTurn while a prompt is in flight is a steer: the agent folds
-        // the new prompt into the ongoing work, so the active turn id is
-        // reused instead of opening a new turn.
-        const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
-        const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
-        // Count this prompt immediately so a superseded in-flight prompt
-        // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
-        ctx.promptsInFlight += 1;
+        const candidateTurnId = TurnId.make(yield* randomUUIDv4);
+        const admission = yield* ctx.callbackLifecycle.semaphore.withPermit(
+          Effect.gen(function* () {
+            if (ctx.stopped) {
+              return yield* new ProviderAdapterSessionNotFoundError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+              });
+            }
+            // A prompt sent while another is in flight steers the active turn.
+            const startsTurn = ctx.promptsInFlight === 0;
+            if (startsTurn) {
+              ctx.callbackLifecycle.generation += 1;
+              ctx.callbackLifecycle.admissionOpen = true;
+              ctx.activeTurnId = candidateTurnId;
+              ctx.lastPlanFingerprint = undefined;
+            }
+            // Count it immediately so an older prompt cannot settle the shared turn.
+            ctx.promptsInFlight += 1;
+            return {
+              generation: ctx.callbackLifecycle.generation,
+              startsTurn,
+              turnId: ctx.activeTurnId ?? candidateTurnId,
+            };
+          }),
+        );
+        const { generation, startsTurn, turnId } = admission;
+        let promptFinalized = false;
+
+        const finalizePrompt = (
+          onLastPrompt?: () => Effect.Effect<void, ProviderAdapterRequestError>,
+        ): Effect.Effect<boolean, ProviderAdapterRequestError> =>
+          Effect.uninterruptible(
+            ctx.callbackLifecycle.semaphore.withPermit(
+              Effect.gen(function* () {
+                if (promptFinalized) return false;
+                promptFinalized = true;
+                if (ctx.callbackLifecycle.generation !== generation) return false;
+                ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+                // Only the final prompt for this generation may settle and complete the turn.
+                if (ctx.promptsInFlight !== 0) return false;
+
+                ctx.callbackLifecycle.admissionOpen = false;
+                yield* settlePendingCallbacks(
+                  Array.from(ctx.pendingApprovals.values()),
+                  Array.from(ctx.pendingUserInputs.values()),
+                );
+                if (!ctx.stopped && onLastPrompt) {
+                  yield* onLastPrompt();
+                }
+                return true;
+              }),
+            ),
+          );
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -945,17 +1082,13 @@ export function makeCursorAdapter(
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
-          ctx.activeTurnId = turnId;
-          if (steeringTurnId === undefined) {
-            ctx.lastPlanFingerprint = undefined;
-          }
           ctx.session = {
             ...ctx.session,
             activeTurnId: turnId,
             updatedAt: yield* nowIso,
           };
 
-          if (steeringTurnId === undefined) {
+          if (startsTurn) {
             yield* offerRuntimeEvent({
               type: "turn.started",
               ...(yield* makeEventStamp()),
@@ -1033,42 +1166,53 @@ export function makeCursorAdapter(
             model: resolvedModel,
           };
 
-          // Only the last remaining prompt settles the turn — a steer-
-          // superseded prompt resolving (usually cancelled) while another is
-          // in flight or pending must leave the merged turn running.
-          if (ctx.promptsInFlight === 1) {
-            yield* offerRuntimeEvent({
-              type: "turn.completed",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: {
-                state: result.stopReason === "cancelled" ? "cancelled" : "completed",
-                stopReason: result.stopReason ?? null,
-              },
-            });
-          }
+          yield* finalizePrompt(() =>
+            makeEventStamp().pipe(
+              Effect.flatMap((stamp) =>
+                offerRuntimeEvent({
+                  type: "turn.completed",
+                  ...stamp,
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId,
+                  payload: {
+                    state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+                    stopReason: result.stopReason ?? null,
+                  },
+                }),
+              ),
+            ),
+          );
 
           return {
             threadId: input.threadId,
             turnId,
             resumeCursor: ctx.session.resumeCursor,
           };
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
-            }),
-          ),
-        );
+        }).pipe(Effect.ensuring(finalizePrompt().pipe(Effect.ignore)));
       });
 
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
-        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        const interruptedTurnId = yield* Effect.uninterruptible(
+          ctx.callbackLifecycle.semaphore.withPermit(
+            Effect.gen(function* () {
+              const turnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+              ctx.callbackLifecycle.admissionOpen = false;
+              yield* settlePendingCallbacks(
+                Array.from(ctx.pendingApprovals.values()),
+                Array.from(ctx.pendingUserInputs.values()),
+              );
+              if (turnId) {
+                ctx.promptsInFlight = 0;
+                ctx.callbackLifecycle.generation += 1;
+                ctx.lastPlanFingerprint = undefined;
+              }
+              return turnId;
+            }),
+          ),
+        );
         yield* Effect.ignore(
           ctx.acp.cancel.pipe(
             Effect.mapError((error) =>
@@ -1076,6 +1220,20 @@ export function makeCursorAdapter(
             ),
           ),
         );
+        if (interruptedTurnId && !ctx.stopped) {
+          yield* makeEventStamp().pipe(
+            Effect.flatMap((stamp) =>
+              offerRuntimeEvent({
+                type: "turn.completed",
+                ...stamp,
+                provider: PROVIDER,
+                threadId,
+                turnId: interruptedTurnId,
+                payload: { state: "cancelled", stopReason: "cancelled" },
+              }),
+            ),
+          );
+        }
       });
 
     const respondToRequest: CursorAdapterShape["respondToRequest"] = (
@@ -1093,7 +1251,14 @@ export function makeCursorAdapter(
             detail: `Unknown pending approval request: ${requestId}`,
           });
         }
-        yield* Deferred.succeed(pending.decision, decision);
+        const accepted = yield* Deferred.succeed(pending.decision, decision);
+        if (!accepted) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session/request_permission",
+            detail: `Approval request is no longer pending: ${requestId}`,
+          });
+        }
       });
 
     const respondToUserInput: CursorAdapterShape["respondToUserInput"] = (
@@ -1111,7 +1276,14 @@ export function makeCursorAdapter(
             detail: `Unknown pending user-input request: ${requestId}`,
           });
         }
-        yield* Deferred.succeed(pending.answers, answers);
+        const accepted = yield* Deferred.succeed(pending.answers, answers);
+        if (!accepted) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "cursor/ask_question",
+            detail: `User-input request is no longer pending: ${requestId}`,
+          });
+        }
       });
 
     const readThread: CursorAdapterShape["readThread"] = (threadId) =>
