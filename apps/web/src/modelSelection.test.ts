@@ -198,6 +198,86 @@ describe("instance-scoped model selection", () => {
     ).not.toContain("openai/gpt-5.5");
   });
 
+  it("removes a custom model immediately when the provider snapshot is stale", () => {
+    const baseProvider = provider({
+      instanceId: "claudeAgent",
+      models: ["claude-sonnet-4-6"],
+    });
+    const staleProviders: ServerProvider[] = [
+      {
+        ...baseProvider,
+        models: [
+          ...baseProvider.models,
+          {
+            slug: "removed-preview-model",
+            name: "Removed Preview Model",
+            isCustom: true,
+            capabilities: {},
+          },
+        ],
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: [] },
+        },
+      },
+    };
+    const stock = deriveProviderInstanceEntries(staleProviders)[0]!;
+
+    expect(getAppModelOptionsForInstance(settings, stock).map((option) => option.slug)).toEqual([
+      "claude-sonnet-4-6",
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claudeAgent"),
+        settings,
+        staleProviders,
+        "removed-preview-model",
+      ),
+    ).toBe("claude-sonnet-4-6");
+  });
+
+  it("does not fall back to a stale custom model when no configured models remain", () => {
+    const baseProvider = provider({ instanceId: "claudeAgent" });
+    const staleProviders: ServerProvider[] = [
+      {
+        ...baseProvider,
+        models: [
+          {
+            slug: "removed-preview-model",
+            name: "Removed Preview Model",
+            isCustom: true,
+            capabilities: {},
+          },
+        ],
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: [] },
+        },
+      },
+    };
+
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claudeAgent"),
+        settings,
+        staleProviders,
+        "removed-preview-model",
+      ),
+    ).toBeNull();
+  });
+
   it("hides server models from the instance option list", () => {
     const providers = [
       provider({
