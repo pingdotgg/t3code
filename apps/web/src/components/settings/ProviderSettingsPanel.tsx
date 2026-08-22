@@ -72,6 +72,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { KimiSignInControl } from "./KimiSignInControl";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
@@ -832,6 +833,16 @@ export function EnvironmentProviderSettings({
                   onClick={() => resetDefaultInstance(row.driver)}
                 />
               ) : null;
+            const authAction =
+              row.driver === ProviderDriverKind.make("kimi") &&
+              resolveProviderInstanceEnabled(row.instance) &&
+              liveProvider?.installed === true ? (
+                <KimiSignInControl
+                  authenticated={liveProvider.auth.status === "authenticated"}
+                  environmentId={environmentId}
+                  instanceId={row.instanceId}
+                />
+              ) : undefined;
             return (
               <ProviderInstanceCard
                 key={row.instanceId}
@@ -839,6 +850,7 @@ export function EnvironmentProviderSettings({
                 instance={row.instance}
                 driverOption={driverOption}
                 liveProvider={liveProvider}
+                authAction={authAction}
                 isExpanded={openInstanceDetails[row.instanceId] ?? false}
                 onExpandedChange={(open) =>
                   setOpenInstanceDetails((existing) => ({

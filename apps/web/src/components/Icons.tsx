@@ -214,6 +214,21 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const KimiIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
+  >
+    {/* Stylized "K" mark: upright stem plus two angled strokes, with the
+        upper arm ending in Kimi's dot accent. */}
+    <path d="M4 3h3.6v18H4z" />
+    <path d="M9.4 13.2 16.6 21h4.6l-8.9-9.7 2.5-2.7-2.4-2.6-8.5 9.2h4.9z" />
+    <circle cx="18.8" cy="5.2" r="2.2" />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

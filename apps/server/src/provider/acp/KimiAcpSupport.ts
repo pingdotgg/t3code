@@ -1,0 +1,674 @@
+import {
+  type KimiSettings,
+  type ProviderInteractionMode,
+  ProviderDriverKind,
+  type RuntimeMode,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as EffectAcpClient from "effect-acp/client";
+import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
+import { normalizeModelSlug } from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+
+import { expandHomePath } from "../../pathExpansion.ts";
+import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+
+const KIMI_CODE_HOME_ENV = "KIMI_CODE_HOME";
+// kimi-cli advertises a single terminal-auth method: `login`. The ACP
+// `authenticate` call only validates the stored OAuth token; the actual
+// device flow happens through `kimi login` (or T3's in-app sign-in, which
+// writes the same credentials file).
+const KIMI_AUTH_METHOD_LOGIN = "login";
+const KIMI_DRIVER_KIND = ProviderDriverKind.make("kimi");
+
+type KimiAcpRuntimeKimiSettings = Pick<KimiSettings, "binaryPath" | "homePath">;
+
+interface KimiAcpRuntimeInput extends Omit<
+  AcpSessionRuntime.AcpSessionRuntimeOptions,
+  "authMethodId" | "clientCapabilities" | "spawn"
+> {
+  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly kimiSettings: KimiAcpRuntimeKimiSettings | null | undefined;
+  readonly environment?: NodeJS.ProcessEnv;
+  /**
+   * Advertise the ACP client terminal capability. Only adapter chat sessions
+   * set this: they register the terminal handlers. Text generation and the
+   * discovery/auth probes must stay `false` because they register none, and
+   * Kimi routes every shell command through the client once advertised.
+   */
+  readonly terminal?: boolean;
+}
+
+export interface KimiTurnActivity {
+  readonly markActive: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly markIdle: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly activeCount: Effect.Effect<number>;
+  readonly awaitIdle: Effect.Effect<void>;
+  readonly beginProbeIfIdle: Effect.Effect<boolean>;
+  readonly endProbe: Effect.Effect<void>;
+}
+
+interface KimiTurnActivityState {
+  readonly activeThreadIds: ReadonlySet<ThreadId>;
+  readonly idle: Deferred.Deferred<void>;
+  readonly probesInFlight: number;
+}
+
+export const makeKimiTurnActivity: Effect.Effect<KimiTurnActivity> = Effect.gen(function* () {
+  const initialIdle = yield* Deferred.make<void>();
+  yield* Deferred.succeed(initialIdle, undefined);
+  const state = yield* SynchronizedRef.make<KimiTurnActivityState>({
+    activeThreadIds: new Set<ThreadId>(),
+    idle: initialIdle,
+    probesInFlight: 0,
+  });
+
+  const markActive = (threadId: ThreadId): Effect.Effect<void> =>
+    SynchronizedRef.modifyEffect(
+      state,
+      (current): Effect.Effect<readonly [void, KimiTurnActivityState]> => {
+        if (current.activeThreadIds.has(threadId)) {
+          return Effect.succeed([undefined, current] as const);
+        }
+        return Effect.gen(function* () {
+          const activeThreadIds = new Set(current.activeThreadIds);
+          activeThreadIds.add(threadId);
+          const idle =
+            current.activeThreadIds.size === 0 ? yield* Deferred.make<void>() : current.idle;
+          return [undefined, { ...current, activeThreadIds, idle }] as const;
+        });
+      },
+    );
+
+  const markIdle = (threadId: ThreadId): Effect.Effect<void> =>
+    SynchronizedRef.modify(
+      state,
+      (current): readonly [Deferred.Deferred<void> | null, KimiTurnActivityState] => {
+        if (!current.activeThreadIds.has(threadId)) {
+          return [null, current] as const;
+        }
+        const activeThreadIds = new Set(current.activeThreadIds);
+        activeThreadIds.delete(threadId);
+        return [
+          activeThreadIds.size === 0 ? current.idle : null,
+          { ...current, activeThreadIds },
+        ] as const;
+      },
+    ).pipe(
+      Effect.flatMap((idle) =>
+        idle ? Deferred.succeed(idle, undefined).pipe(Effect.asVoid) : Effect.void,
+      ),
+    );
+
+  const awaitIdle: Effect.Effect<void> = Effect.gen(function* () {
+    while (true) {
+      const current = yield* SynchronizedRef.get(state);
+      if (current.activeThreadIds.size === 0) {
+        return;
+      }
+      yield* Deferred.await(current.idle);
+    }
+  });
+
+  const beginProbeIfIdle = SynchronizedRef.modify(state, (current) =>
+    current.activeThreadIds.size > 0
+      ? [false, current]
+      : [true, { ...current, probesInFlight: current.probesInFlight + 1 }],
+  );
+  const endProbe = SynchronizedRef.update(state, (current) => ({
+    ...current,
+    probesInFlight: Math.max(0, current.probesInFlight - 1),
+  }));
+
+  return {
+    markActive,
+    markIdle,
+    activeCount: SynchronizedRef.get(state).pipe(
+      Effect.map((current) => current.activeThreadIds.size),
+    ),
+    awaitIdle,
+    beginProbeIfIdle,
+    endProbe,
+  } satisfies KimiTurnActivity;
+});
+
+export function resolveKimiHomePath(
+  kimiSettings: Pick<KimiSettings, "homePath"> | null | undefined,
+): string | undefined {
+  const homePath = kimiSettings?.homePath?.trim();
+  return homePath ? expandHomePath(homePath) : undefined;
+}
+
+export function buildKimiAcpSpawnInput(
+  kimiSettings: KimiAcpRuntimeKimiSettings | null | undefined,
+  cwd: string,
+  environment?: NodeJS.ProcessEnv,
+): AcpSessionRuntime.AcpSpawnInput {
+  const homePath = resolveKimiHomePath(kimiSettings);
+  return {
+    command: kimiSettings?.binaryPath || "kimi",
+    args: ["acp"],
+    cwd,
+    ...(environment || homePath
+      ? {
+          env: {
+            ...environment,
+            ...(homePath ? { [KIMI_CODE_HOME_ENV]: homePath } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+export const probeKimiAcpAuthentication = Effect.fn("probeKimiAcpAuthentication")(function* (
+  input: KimiAcpRuntimeInput,
+) {
+  const spawnInput = buildKimiAcpSpawnInput(input.kimiSettings, input.cwd, input.environment);
+  const spawnCommand = yield* resolveSpawnCommand(
+    spawnInput.command,
+    spawnInput.args,
+    spawnInput.env ? { env: spawnInput.env, extendEnv: true } : {},
+  );
+  const child = yield* input.childProcessSpawner
+    .spawn(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        ...(spawnInput.cwd ? { cwd: spawnInput.cwd } : {}),
+        ...(spawnInput.env ? { env: spawnInput.env, extendEnv: true } : {}),
+        shell: spawnCommand.shell,
+      }),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new EffectAcpErrors.AcpSpawnError({
+            command: spawnInput.command,
+            cause,
+          }),
+      ),
+    );
+  const acpContext = yield* Layer.build(EffectAcpClient.layerChildProcess(child));
+  const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
+  yield* acp.agent.initialize({
+    protocolVersion: 1,
+    clientCapabilities: {
+      fs: { readTextFile: false, writeTextFile: false },
+      terminal: false,
+    },
+    clientInfo: input.clientInfo,
+  });
+  yield* acp.agent.authenticate({ methodId: KIMI_AUTH_METHOD_LOGIN });
+});
+
+export const makeKimiAcpRuntime = (
+  input: KimiAcpRuntimeInput,
+): Effect.Effect<
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
+  EffectAcpErrors.AcpError,
+  Crypto.Crypto | Scope.Scope
+> =>
+  Effect.gen(function* () {
+    const acpContext = yield* Layer.build(
+      AcpSessionRuntime.layer({
+        ...input,
+        spawn: buildKimiAcpSpawnInput(input.kimiSettings, input.cwd, input.environment),
+        authMethodId: KIMI_AUTH_METHOD_LOGIN,
+        ...(input.terminal ? { clientCapabilities: { terminal: true } } : {}),
+      }).pipe(
+        Layer.provide(
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+        ),
+      ),
+    );
+    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+      Effect.provide(acpContext),
+    );
+  });
+
+// kimi-code aliases its managed models as `kimi-code/<id>` in config.toml,
+// and its model-selection RPCs expect those alias ids.
+const KIMI_CODE_MODEL_NAMESPACE = "kimi-code/";
+
+type KimiSessionSetupResponse =
+  | EffectAcpSchema.LoadSessionResponse
+  | EffectAcpSchema.NewSessionResponse
+  | EffectAcpSchema.ResumeSessionResponse;
+
+type KimiSelectConfigOption = Extract<
+  EffectAcpSchema.SessionConfigOption,
+  { readonly type: "select" }
+>;
+
+export function findKimiModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): KimiSelectConfigOption | undefined {
+  if (!configOptions) {
+    return undefined;
+  }
+  const selectOptions = configOptions.filter(
+    (option): option is KimiSelectConfigOption => option.type === "select",
+  );
+  return (
+    selectOptions.find((option) => option.category === "model") ??
+    selectOptions.find((option) => option.id.trim() === "model")
+  );
+}
+
+export function findKimiThinkingConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): KimiSelectConfigOption | undefined {
+  if (!configOptions) {
+    return undefined;
+  }
+  const selectOptions = configOptions.filter(
+    (option): option is KimiSelectConfigOption => option.type === "select",
+  );
+  return (
+    selectOptions.find((option) => option.category === "thought_level") ??
+    selectOptions.find((option) => option.id.trim() === "thinking")
+  );
+}
+
+export function flattenKimiSelectConfigOptions(
+  configOption: EffectAcpSchema.SessionConfigOption | null | undefined,
+): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
+  if (!configOption || configOption.type !== "select") {
+    return [];
+  }
+  return configOption.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
+}
+
+export function kimiModelStateFromSessionSetup(
+  sessionSetupResult: KimiSessionSetupResponse,
+): EffectAcpSchema.SessionModelState | undefined {
+  const modelConfig = findKimiModelConfigOption(sessionSetupResult.configOptions);
+  if (modelConfig) {
+    const currentModelId = modelConfig.currentValue.trim();
+    const seen = new Set<string>();
+    const availableModels = flattenKimiSelectConfigOptions(modelConfig).flatMap((option) => {
+      const modelId = option.value.trim();
+      if (!modelId || seen.has(modelId)) {
+        return [];
+      }
+      seen.add(modelId);
+      const name = option.name.trim() || modelId;
+      const description = option.description?.trim() || undefined;
+      return [
+        {
+          modelId,
+          name,
+          ...(description ? { description } : {}),
+        } satisfies EffectAcpSchema.ModelInfo,
+      ];
+    });
+    if (currentModelId && availableModels.length > 0) {
+      return { currentModelId, availableModels };
+    }
+  }
+  return sessionSetupResult.models ?? undefined;
+}
+
+export function kimiSessionHasModelConfigOption(
+  sessionSetupResult: KimiSessionSetupResponse,
+): boolean {
+  return findKimiModelConfigOption(sessionSetupResult.configOptions) !== undefined;
+}
+
+export type KimiAcpModeId = "default" | "plan" | "auto" | "yolo";
+
+export function resolveKimiAcpModeId(input: {
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
+}): KimiAcpModeId {
+  if (input.interactionMode === "plan") {
+    return "plan";
+  }
+  switch (input.runtimeMode) {
+    case "approval-required":
+      return "default";
+    case "auto-accept-edits":
+    case "auto":
+      return "auto";
+    case "full-access":
+      return "yolo";
+  }
+}
+
+export function currentKimiModeIdFromConfigOptions(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): string | undefined {
+  const options = configOptions ?? [];
+  const modeConfig =
+    options.find(
+      (option): option is KimiSelectConfigOption =>
+        option.type === "select" && option.category === "mode",
+    ) ??
+    options.find(
+      (option): option is KimiSelectConfigOption =>
+        option.type === "select" && option.id.trim() === "mode",
+    );
+  return modeConfig?.currentValue.trim() || undefined;
+}
+
+export function currentKimiModeIdFromSessionSetup(
+  sessionSetupResult: KimiSessionSetupResponse,
+): string | undefined {
+  return (
+    (currentKimiModeIdFromConfigOptions(sessionSetupResult.configOptions) ??
+      sessionSetupResult.modes?.currentModeId.trim()) ||
+    undefined
+  );
+}
+
+export function applyKimiAcpModeSelection<E>(input: {
+  readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setMode">;
+  readonly currentModeId: string | undefined;
+  readonly requestedModeId: KimiAcpModeId;
+  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+}): Effect.Effect<KimiAcpModeId, E> {
+  if (input.currentModeId === input.requestedModeId) {
+    return Effect.succeed(input.requestedModeId);
+  }
+  return input.runtime
+    .setMode(input.requestedModeId)
+    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModeId));
+}
+
+/**
+ * Kimi routes three different things through `session/request_permission`:
+ * tool gates (Bash, edits), the plan decision (`ExitPlanMode`), and user
+ * questions (`AskUserQuestion`). Only tool gates are approvable on the user's
+ * behalf; the other two are user decisions and must always reach the UI.
+ */
+export type KimiPermissionRequestKind = "tool" | "plan-decision" | "user-question";
+
+export function classifyKimiPermissionRequest(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): KimiPermissionRequestKind {
+  const title = params.toolCall.title?.trim();
+  if (
+    title === "ExitPlanMode" ||
+    params.options.some((option) => option.optionId.trim() === "plan_approve")
+  ) {
+    return "plan-decision";
+  }
+  if (title === "AskUserQuestion") {
+    return "user-question";
+  }
+  return "tool";
+}
+
+// kimi-cli composes human-readable text entries on the permission request's
+// tool call instead of filling rawInput. Observed on 0.37.2:
+//   Bash:         "Requesting approval to Running: <command>"
+//   ExitPlanMode: "Plan saved to: <path>\n\n<plan markdown>" plus a trailing
+//                 "Requesting approval to Presenting plan and exiting plan mode"
+//   AskUserQuestion: the bare question text.
+const KIMI_APPROVAL_TEXT_PREFIX = "Requesting approval to ";
+const KIMI_PLAN_SAVED_PREFIX = "Plan saved to: ";
+
+function kimiPermissionContentTexts(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): Array<string> {
+  const texts: Array<string> = [];
+  for (const entry of params.toolCall.content ?? []) {
+    if (entry.type !== "content" || entry.content.type !== "text") {
+      continue;
+    }
+    const text = entry.content.text.trim();
+    if (text.length > 0) {
+      texts.push(text);
+    }
+  }
+  return texts;
+}
+
+/**
+ * The plan markdown from an ExitPlanMode permission request, without the
+ * "Plan saved to: <path>" header line. Kimi does not stream ACP plan entries
+ * in plan mode, so this payload is the only plan-markdown source and becomes
+ * the approval card's detail text.
+ */
+export function extractKimiProposedPlanMarkdown(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  const texts = kimiPermissionContentTexts(params);
+  for (const text of texts) {
+    if (!text.startsWith(KIMI_PLAN_SAVED_PREFIX)) {
+      continue;
+    }
+    const separatorIndex = text.indexOf("\n\n");
+    const markdown = (separatorIndex === -1 ? "" : text.slice(separatorIndex + 2)).trim();
+    if (markdown.length > 0) {
+      return markdown;
+    }
+  }
+  return texts.find((text) => !text.startsWith(KIMI_APPROVAL_TEXT_PREFIX));
+}
+
+/**
+ * What the approval card should say for a Kimi permission request: the actual
+ * command, plan, or question text, not just the tool title. Kimi prefixes
+ * tool-gate text with "Requesting approval to "; that scaffolding is stripped.
+ * A plan decision's detail is the plan markdown itself, without the
+ * "Plan saved to: <path>" header line.
+ */
+export function kimiPermissionRequestDetail(
+  params: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  if (classifyKimiPermissionRequest(params) === "plan-decision") {
+    const planMarkdown = extractKimiProposedPlanMarkdown(params);
+    if (planMarkdown !== undefined) {
+      return planMarkdown;
+    }
+  }
+  const text = kimiPermissionContentTexts(params)[0];
+  if (text === undefined) {
+    return undefined;
+  }
+  const stripped = text.startsWith(KIMI_APPROVAL_TEXT_PREFIX)
+    ? text.slice(KIMI_APPROVAL_TEXT_PREFIX.length).trim()
+    : text;
+  return stripped.length > 0 ? stripped : undefined;
+}
+
+export function shouldKimiAdapterAutoApprove(input: {
+  readonly runtimeMode: RuntimeMode;
+  readonly requestKind?: KimiPermissionRequestKind | undefined;
+}): boolean {
+  // User decisions (plan approval, clarifying questions) are never answered
+  // on the user's behalf, regardless of runtime mode.
+  if (input.requestKind !== undefined && input.requestKind !== "tool") {
+    return false;
+  }
+  // Full access means T3 answers Kimi's tool-gate permission requests in
+  // every native mode. Kimi's own per-mode behavior is unchanged; a stale
+  // tracked mode (e.g. plan left behind by a natively approved plan exit,
+  // before the next turn re-syncs it) must not re-gate every command.
+  return input.runtimeMode === "full-access";
+}
+
+/**
+ * Kimi model ids may carry a `kimi-code/` namespace prefix and a `,thinking`
+ * variant suffix (e.g. `kimi-code/k3,thinking`). Selection and display always
+ * use the base id; the thinking level is a separate session config option in
+ * current kimi-cli builds.
+ */
+export function resolveKimiAcpBaseModelId(model: string | null | undefined): string {
+  const trimmed = model?.trim();
+  const withoutVariant = trimmed?.split(",", 1)[0]?.trim();
+  const withoutNamespace = withoutVariant?.startsWith(KIMI_CODE_MODEL_NAMESPACE)
+    ? withoutVariant.slice(KIMI_CODE_MODEL_NAMESPACE.length)
+    : withoutVariant;
+  const base = withoutNamespace && withoutNamespace.length > 0 ? withoutNamespace : "k3";
+  return normalizeModelSlug(base, KIMI_DRIVER_KIND) ?? "k3";
+}
+
+/**
+ * The ACP wire id for a base model id, resolved against the ids the agent
+ * advertised at session setup when it did.
+ *
+ * kimi-cli (PyPI) advertises `availableModels` with bare ids (`k3`,
+ * `k3,thinking`) and expects those on `session/set_model`. Kimi Code CLI
+ * (~0.37) advertises namespaced config.toml alias ids through its model config
+ * option. Matching an advertised id wins; with nothing advertised, bare ids
+ * get the `kimi-code/` namespace; ids that already carry a namespace (custom
+ * models such as `moonshot-ai/kimi-k3`) always pass through as-is.
+ */
+export function resolveKimiAcpWireModelId(
+  baseModelId: string,
+  advertisedModelIds?: ReadonlyArray<string> | undefined,
+): string {
+  if (advertisedModelIds && advertisedModelIds.length > 0) {
+    const matches = advertisedModelIds.filter(
+      (advertised) => resolveKimiAcpBaseModelId(advertised) === baseModelId,
+    );
+    // Prefer the plain id over its `,thinking` variant when both are advertised.
+    const match = matches.find((advertised) => !advertised.includes(",")) ?? matches[0];
+    if (match !== undefined) {
+      return match;
+    }
+    // A custom model the agent did not advertise: trust the configured id.
+    return baseModelId;
+  }
+  return baseModelId.includes("/") ? baseModelId : `${KIMI_CODE_MODEL_NAMESPACE}${baseModelId}`;
+}
+
+export function advertisedKimiModelIdsFromSessionSetup(
+  sessionSetupResult: KimiSessionSetupResponse,
+): ReadonlyArray<string> | undefined {
+  const models = kimiModelStateFromSessionSetup(sessionSetupResult)?.availableModels;
+  return models && models.length > 0 ? models.map((model) => model.modelId) : undefined;
+}
+
+export function currentKimiModelIdFromConfigOptions(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): string | undefined {
+  return findKimiModelConfigOption(configOptions)?.currentValue.trim() || undefined;
+}
+
+export function currentKimiModelIdFromSessionSetup(
+  sessionSetupResult: KimiSessionSetupResponse,
+): string | undefined {
+  return kimiModelStateFromSessionSetup(sessionSetupResult)?.currentModelId?.trim() || undefined;
+}
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+export function applyKimiAcpModelSelection<E>(input: {
+  readonly runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "setModel" | "setSessionModel"
+  >;
+  readonly currentModelId: string | undefined;
+  readonly requestedModelId: string | undefined;
+  readonly advertisedModelIds?: ReadonlyArray<string> | undefined;
+  readonly hasModelConfigOption: boolean;
+  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+}): Effect.Effect<string | undefined, E> {
+  const currentBaseModelId = input.currentModelId
+    ? resolveKimiAcpBaseModelId(input.currentModelId)
+    : undefined;
+  const shouldSwitchModel =
+    input.requestedModelId !== undefined && input.requestedModelId !== currentBaseModelId;
+  if (!shouldSwitchModel) {
+    return Effect.succeed(input.currentModelId);
+  }
+  const wireModelId = resolveKimiAcpWireModelId(input.requestedModelId, input.advertisedModelIds);
+  const applyFallbackModel = input.runtime.setSessionModel(wireModelId).pipe(Effect.asVoid);
+  const applyModel = input.hasModelConfigOption
+    ? input.runtime.setModel(wireModelId).pipe(
+        Effect.catchIf(
+          (cause) => isAcpRequestError(cause) && cause.code === -32601,
+          () => applyFallbackModel,
+        ),
+      )
+    : applyFallbackModel;
+  return applyModel.pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+}
+
+export interface KimiThinkingSelectionResolution {
+  readonly configId: string;
+  readonly currentValue: string;
+  readonly selectedValue: string;
+  readonly usedFallback: boolean;
+}
+
+export function resolveKimiThinkingSelection(input: {
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly requestedValue: string | undefined;
+}): KimiThinkingSelectionResolution | undefined {
+  const thinkingConfig = findKimiThinkingConfigOption(input.configOptions);
+  if (!thinkingConfig) {
+    return undefined;
+  }
+  const values = flattenKimiSelectConfigOptions(thinkingConfig)
+    .map((option) => option.value.trim())
+    .filter((value) => value.length > 0);
+  if (values.length === 0) {
+    return undefined;
+  }
+  const configId = thinkingConfig.id.trim();
+  const currentValue = thinkingConfig.currentValue.trim();
+  const fallbackValue = values.includes(currentValue) ? currentValue : values[0];
+  if (!configId || !fallbackValue) {
+    return undefined;
+  }
+  const requestedValue = input.requestedValue?.trim();
+  const selectedValue =
+    requestedValue && values.includes(requestedValue) ? requestedValue : fallbackValue;
+  return {
+    configId,
+    currentValue,
+    selectedValue,
+    usedFallback: requestedValue !== undefined && requestedValue !== selectedValue,
+  };
+}
+
+export function applyKimiAcpThinkingSelection<E>(input: {
+  readonly runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setConfigOption"
+  >;
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly requestedValue: string | undefined;
+  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+}): Effect.Effect<
+  {
+    readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+    readonly resolution: KimiThinkingSelectionResolution | undefined;
+  },
+  E
+> {
+  const resolution = resolveKimiThinkingSelection(input);
+  if (!resolution || resolution.selectedValue === resolution.currentValue) {
+    return Effect.succeed({ configOptions: input.configOptions, resolution });
+  }
+  return input.runtime.setConfigOption(resolution.configId, resolution.selectedValue).pipe(
+    Effect.mapError(input.mapError),
+    Effect.andThen(input.runtime.getConfigOptions),
+    Effect.map((configOptions) => ({ configOptions, resolution })),
+  );
+}
+
+export function kimiConfigOptionsFromSessionNotification(
+  notification: EffectAcpSchema.SessionNotification,
+): ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined {
+  return notification.update.sessionUpdate === "config_option_update"
+    ? notification.update.configOptions
+    : undefined;
+}
+
+/** True when Kimi reports its real missing-credential ACP error. */
+export function isKimiAuthRequiredError(error: unknown): boolean {
+  return isAcpRequestError(error) && error.code === -32000;
+}

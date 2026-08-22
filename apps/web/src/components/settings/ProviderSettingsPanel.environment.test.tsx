@@ -89,6 +89,7 @@ import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
+const kimiId = ProviderInstanceId.make("kimi");
 const customId = ProviderInstanceId.make("codex_work");
 
 function provider(): ServerProvider {
@@ -148,6 +149,30 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(() => renderPanel()).not.toThrow();
     expect(settingsState.readEnvironmentIds).toEqual([environmentId]);
     expect(settingsState.updateEnvironmentIds).toEqual([environmentId]);
+  });
+
+  it("does not render Kimi auth actions for an instance resolved as disabled", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [kimiId]: {
+          driver: ProviderDriverKind.make("kimi"),
+          config: { enabled: false },
+        },
+      },
+    };
+    atoms.providers = [
+      {
+        ...provider(),
+        instanceId: kimiId,
+        driver: ProviderDriverKind.make("kimi"),
+        auth: { status: "unauthenticated" },
+      },
+    ];
+
+    const panel = renderPanel();
+    const providerCard = visitElements(panel, (element) => element.props.instanceId === kimiId);
+    expect(providerCard?.props.authAction).toBeUndefined();
   });
 
   it("routes refresh and provider update commands to the selected environment", async () => {

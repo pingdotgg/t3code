@@ -1,5 +1,8 @@
 import {
+  defaultInstanceIdForDriver,
   type EnvironmentId,
+  ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -74,6 +77,51 @@ const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.withLabel(`environment-data:server:update-state:${environmentId}`),
   ),
 );
+
+/** Progress of an in-flight "Sign in with Kimi" device flow, per environment. */
+export type KimiSignInState =
+  | { readonly status: "idle" }
+  | { readonly status: "starting" }
+  | {
+      readonly status: "waiting";
+      readonly verificationUri: string;
+      readonly userCode?: string;
+    }
+  | { readonly status: "completed" }
+  | { readonly status: "failed"; readonly message: string };
+
+export interface KimiSignInTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: EnvironmentRpcInput<typeof WS_METHODS.kimiAuthSignIn>;
+}
+
+export interface KimiSignOutTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: EnvironmentRpcInput<typeof WS_METHODS.kimiAuthSignOut>;
+}
+
+const DEFAULT_KIMI_INSTANCE_ID = defaultInstanceIdForDriver(ProviderDriverKind.make("kimi"));
+
+export function kimiAuthTargetKey(
+  environmentId: EnvironmentId,
+  instanceId: ProviderInstanceId,
+): string {
+  return `${environmentId}\0${instanceId}`;
+}
+
+const IDLE_KIMI_SIGN_IN_STATE: KimiSignInState = { status: "idle" };
+const EMPTY_KIMI_SIGN_IN_STATE_ATOM = Atom.make<KimiSignInState>(IDLE_KIMI_SIGN_IN_STATE).pipe(
+  Atom.withLabel("environment-data:server:kimi-sign-in-state:empty"),
+);
+const kimiSignInStateAtomFamily = Atom.family((targetKey: string) =>
+  Atom.make<KimiSignInState>(IDLE_KIMI_SIGN_IN_STATE).pipe(
+    Atom.withLabel(`environment-data:server:kimi-sign-in-state:${targetKey}`),
+  ),
+);
+
+function kimiSignInFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Kimi sign-in failed.";
+}
 
 export class ServerUpdateResumeTimeoutError extends Schema.TaggedErrorClass<ServerUpdateResumeTimeoutError>()(
   "ServerUpdateResumeTimeoutError",
@@ -669,6 +717,105 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     },
   });
+  const kimiSignInStateAtom = (
+    environmentId: EnvironmentId | null,
+    instanceId: ProviderInstanceId,
+  ) =>
+    environmentId === null
+      ? EMPTY_KIMI_SIGN_IN_STATE_ATOM
+      : kimiSignInStateAtomFamily(kimiAuthTargetKey(environmentId, instanceId));
+  const kimiSignIn = createRuntimeCommand<
+    EnvironmentRegistry | EnvironmentCacheStore | R,
+    E,
+    KimiSignInTarget,
+    void,
+    unknown
+  >(runtime, {
+    label: "environment-data:server:kimi-sign-in",
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) =>
+        kimiAuthTargetKey(environmentId, input.instanceId ?? DEFAULT_KIMI_INSTANCE_ID),
+    },
+    execute: (target, atomRegistry) => {
+      const stateAtom = kimiSignInStateAtomFamily(
+        kimiAuthTargetKey(
+          target.environmentId,
+          target.input.instanceId ?? DEFAULT_KIMI_INSTANCE_ID,
+        ),
+      );
+      atomRegistry.set(stateAtom, { status: "starting" });
+      return Effect.gen(function* () {
+        const environmentRegistry = yield* EnvironmentRegistry;
+        yield* environmentRegistry
+          .runStream(target.environmentId, runStream(WS_METHODS.kimiAuthSignIn, target.input))
+          .pipe(
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                if (event.type === "verification") {
+                  atomRegistry.set(stateAtom, {
+                    status: "waiting",
+                    verificationUri: event.verificationUri,
+                    ...(event.userCode ? { userCode: event.userCode } : {}),
+                  });
+                  return;
+                }
+                atomRegistry.set(stateAtom, { status: "completed" });
+              }),
+            ),
+          );
+      }).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (Exit.isSuccess(exit)) {
+              return;
+            }
+            if (Cause.hasInterruptsOnly(exit.cause)) {
+              atomRegistry.set(stateAtom, IDLE_KIMI_SIGN_IN_STATE);
+              return;
+            }
+            atomRegistry.set(stateAtom, {
+              status: "failed",
+              message: kimiSignInFailureMessage(Cause.squash(exit.cause)),
+            });
+          }),
+        ),
+      );
+    },
+  });
+
+  const kimiSignOut = createRuntimeCommand<
+    EnvironmentRegistry | EnvironmentCacheStore | R,
+    E,
+    KimiSignOutTarget,
+    void,
+    unknown
+  >(runtime, {
+    label: "environment-data:server:kimi-sign-out",
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) =>
+        kimiAuthTargetKey(environmentId, input.instanceId ?? DEFAULT_KIMI_INSTANCE_ID),
+    },
+    execute: (target, atomRegistry) =>
+      Effect.gen(function* () {
+        const environmentRegistry = yield* EnvironmentRegistry;
+        yield* environmentRegistry.run(
+          target.environmentId,
+          request(WS_METHODS.kimiAuthSignOut, target.input),
+        );
+        atomRegistry.set(
+          kimiSignInStateAtomFamily(
+            kimiAuthTargetKey(
+              target.environmentId,
+              target.input.instanceId ?? DEFAULT_KIMI_INSTANCE_ID,
+            ),
+          ),
+          IDLE_KIMI_SIGN_IN_STATE,
+        );
+      }),
+  });
+
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
@@ -685,6 +832,9 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    kimiSignIn,
+    kimiSignInStateAtom,
+    kimiSignOut,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
