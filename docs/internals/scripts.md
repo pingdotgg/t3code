@@ -63,6 +63,10 @@ authenticated.
 - `vp run lint:mobile`: Mobile native static analysis (`scripts/mobile-native-static-check.ts`).
 - `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...`: Inspects or seeds
   an isolated T3 SQLite database; writes create a private backup first.
+- `vp run thread:list --source <project-dir>`: Lists the projects (id, workspace root, title) and
+  live threads (id, project id, title) of an existing T3 state database. The source can be a workspace containing `.t3`, the T3 base
+  directory, or a direct state directory containing `state.sqlite`. State defaults to `userdata`;
+  pass `--state dev` for a main-checkout dev database. Pass `--json` for structured output.
 
 ## Desktop artifacts
 
