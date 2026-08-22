@@ -4748,7 +4748,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
-  it.effect("routes websocket rpc projects.listEntries and projects.readFile", () =>
+  it.effect("routes websocket rpc project file and skill reads", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -4758,6 +4758,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         path.join(workspaceDir, "src", "index.ts"),
         "export const answer = 42;\n",
       );
+      yield* fs.makeDirectory(path.join(workspaceDir, ".agents", "skills", "unslop"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, ".agents", "skills", "unslop", "SKILL.md"),
+        "---\nname: unslop\ndescription: Remove AI writing patterns.\n---\n",
+      );
 
       yield* buildAppUnderTest();
 
@@ -4766,6 +4773,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           Effect.all({
             listing: client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir }),
+            skills: client[WS_METHODS.projectsListSkills]({ cwd: workspaceDir }),
             file: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "src/index.ts",
@@ -4775,6 +4783,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.isTrue(response.listing.entries.some((entry) => entry.path === "src/index.ts"));
+      assert.deepEqual(response.skills, [
+        {
+          name: "unslop",
+          description: "Remove AI writing patterns.",
+          path: path.join(workspaceDir, ".agents", "skills", "unslop", "SKILL.md"),
+          enabled: true,
+          scope: "project",
+        },
+      ]);
       assert.deepEqual(response.file, {
         relativePath: "src/index.ts",
         contents: "export const answer = 42;\n",

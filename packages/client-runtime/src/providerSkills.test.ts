@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatProviderSkillDisplayName,
+  mergeProviderSkills,
   resolveProviderSkillSourceKind,
 } from "./providerSkills.ts";
 
@@ -73,5 +74,42 @@ describe("resolveProviderSkillSourceKind", () => {
         path: "/opt/skills/team-review/SKILL.md",
       }),
     ).toBe("other");
+  });
+});
+
+describe("mergeProviderSkills", () => {
+  it("adds repository skills installed under .agents/skills", () => {
+    expect(
+      mergeProviderSkills(
+        [],
+        [
+          {
+            name: "unslop",
+            path: ".agents/skills/unslop/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+          {
+            name: "poteto-mode",
+            path: ".agents/skills/poteto-mode/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        name: "poteto-mode",
+        path: ".agents/skills/poteto-mode/SKILL.md",
+        enabled: true,
+        scope: "project",
+      },
+      {
+        name: "unslop",
+        path: ".agents/skills/unslop/SKILL.md",
+        enabled: true,
+        scope: "project",
+      },
+    ]);
   });
 });
