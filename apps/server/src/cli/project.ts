@@ -7,6 +7,7 @@ import {
   ProjectId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -235,6 +236,16 @@ const normalizeWorkspaceRootForProjectCommand = Effect.fn(
   return yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot);
 });
 
+function resolveWorkspaceRootIdentifier(identifier: string, path: Path.Path): string {
+  const expandedIdentifier =
+    identifier === "~"
+      ? NodeOS.homedir()
+      : identifier.startsWith("~/") || identifier.startsWith("~\\")
+        ? path.join(NodeOS.homedir(), identifier.slice(2))
+        : identifier;
+  return path.resolve(expandedIdentifier);
+}
+
 const resolveProjectTitle = Effect.fn("resolveProjectTitle")(function* (
   workspaceRoot: string,
   explicitTitle?: string,
@@ -274,6 +285,21 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
       id: exactIdMatch.id,
       title: exactIdMatch.title,
       workspaceRoot: exactIdMatch.workspaceRoot,
+    } satisfies ProjectMutationTarget;
+  }
+
+  // A relink may be the first command run after the workspace moved, so the
+  // stored root can be valid project identity even though it no longer exists.
+  const path = yield* Path.Path;
+  const resolvedWorkspaceRootIdentifier = resolveWorkspaceRootIdentifier(trimmedIdentifier, path);
+  const staleWorkspaceRootMatch = activeProjects.find(
+    (project) => project.workspaceRoot === resolvedWorkspaceRootIdentifier,
+  );
+  if (staleWorkspaceRootMatch) {
+    return {
+      id: staleWorkspaceRootMatch.id,
+      title: staleWorkspaceRootMatch.title,
+      workspaceRoot: staleWorkspaceRootMatch.workspaceRoot,
     } satisfies ProjectMutationTarget;
   }
 
@@ -570,7 +596,55 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const projectRelinkCommand = Command.make("relink", {
+  ...projectLocationFlags,
+  project: Argument.string("project").pipe(
+    Argument.withDescription("Project id or workspace root to relink."),
+  ),
+  workspaceRoot: Argument.string("path").pipe(
+    Argument.withDescription("New workspace root for the project."),
+  ),
+}).pipe(
+  Command.withDescription("Relink a project to a new workspace root."),
+  Command.withHandler((flags) =>
+    runProjectMutation(
+      flags,
+      Effect.fn("projectRelinkMutation")(function* ({
+        snapshot,
+        dispatch,
+      }: {
+        readonly snapshot: OrchestrationReadModel;
+        readonly dispatch: (
+          command: ProjectCliDispatchCommand,
+        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+      }) {
+        const project = yield* findActiveProjectTarget({
+          snapshot,
+          identifier: flags.project,
+        });
+        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
+        if (workspaceRoot === project.workspaceRoot) {
+          return `Project ${project.id} is already linked to ${workspaceRoot}.`;
+        }
+
+        yield* dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make(yield* projectCommandUuid),
+          projectId: project.id,
+          workspaceRoot,
+        });
+        return `Relinked project ${project.id} to ${workspaceRoot}.`;
+      }),
+    ),
+  ),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectAddCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+    projectRelinkCommand,
+  ]),
 );
