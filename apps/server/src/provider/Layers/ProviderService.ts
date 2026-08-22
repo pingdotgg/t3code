@@ -1102,6 +1102,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.rollback_turns": input.numTurns,
       });
       yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
+      const activeSessions = yield* routed.adapter.listSessions();
+      const rolledBackSession = activeSessions.find(
+        (session) => session.threadId === routed.threadId,
+      );
+      if (rolledBackSession) {
+        yield* upsertSessionBinding(
+          { ...rolledBackSession, providerInstanceId: routed.instanceId },
+          routed.threadId,
+        );
+      }
       yield* analytics.record("provider.conversation.rolled_back", {
         provider: routed.adapter.provider,
         turns: input.numTurns,
