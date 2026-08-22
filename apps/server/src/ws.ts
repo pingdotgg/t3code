@@ -52,7 +52,7 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
-  KimiAuthError,
+  KimiAuthRequestError,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -1744,9 +1744,8 @@ const makeWsRpcLayer = (
               const settings = yield* serverSettings.getSettings.pipe(
                 Effect.mapError(
                   (cause) =>
-                    new KimiAuthError({
-                      reason: "request-failed",
-                      detail: "Failed to load provider settings for Kimi sign-in.",
+                    new KimiAuthRequestError({
+                      operation: "provider-settings",
                       cause,
                     }),
                 ),
@@ -1775,9 +1774,8 @@ const makeWsRpcLayer = (
               const settings = yield* serverSettings.getSettings.pipe(
                 Effect.mapError(
                   (cause) =>
-                    new KimiAuthError({
-                      reason: "request-failed",
-                      detail: "Failed to load provider settings for Kimi sign-out.",
+                    new KimiAuthRequestError({
+                      operation: "provider-settings",
                       cause,
                     }),
                 ),

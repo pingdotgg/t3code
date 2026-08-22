@@ -1,6 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { KimiAuthError, ProviderInstanceId, ServerSettings } from "@t3tools/contracts";
+import {
+  KimiAuthDeniedError,
+  KimiAuthExpiredError,
+  KimiAuthInstanceInvalidError,
+  KimiAuthRequestError,
+  ProviderInstanceId,
+  ServerSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -108,8 +115,10 @@ describe("resolveKimiSignInHomePath", () => {
         ProviderInstanceId.make("codex_work"),
       ).pipe(Effect.flip);
 
-      expect(missing.reason).toBe("invalid-instance");
-      expect(wrongDriver.reason).toBe("invalid-instance");
+      expect(missing).toBeInstanceOf(KimiAuthInstanceInvalidError);
+      expect(missing.issue).toBe("not-found");
+      expect(wrongDriver).toBeInstanceOf(KimiAuthInstanceInvalidError);
+      expect(wrongDriver.issue).toBe("wrong-driver");
     }),
   );
 
@@ -245,8 +254,7 @@ it.layer(NodeServices.layer)("signInWithKimi", (it) => {
       yield* TestClock.adjust("5 seconds");
       const error = yield* Fiber.join(outcome);
 
-      expect(error).toBeInstanceOf(KimiAuthError);
-      expect(error.reason).toBe("denied");
+      expect(error).toBeInstanceOf(KimiAuthDeniedError);
     }),
   );
 
@@ -271,10 +279,46 @@ it.layer(NodeServices.layer)("signInWithKimi", (it) => {
       yield* TestClock.adjust("1 second");
       const error = yield* Fiber.join(outcome);
 
-      expect(error.reason).toBe("expired");
+      expect(error).toBeInstanceOf(KimiAuthExpiredError);
       expect(requests.filter((request) => request.url.includes("/api/oauth/token"))).toHaveLength(
         0,
       );
+    }),
+  );
+
+  it.effect("keeps raw OAuth wire failures out of stable error context", () =>
+    Effect.gen(function* () {
+      const rawDescription = "x".repeat(10_000);
+      const requests: Array<RecordedRequest> = [];
+      const httpLayer = makeKimiOAuthHttpLayer(requests, (url) =>
+        url.includes("device_authorization")
+          ? { status: 200, body: DEVICE_AUTHORIZATION_BODY }
+          : {
+              status: 400,
+              body: { error: "vendor_secret_code", error_description: rawDescription },
+            },
+      );
+      const outcome = yield* signInWithKimi({}).pipe(
+        Stream.runCollect,
+        Effect.flip,
+        Effect.provide(httpLayer),
+        Effect.forkChild,
+      );
+
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(outcome);
+
+      expect(error).toBeInstanceOf(KimiAuthRequestError);
+      expect(error._tag).toBe("KimiAuthRequestError");
+      if (error._tag === "KimiAuthRequestError") {
+        expect(error.operation).toBe("token-poll");
+        expect(error.status).toBe(400);
+        expect(error.oauthErrorCode).toBeUndefined();
+        expect(error).not.toHaveProperty("detail");
+        expect((error.cause as { errorDescription?: string }).errorDescription).toBe(
+          rawDescription,
+        );
+      }
     }),
   );
 
@@ -296,7 +340,7 @@ it.layer(NodeServices.layer)("signInWithKimi", (it) => {
       yield* TestClock.adjust("5 seconds");
       const error = yield* Fiber.join(outcome);
 
-      expect(error.reason).toBe("expired");
+      expect(error).toBeInstanceOf(KimiAuthExpiredError);
     }),
   );
 });

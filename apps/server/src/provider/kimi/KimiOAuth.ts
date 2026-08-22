@@ -16,8 +16,15 @@
 import * as NodeOS from "node:os";
 
 import {
-  KimiAuthError,
+  KimiAuthDeniedError,
+  type KimiAuthError,
+  KimiAuthExpiredError,
+  KimiAuthInstanceInvalidError,
+  KimiAuthRequestError,
+  KimiCredentialRemoveError,
+  KimiCredentialWriteError,
   type KimiAuthSignInEvent,
+  KimiOAuthErrorCode,
   KimiSettings,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -76,16 +83,16 @@ export const resolveKimiAuthTarget = Effect.fn("kimi.oauth.resolve_target")(func
   const instance = settings.providerInstances[targetInstanceId];
   if (instance !== undefined) {
     if (instance.driver !== KIMI_DRIVER) {
-      return yield* new KimiAuthError({
-        reason: "invalid-instance",
-        detail: `Provider instance '${targetInstanceId}' is not a Kimi instance.`,
+      return yield* new KimiAuthInstanceInvalidError({
+        instanceId: targetInstanceId,
+        issue: "wrong-driver",
       });
     }
     const decoded = decodeKimiSettingsExit(instance.config ?? {});
     if (Exit.isFailure(decoded)) {
-      return yield* new KimiAuthError({
-        reason: "invalid-instance",
-        detail: `Provider instance '${targetInstanceId}' has invalid Kimi settings.`,
+      return yield* new KimiAuthInstanceInvalidError({
+        instanceId: targetInstanceId,
+        issue: "invalid-settings",
         cause: decoded.cause,
       });
     }
@@ -95,9 +102,9 @@ export const resolveKimiAuthTarget = Effect.fn("kimi.oauth.resolve_target")(func
     } satisfies KimiAuthTarget;
   }
   if (targetInstanceId !== DEFAULT_KIMI_INSTANCE_ID) {
-    return yield* new KimiAuthError({
-      reason: "invalid-instance",
-      detail: `Kimi provider instance '${targetInstanceId}' was not found.`,
+    return yield* new KimiAuthInstanceInvalidError({
+      instanceId: targetInstanceId,
+      issue: "not-found",
     });
   }
   return {
@@ -138,6 +145,7 @@ const TokenPollResponse = Schema.Struct({
   error_description: Schema.optional(Schema.String),
 });
 type TokenPollResponse = typeof TokenPollResponse.Type;
+const isKimiOAuthErrorCode = Schema.is(KimiOAuthErrorCode);
 
 const postForm = Effect.fn("kimi.oauth.post_form")(function* (
   path: string,
@@ -158,25 +166,23 @@ const requestDeviceAuthorization = Effect.fn("kimi.oauth.device_authorization")(
   }).pipe(
     Effect.mapError(
       (cause) =>
-        new KimiAuthError({
-          reason: "request-failed",
-          detail: "Failed to request Kimi device authorization.",
+        new KimiAuthRequestError({
+          operation: "device-authorization-request",
           cause,
         }),
     ),
   );
   if (response.status !== 200) {
-    return yield* new KimiAuthError({
-      reason: "request-failed",
-      detail: `Device authorization failed (HTTP ${response.status}).`,
+    return yield* new KimiAuthRequestError({
+      operation: "device-authorization-request",
+      status: response.status,
     });
   }
   return yield* HttpClientResponse.schemaBodyJson(DeviceAuthorizationResponse)(response).pipe(
     Effect.mapError(
       (cause) =>
-        new KimiAuthError({
-          reason: "request-failed",
-          detail: "Kimi device authorization returned an invalid response.",
+        new KimiAuthRequestError({
+          operation: "device-authorization-response",
           cause,
         }),
     ),
@@ -195,9 +201,8 @@ const pollToken = Effect.fn("kimi.oauth.poll_token")(
   },
   Effect.mapError(
     (cause) =>
-      new KimiAuthError({
-        reason: "request-failed",
-        detail: "Failed to poll Kimi device authorization.",
+      new KimiAuthRequestError({
+        operation: "token-poll",
         cause,
       }),
   ),
@@ -250,14 +255,7 @@ export const writeKimiCredentials = Effect.fn("kimi.oauth.write_credentials")(fu
     yield* fileSystem.rename(temporaryPath, credentialsPath);
   }).pipe(
     Effect.tapError(() => Effect.ignore(fileSystem.remove(temporaryPath, { force: true }))),
-    Effect.mapError(
-      (cause) =>
-        new KimiAuthError({
-          reason: "credential-write-failed",
-          detail: "Failed to write the Kimi credential file.",
-          cause,
-        }),
-    ),
+    Effect.mapError((cause) => new KimiCredentialWriteError({ credentialsPath, cause })),
   );
 
   return credentialsPath;
@@ -273,16 +271,9 @@ export const removeKimiCredentials = Effect.fn("kimi.oauth.remove_credentials")(
     CREDENTIALS_DIR_NAME,
     CREDENTIALS_FILE_NAME,
   );
-  yield* fileSystem.remove(credentialsPath, { force: true }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new KimiAuthError({
-          reason: "credential-remove-failed",
-          detail: "Failed to remove the Kimi credential file.",
-          cause,
-        }),
-    ),
-  );
+  yield* fileSystem
+    .remove(credentialsPath, { force: true })
+    .pipe(Effect.mapError((cause) => new KimiCredentialRemoveError({ credentialsPath, cause })));
   return credentialsPath;
 });
 
@@ -313,9 +304,8 @@ export function signInWithKimi(
         "";
       if (!verificationUri) {
         return Stream.fail(
-          new KimiAuthError({
-            reason: "request-failed",
-            detail: "Device authorization response carried no verification URI.",
+          new KimiAuthRequestError({
+            operation: "device-authorization-response",
           }),
         );
       }
@@ -353,20 +343,24 @@ export function signInWithKimi(
               intervalSeconds += 5;
               continue;
             case "access_denied":
-              return yield* new KimiAuthError({ reason: "denied" });
+              return yield* new KimiAuthDeniedError();
             case "expired_token":
-              return yield* new KimiAuthError({ reason: "expired" });
+              return yield* new KimiAuthExpiredError();
             default:
-              return yield* new KimiAuthError({
-                reason: "request-failed",
-                detail:
-                  poll.body.error_description ??
-                  poll.body.error ??
-                  `Token polling failed (HTTP ${poll.status}).`,
+              return yield* new KimiAuthRequestError({
+                operation: "token-poll",
+                status: poll.status,
+                ...(isKimiOAuthErrorCode(poll.body.error)
+                  ? { oauthErrorCode: poll.body.error }
+                  : {}),
+                cause: {
+                  error: poll.body.error,
+                  errorDescription: poll.body.error_description,
+                },
               });
           }
         }
-        return yield* new KimiAuthError({ reason: "expired" });
+        return yield* new KimiAuthExpiredError();
       });
 
       return Stream.concat(Stream.make(verificationEvent), Stream.fromEffect(completion));

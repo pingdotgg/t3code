@@ -4452,10 +4452,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(error._tag, "KimiAuthError");
-      if (error._tag === "KimiAuthError") {
-        assert.equal(error.reason, "request-failed");
-        assert.include(error.detail ?? "", "provider settings");
+      assert.equal(error._tag, "KimiAuthRequestError");
+      if (error._tag === "KimiAuthRequestError") {
+        assert.equal(error.operation, "provider-settings");
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

@@ -52,42 +52,110 @@ export const KimiAuthSignInEvent = Schema.Union([
 ]);
 export type KimiAuthSignInEvent = typeof KimiAuthSignInEvent.Type;
 
-export const KimiAuthFailureReason = Schema.Literals([
-  // The user rejected the sign-in on the verification page.
-  "denied",
-  // The device authorization expired before the user approved it.
-  "expired",
-  // Requesting or polling the OAuth endpoints failed.
-  "request-failed",
-  // The token arrived but persisting the credentials file failed.
-  "credential-write-failed",
-  // Removing an existing credential during sign-out failed.
-  "credential-remove-failed",
-  // The requested provider instance is missing, invalid, or not Kimi.
-  "invalid-instance",
+export const KimiOAuthErrorCode = Schema.Literals([
+  "authorization_pending",
+  "slow_down",
+  "access_denied",
+  "expired_token",
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "server_error",
+  "temporarily_unavailable",
 ]);
-export type KimiAuthFailureReason = typeof KimiAuthFailureReason.Type;
+export type KimiOAuthErrorCode = typeof KimiOAuthErrorCode.Type;
 
-export class KimiAuthError extends Schema.TaggedErrorClass<KimiAuthError>()("KimiAuthError", {
-  reason: KimiAuthFailureReason,
-  detail: Schema.optional(Schema.String),
-  cause: Schema.optional(Schema.Defect()),
-}) {
+export class KimiAuthDeniedError extends Schema.TaggedErrorClass<KimiAuthDeniedError>()(
+  "KimiAuthDeniedError",
+  {},
+) {
   override get message(): string {
-    switch (this.reason) {
-      case "denied":
-        return "Kimi sign-in was denied.";
-      case "expired":
-        return "Kimi sign-in expired before it was approved.";
-      case "credential-write-failed":
-        return "Kimi sign-in succeeded but the credential could not be saved.";
-      case "credential-remove-failed":
-        return "Kimi credentials could not be removed.";
-      case "invalid-instance":
-        return "The selected Kimi provider instance is unavailable.";
-      case "request-failed":
-      default:
-        return "Kimi sign-in failed.";
+    return "Kimi sign-in was denied.";
+  }
+}
+
+export class KimiAuthExpiredError extends Schema.TaggedErrorClass<KimiAuthExpiredError>()(
+  "KimiAuthExpiredError",
+  {},
+) {
+  override get message(): string {
+    return "Kimi sign-in expired before it was approved.";
+  }
+}
+
+export class KimiAuthRequestError extends Schema.TaggedErrorClass<KimiAuthRequestError>()(
+  "KimiAuthRequestError",
+  {
+    operation: Schema.Literals([
+      "provider-settings",
+      "device-authorization-request",
+      "device-authorization-response",
+      "token-poll",
+    ]),
+    status: Schema.optional(Schema.Number),
+    oauthErrorCode: Schema.optional(KimiOAuthErrorCode),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.operation) {
+      case "provider-settings":
+        return "Failed to load provider settings for Kimi authentication.";
+      case "device-authorization-request":
+        return "Failed to request Kimi device authorization.";
+      case "device-authorization-response":
+        return "Kimi device authorization returned an invalid response.";
+      case "token-poll":
+        return "Failed to poll Kimi device authorization.";
     }
   }
 }
+
+export class KimiCredentialWriteError extends Schema.TaggedErrorClass<KimiCredentialWriteError>()(
+  "KimiCredentialWriteError",
+  {
+    credentialsPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Kimi sign-in succeeded but the credential could not be saved.";
+  }
+}
+
+export class KimiCredentialRemoveError extends Schema.TaggedErrorClass<KimiCredentialRemoveError>()(
+  "KimiCredentialRemoveError",
+  {
+    credentialsPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Kimi credentials could not be removed.";
+  }
+}
+
+export class KimiAuthInstanceInvalidError extends Schema.TaggedErrorClass<KimiAuthInstanceInvalidError>()(
+  "KimiAuthInstanceInvalidError",
+  {
+    instanceId: ProviderInstanceId,
+    issue: Schema.Literals(["not-found", "wrong-driver", "invalid-settings"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return "The selected Kimi provider instance is unavailable.";
+  }
+}
+
+export const KimiAuthError = Schema.Union([
+  KimiAuthDeniedError,
+  KimiAuthExpiredError,
+  KimiAuthRequestError,
+  KimiCredentialWriteError,
+  KimiCredentialRemoveError,
+  KimiAuthInstanceInvalidError,
+]);
+export type KimiAuthError = typeof KimiAuthError.Type;
