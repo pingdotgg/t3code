@@ -66,4 +66,24 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
       yield* runtime.setSessionModel(currentModelId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("session/set_model accepts advertised reasoning effort metadata", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeProbeRuntime;
+      const started = yield* runtime.start();
+      const modelState = started.sessionSetupResult.models;
+      const currentModelId = modelState?.currentModelId.trim();
+      expect(currentModelId).toBeDefined();
+      if (!currentModelId) return;
+
+      const currentModel = modelState?.availableModels.find(
+        (model) => model.modelId.trim() === currentModelId,
+      );
+      const reasoningEffort = currentModel?._meta?.reasoningEffort;
+      expect(typeof reasoningEffort).toBe("string");
+      if (typeof reasoningEffort !== "string") return;
+
+      yield* runtime.setSessionModel(currentModelId, { reasoningEffort });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
