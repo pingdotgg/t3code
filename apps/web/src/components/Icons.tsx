@@ -489,7 +489,7 @@ export const KimiCode: Icon = ({ className, ...props }) => (
   <svg
     {...props}
     viewBox="0 0 24 24"
-    className={cn("text-[#6c5ce7] dark:text-[#a89cff]", className)}
+    className={cn("text-[color:var(--usage-provider-kimi)]", className)}
     fill="none"
   >
     <rect x="3" y="4.5" width="18" height="13" rx="2.2" stroke="currentColor" strokeWidth="1.6" />

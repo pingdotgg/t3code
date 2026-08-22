@@ -21,7 +21,7 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -160,6 +160,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
+  const hostEnvironment = yield* HostProcessEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
 
   const fileCache: ScanCache = new Map();
@@ -258,8 +259,8 @@ export const make = Effect.gen(function* () {
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
 
     const homeDir = NodeOS.homedir();
-    const kimiCodeHome = resolveKimiCodeHome(process.env, path.join(homeDir, ".kimi-code"));
-    const kimiDesktopDataDir = resolveKimiDesktopDataDir(process.env, hostPlatform, homeDir);
+    const kimiCodeHome = resolveKimiCodeHome(hostEnvironment, path.join(homeDir, ".kimi-code"));
+    const kimiDesktopDataDir = resolveKimiDesktopDataDir(hostEnvironment, hostPlatform, homeDir);
 
     const sources: readonly TranscriptSource[] = [
       { provider: "claude", dir: claudeDir },
@@ -278,7 +279,16 @@ export const make = Effect.gen(function* () {
         ),
       },
     ];
-    return sources;
+    const seenKimiDirs = new Set<string>();
+    return sources.filter((source) => {
+      if (source.provider !== "kimi") return true;
+
+      const resolvedDir = path.resolve(source.dir);
+      if (seenKimiDirs.has(resolvedDir)) return false;
+
+      seenKimiDirs.add(resolvedDir);
+      return true;
+    });
   });
 
   /**
