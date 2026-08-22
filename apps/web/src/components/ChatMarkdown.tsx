@@ -36,13 +36,14 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
-import ReactMarkdown from "react-markdown";
-import { defaultUrlTransform } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
@@ -175,12 +176,147 @@ export function orderedListGutterStyle(
   return { "--list-gutter": `${digits + 1}ch` };
 }
 
+export function preprocessLatexDelimiters(text: string): string {
+  if (!text || (!text.includes("\\(") && !text.includes("\\[") && !text.includes("$"))) {
+    return text;
+  }
+
+  // Match fenced code blocks (``` or ~~~ with >= 3 chars), or inline code (`+)
+  const codeRegex =
+    /(?:^|\n)([ \t]*)(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1\2[ \t]*(?=\n|$)|$)|`+[^`]+`+/g;
+
+  let result = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = codeRegex.exec(text)) !== null) {
+    const textChunk = text.slice(lastIndex, match.index);
+    result += transformLatexDelimitersInText(textChunk);
+    result += match[0];
+    lastIndex = codeRegex.lastIndex;
+  }
+
+  result += transformLatexDelimitersInText(text.slice(lastIndex));
+  return result;
+}
+
+function countPrecedingBackslashes(str: string, index: number): number {
+  let count = 0;
+  for (let k = index - 1; k >= 0 && str.charCodeAt(k) === 92; k--) {
+    count++;
+  }
+  return count;
+}
+
+function findClosingDelimiter(str: string, startIdx: number, delimiter: string): number {
+  for (let j = startIdx; j < str.length; j++) {
+    if (str.startsWith(delimiter, j)) {
+      if (countPrecedingBackslashes(str, j) % 2 === 0) {
+        return j;
+      }
+    }
+  }
+  return -1;
+}
+
+function transformLatexDelimitersInText(raw: string): string {
+  if (!raw) return "";
+
+  let out = "";
+  let i = 0;
+
+  while (i < raw.length) {
+    // Check for display math $$...$$
+    if (raw.startsWith("$$", i)) {
+      const closeIdx = raw.indexOf("$$", i + 2);
+      if (closeIdx !== -1) {
+        out += raw.slice(i, closeIdx + 2);
+        i = closeIdx + 2;
+        continue;
+      }
+    }
+
+    const isEscaped = countPrecedingBackslashes(raw, i) % 2 === 1;
+
+    // Check for \[...\]
+    if (raw.startsWith("\\[", i) && !isEscaped) {
+      const closeIdx = findClosingDelimiter(raw, i + 2, "\\]");
+      if (closeIdx !== -1) {
+        const formula = raw.slice(i + 2, closeIdx);
+        if (formula.trim() === "") {
+          out += raw.slice(i, closeIdx + 2);
+          i = closeIdx + 2;
+          continue;
+        }
+
+        const lineStart = Math.max(0, raw.lastIndexOf("\n", i) + 1);
+        const linePrefix = raw.slice(lineStart, i);
+        const isBlockquote = /^[ \t]*>[ \t]?/.test(linePrefix);
+
+        if (isBlockquote) {
+          const cleanedFormula = formula.replace(/\n[ \t]*>[ \t]?/g, "\n").trim();
+          const blockLines = cleanedFormula
+            .split("\n")
+            .map((line) => `> ${line}`)
+            .join("\n");
+          out += `\n>\n> $$\n${blockLines}\n> $$\n>\n`;
+        } else {
+          out += "\n\n$$\n" + formula.trim() + "\n$$\n\n";
+        }
+        i = closeIdx + 2;
+        continue;
+      }
+    }
+
+    // Check for \(...\)
+    if (raw.startsWith("\\(", i) && !isEscaped) {
+      const closeIdx = findClosingDelimiter(raw, i + 2, "\\)");
+      if (closeIdx !== -1) {
+        let formula = raw.slice(i + 2, closeIdx);
+        if (formula.trim() === "") {
+          out += raw.slice(i, closeIdx + 2);
+          i = closeIdx + 2;
+          continue;
+        }
+
+        const lineStart = Math.max(0, raw.lastIndexOf("\n", i) + 1);
+        const linePrefix = raw.slice(lineStart, i);
+        const isBlockquote = /^[ \t]*>[ \t]?/.test(linePrefix);
+
+        if (isBlockquote) {
+          formula = formula.replace(/\n[ \t]*>[ \t]?/g, "\n");
+        }
+        out += "$" + formula + "$";
+        i = closeIdx + 2;
+        continue;
+      }
+    }
+
+    // Escape unescaped $ that is not math delimiter so remark-math does not parse currency/variables
+    if (raw[i] === "$" && !isEscaped) {
+      out += "\\$";
+      i++;
+      continue;
+    }
+
+    out += raw[i];
+    i++;
+  }
+
+  return out;
+}
+
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []),
+      "dataCodeMeta",
+      "dataInlineCode",
+      ["className", "language-math", "math-inline", "math-display"],
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
   },
   protocols: {
@@ -191,6 +327,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  [remarkMath, { singleDollarTextMath: true }],
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
@@ -199,9 +336,10 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  [remarkMath, { singleDollarTextMath: true }],
+  remarkBreaks,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
-  remarkBreaks,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
@@ -209,7 +347,12 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  rehypeKatex,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW = [rehypeKatex] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -1785,6 +1928,8 @@ function ChatMarkdown({
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 
+  const preprocessedText = useMemo(() => preprocessLatexDelimiters(text), [text]);
+
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
   // complete source token instead of dropping it from the rendered message.
@@ -1800,12 +1945,14 @@ function ChatMarkdown({
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+        rehypePlugins={
+          parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW
+        }
         skipHtml={false}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >
-        {text}
+        {preprocessedText}
       </ReactMarkdown>
     </div>
   );
