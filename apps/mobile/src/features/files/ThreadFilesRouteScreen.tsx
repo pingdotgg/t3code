@@ -1,6 +1,6 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -16,6 +16,8 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { createWorkspaceImageRenderer } from "../../components/MarkdownWorkspaceImage";
+import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -94,6 +96,7 @@ function FileContent(props: {
   readonly initialLine: number | null;
   readonly truncated: boolean;
   readonly onRefresh?: () => Promise<void> | void;
+  readonly renderMarkdownImage?: MarkdownImageRenderer;
 }) {
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
   const isBrowserFile = isBrowserPreviewFile(props.relativePath);
@@ -145,7 +148,11 @@ function FileContent(props: {
         </View>
       ) : null}
       {props.activeMode === "preview" && isMarkdown ? (
-        <FileMarkdownPreview markdown={props.fileContents} onRefresh={props.onRefresh} />
+        <FileMarkdownPreview
+          markdown={props.fileContents}
+          onRefresh={props.onRefresh}
+          renderImage={props.renderMarkdownImage}
+        />
       ) : (
         <SourceFileSurface
           contents={props.fileContents}
@@ -495,6 +502,19 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath: assetPreviewPath,
     threadId,
   });
+  // Relative image srcs in a rendered markdown file resolve against the
+  // document's own directory — a nested README refers to its own folder.
+  const renderMarkdownImage = useMemo(() => {
+    if (environmentId === null || threadId === null || relativePath === null) {
+      return undefined;
+    }
+    const lastSeparator = Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"));
+    return createWorkspaceImageRenderer({
+      environmentId,
+      threadId,
+      ...(lastSeparator >= 0 ? { baseDir: relativePath.slice(0, lastSeparator) } : {}),
+    });
+  }, [environmentId, relativePath, threadId]);
   const previewUri =
     assetPreviewUri === null || previewRevision === 0
       ? assetPreviewUri
@@ -667,6 +687,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           truncated={fileData?.truncated ?? false}
           onRefresh={() => fileQuery.refresh()}
+          renderMarkdownImage={renderMarkdownImage}
         />
       </View>
     </ReviewHighlighterProvider>

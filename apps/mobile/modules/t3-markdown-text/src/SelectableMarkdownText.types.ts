@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export interface NativeMarkdownTextStyle {
   readonly color: string;
   readonly strongColor: string;
@@ -36,6 +38,23 @@ export interface SelectableMarkdownSkill {
   readonly displayName?: string | null;
 }
 
+export interface MarkdownImageSource {
+  readonly href: string;
+  readonly alt?: string | undefined;
+  readonly title?: string | undefined;
+}
+
+/**
+ * Overrides how block images render. `renderDefault` draws the module's own
+ * image frame for a uri, so overrides that only swap the uri (e.g. a signed
+ * asset URL for a workspace path) keep the native look; passing undefined
+ * draws the empty frame as a placeholder.
+ */
+export type MarkdownImageRenderer = (
+  image: MarkdownImageSource,
+  renderDefault: (uri: string | undefined) => ReactNode,
+) => ReactNode;
+
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
@@ -43,6 +62,7 @@ export interface SelectableMarkdownTextProps {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
+  readonly renderImage?: MarkdownImageRenderer;
   readonly marginTop?: number;
   readonly marginBottom?: number;
 }

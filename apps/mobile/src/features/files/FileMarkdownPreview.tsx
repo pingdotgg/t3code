@@ -18,6 +18,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
+  type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 
@@ -173,6 +174,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
 export function FileMarkdownPreview(props: {
   readonly markdown: string;
   readonly onRefresh?: () => Promise<void> | void;
+  readonly renderImage?: MarkdownImageRenderer;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
@@ -210,6 +212,7 @@ export function FileMarkdownPreview(props: {
             markdown={props.markdown}
             onLinkPress={onLinkPress}
             textStyle={styles.nativeTextStyle}
+            renderImage={props.renderImage}
           />
         ) : (
           <Markdown
