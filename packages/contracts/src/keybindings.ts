@@ -73,6 +73,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "editor.openFavorite",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
+  "recentThreads.next",
+  "recentThreads.previous",
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
