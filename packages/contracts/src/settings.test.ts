@@ -35,6 +35,19 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings external link opening", () => {
+  it("defaults to the system browser and accepts either destination", () => {
+    expect(decodeClientSettings({}).externalLinkOpenMode).toBe("external");
+    expect(decodeClientSettingsPatch({ externalLinkOpenMode: "integrated" })).toEqual({
+      externalLinkOpenMode: "integrated",
+    });
+  });
+
+  it("rejects unsupported destinations", () => {
+    expect(() => decodeClientSettings({ externalLinkOpenMode: "new-tab" })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

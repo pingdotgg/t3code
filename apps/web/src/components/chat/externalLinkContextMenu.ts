@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ExternalLinkOpenMode } from "@t3tools/contracts";
 
 export type ExternalLinkContextMenuAction = "open-in-preview" | "open-external" | "copy-link";
 
@@ -61,6 +61,29 @@ export function resolveExternalWebLinkHost(href: string | undefined): string | n
   } catch {
     return null;
   }
+}
+
+export function shouldOpenExternalLinkInPreview(options: {
+  readonly href: string;
+  readonly mode: ExternalLinkOpenMode;
+  readonly canOpenInPreview: boolean;
+  readonly event: {
+    readonly altKey: boolean;
+    readonly ctrlKey: boolean;
+    readonly metaKey: boolean;
+    readonly shiftKey: boolean;
+  };
+}): boolean {
+  const { href, mode, canOpenInPreview, event } = options;
+  return (
+    mode === "integrated" &&
+    canOpenInPreview &&
+    resolveExternalWebLinkHost(href) !== null &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey
+  );
 }
 
 export async function showExternalLinkContextMenu({

@@ -20,6 +20,7 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
+  type ExternalLinkOpenMode,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
@@ -156,6 +157,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const EXTERNAL_LINK_OPEN_MODE_LABELS: Record<ExternalLinkOpenMode, string> = {
+  external: "System browser",
+  integrated: "Integrated browser",
+};
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -483,6 +489,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.externalLinkOpenMode !== DEFAULT_UNIFIED_SETTINGS.externalLinkOpenMode
+        ? ["Open web links"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -552,6 +561,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
+      settings.externalLinkOpenMode,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -639,6 +649,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     }
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      externalLinkOpenMode: DEFAULT_UNIFIED_SETTINGS.externalLinkOpenMode,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -1982,6 +1993,47 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("open-web-links")}
+          description="Choose where links in conversations open by default. When the integrated browser is unavailable, links open in the system browser."
+          resetAction={
+            settings.externalLinkOpenMode !== DEFAULT_UNIFIED_SETTINGS.externalLinkOpenMode ? (
+              <SettingResetButton
+                label="web link destination"
+                onClick={() =>
+                  updateSettings({
+                    externalLinkOpenMode: DEFAULT_UNIFIED_SETTINGS.externalLinkOpenMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.externalLinkOpenMode}
+              onValueChange={(value) => {
+                if (value === "external" || value === "integrated") {
+                  updateSettings({ externalLinkOpenMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Default web link destination">
+                <SelectValue>
+                  {EXTERNAL_LINK_OPEN_MODE_LABELS[settings.externalLinkOpenMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="external">
+                  {EXTERNAL_LINK_OPEN_MODE_LABELS.external}
+                </SelectItem>
+                <SelectItem hideIndicator value="integrated">
+                  {EXTERNAL_LINK_OPEN_MODE_LABELS.integrated}
                 </SelectItem>
               </SelectPopup>
             </Select>
