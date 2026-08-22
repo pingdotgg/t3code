@@ -312,7 +312,9 @@ export const ChatHeader = memo(function ChatHeader({
                     faviconPath={activeProjectFaviconPath}
                     className="size-3.5"
                   />
-                  <span className="max-w-40 truncate">{activeProjectName}</span>
+                  <span dir="auto" className="max-w-40 truncate">
+                    {activeProjectName}
+                  </span>
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>
@@ -324,6 +326,7 @@ export const ChatHeader = memo(function ChatHeader({
           {renamingTitle !== null ? (
             <input
               autoFocus
+              dir="auto"
               aria-label="Thread title"
               className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-medium text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
               defaultValue={renamingTitle}
@@ -350,25 +353,31 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                <h2 className="min-w-0 truncate">{activeThreadTitle}</h2>
+                <h2 dir="auto" className="min-w-0 truncate">
+                  {activeThreadTitle}
+                </h2>
                 <ChevronDownIcon
                   aria-hidden
                   data-thread-title-chevron
                   className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
                 />
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup dir="auto" side="top">
+                {activeThreadTitle}
+              </TooltipPopup>
             </Tooltip>
           ) : (
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <h2 aria-label={activeThreadTitle} className="min-w-0 flex-1 truncate">
+                  <h2 dir="auto" aria-label={activeThreadTitle} className="min-w-0 flex-1 truncate">
                     {activeThreadTitle}
                   </h2>
                 }
               />
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup dir="auto" side="top">
+                {activeThreadTitle}
+              </TooltipPopup>
             </Tooltip>
           )}
         </WorkspaceBreadcrumbItem>

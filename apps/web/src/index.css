@@ -2034,7 +2034,9 @@ code {
      custom property, so without this a task-list under a 3+ digit ordered
      list would inherit the outer gutter instead of its own default. */
   --list-gutter: 1.25rem;
-  padding-left: 1.25rem;
+  /* Logical, because a list whose text is Arabic or Hebrew carries dir="auto"
+     and paints its markers on the right — the gutter has to move with them. */
+  padding-inline-start: 1.25rem;
   list-style-type: disc;
 }
 
@@ -2045,7 +2047,7 @@ code {
    nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {
   --list-gutter: 1.25rem;
-  padding-left: var(--list-gutter, 1.25rem);
+  padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
 
@@ -2075,7 +2077,8 @@ code {
 }
 
 .chat-markdown li.task-list-item input[type="checkbox"] {
-  margin: 0 0.35em 0.15em calc(-1 * var(--list-gutter, 1.25rem));
+  margin: 0 0 0.15em;
+  margin-inline: calc(-1 * var(--list-gutter, 1.25rem)) 0.35em;
   vertical-align: middle;
 }
 
@@ -2099,8 +2102,8 @@ code {
 }
 
 .chat-markdown blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 0.8rem;
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: 0.8rem;
   color: var(--muted-foreground);
 }
 
@@ -2114,7 +2117,7 @@ code {
 
 .chat-markdown section[data-footnotes] ol {
   margin: 0;
-  padding-left: 1.25rem;
+  padding-inline-start: 1.25rem;
 }
 
 .chat-markdown section[data-footnotes] li + li {
@@ -2226,7 +2229,9 @@ code {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+  /* Logical: the table is pinned LTR so its columns keep their source order,
+     but each cell carries dir="auto" and aligns to its own text. */
+  text-align: start;
 }
 
 .chat-markdown thead th {

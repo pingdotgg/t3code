@@ -195,6 +195,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
+  remarkTextDirection,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
@@ -204,6 +205,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkBreaks,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
+  remarkTextDirection,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
@@ -334,6 +336,74 @@ function remarkTagInlineCode() {
       }
       const childInsideLink = insideLink || node.type === "link" || node.type === "linkReference";
       node.children?.forEach((child) => visit(child, childInsideLink));
+    };
+
+    visit(tree, false);
+  };
+}
+
+/**
+ * Message prose belongs to whoever wrote it, so its direction is a property of
+ * the text and not of the app: `dir="auto"` makes the browser read each block's
+ * base direction off that block's own first strong character, which is what
+ * puts an Arabic sentence's trailing punctuation and its list markers on the
+ * right side without touching the English block above it.
+ *
+ * Code and tables opt out and stay LTR. Their shape is not prose — identifiers,
+ * paths, and column order read the same in every locale, and letting an Arabic
+ * comment flip a snippet would misreport what the agent actually wrote.
+ */
+const AUTO_DIRECTION_NODE_TYPES = new Set([
+  "blockquote",
+  "heading",
+  "list",
+  "paragraph",
+  "tableCell",
+]);
+const LTR_DIRECTION_NODE_TYPES = new Set(["code", "inlineCode", "table"]);
+
+function setDirection(node: MarkdownAstNode, dir: "auto" | "ltr") {
+  node.data = {
+    ...node.data,
+    hProperties: {
+      ...node.data?.hProperties,
+      dir,
+    },
+  };
+}
+
+function remarkTextDirection() {
+  return (tree: MarkdownAstNode) => {
+    // `dir="auto"` reads the first strong character of an element's *own* text
+    // and skips any descendant that carries its own `dir`. So only the outermost
+    // block of a run gets marked: marking a list and its items both would leave
+    // the list itself with no text to judge, fall back to LTR, and paint the
+    // bullets of an RTL item into a gutter that is no longer on that side.
+    //
+    // The cost is that one list reads in one direction. A list that mixes an
+    // Arabic item with an English one takes the direction of its first item,
+    // which is the trade for markers that stay next to the text they label.
+    const visit = (node: MarkdownAstNode, insideAutoBlock: boolean) => {
+      const type = node.type ?? "";
+      if (LTR_DIRECTION_NODE_TYPES.has(type)) {
+        setDirection(node, "ltr");
+        // A pinned table is not an `auto` ancestor, so its cells are free to
+        // pick their own direction while the column order stays put.
+        node.children?.forEach((child) => visit(child, false));
+        return;
+      }
+
+      // A GitHub alert is rendered as a titled callout rather than a quote, and
+      // its own renderer builds that chrome from scratch. Claiming the block
+      // here would strand its body: the `dir` never reaches the callout, and the
+      // paragraphs inside it would have been skipped as already-covered.
+      const isAlertBlockquote = type === "blockquote" && node.data?.hProperties?.dataAlert != null;
+      const isAutoBlock =
+        !insideAutoBlock && !isAlertBlockquote && AUTO_DIRECTION_NODE_TYPES.has(type);
+      if (isAutoBlock) {
+        setDirection(node, "auto");
+      }
+      node.children?.forEach((child) => visit(child, insideAutoBlock || isAutoBlock));
     };
 
     visit(tree, false);
@@ -671,6 +741,9 @@ function MarkdownCodeBlock({
 
   return (
     <div
+      // The fence's own chrome, not just its code: a title bar and copy/wrap
+      // controls that read left-to-right regardless of the prose around them.
+      dir="ltr"
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
@@ -1301,6 +1374,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       <TooltipTrigger
         render={
           <a
+            // A path is an identifier, so it reads left-to-right wherever the
+            // prose around it points. The `code` renderer swaps this chip in for
+            // the `<code dir="ltr">` it replaces, so the pin has to live here too.
+            dir="ltr"
             href={href}
             className={cn(CHAT_FILE_TAG_CHIP_CLASS_NAME, MARKDOWN_FILE_LINK_CLASS_NAME, className)}
             data-markdown-copy={copyMarkdown}
@@ -1570,7 +1647,7 @@ function ChatMarkdown({
         // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
         // text under a colored title — which is how the host renders it.
         return (
-          <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+          <div role="note" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
             <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
               <alert.Icon aria-hidden className="size-3.5 shrink-0" />
               {alert.label}
