@@ -1,3 +1,4 @@
+import { DirectionProvider, type TextDirection } from "@base-ui/react/direction-provider";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -393,7 +394,31 @@ function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
 
-function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
+// Strong-RTL code points: Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Mandaic and
+// their extensions/presentation forms, plus the astral RTL blocks (Phoenician … Adlam).
+const STRONG_RTL_CHAR =
+  /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
+// First letter decides (UBA P2/P3): digits, punctuation and symbols are neutral.
+const FIRST_LETTER = /\p{L}/u;
+
+// The direction a block of text renders in — what `dir="auto"` would resolve.
+export function firstStrongDirection(text: string): TextDirection {
+  const letter = FIRST_LETTER.exec(text)?.[0];
+  return letter && STRONG_RTL_CHAR.test(letter) ? "rtl" : "ltr";
+}
+
+function hastTextContent(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as { type?: string; value?: string; children?: unknown[] };
+  if (n.type === "text") return n.value ?? "";
+  return (n.children ?? []).map(hastTextContent).join("");
+}
+
+function MarkdownTable({
+  children,
+  dir = "ltr",
+  ...props
+}: Omit<React.ComponentProps<"table">, "dir"> & { dir?: TextDirection }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
@@ -468,16 +493,23 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
     >
-      <ScrollArea
-        chainVerticalScroll
-        scrollFade
-        hideScrollbars
-        className="w-full max-w-full rounded-none"
-      >
-        <table ref={tableRef} {...props}>
-          {children}
-        </table>
-      </ScrollArea>
+      {/* A concrete direction on the scroll viewport (not just the table) so an
+          overflowing RTL table opens at its first, rightmost column — and the same
+          value fed to Base UI, whose scroll-fade math reads its DirectionProvider
+          rather than the DOM `dir`. */}
+      <DirectionProvider direction={dir}>
+        <ScrollArea
+          dir={dir}
+          chainVerticalScroll
+          scrollFade
+          hideScrollbars
+          className="w-full max-w-full rounded-none"
+        >
+          <table ref={tableRef} {...props}>
+            {children}
+          </table>
+        </ScrollArea>
+      </DirectionProvider>
       <div className="mt-0.5 flex items-center justify-between select-none">
         <Tooltip>
           <TooltipTrigger
@@ -1565,15 +1597,21 @@ function ChatMarkdown({
             String((props as Record<string, unknown>)["data-alert"] ?? "")
           ];
         if (!alert) {
-          return <blockquote {...props}>{children}</blockquote>;
+          return (
+            <blockquote dir="auto" {...props}>
+              {children}
+            </blockquote>
+          );
         }
         // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
         // text under a colored title — which is how the host renders it.
         return (
-          <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+          <div role="note" dir="auto" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
             <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
               <alert.Icon aria-hidden className="size-3.5 shrink-0" />
-              {alert.label}
+              {/* dir="ltr" on the label text only (not the row) keeps it out of the container's
+                  dir="auto" resolution, so the body decides the side and the row follows it. */}
+              <span dir="ltr">{alert.label}</span>
             </p>
             {children}
           </div>
@@ -1585,8 +1623,19 @@ function ChatMarkdown({
             .length ?? 0;
         const gutterStyle = orderedListGutterStyle(itemCount, start);
         return (
-          <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
+          <ol
+            dir="auto"
+            {...props}
+            start={start}
+            style={gutterStyle ? { ...style, ...gutterStyle } : style}
+          />
         );
+      },
+      // `dir="auto"`: the browser picks each list's / quote's / table's base direction from its
+      // first strong character, so Hebrew/Arabic content gets its markers, bar and column order
+      // on the right while English blocks stay LTR (paired with the bidi rules in index.css).
+      ul({ node: _node, ...props }) {
+        return <ul dir="auto" {...props} />;
       },
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
@@ -1731,8 +1780,8 @@ function ChatMarkdown({
           </code>
         );
       },
-      table({ node: _node, ...props }) {
-        return <MarkdownTable {...props} />;
+      table({ node, dir: _dir, ...props }) {
+        return <MarkdownTable dir={firstStrongDirection(hastTextContent(node))} {...props} />;
       },
       details({ node: _node, children, open: detailsOpen }) {
         return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;

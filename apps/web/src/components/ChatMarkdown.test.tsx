@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { orderedListGutterStyle } from "./ChatMarkdown";
+import { firstStrongDirection, orderedListGutterStyle } from "./ChatMarkdown";
 
 describe("orderedListGutterStyle", () => {
   it("leaves the default gutter alone for single-digit lists", () => {
@@ -32,5 +32,20 @@ describe("orderedListGutterStyle", () => {
 
   it("treats a missing/zero item count as a single item", () => {
     expect(orderedListGutterStyle(0, undefined)).toBeUndefined();
+  });
+});
+
+describe("firstStrongDirection", () => {
+  it("reads the first letter, skipping neutral digits and punctuation", () => {
+    expect(firstStrongDirection("רכיב | סטטוס")).toBe("rtl");
+    expect(firstStrongDirection("1. (שלב) ראשון")).toBe("rtl");
+    expect(firstStrongDirection("\u{1E900}\u{1E92F} adlam")).toBe("rtl"); // astral RTL block
+    expect(firstStrongDirection("Component | Status")).toBe("ltr");
+    expect(firstStrongDirection("42 — Next.js then עברית")).toBe("ltr");
+  });
+
+  it("falls back to ltr when there is no strong character", () => {
+    expect(firstStrongDirection("")).toBe("ltr");
+    expect(firstStrongDirection("123 | 456")).toBe("ltr");
   });
 });
