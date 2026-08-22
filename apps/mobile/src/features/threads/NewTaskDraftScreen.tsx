@@ -735,6 +735,7 @@ export function NewTaskDraftScreen(props: {
       branch: creationBranch,
       worktreePath: workspaceMode === "worktree" ? null : selectedWorktreePath,
       startFromOrigin,
+      worktreeBranchPrefix: selectedEnvironmentServerConfig?.settings.worktreeBranchPrefix,
       runtimeMode,
       interactionMode,
       initialMessageText,

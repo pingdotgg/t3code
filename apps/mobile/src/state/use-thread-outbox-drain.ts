@@ -10,7 +10,6 @@ import {
   DEFAULT_RUNTIME_MODE,
   type MessageId,
 } from "@t3tools/contracts";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,9 +17,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { toUploadChatImageAttachments } from "../lib/composerImages";
-import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { useProjects, useThreadShells } from "./entities";
+import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
@@ -102,6 +100,7 @@ export function useThreadOutboxDrain(): void {
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());
@@ -250,6 +249,7 @@ export function useThreadOutboxDrain(): void {
       queuedMessage: QueuedThreadMessage,
       creation: QueuedThreadCreation,
       projectCwd: string,
+      worktreeBranchPrefix: string | undefined,
     ) => {
       const modelSelection = queuedMessage.modelSelection;
       if (modelSelection === undefined) {
@@ -274,7 +274,7 @@ export function useThreadOutboxDrain(): void {
           branch: creation.branch,
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          worktreeBranchPrefix,
         }),
       });
       return completeDelivery(deliveryResult);
@@ -305,6 +305,8 @@ export function useThreadOutboxDrain(): void {
       }
 
       const creation = nextQueuedMessage.creation;
+      const worktreeBranchPrefix = serverConfigs.get(nextQueuedMessage.environmentId)?.settings
+        .worktreeBranchPrefix;
       const environment = connectedEnvironments.find(
         (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
       );
@@ -372,7 +374,12 @@ export function useThreadOutboxDrain(): void {
           ? removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined
             ? creationProjectCwd !== null
-              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
+              ? sendQueuedCreation(
+                  nextQueuedMessage,
+                  creation,
+                  creationProjectCwd,
+                  worktreeBranchPrefix,
+                )
               : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
             : thread !== undefined
               ? sendQueuedMessage(nextQueuedMessage, thread)
@@ -417,6 +424,7 @@ export function useThreadOutboxDrain(): void {
     projects,
     queuedMessagesByThreadKey,
     retryTick,
+    serverConfigs,
     sendQueuedCreation,
     sendQueuedMessage,
     shellStatuses,

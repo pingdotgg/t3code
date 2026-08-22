@@ -70,6 +70,13 @@ describe("searchSettings", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("finds the worktree branch prefix setting", () => {
+    expect(searchSettings("worktree branch prefix")[0]).toMatchObject({
+      id: "worktree-branch-prefix",
+      to: "/settings/general",
+    });
+  });
+
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });

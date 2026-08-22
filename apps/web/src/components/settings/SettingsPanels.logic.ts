@@ -1,13 +1,14 @@
-import type {
-  BackgroundActivityProfile,
-  BackgroundActivitySettings,
-  ProviderDriverKind,
-  ProviderInstanceConfig,
-  PreviewViewportSetting,
-  ProviderInstanceId,
-  ServerSettings,
-  SidebarProjectGroupingMode,
-  UnifiedSettings,
+import {
+  WorktreeBranchPrefix,
+  type BackgroundActivityProfile,
+  type BackgroundActivitySettings,
+  type ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type PreviewViewportSetting,
+  type ProviderInstanceId,
+  type ServerSettings,
+  type SidebarProjectGroupingMode,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
@@ -18,6 +19,19 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import * as Schema from "effect/Schema";
+
+const decodeWorktreeBranchPrefix = Schema.decodeUnknownSync(WorktreeBranchPrefix);
+
+export function resolveWorktreeBranchPrefixUpdate(
+  value: string,
+): { worktreeBranchPrefix: string } | null {
+  try {
+    return { worktreeBranchPrefix: decodeWorktreeBranchPrefix(value) };
+  } catch {
+    return null;
+  }
+}
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";

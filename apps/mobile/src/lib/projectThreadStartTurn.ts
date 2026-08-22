@@ -7,8 +7,10 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
 import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
+import { randomHex } from "./uuid";
 
 export function deriveThreadTitleFromPrompt(value: string): string {
   const trimmed = value.trim();
@@ -36,8 +38,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
-  /** Generated temp branch for worktree mode; unused for local mode. */
-  readonly worktreeBranchName: string;
+  /** Target environment setting; defaults for unavailable older configurations. */
+  readonly worktreeBranchPrefix?: string;
 }
 
 /**
@@ -77,7 +79,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
             prepareWorktree: {
               projectCwd: spec.projectCwd,
               baseBranch: spec.branch!,
-              branch: spec.worktreeBranchName,
+              branch: buildTemporaryWorktreeBranchName(randomHex, spec.worktreeBranchPrefix),
               ...(spec.startFromOrigin ? { startFromOrigin: true } : {}),
             },
             runSetupScript: true,

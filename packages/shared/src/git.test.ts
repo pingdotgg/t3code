@@ -80,6 +80,41 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
   });
 
+  it("builds custom temporary refs while recognizing custom and legacy placeholders", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "DEADBEEF", "team_42-dev")).toBe(
+      "team_42-dev/deadbeef",
+    );
+    expect(isTemporaryWorktreeBranch("team_42-dev/deadbeef", "team_42-dev")).toBe(true);
+    expect(
+      isTemporaryWorktreeBranch(
+        `${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12`,
+        "team_42-dev",
+      ),
+    ).toBe(true);
+  });
+
+  it("normalizes custom prefixes before building and matching", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "DEADBEEF", " Team_42-Dev ")).toBe(
+      "team_42-dev/deadbeef",
+    );
+    expect(isTemporaryWorktreeBranch("team_42-dev/deadbeef", " Team_42-Dev ")).toBe(true);
+  });
+
+  it("does not retain previously configured custom prefixes", () => {
+    expect(isTemporaryWorktreeBranch("team/deadbeef", "org")).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`, "org")).toBe(true);
+  });
+
+  it.each(["", "   ", "t3.code", "team/feature", "a".repeat(65)])(
+    "rejects invalid custom prefix %j",
+    (worktreeBranchPrefix) => {
+      expect(() =>
+        buildTemporaryWorktreeBranchName(() => "deadbeef", worktreeBranchPrefix),
+      ).toThrow();
+      expect(() => isTemporaryWorktreeBranch("t3code/deadbeef", worktreeBranchPrefix)).toThrow();
+    },
+  );
+
   it("normalizes a UUID-shaped random callback to the canonical 8-hex form", () => {
     expect(buildTemporaryWorktreeBranchName(() => "f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12")).toBe(
       `${WORKTREE_BRANCH_PREFIX}/f4ae4e0e`,

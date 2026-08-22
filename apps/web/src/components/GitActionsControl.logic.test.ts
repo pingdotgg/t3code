@@ -1102,10 +1102,30 @@ describe("resolveLiveThreadBranchUpdate", () => {
     assert.equal(update, null);
   });
 
+  it("does not regress a semantic thread ref back to a configured temporary worktree ref", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: "feature/github-query-rate-limit",
+      gitStatus: status({ refName: "team/bda76797" }),
+      worktreeBranchPrefix: "team",
+    });
+
+    assert.equal(update, null);
+  });
+
   it("allows a temporary worktree ref to reconcile to a semantic branch", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "t3code/a9628676",
       gitStatus: status({ refName: "feature/diff-panel-toggle" }),
+    });
+
+    assert.deepEqual(update, { branch: "feature/diff-panel-toggle" });
+  });
+
+  it("allows a configured temporary worktree ref to reconcile to a semantic branch", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: "team/a9628676",
+      gitStatus: status({ refName: "feature/diff-panel-toggle" }),
+      worktreeBranchPrefix: "team",
     });
 
     assert.deepEqual(update, { branch: "feature/diff-panel-toggle" });
