@@ -4159,6 +4159,449 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("prefers result text over assistant text when ExitPlanMode is skipped", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan this",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-plan-text",
+        uuid: "assistant-plan-text",
+        parent_tool_use_id: null,
+        message: {
+          model: "claude-opus-4-6",
+          id: "msg-plan-text",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "# Draft notes",
+            },
+          ],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {},
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        result: "# Ship it\n\n- one\n- two",
+        session_id: "sdk-session-plan-text",
+        uuid: "result-plan-text",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(completedFiber));
+      const proposedEvent = runtimeEvents.find((event) => event.type === "turn.proposed.completed");
+      assert.equal(proposedEvent?.type, "turn.proposed.completed");
+      if (proposedEvent?.type !== "turn.proposed.completed") {
+        return;
+      }
+      assert.equal(proposedEvent.payload.planMarkdown, "# Ship it\n\n- one\n- two");
+      assert.equal(proposedEvent.raw?.source, "claude.sdk.message");
+      assert.equal(proposedEvent.raw?.method, "claude/result/plan-text");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect.each<{
+    title: string;
+    interactionMode?: "plan" | "default";
+    assistantText?: string;
+    resultExtras?: Record<string, unknown>;
+  }>([
+    {
+      title: "does not emit proposed plan outside plan mode",
+      assistantText: "# Ship it\n\n- one\n- two",
+      resultExtras: { result: "# Ship it\n\n- one\n- two" },
+    },
+    {
+      title: "does not emit proposed plan when result and assistant text are empty",
+      interactionMode: "plan",
+    },
+    {
+      title: "does not emit proposed plan when the result is a refusal",
+      interactionMode: "plan",
+      assistantText: "# Ship it\n\n- one\n- two",
+      resultExtras: { result: "# Ship it\n\n- one\n- two", stop_reason: "refusal" },
+    },
+  ])("$title", ({ interactionMode, assistantText, resultExtras }) => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan this",
+        ...(interactionMode ? { interactionMode } : {}),
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      if (assistantText !== undefined) {
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-plan-text-skip",
+          uuid: "assistant-plan-text-skip",
+          parent_tool_use_id: null,
+          message: {
+            model: "claude-opus-4-6",
+            id: "msg-plan-text-skip",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: assistantText }],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {},
+          },
+        } as unknown as SDKMessage);
+      }
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-plan-text-skip",
+        uuid: "result-plan-text-skip",
+        ...resultExtras,
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(completedFiber));
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "turn.proposed.completed"),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not emit a second proposed plan after ExitPlanMode", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan this",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-exit-then-result",
+        uuid: "assistant-exit-then-result",
+        parent_tool_use_id: null,
+        message: {
+          model: "claude-opus-4-6",
+          id: "msg-exit-then-result",
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "# Final plan\n\n- capture it",
+            },
+            {
+              type: "tool_use",
+              id: "tool-exit-dedupe",
+              name: "ExitPlanMode",
+              input: {
+                plan: "# Final plan\n\n- capture it",
+              },
+            },
+          ],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {},
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        result: "# Final plan\n\n- capture it",
+        session_id: "sdk-session-exit-then-result",
+        uuid: "result-exit-then-result",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(completedFiber));
+      const proposedEvents = runtimeEvents.filter(
+        (event) => event.type === "turn.proposed.completed",
+      );
+      assert.equal(proposedEvents.length, 1);
+      assert.equal(proposedEvents[0]?.raw?.method, "claude/assistant");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not emit proposed plan from a later synthetic turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan this",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const firstCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-plan-then-synthetic",
+        uuid: "assistant-plan-then-synthetic",
+        parent_tool_use_id: null,
+        message: {
+          model: "claude-opus-4-6",
+          id: "msg-plan-then-synthetic",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "# Ship it\n\n- one\n- two" }],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {},
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        result: "# Ship it\n\n- one\n- two",
+        session_id: "sdk-session-plan-then-synthetic",
+        uuid: "result-plan-then-synthetic",
+      } as unknown as SDKMessage);
+
+      const firstEvents = Array.from(yield* Fiber.join(firstCompletedFiber));
+      assert.equal(
+        firstEvents.some((event) => event.type === "turn.proposed.completed"),
+        true,
+      );
+
+      const secondCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-plan-then-synthetic",
+        uuid: "assistant-synthetic-followup",
+        parent_tool_use_id: null,
+        message: {
+          model: "claude-opus-4-6",
+          id: "msg-synthetic-followup",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "background agent notes" }],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {},
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        result: "background agent notes",
+        session_id: "sdk-session-plan-then-synthetic",
+        uuid: "result-synthetic-followup",
+      } as unknown as SDKMessage);
+
+      const secondEvents = Array.from(yield* Fiber.join(secondCompletedFiber));
+      assert.equal(
+        secondEvents.some((event) => event.type === "turn.proposed.completed"),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not emit proposed plan while user input is pending", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan this",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
+
+      const canUseTool = harness.getLastCreateQueryInput()?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const permissionPromise = canUseTool(
+        "AskUserQuestion",
+        {
+          questions: [
+            {
+              question: "Which framework?",
+              header: "Framework",
+              options: [{ label: "React", description: "React.js" }],
+              multiSelect: false,
+            },
+          ],
+        },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-ask-pending-plan",
+        },
+      );
+
+      const requestedEvent = yield* Stream.runHead(adapter.streamEvents);
+      assert.equal(requestedEvent._tag, "Some");
+      if (requestedEvent._tag !== "Some" || requestedEvent.value.type !== "user-input.requested") {
+        return;
+      }
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-pending-input",
+        uuid: "assistant-pending-input",
+        parent_tool_use_id: null,
+        message: {
+          model: "claude-opus-4-6",
+          id: "msg-pending-input",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "# Ship it\n\n- one\n- two" }],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {},
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        result: "# Ship it\n\n- one\n- two",
+        session_id: "sdk-session-pending-input",
+        uuid: "result-pending-input",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(completedFiber));
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "turn.proposed.completed"),
+        false,
+      );
+
+      yield* adapter.stopSession(session.threadId);
+      yield* Effect.promise(() => permissionPromise);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("handles AskUserQuestion via user-input.requested/resolved lifecycle", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

@@ -279,6 +279,11 @@ interface ClaudeSessionContext {
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
+  /**
+   * Set only from sendTurn's interactionMode plan/default branches.
+   * Absent interactionMode leaves the previous value unchanged.
+   */
+  inPlanMode: boolean;
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
@@ -1422,6 +1427,20 @@ function extractExitPlanModePlan(value: unknown): string | undefined {
     : undefined;
 }
 
+function planMarkdownFromSkippedExit(turnState: ClaudeTurnState, result: SDKResultMessage): string {
+  if (result.subtype === "success" && typeof result.result === "string") {
+    const fromResult = result.result.trim();
+    if (fromResult.length > 0) {
+      return fromResult;
+    }
+  }
+
+  return turnState.assistantTextBlockOrder
+    .map((block) => block.fallbackText)
+    .join("")
+    .trim();
+}
+
 function exitPlanCaptureKey(input: {
   readonly toolUseId?: string | undefined;
   readonly planMarkdown: string;
@@ -2343,6 +2362,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         rawMethod: "claude/result",
         rawPayload: result ?? { status },
       });
+    }
+
+    // Plan-mode turns that skip ExitPlanMode still captured the plan on
+    // the success result (assistant text is the fallback). Arm Implement
+    // through the existing emit helper.
+    // capturedProposedPlanKeys.size (not the helper's capture key) is the
+    // double-emit gate: ExitPlanMode stores tool:${id}, this path would
+    // store plan:${markdown}. Skip synthetic auto-started turns — they
+    // inherit session inPlanMode after a real plan turn.
+    if (
+      result !== undefined &&
+      status === "completed" &&
+      result.stop_reason !== "refusal" &&
+      context.inPlanMode &&
+      turnState.synthetic !== true &&
+      turnState.capturedProposedPlanKeys.size === 0 &&
+      context.pendingUserInputs.size === 0
+    ) {
+      const planMarkdown = planMarkdownFromSkippedExit(turnState, result);
+      if (planMarkdown.length > 0) {
+        yield* emitProposedPlanCompleted(context, {
+          planMarkdown,
+          rawSource: "claude.sdk.message",
+          rawMethod: "claude/result/plan-text",
+          rawPayload: result,
+        });
+      }
     }
 
     context.turns.push({
@@ -4275,6 +4321,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
+        inPlanMode: false,
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
@@ -4402,11 +4449,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         try: () => context.query.setPermissionMode("plan"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
       });
+      context.inPlanMode = true;
     } else if (input.interactionMode === "default") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
       });
+      context.inPlanMode = false;
     }
 
     const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
