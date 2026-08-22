@@ -1234,6 +1234,33 @@ export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** Overrides the default "Confirm" button label. */
+  readonly confirmLabel?: string;
+  /** Overrides the default "Cancel" button label. */
+  readonly cancelLabel?: string;
+  /**
+   * An extra affirmative action rendered alongside the primary confirm button.
+   * Use when a single confirmation must distinguish between two valid
+   * outcomes (for example "delete only" vs "delete and clean up") instead of
+   * chaining a second dialog. The primary action stays the safe default; the
+   * secondary is the opt-in.
+   */
+  readonly secondary?: ConfirmDialogSecondaryAction;
+}
+
+export interface ConfirmDialogSecondaryAction {
+  readonly label: string;
+  readonly variant?: ConfirmDialogVariant;
+}
+
+/**
+ * Resolution of a confirmation request. `confirmed` is true when either the
+ * primary or the secondary action is taken; `secondary` tells them apart.
+ * Cancelling or dismissing resolves to `{ confirmed: false, secondary: false }`.
+ */
+export interface ConfirmDialogResult {
+  readonly confirmed: boolean;
+  readonly secondary: boolean;
 }
 
 /**
@@ -1250,6 +1277,15 @@ export interface LocalApi {
   dialogs: {
     pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
     confirm: (message: string, options?: ConfirmDialogOptions) => Promise<boolean>;
+    /**
+     * Like {@link confirm} but returns which action was taken, so callers can
+     * branch on a secondary action without a second round-trip. Callers that
+     * only need yes/no should keep using {@link confirm}.
+     */
+    confirmWithDetails: (
+      message: string,
+      options?: ConfirmDialogOptions,
+    ) => Promise<ConfirmDialogResult>;
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
