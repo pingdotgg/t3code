@@ -238,6 +238,11 @@ interface OpenCodeSessionContext {
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
+   * Mirrors the session's `time.compacting` marker so edge transitions (and
+   * only transitions) become session state events.
+   */
+  compacting: boolean;
+  /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
    * so concurrent callers can race the transition safely via `getAndSet`.
@@ -839,6 +844,62 @@ export function makeOpenCodeAdapter(
               },
             });
           }
+
+          // `time.compacting` appears while OpenCode compacts the session and
+          // disappears when it finishes; report the transitions. The falling
+          // edge lands on ready when compaction outlived its turn so the
+          // state clears itself — unless the session already failed, which a
+          // compaction ending must not paper over.
+          const compacting = event.properties.info.time?.compacting !== undefined;
+          if (compacting !== context.compacting) {
+            context.compacting = compacting;
+            if (compacting || context.session.status !== "error") {
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "session.state.changed",
+                payload: compacting
+                  ? { state: "compacting", reason: "session:compacting" }
+                  : { state: turnId ? "running" : "ready", reason: "session:compaction-ended" },
+              });
+            }
+          }
+          break;
+        }
+
+        case "session.compacted": {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId,
+              raw: event,
+            })),
+            type: "thread.state.changed",
+            payload: {
+              state: "compacted",
+              detail: event.properties,
+            },
+          });
+          if (context.compacting) {
+            context.compacting = false;
+            if (context.session.status !== "error") {
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "session.state.changed",
+                payload: {
+                  state: turnId ? "running" : "ready",
+                  reason: "session:compacted",
+                },
+              });
+            }
+          }
           break;
         }
 
@@ -1402,6 +1463,7 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          compacting: false,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };

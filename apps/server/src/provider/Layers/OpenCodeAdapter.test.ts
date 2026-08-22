@@ -1191,6 +1191,62 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("reports compaction transitions from session timestamps and events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-compaction");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.updated",
+          properties: {
+            info: {
+              id: "http://127.0.0.1:9999/session",
+              title: "New session - 2026-08-09T10:20:30.456Z",
+              time: { created: 1, updated: 2, compacting: 2 },
+            },
+          },
+        },
+        {
+          type: "session.compacted",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "session.state.changed" || event.type === "thread.state.changed"),
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) =>
+          event.type === "session.state.changed" || event.type === "thread.state.changed"
+            ? `${event.type}:${event.payload.state}`
+            : event.type,
+        ),
+        [
+          "session.state.changed:compacting",
+          "thread.state.changed:compacted",
+          "session.state.changed:ready",
+        ],
+      );
+    }),
+  );
+
   it.effect("passes the thread title to session.create when provided", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

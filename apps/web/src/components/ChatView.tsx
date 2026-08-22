@@ -2373,6 +2373,12 @@ function ChatViewContent(props: ChatViewProps) {
     localDispatchStartedAt,
     latestUserMessageAt,
   );
+  // The session row is rewritten when the compacting detail is raised, so its
+  // updatedAt is when compaction started.
+  const compactingSince =
+    activeThread?.session?.statusDetail === "compacting"
+      ? activeThread.session.updatedAt
+      : null;
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -6507,6 +6513,7 @@ function ChatViewContent(props: ChatViewProps) {
                 isWorking={isWorking}
                 workingStepLabel={workingStepLabel}
                 activeTurnStartedAt={activeWorkStartedAt}
+                compactingSince={compactingSince}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}

@@ -1202,8 +1202,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // surfaces immediately — effectiveSnoozed refuses to classify a thread
       // with a raised hand (approval / input / failure / fresh completion)
       // as snoozed, without spending the return ticket.
+      // Compaction is provider housekeeping that may outlive its turn; a
+      // session that is only busy compacting must not fight the settle either.
       const isSessionActivity =
-        command.session.status === "starting" || command.session.status === "running";
+        (command.session.status === "starting" || command.session.status === "running") &&
+        command.session.statusDetail !== "compacting";
       // Real activity resets ANY override (settled wakes, active unpins).
       if (thread.settledOverride === null || !isSessionActivity) {
         return sessionSetEvent;

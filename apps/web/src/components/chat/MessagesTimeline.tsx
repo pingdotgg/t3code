@@ -209,6 +209,8 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   workingStepLabel?: string | null;
   activeTurnStartedAt: string | null;
+  /** Set while the provider compacts context; the working row says so. */
+  compactingSince?: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   latestTurn: TimelineLatestTurn | null;
@@ -252,6 +254,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   workingStepLabel = null,
   activeTurnStartedAt,
+  compactingSince = null,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
   onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
@@ -414,6 +417,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         expandedWorkGroupIds,
         isWorking,
         activeTurnStartedAt,
+        compactingSince,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
       }),
@@ -425,6 +429,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedWorkGroupIds,
       isWorking,
       activeTurnStartedAt,
+      compactingSince,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
@@ -947,7 +952,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
             : "pb-0"
           : isExpandedToolGroupHeader
             ? "pb-0"
-            : row.kind === "turn-fold" || row.kind === "working"
+            : row.kind === "turn-fold" || row.kind === "working" || row.kind === "compaction"
               ? "pb-1.5"
               : (row.kind === "message" &&
                     row.message.role === "assistant" &&
@@ -981,6 +986,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+      {row.kind === "compaction" ? <CompactionTimelineRow row={row} /> : null}
     </div>
   );
 });
@@ -1130,6 +1136,25 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         <span>{row.label}</span>
         <Icon className="size-3.5" />
       </button>
+    </div>
+  );
+}
+
+/**
+ * Compaction result row — a thread lifecycle marker at the same level as the
+ * "Worked for N" fold, never part of it.
+ */
+function CompactionTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "compaction" }> }) {
+  return (
+    <div className="border-b border-border/60 pb-2 pt-1">
+      <div
+        className={cn(
+          "px-1 text-sm leading-relaxed tabular-nums",
+          row.failed ? "text-destructive/90" : "text-muted-foreground",
+        )}
+      >
+        {row.label}
+      </div>
     </div>
   );
 }
@@ -1317,14 +1342,18 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     <div>
       <div className="border-b border-border/60 pb-2 pt-1">
         <div className="px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
-          {row.createdAt ? (
+          {row.compactingSince ? (
+            <>
+              Compacting context for <WorkingTimer createdAt={row.compactingSince} />
+            </>
+          ) : row.createdAt ? (
             <>
               Working for <WorkingTimer createdAt={row.createdAt} />
             </>
           ) : (
             "Working..."
           )}
-          {workingStepLabel ? (
+          {workingStepLabel && !row.compactingSince ? (
             <span className="ml-2 text-muted-foreground/55">· {workingStepLabel}</span>
           ) : null}
         </div>

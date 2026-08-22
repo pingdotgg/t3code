@@ -297,9 +297,20 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * Overlays the session status with what the provider is busy doing when that
+ * work is not turn progress. Rides on whatever status the turn lifecycle
+ * produces — "running" during a turn, "ready" when the work outlives its turn.
+ * Optional so clients that predate a detail keep decoding sessions; absent
+ * means ordinary turn work.
+ */
+export const OrchestrationSessionStatusDetail = Schema.Literals(["compacting"]);
+export type OrchestrationSessionStatusDetail = typeof OrchestrationSessionStatusDetail.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
+  statusDetail: Schema.optional(OrchestrationSessionStatusDetail),
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

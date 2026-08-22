@@ -73,10 +73,12 @@ export function resolveThreadStatus(
     };
   }
 
-  if (thread.session?.status === "running") {
+  // Compaction overlays the turn lifecycle: it can run on a ready session (a
+  // /compact whose turn already closed), so it is checked before status.
+  if (thread.session?.statusDetail === "compacting" || thread.session?.status === "running") {
     return {
       kind: "working",
-      label: "Working",
+      label: thread.session.statusDetail === "compacting" ? "Compacting" : "Working",
       pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
       textClassName: "text-sky-700 dark:text-sky-300",
       iconColor: "#0a84ff",

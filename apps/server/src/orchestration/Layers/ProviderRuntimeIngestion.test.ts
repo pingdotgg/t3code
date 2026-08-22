@@ -456,6 +456,147 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("overlays compaction on statusDetail without driving the turn lifecycle", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-compacting"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      turnId: asTurnId("turn-compacting-1"),
+      payload: {},
+    });
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-compacting"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.500Z",
+      turnId: asTurnId("turn-compacting-1"),
+      payload: {
+        state: "compacting",
+        reason: "status:compacting",
+      },
+    });
+
+    let thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running" && entry.session?.statusDetail === "compacting",
+    );
+    const compactingSince = thread.session?.updatedAt;
+
+    // Compaction is not turn work: a completed turn settles the session to
+    // ready while the compacting overlay stays up on statusDetail.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-while-compacting"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-compacting-1"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "ready" && entry.session?.activeTurnId === null,
+    );
+    expect(thread.session?.statusDetail).toBe("compacting");
+    const postTurnCompactingSince = thread.session?.updatedAt;
+    expect(postTurnCompactingSince).not.toBe(compactingSince);
+
+    // A thread/session start notification landing mid-compaction (e.g. a
+    // reconnect) must not wipe the compacting overlay, and it keeps the
+    // session's updatedAt stable so the compacting timer does not reset.
+    harness.emit({
+      type: "thread.started",
+      eventId: asEventId("evt-thread-started-while-compacting"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.500Z",
+    });
+
+    await harness.drain();
+    thread = await waitForThread(harness.readModel, (entry) => entry.session !== null);
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.statusDetail).toBe("compacting");
+    expect(thread.session?.updatedAt).toBe(postTurnCompactingSince);
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-compaction-done"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: {
+        state: "ready",
+        reason: "status:active",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "ready" && entry.session?.statusDetail === undefined,
+    );
+    expect(thread.session?.statusDetail).toBeUndefined();
+  });
+
+  it("keeps a turnless compaction on ready status", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "session.started",
+      eventId: asEventId("evt-session-started-turnless-compaction"),
+      provider: ProviderDriverKind.make("openCode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {},
+    });
+
+    // A /compact with no open turn: the thread stays settled on ready while
+    // the compacting overlay reports the housekeeping.
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-turnless-compacting"),
+      provider: ProviderDriverKind.make("openCode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.500Z",
+      payload: {
+        state: "compacting",
+        reason: "session.time.compacting",
+      },
+    });
+
+    let thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.statusDetail === "compacting",
+    );
+    expect(thread.session?.status).toBe("ready");
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-turnless-compaction-done"),
+      provider: ProviderDriverKind.make("openCode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        state: "ready",
+        reason: "session.compacted",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "ready" && entry.session?.statusDetail === undefined,
+    );
+    expect(thread.session?.statusDetail).toBeUndefined();
+  });
+
   it("clears active turn when provider session becomes ready", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -3212,6 +3353,71 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(activity?.summary).toBe("Context compacted");
     expect(activity?.tone).toBe("info");
+  });
+
+  it("projects completed context_compaction items into context compaction activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-item-compaction-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        itemType: "context_compaction",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "context-compaction",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(activity?.summary).toBe("Context compacted");
+    expect(activity?.tone).toBe("info");
+  });
+
+  it("projects failed context_compaction items into failed compaction activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-item-compaction-failed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        itemType: "context_compaction",
+        status: "failed",
+        detail: "Conversation too short to compact",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "context-compaction",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(activity?.summary).toBe("Context compaction failed");
+    expect(activity?.tone).toBe("error");
+    expect(activity?.payload).toMatchObject({
+      state: "failed",
+      detail: "Conversation too short to compact",
+    });
   });
 
   it("projects Codex task lifecycle chunks into thread activities", async () => {
