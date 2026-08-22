@@ -87,6 +87,22 @@ struct MarkdownRenderCacheTests {
     }
 
     @Test
+    func keepsImageReferencesInRenderedDocuments() {
+        let cache = MarkdownRenderCache(documentCountLimit: 8, documentCostLimit: 64_000)
+        let revision = MarkdownContentRevision("Result:\n![Chart](out/chart.png)")
+
+        guard let document = cache.documentImmediately(for: revision),
+              document.blocks.count == 2,
+              case let .image(source, alt) = document.blocks[1] else {
+            Issue.record("Expected a rendered image block")
+            return
+        }
+
+        #expect(source == "out/chart.png")
+        #expect(alt == "Chart")
+    }
+
+    @Test
     func canceledRequestDoesNotRenderOrCache() async {
         let cache = MarkdownRenderCache(documentCountLimit: 8, documentCostLimit: 64_000)
         let revision = MarkdownContentRevision(String(repeating: "Paragraph.\n\n", count: 2_000))

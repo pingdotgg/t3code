@@ -427,6 +427,181 @@ struct MarkdownDocumentTests {
         )
     }
 
+    @Test
+    func liftsStandaloneImageReferencesIntoTheirOwnBlock() {
+        let document = MarkdownDocument(
+            parsing: """
+            Here is the render:
+            ![Generated image](out/render.png)
+
+            ![](docs/diagram.svg "Architecture")
+
+            - ![Icon](assets/icon.png)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .paragraph("Here is the render:"),
+                .image(source: "out/render.png", alt: "Generated image"),
+                .image(source: "docs/diagram.svg", alt: ""),
+                .unorderedList([
+                    MarkdownListItem(
+                        task: nil,
+                        blocks: [.image(source: "assets/icon.png", alt: "Icon")]
+                    ),
+                ]),
+            ]
+        )
+    }
+
+    @Test
+    func resolvesBackslashEscapesInImageReferences() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![Plot \\[final\\]](out/foo\\(1\\).png)
+
+            ![C:\\\\path](out/back\\\\slash.png)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/foo(1).png", alt: "Plot [final]"),
+                .image(source: "out/back\\slash.png", alt: "C:\\path"),
+            ]
+        )
+    }
+
+    @Test
+    func readsDestinationsPastTitlesAndBalancedParentheses() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![plot](out/plot.png "generated (final")
+
+            ![shot](out/foo(1).png)
+
+            ![single](out/single.png 'a title')
+
+            ![parenthesized](out/parenthesized.png (a title))
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/plot.png", alt: "plot"),
+                .image(source: "out/foo(1).png", alt: "shot"),
+                .image(source: "out/single.png", alt: "single"),
+                .image(source: "out/parenthesized.png", alt: "parenthesized"),
+            ]
+        )
+    }
+
+    @Test(
+        "Malformed image titles stay paragraph text",
+        .bug("https://github.com/pingdotgg/t3code/pull/7378#discussion_r3826785013")
+    )
+    func rejectsMalformedImageTitles() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![bare](out/a.png garbage)
+
+            ![trailing](out/b.png "title" garbage)
+
+            ![unclosed](out/c.png "title)
+
+            ![angle](<out/d.png>"title")
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .paragraph("![bare](out/a.png garbage)"),
+                .paragraph("![trailing](out/b.png \"title\" garbage)"),
+                .paragraph("![unclosed](out/c.png \"title)"),
+                .paragraph("![angle](<out/d.png>\"title\")"),
+            ]
+        )
+    }
+
+    @Test
+    func readsAngleBracketedDestinationsLiterally() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![plot](<out/plot).png>)
+
+            ![spaced](<out/my render.png> "a title")
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/plot).png", alt: "plot"),
+                .image(source: "out/my render.png", alt: "spaced"),
+            ]
+        )
+    }
+
+    @Test
+    func readsAngleBracketedDestinationsPastSpacesAndEscapes() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![padded]( <out/pad).png> )
+
+            ![escaped](<out/a\\>b.png>)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "out/pad).png", alt: "padded"),
+                .image(source: "out/a>b.png", alt: "escaped"),
+            ]
+        )
+    }
+
+    @Test
+    func treatsQuotesInsideFileNamesAsPathCharacters() {
+        let document = MarkdownDocument(
+            parsing: """
+            ![logo](images/team's-logo.png)
+
+            ![quote](out/say"hi".png)
+
+            ![both](out/it's-(1).png "a (title")
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .image(source: "images/team's-logo.png", alt: "logo"),
+                .image(source: "out/say\"hi\".png", alt: "quote"),
+                .image(source: "out/it's-(1).png", alt: "both"),
+            ]
+        )
+    }
+
+    @Test
+    func keepsImagesInsideProseAsParagraphText() {
+        let document = MarkdownDocument(
+            parsing: """
+            See ![inline](a.png) here.
+
+            ![unterminated](a.png
+
+            [Not an image](b.png)
+            """
+        )
+
+        #expect(
+            document.blocks == [
+                .paragraph("See ![inline](a.png) here."),
+                .paragraph("![unterminated](a.png"),
+                .paragraph("[Not an image](b.png)"),
+            ]
+        )
+    }
+
     private func index(of substring: String, in text: NSString) -> Int? {
         let range = text.range(of: substring)
         return range.location == NSNotFound ? nil : range.location

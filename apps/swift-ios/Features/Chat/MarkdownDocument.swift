@@ -26,7 +26,222 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case blockquote(MarkdownDocument)
     case table(MarkdownTable)
     case codeBlock(language: String?, code: String)
+    case image(source: String, alt: String)
     case thematicBreak
+}
+
+/// A Markdown image reference that stands alone on its line. Foundation's inline
+/// parser keeps only the alternative text, so images need their own block to be
+/// rendered rather than silently flattened into the surrounding prose.
+struct MarkdownImageReference: Equatable, Sendable {
+    let source: String
+    let alt: String
+
+    static func parse(_ line: String) -> Self? {
+        // Every line of every message reaches this check, so reject the common
+        // case before materializing the line.
+        let trimmed = line.markdownTrimmed
+        guard trimmed.hasPrefix("!["), trimmed.hasSuffix(")") else { return nil }
+
+        let characters = Array(trimmed)
+        guard characters.count > 4 else { return nil }
+        guard let altEnd = matchingDelimiter(
+            in: characters,
+            from: 1,
+            open: "[",
+            close: "]"
+        ) else {
+            return nil
+        }
+
+        let destinationStart = altEnd + 1
+        guard destinationStart < characters.count,
+              characters[destinationStart] == "(",
+              let destinationEnd = matchingDelimiter(
+                  in: characters,
+                  from: destinationStart,
+                  open: "(",
+                  close: ")",
+                  ignoringQuotedText: true
+              ),
+              // Only a line that is nothing but the image becomes a block; an
+              // image inside a sentence stays inline text.
+              destinationEnd == characters.count - 1 else {
+            return nil
+        }
+
+        let destination = String(characters[(destinationStart + 1)..<destinationEnd])
+        guard let source = self.source(in: destination), !source.isEmpty else { return nil }
+        return Self(
+            source: unescaped(source),
+            alt: unescaped(String(characters[2..<altEnd]))
+        )
+    }
+
+    /// CommonMark lets any ASCII punctuation be backslash-escaped, so
+    /// `out/foo\(1\).png` names the file `out/foo(1).png`. Leaving the escapes
+    /// in would ask the workspace for a file that does not exist.
+    private static func unescaped(_ source: String) -> String {
+        guard source.contains("\\") else { return source }
+        var result = ""
+        result.reserveCapacity(source.count)
+        var isEscaping = false
+        for character in source {
+            if isEscaping {
+                if !character.isASCIIPunctuation { result.append("\\") }
+                result.append(character)
+                isEscaping = false
+                continue
+            }
+            if character == "\\" {
+                isEscaping = true
+                continue
+            }
+            result.append(character)
+        }
+        if isEscaping { result.append("\\") }
+        return result
+    }
+
+    /// Drops the optional title and the optional angle-bracket wrapper that
+    /// CommonMark allows around a link destination.
+    private static func source(in destination: String) -> String? {
+        let trimmed = destination.markdownTrimmed
+        let characters = Array(trimmed)
+        let source: String
+        let sourceEnd: Int
+        if characters.first == "<" {
+            // The same unescaped scan the delimiter search uses, so an escaped
+            // `>` inside the brackets stays part of the file name.
+            guard let closing = unescapedIndex(of: ">", in: characters, from: 1) else {
+                return nil
+            }
+            source = String(characters[1..<closing])
+            sourceEnd = closing + 1
+        } else {
+            sourceEnd = characters.firstIndex(where: { $0.isMarkdownWhitespace })
+                ?? characters.count
+            source = String(characters[..<sourceEnd])
+        }
+
+        guard titleSuffixIsValid(characters[sourceEnd...]) else { return nil }
+        return source
+    }
+
+    private static func titleSuffixIsValid(_ suffix: ArraySlice<Character>) -> Bool {
+        guard !suffix.isEmpty else { return true }
+        guard suffix.first?.isMarkdownWhitespace == true else { return false }
+
+        let title = String(suffix).markdownTrimmed
+        guard !title.isEmpty else { return true }
+        let characters = Array(title)
+        let closing: Character
+        switch characters.first {
+        case "\"":
+            closing = "\""
+        case "'":
+            closing = "'"
+        case "(":
+            closing = ")"
+        default:
+            return false
+        }
+        guard characters.count >= 2, characters.last == closing else { return false }
+        return unescapedIndex(of: closing, in: characters, from: 1) == characters.count - 1
+    }
+
+    private static func unescapedIndex(
+        of target: Character,
+        in characters: [Character],
+        from start: Int
+    ) -> Int? {
+        var cursor = start
+        while cursor < characters.count {
+            if characters[cursor] == "\\" {
+                cursor += 2
+                continue
+            }
+            if characters[cursor] == target { return cursor }
+            cursor += 1
+        }
+        return nil
+    }
+
+    /// Set `ignoringQuotedText` for a link destination: a quoted title may hold
+    /// an unbalanced parenthesis, as in `(out/plot.png "generated (final")`, and
+    /// counting those would hide the real closing delimiter.
+    private static func matchingDelimiter(
+        in characters: [Character],
+        from start: Int,
+        open: Character,
+        close: Character,
+        ignoringQuotedText: Bool = false
+    ) -> Int? {
+        var depth = 0
+        var cursor = start
+        var openQuote: Character?
+        var followsWhitespace = false
+        // True until the first non-whitespace character after the opening
+        // delimiter, which is the only place a `<`-wrapped destination starts.
+        var opensDestination = true
+        while cursor < characters.count {
+            let character = characters[cursor]
+            if character == "\\" {
+                cursor += 2
+                followsWhitespace = false
+                opensDestination = false
+                continue
+            }
+            if ignoringQuotedText {
+                if let activeQuote = openQuote {
+                    if character == activeQuote { openQuote = nil }
+                    cursor += 1
+                    followsWhitespace = false
+                    continue
+                }
+                // A title is separated from the destination by whitespace, so
+                // only a quote in that position opens one. An apostrophe inside
+                // a file name, as in `images/team's-logo.png`, is just a
+                // character of the path.
+                if followsWhitespace, character == "\"" || character == "'" {
+                    openQuote = character
+                    cursor += 1
+                    followsWhitespace = false
+                    continue
+                }
+                // CommonMark wraps an awkward destination in angle brackets, as
+                // in `(<out/plot).png>)`. Everything inside is literal, so a
+                // parenthesis there is part of the file name.
+                // CommonMark also permits whitespace between the delimiter and
+                // the brackets, and the destination reader trims it.
+                if character == "<", opensDestination {
+                    guard let closingAngle = unescapedIndex(
+                        of: ">",
+                        in: characters,
+                        from: cursor + 1
+                    ) else {
+                        return nil
+                    }
+                    cursor = closingAngle + 1
+                    followsWhitespace = false
+                    opensDestination = false
+                    continue
+                }
+            }
+            if character == open {
+                depth += 1
+            } else if character == close {
+                depth -= 1
+                if depth == 0 { return cursor }
+            }
+            followsWhitespace = character.isMarkdownWhitespace
+            if cursor > start, !character.isMarkdownWhitespace {
+                opensDestination = false
+            }
+            cursor += 1
+        }
+        return nil
+    }
 }
 
 struct MarkdownTable: Equatable, Sendable {
@@ -106,6 +321,12 @@ private struct MarkdownBlockParser {
 
             if isThematicBreak(lines[index]) {
                 blocks.append(.thematicBreak)
+                index += 1
+                continue
+            }
+
+            if let image = MarkdownImageReference.parse(lines[index]) {
+                blocks.append(.image(source: image.source, alt: image.alt))
                 index += 1
                 continue
             }
@@ -262,7 +483,9 @@ private struct MarkdownBlockParser {
 
         while index < lines.count, !lines[index].isMarkdownBlank {
             if !paragraphLines.isEmpty,
-               (isBlockStarter(lines[index]) || tableOpening(at: index) != nil) {
+               isBlockStarter(lines[index])
+                   || tableOpening(at: index) != nil
+                   || MarkdownImageReference.parse(lines[index]) != nil {
                 break
             }
             paragraphLines.append(lines[index].markdownTrimmedTrailing)
@@ -621,5 +844,13 @@ private extension String {
 private extension Character {
     var isMarkdownWhitespace: Bool {
         self == " " || self == "\t"
+    }
+
+    var isASCIIPunctuation: Bool {
+        guard let ascii = asciiValue else { return false }
+        return (33...47).contains(ascii)
+            || (58...64).contains(ascii)
+            || (91...96).contains(ascii)
+            || (123...126).contains(ascii)
     }
 }

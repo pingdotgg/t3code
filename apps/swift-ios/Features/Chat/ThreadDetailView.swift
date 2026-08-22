@@ -356,6 +356,7 @@ public struct ThreadDetailView: View {
             } else {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
+                    workspaceImageContext: workspaceImageContext,
                     messages: detail.messages,
                     renderUpdate: model.detailRenderUpdates[thread.id],
                     dynamicTypeSize: dynamicTypeSize,
@@ -402,6 +403,14 @@ public struct ThreadDetailView: View {
         }
     }
 
+    /// Present only when the connected client can resolve signed workspace
+    /// assets; without it Markdown image references stay alternative text.
+    private var workspaceImageContext: MarkdownWorkspaceImageContext? {
+        guard let resolver = model.client as? any FeatureWorkspaceAssetResolving else {
+            return nil
+        }
+        return MarkdownWorkspaceImageContext(resolver: resolver, threadID: thread.id)
+    }
     private var composerPowerFeatures: FeatureComposerPowerFeatures {
         let selectedProviderID = selection?.providerID ?? currentSelection?.providerID
         let provider = threadProviders.first { $0.id == selectedProviderID }
@@ -653,6 +662,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     let threadID: String
+    let workspaceImageContext: MarkdownWorkspaceImageContext?
     let messages: [FeatureMessage]
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
@@ -688,6 +698,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
         context.coordinator.update(
             threadID: threadID,
+            workspaceImageContext: workspaceImageContext,
             messages: messages,
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
@@ -747,6 +758,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentIsMonitoring = false
         private var currentCanLoadEarlier = false
         private var currentIsLoadingEarlier = false
+        private var currentWorkspaceImageContext: MarkdownWorkspaceImageContext?
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
         private var onDismissKeyboard: (() -> Void)?
@@ -791,6 +803,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 cell.contentConfiguration = UIHostingConfiguration {
                     FeatureMessageView(message: message)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        // Hosted cells start their own SwiftUI environment, so
+                        // the workspace an image belongs to is injected here.
+                        .environment(
+                            \.markdownWorkspaceImageContext,
+                            self?.currentWorkspaceImageContext
+                        )
                 }
                 .margins(.all, 0)
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
@@ -812,6 +830,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
         func update(
             threadID: String,
+            workspaceImageContext: MarkdownWorkspaceImageContext?,
             messages: [FeatureMessage],
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
@@ -828,6 +847,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             guard let dataSource else { return }
             self.onLoadEarlier = onLoadEarlier
             self.onDismissKeyboard = onDismissKeyboard
+            // Cells read this when they are configured. It only changes with the
+            // thread, which already reloads every cell below.
+            currentWorkspaceImageContext = workspaceImageContext
 
             let threadChanged = currentThreadID != threadID
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
@@ -1685,7 +1707,9 @@ private struct FeatureLocalAttachmentThumbnail: View {
     }
 }
 
-private enum FeatureAttachmentThumbnailLoader {
+/// Shared by transcript attachments and inline workspace images so both go
+/// through one bounded cache and one downsampling path.
+enum FeatureAttachmentThumbnailLoader {
     static func image(for url: URL, maximumPixelSize: Int) async throws -> UIImage {
         let cacheKey = "\(url.absoluteString)#\(maximumPixelSize)" as NSString
         if let cached = FeatureAttachmentThumbnailCache.shared.image(for: cacheKey) {
@@ -1730,7 +1754,8 @@ private enum FeatureAttachmentThumbnailLoader {
     }
 }
 
-private final class FeatureAttachmentThumbnailCache: @unchecked Sendable {
+/// Shared by transcript attachments and inline workspace images.
+final class FeatureAttachmentThumbnailCache: @unchecked Sendable {
     static let shared = FeatureAttachmentThumbnailCache()
 
     private let images = NSCache<NSString, UIImage>()
