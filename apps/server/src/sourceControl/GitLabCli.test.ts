@@ -184,6 +184,74 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("normalizes a full repository URL to a project path before the API call", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              path_with_namespace: "group/project",
+              web_url: "https://sourcecontrol.example.com/group/project",
+              http_url_to_repo: "https://sourcecontrol.example.com/group/project.git",
+              ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://sourcecontrol.example.com/group/project.git",
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "group/project",
+        url: "https://sourcecontrol.example.com/group/project",
+        sshUrl: "git@sourcecontrol.example.com:group/project.git",
+      });
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", `projects/${encodeURIComponent("group/project")}`],
+        }),
+      );
+    }),
+  );
+
+  it.effect("normalizes a full repository URL with nested subgroups and no .git suffix", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              path_with_namespace: "group/sub/project",
+              web_url: "https://gitlab.example.com/group/sub/project",
+              http_url_to_repo: "https://gitlab.example.com/group/sub/project.git",
+              ssh_url_to_repo: "git@gitlab.example.com:group/sub/project.git",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://gitlab.example.com/group/sub/project",
+      });
+
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: ["api", `projects/${encodeURIComponent("group/sub/project")}`],
+        }),
+      );
+      assert.deepStrictEqual(result.nameWithOwner, "group/sub/project");
+    }),
+  );
+
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));

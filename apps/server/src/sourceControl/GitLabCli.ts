@@ -406,6 +406,32 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
+/**
+ * `glab api projects/<path>` expects a bare, URL-encoded project path such
+ * as `namespace/project`; passing a full web URL fails even though glab's
+ * default host is correct. Reduce pasted `http(s)://host/group/project(.git)`
+ * inputs to their path form and leave everything else untouched.
+ */
+function normalizeProjectPathInput(repository: string): string {
+  const trimmed = repository.trim();
+  if (!URL.canParse(trimmed)) {
+    return trimmed;
+  }
+  const url = new URL(trimmed);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return trimmed;
+  }
+  const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
+  if (segments.length === 0) {
+    return trimmed;
+  }
+  const lastSegment = segments.at(-1);
+  if (lastSegment && lastSegment.length > ".git".length && lastSegment.endsWith(".git")) {
+    segments[segments.length - 1] = lastSegment.slice(0, -".git".length);
+  }
+  return segments.join("/");
+}
+
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
@@ -519,7 +545,10 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+        args: [
+          "api",
+          `projects/${encodeURIComponent(normalizeProjectPathInput(input.repository))}`,
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
