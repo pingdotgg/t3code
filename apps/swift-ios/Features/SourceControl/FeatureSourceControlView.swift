@@ -1,5 +1,20 @@
 import SwiftUI
 
+@MainActor
+func runFeatureSourceControlAction<Value>(
+    setRunning: (Bool) -> Void,
+    operation: () async throws -> Value
+) async -> Result<Value, Error> {
+    setRunning(true)
+    defer { setRunning(false) }
+
+    do {
+        return .success(try await operation())
+    } catch {
+        return .failure(error)
+    }
+}
+
 public struct FeatureSourceControlView: View {
     let client: any FeatureClient
     let threadID: String
@@ -10,6 +25,10 @@ public struct FeatureSourceControlView: View {
     @State private var errorMessage: String?
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
+    /// Owns the loading indicator; only a newer load supersedes it.
+    @State private var loadGeneration = 0
+    /// Invalidates status writes; a running action supersedes them too.
+    @State private var statusGeneration = 0
 
     public init(client: any FeatureClient, threadID: String) {
         self.client = client
@@ -41,9 +60,17 @@ public struct FeatureSourceControlView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
-                    .disabled(isLoading || isRunningAction)
-                    .accessibilityLabel("Reload source control")
+                Button { Task { await reload() } } label: {
+                    // Never disabled on a populated screen, so the spinner is
+                    // the only signal that a reload is under way.
+                    if isLoading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(isRunningAction)
+                .accessibilityLabel("Reload source control")
             }
         }
         .alert("Commit changes", isPresented: Binding(
@@ -65,18 +92,40 @@ public struct FeatureSourceControlView: View {
 
     private func statusList(_ status: FeatureSourceControlStatus) -> some View {
         List {
+            // Once a status is on screen the unavailable-state view is
+            // unreachable, so a later failure needs its own inline surface.
+            if let errorMessage {
+                Section {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(.orange)
+                }
+            }
+
             Section("Repository") {
                 LabeledContent("Branch", value: status.branch ?? "Detached HEAD")
                 if let upstream = status.upstream {
                     LabeledContent("Upstream", value: upstream)
                 }
-                HStack {
-                    Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
-                    Spacer()
-                    Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                if status.isRemoteKnown {
+                    HStack {
+                        Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
+                        Spacer()
+                        Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                    }
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                } else {
+                    // Only claim to be checking while something actually is.
+                    Label(
+                        isLoading ? "Checking remote…" : "Remote status unavailable",
+                        systemImage: isLoading
+                            ? "arrow.triangle.2.circlepath"
+                            : "exclamationmark.triangle"
+                    )
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
                 }
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
                 if let pullRequest = status.pullRequest {
                     if let url = pullRequest.url {
                         Link(destination: url) {
@@ -131,7 +180,7 @@ public struct FeatureSourceControlView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .refreshable { await load() }
+        .refreshable { await reload() }
         .overlay {
             if isRunningAction {
                 ProgressView()
@@ -150,29 +199,85 @@ public struct FeatureSourceControlView: View {
         }
     }
 
+    /// Streams the cached status first so the screen fills immediately.
     private func load() async {
+        await load(force: false)
+    }
+
+    /// Explicit refresh affordances bypass the server-side status cache: the
+    /// streaming path is cache-first, so without this a reload would only
+    /// replay what the server already had.
+    private func reload() async {
+        await load(force: true)
+    }
+
+    /// `clearsError` is false when recovering after a failed action, so the
+    /// reason that action failed survives the refresh it triggers.
+    private func load(force: Bool, clearsError: Bool = true) async {
+        loadGeneration += 1
+        statusGeneration += 1
+        let loadID = loadGeneration
+        let statusID = statusGeneration
         isLoading = true
-        defer { isLoading = false }
+        // Only a newer *load* takes over the indicator. An action supersedes
+        // this load's writes without taking ownership of the indicator, so
+        // this must still be the one to clear it — at the cost of a superseded
+        // stream holding the toolbar spinner until its bound expires.
+        defer { if loadID == loadGeneration { isLoading = false } }
         do {
-            status = try await client.sourceControlStatus(threadID: threadID)
-            errorMessage = nil
+            if force {
+                let refreshed = try await client.sourceControlStatus(threadID: threadID)
+                guard statusID == statusGeneration else { return }
+                status = refreshed
+                if clearsError { errorMessage = nil }
+            } else {
+                let statuses = try await client.sourceControlStatuses(threadID: threadID)
+                for try await nextStatus in statuses {
+                    guard statusID == statusGeneration else { return }
+                    status = nextStatus
+                    if clearsError { errorMessage = nil }
+                }
+            }
+        } catch is CancellationError {
+            return
         } catch {
+            guard statusID == statusGeneration, clearsError else { return }
             errorMessage = error.localizedDescription
         }
     }
 
     private func perform(_ action: FeatureSourceControlAction, message: String?) async {
-        isRunningAction = true
-        defer { isRunningAction = false }
-        do {
-            status = try await client.performSourceControlAction(
+        // Supersede any open stream. Its accumulator still holds the local half
+        // from before this action, so a late event would fold that stale half
+        // into a status that overwrites this action's result — and a late
+        // stream error would mask this action's failure message.
+        statusGeneration += 1
+        let statusID = statusGeneration
+        let actionResult = await runFeatureSourceControlAction(
+            setRunning: { isRunningAction = $0 }
+        ) {
+            try await client.performSourceControlAction(
                 threadID: threadID,
                 action: action,
                 message: message?.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+        }
+
+        switch actionResult {
+        case let .success(result):
+            // Guarded like a load's: pull-to-refresh is not gated on a running
+            // action, so a refresh started after this one must win.
+            guard statusID == statusGeneration else { return }
+            status = result
             errorMessage = nil
-        } catch {
+        case let .failure(error):
+            guard statusID == statusGeneration else { return }
             errorMessage = error.localizedDescription
+            // This action superseded an in-flight stream, so the remote half it
+            // was still waiting on would otherwise never arrive: the screen
+            // would keep withholding the pull-request actions until the user
+            // reloaded by hand. Recover, without losing the reason above.
+            await load(force: false, clearsError: false)
         }
     }
 }
