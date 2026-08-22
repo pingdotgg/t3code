@@ -112,6 +112,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
+import { readThreadLink } from "../threadLink";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -1772,6 +1773,25 @@ export default function Sidebar() {
       );
     },
   });
+  const { copyToClipboard: copyLinkToClipboard } = useCopyToClipboard<{ link: string }>({
+    target: "link",
+    onCopy: ({ link }) => {
+      toastManager.add({
+        type: "success",
+        title: "Link copied",
+        description: link,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy link",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
       toastManager.add({
@@ -3065,6 +3085,7 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const threadLink = readThreadLink(threadRef);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -3083,6 +3104,7 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              canCopyLink: threadLink !== null,
             }),
             position,
           ),
@@ -3157,6 +3179,11 @@ export default function Sidebar() {
           }
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+            return;
+          case "copy-link":
+            if (threadLink) {
+              copyLinkToClipboard(threadLink, { link: threadLink });
+            }
             return;
           case "copy-path":
             if (!threadWorkspacePath) {
@@ -3250,6 +3277,7 @@ export default function Sidebar() {
       confirmThreadArchive,
       confirmThreadDelete,
       copyBranchToClipboard,
+      copyLinkToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
