@@ -159,12 +159,10 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
 }
 
 /**
- * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits two-digit
- * decimal markers. Once a list's last item reaches three digits (item 100+),
- * `list-style-position: outside` paints the marker wider than that gutter and
- * the leading digit gets clipped by the item's own overflow. Rather than
- * widening the gutter for every list, only lists whose last marker is 3+
- * digits get a wider `--list-gutter`, sized to that marker's digit count.
+ * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits single-digit
+ * decimal markers. Wider markers can extend past it and get clipped by a
+ * collapsed message's overflow. Multi-digit lists get a `--list-gutter` sized
+ * to their largest marker.
  */
 export function orderedListGutterStyle(
   itemCount: number,
@@ -173,7 +171,7 @@ export function orderedListGutterStyle(
   const firstNumber = typeof start === "number" && Number.isFinite(start) ? start : 1;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
   const digits = String(Math.abs(lastNumber)).length;
-  if (digits <= 2) return undefined;
+  if (digits <= 1) return undefined;
   return { "--list-gutter": `${digits + 1}ch` };
 }
 

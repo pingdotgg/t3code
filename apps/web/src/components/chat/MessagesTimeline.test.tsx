@@ -584,6 +584,23 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
+  it("widens two-digit markers in collapsed user messages", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            Array.from({ length: 10 }, (_, index) => `${index + 10}. A`).join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('<ol start="10" style="--list-gutter:3ch">');
+    expect(markup).toContain("Show full message");
+    expect(markup).toContain('data-user-message-collapsed="true"');
+  });
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
