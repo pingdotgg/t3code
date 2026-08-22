@@ -28,6 +28,58 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness("thread")).toBeNull();
   });
 
+  it("does not let status-free updated restart an idle task", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness("thread")).toBeNull();
+  });
+
+  it("a genuine restart (kind: started) still revives an idle task", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness("thread")).toBe("working");
+  });
+
   it("agents present as working; monitors as monitoring; agents win", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-live-1";
