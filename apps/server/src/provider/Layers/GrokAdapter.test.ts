@@ -26,7 +26,11 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
+import {
+  grokPromptSettlementBelongsToContext,
+  makeGrokAdapter,
+  selectGrokPermissionOptionId,
+} from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -88,6 +92,50 @@ const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
+
+function grokPermissionRequest(
+  options: ReadonlyArray<{
+    readonly optionId: string;
+    readonly kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+  }>,
+) {
+  return {
+    sessionId: "mock-session-1",
+    toolCall: {
+      toolCallId: "tool-call-1",
+      title: "cat package.json",
+      kind: "execute" as const,
+      status: "pending" as const,
+    },
+    options: options.map((option) => ({
+      optionId: option.optionId,
+      name: option.kind,
+      kind: option.kind,
+    })),
+  };
+}
+
+it("maps Always allow to allow_once when Grok omits allow_always", () => {
+  const request = grokPermissionRequest([
+    { optionId: "allow-once", kind: "allow_once" },
+    { optionId: "reject-once", kind: "reject_once" },
+  ]);
+
+  assert.equal(selectGrokPermissionOptionId(request, "acceptForSession"), "allow-once");
+  assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
+  assert.equal(selectGrokPermissionOptionId(request, "decline"), "reject-once");
+});
+
+it("prefers allow_always when Grok offers it", () => {
+  const request = grokPermissionRequest([
+    { optionId: "allow-once", kind: "allow_once" },
+    { optionId: "allow-always", kind: "allow_always" },
+    { optionId: "reject-once", kind: "reject_once" },
+  ]);
+
+  assert.equal(selectGrokPermissionOptionId(request, "acceptForSession"), "allow-always");
+  assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
+});
 
 it("requires a settlement to match the live Grok turn", () => {
   const staleTurnId = TurnId.make("stale-turn");
@@ -1089,6 +1137,80 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
             entry.result.outcome !== null &&
             "optionId" in entry.result.outcome &&
             entry.result.outcome.optionId === "agent-defined-approval-id",
+        ),
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps a Grok turn running when Always allow has no allow_always option", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-always-allow-without-allow-always");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_OMIT_ALLOW_ALWAYS: "1",
+          T3_ACP_PERMISSION_REQUEST_COUNT: "2",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const openedCount = yield* Ref.make(0);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "request.opened"
+          ? Effect.gen(function* () {
+              yield* Ref.update(openedCount, (count) => count + 1);
+              yield* adapter.respondToRequest(
+                threadId,
+                ApprovalRequestId.make(String(event.requestId)),
+                "acceptForSession",
+              );
+            })
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "approve this session",
+        attachments: [],
+      });
+
+      assert.equal(yield* Ref.get(openedCount), 1);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const permissionResults = requests.filter(
+        (entry) =>
+          !("method" in entry) &&
+          typeof entry.result === "object" &&
+          entry.result !== null &&
+          "outcome" in entry.result &&
+          typeof entry.result.outcome === "object" &&
+          entry.result.outcome !== null &&
+          "optionId" in entry.result.outcome,
+      );
+      assert.equal(permissionResults.length, 2);
+      assert.isTrue(
+        permissionResults.every(
+          (entry) =>
+            typeof entry.result === "object" &&
+            entry.result !== null &&
+            "outcome" in entry.result &&
+            typeof entry.result.outcome === "object" &&
+            entry.result.outcome !== null &&
+            "optionId" in entry.result.outcome &&
+            entry.result.outcome.optionId === "allow-once",
         ),
       );
 
