@@ -1,7 +1,14 @@
 import type { ProjectEntry } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, View } from "react-native";
+import {
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  Pressable,
+  RefreshControl,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -256,7 +263,13 @@ export function FileTreeBrowser(props: {
       maxToRenderPerBatch={FILE_TREE_RENDER_BATCH_SIZE}
       updateCellsBatchingPeriod={16}
       windowSize={5}
-      contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+      contentContainerStyle={{
+        paddingTop: 8,
+        // On iOS the list runs under a native header with automatic content
+        // insets, which already reserve the bottom safe area; Android gets
+        // nothing from that prop and needs the inset here.
+        paddingBottom: Platform.OS === "android" ? Math.max(insets.bottom, 8) + 8 : 8,
+      }}
       refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={props.onRefresh} />}
       renderItem={renderItem}
       ListEmptyComponent={

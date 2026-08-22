@@ -6,6 +6,7 @@ import type { StyleProp, ViewStyle } from "react-native";
 import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { appBlurTargetRef } from "../lib/appBlurTarget";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -82,6 +83,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
 
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
+  const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
   const rippleColor = useThemeColor("--color-subtle");
@@ -164,9 +166,13 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
         );
   // The keyboard stays up while the menu is open (in-window overlay, no
   // focus change), so the space it covers is not usable — without this the
-  // composer-pill menus "open down" into the IME and can't be tapped.
+  // composer-pill menus "open down" into the IME and can't be tapped. The
+  // portal host spans the whole window, so the gesture bar is unusable too;
+  // the keyboard already covers it when up, hence the max rather than a sum.
   const usableBottom =
-    overlay === null ? 0 : overlay.height - (keyboardVisible ? keyboardHeight : 0);
+    overlay === null
+      ? 0
+      : overlay.height - Math.max(keyboardVisible ? keyboardHeight : 0, insets.bottom);
   const spaceBelow =
     local === null || overlay === null
       ? 0
