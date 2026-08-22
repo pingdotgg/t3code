@@ -35,6 +35,20 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings remote connection sleep prevention", () => {
+  it("defaults off and preserves an explicit desktop preference", () => {
+    expect(decodeClientSettings({}).preventSleepForRemoteConnections).toBe(false);
+    expect(
+      decodeClientSettings({ preventSleepForRemoteConnections: true })
+        .preventSleepForRemoteConnections,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ preventSleepForRemoteConnections: true })
+        .preventSleepForRemoteConnections,
+    ).toBe(true);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

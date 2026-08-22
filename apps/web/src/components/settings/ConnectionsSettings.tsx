@@ -19,6 +19,7 @@ import {
   AuthStandardClientScopes,
   AuthTerminalOperateScope,
   type AuthClientSession,
+  type ClientSettings,
   type AuthEnvironmentScope,
   type AuthPairingLink,
   type AdvertisedEndpoint,
@@ -37,6 +38,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
@@ -1707,6 +1709,39 @@ function CloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) 
   return hasCloudPublicConfig() ? <ConfiguredCloudLinkRow canManageRelay={canManageRelay} /> : null;
 }
 
+const selectPreventSleepForRemoteConnections = (settings: ClientSettings) =>
+  settings.preventSleepForRemoteConnections;
+
+function DesktopSleepPreventionRow() {
+  const preventSleepForRemoteConnections = useClientSettings(
+    selectPreventSleepForRemoteConnections,
+  );
+  const updateClientSettings = useUpdateClientSettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("prevent-automatic-sleep")}
+      description="Keep this computer available to remote clients by preventing automatic idle sleep while T3 Code runs. The display may turn off; closing a laptop lid can still sleep it."
+      status={
+        preventSleepForRemoteConnections ? null : (
+          <span className="block text-warning">
+            Remote connections can become unavailable when this computer sleeps.
+          </span>
+        )
+      }
+      control={
+        <Switch
+          checked={preventSleepForRemoteConnections}
+          onCheckedChange={(checked) =>
+            updateClientSettings({ preventSleepForRemoteConnections: Boolean(checked) })
+          }
+          aria-label="Prevent automatic sleep for remote connections"
+        />
+      }
+    />
+  );
+}
+
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
   return (
     <Empty className="min-h-52">
@@ -3062,6 +3097,7 @@ export function ConnectionsSettings() {
             ) : null}
             {desktopBridge ? (
               <>
+                <DesktopSleepPreventionRow />
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
