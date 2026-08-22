@@ -38,6 +38,10 @@ export interface VcsDeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
+export interface VcsListCheckpointRefsInput {
+  readonly cwd: string;
+}
+
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
@@ -50,6 +54,9 @@ export interface VcsCheckpointOps {
   readonly deleteCheckpointRefs: (
     input: VcsDeleteCheckpointRefsInput,
   ) => Effect.Effect<void, VcsError>;
+  readonly listCheckpointRefs: (
+    input: VcsListCheckpointRefsInput,
+  ) => Effect.Effect<ReadonlyArray<CheckpointRef>, VcsError>;
 }
 
 export class VcsDriver extends Context.Service<
