@@ -937,3 +937,11 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
   return ACTION_NEEDS_HOST_REFRESH[action];
 }
+
+/**
+ * A merge changes the VCS status that classifies linked threads in the sidebar. Other pull
+ * request actions either leave that classification alone or keep the pull request open.
+ */
+export function pullRequestActionNeedsVcsRefresh(action: PullRequestAction): boolean {
+  return action === "merge";
+}

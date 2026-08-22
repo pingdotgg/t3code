@@ -382,7 +382,7 @@ export function PullRequestDetailPanel({
    * An action changed this pull request on the host, so a list showing it is now out of date.
    * Told rather than assumed: only the page knows whether it is showing one.
    */
-  onActed?: () => void;
+  onActed?: (action: PullRequestAction) => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
   /** Keeps compact chrome, such as the right-panel tab, in step with refreshed host state. */
@@ -668,7 +668,7 @@ export function PullRequestDetailPanel({
     } else {
       refreshDetail();
     }
-    onActed?.();
+    onActed?.(action);
   };
 
   const saveTitle = async (next: string) => {

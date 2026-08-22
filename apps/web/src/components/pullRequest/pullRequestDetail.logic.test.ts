@@ -25,6 +25,7 @@ import {
   orderPullRequestComments,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
+  pullRequestActionNeedsVcsRefresh,
   pullRequestComposerTarget,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
@@ -1245,5 +1246,13 @@ describe("which actions need the host read again after they run", () => {
     ] as const) {
       expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
     }
+  });
+});
+
+describe("which actions change linked thread VCS status", () => {
+  it("refreshes VCS status only after a merge", () => {
+    expect(PullRequestAction.literals.map(pullRequestActionNeedsVcsRefresh)).toEqual(
+      PullRequestAction.literals.map((action) => action === "merge"),
+    );
   });
 });
