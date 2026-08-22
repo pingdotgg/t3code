@@ -1,3 +1,5 @@
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
 import { resolvePathLinkTarget, splitPathAndPosition } from "./terminal-links";
 
@@ -184,6 +186,82 @@ export function resolveMarkdownFileLinkTarget(
 
   if (!cwd) return null;
   return resolvePathLinkTarget(pathWithPosition, cwd);
+}
+
+/**
+ * Resolves a markdown image src to an absolute workspace path so the renderer
+ * can request a signed asset URL for it, or null when the src is external
+ * (http, data, protocol-relative) or not an image. `baseDir` is the directory
+ * the markdown document lives in; relative sources resolve against it, the
+ * same way the document's host renderer would.
+ */
+export function resolveMarkdownImagePath(
+  src: string | undefined,
+  baseDir: string | undefined,
+): string | null {
+  if (!src) return null;
+  const normalized = normalizeMarkdownLinkDestination(src);
+  if (normalized.length === 0 || normalized.startsWith("#") || normalized.startsWith("//")) {
+    return null;
+  }
+
+  const fileUrlTarget = normalized.toLowerCase().startsWith("file:")
+    ? parseFileUrlHref(normalized)
+    : null;
+  const source = fileUrlTarget ?? stripSearchAndHash(normalized);
+  const decodedPath = normalizeWindowsDrivePath(
+    fileUrlTarget ? source.path : safeDecode(source.path),
+  );
+  if (decodedPath.length === 0) return null;
+  if (
+    !fileUrlTarget &&
+    !WINDOWS_DRIVE_PATH_PATTERN.test(decodedPath) &&
+    hasExternalScheme(decodedPath)
+  ) {
+    return null;
+  }
+  if (!isWorkspaceImagePreviewPath(decodedPath)) return null;
+
+  if (!isRelativePath(decodedPath)) return decodedPath;
+  if (!baseDir) return null;
+  return resolvePathLinkTarget(decodedPath, baseDir);
+}
+
+interface HastNodeLike {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: Array<HastNodeLike>;
+}
+
+/**
+ * A src the sanitizer's protocol allowlist would drop even though it names a
+ * local file: a Windows drive path parses as a scheme ("c:"), and file: urls
+ * are not http(s).
+ */
+function isSanitizerStrippedImageSrc(src: string): boolean {
+  return WINDOWS_DRIVE_PATH_PATTERN.test(src) || src.toLowerCase().startsWith("file:");
+}
+
+/**
+ * Rehype plugin, placed between rehype-raw and rehype-sanitize: copies image
+ * srcs the sanitizer would strip into `dataLocalSrc`, which the sanitize
+ * schema allowlists, so the image renderer can still resolve local files to
+ * signed asset URLs after sanitization.
+ */
+export function rehypePreserveLocalImageSrc() {
+  const visitNode = (node: HastNodeLike): void => {
+    if (node.type === "element" && node.tagName === "img" && node.properties) {
+      const src = node.properties.src;
+      if (typeof src === "string" && isSanitizerStrippedImageSrc(src)) {
+        node.properties.dataLocalSrc = src;
+      }
+    }
+    for (const child of node.children ?? []) {
+      visitNode(child);
+    }
+  };
+  return (tree: HastNodeLike) => visitNode(tree);
 }
 
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;

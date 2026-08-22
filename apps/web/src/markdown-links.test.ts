@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  rehypePreserveLocalImageSrc,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
+  resolveMarkdownImagePath,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
 
@@ -32,6 +34,86 @@ describe("rewriteMarkdownFileUriHref", () => {
     expect(
       rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
     ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
+  });
+});
+
+describe("resolveMarkdownImagePath", () => {
+  it("resolves relative image sources against the document directory", () => {
+    expect(resolveMarkdownImagePath("public/icon-512.png", "/Users/julius/project")).toBe(
+      "/Users/julius/project/public/icon-512.png",
+    );
+  });
+
+  it("keeps parent-directory references for the server to validate", () => {
+    expect(resolveMarkdownImagePath("../shared/logo.svg", "/Users/julius/project/docs")).toBe(
+      "/Users/julius/project/docs/../shared/logo.svg",
+    );
+  });
+
+  it("passes absolute image paths through without a base directory", () => {
+    expect(resolveMarkdownImagePath("/Users/julius/project/shot.png", undefined)).toBe(
+      "/Users/julius/project/shot.png",
+    );
+  });
+
+  it("decodes percent-encoding and strips query and hash", () => {
+    expect(resolveMarkdownImagePath("assets/my%20icon.png?raw=true", "/Users/julius/project")).toBe(
+      "/Users/julius/project/assets/my icon.png",
+    );
+  });
+
+  it("leaves external and protocol-relative sources alone", () => {
+    expect(resolveMarkdownImagePath("https://example.com/a.png", "/Users/julius/project")).toBe(
+      null,
+    );
+    expect(resolveMarkdownImagePath("data:image/png;base64,AAAA", "/Users/julius/project")).toBe(
+      null,
+    );
+    expect(resolveMarkdownImagePath("//cdn.example.com/a.png", "/Users/julius/project")).toBe(null);
+  });
+
+  it("ignores sources that are not images", () => {
+    expect(resolveMarkdownImagePath("docs/guide.md", "/Users/julius/project")).toBe(null);
+  });
+
+  it("ignores relative sources when no base directory is known", () => {
+    expect(resolveMarkdownImagePath("public/icon-512.png", undefined)).toBe(null);
+  });
+
+  it("passes windows drive paths through as absolute", () => {
+    expect(resolveMarkdownImagePath("C:/repo/shot.png", undefined)).toBe("C:/repo/shot.png");
+    expect(resolveMarkdownImagePath("C:\\repo\\shot.png", undefined)).toBe("C:\\repo\\shot.png");
+  });
+
+  it("resolves file urls to their filesystem path", () => {
+    expect(resolveMarkdownImagePath("file:///Users/julius/project/shot.png", undefined)).toBe(
+      "/Users/julius/project/shot.png",
+    );
+  });
+});
+
+describe("rehypePreserveLocalImageSrc", () => {
+  const imgNode = (src: string) => ({
+    type: "element",
+    tagName: "img",
+    properties: { src },
+    children: [],
+  });
+
+  it("copies sanitizer-stripped srcs into dataLocalSrc", () => {
+    const windowsImg = imgNode("C:\\repo\\shot.png");
+    const fileUrlImg = imgNode("file:///repo/shot.png");
+    rehypePreserveLocalImageSrc()({ type: "root", children: [windowsImg, fileUrlImg] });
+    expect(windowsImg.properties).toHaveProperty("dataLocalSrc", "C:\\repo\\shot.png");
+    expect(fileUrlImg.properties).toHaveProperty("dataLocalSrc", "file:///repo/shot.png");
+  });
+
+  it("leaves srcs the sanitizer keeps untouched", () => {
+    const externalImg = imgNode("https://example.com/a.png");
+    const relativeImg = imgNode("public/icon-512.png");
+    rehypePreserveLocalImageSrc()({ type: "root", children: [externalImg, relativeImg] });
+    expect(externalImg.properties).not.toHaveProperty("dataLocalSrc");
+    expect(relativeImg.properties).not.toHaveProperty("dataLocalSrc");
   });
 });
 
