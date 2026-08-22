@@ -21,6 +21,7 @@ import {
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -74,6 +75,11 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import {
+  isTranscodableImageMimeType,
+  TRANSCODED_IMAGE_MIME_TYPE,
+  transcodeImageToJpeg,
+} from "../../imageTranscode.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -1271,7 +1277,11 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
       continue;
     }
 
-    if (!SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)) {
+    // HEIC/HEIF is the default capture format on Apple devices, so it arrives
+    // constantly via paste and the mobile composer. Convert it instead of
+    // failing the turn.
+    const needsTranscode = isTranscodableImageMimeType(attachment.mimeType);
+    if (!needsTranscode && !SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)) {
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
         method: "turn/start",
@@ -1302,6 +1312,28 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
           }),
       ),
     );
+
+    if (needsTranscode) {
+      const hostPlatform = yield* HostProcessPlatform;
+      const converted = yield* Effect.tryPromise({
+        try: () => transcodeImageToJpeg({ bytes, platform: hostPlatform }),
+        catch: (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "turn/start",
+            detail: `Unsupported Claude image attachment type '${attachment.mimeType}' and converting it to JPEG failed.`,
+            cause,
+          }),
+      });
+
+      sdkContent.push(
+        buildClaudeImageContentBlock({
+          mimeType: TRANSCODED_IMAGE_MIME_TYPE,
+          bytes: converted,
+        }),
+      );
+      continue;
+    }
 
     sdkContent.push(
       buildClaudeImageContentBlock({
