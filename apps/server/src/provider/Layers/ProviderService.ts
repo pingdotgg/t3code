@@ -1031,7 +1031,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       for (const session of activeSessions) {
         const binding = bindingsByThreadId.get(session.threadId);
         if (!binding) {
-          sessions.push(session);
+          // Skip sessions without a persisted directory binding.
+          //
+          // Title-generation and branch-name helper sessions are spawned
+          // ephemerally (e.g. `codex exec --ephemeral`) and never go through
+          // the orchestration `thread.create` command, so they have no entry
+          // in `provider_session_runtime`.  Including them in the list
+          // returned by `listSessions` causes them to leak into downstream
+          // consumers — startup reconciliation, the provider command
+          // reactor, and the shell projection — where they appear as ghost
+          // threads in Studio that cannot be resumed.
+          //
+          // Sessions that *should* be visible always have a persisted binding
+          // written during `startSession`, so filtering on binding presence
+          // is a safe and precise way to exclude ephemeral helpers.
+          yield* Effect.logDebug(
+            "ProviderService.listSessions: skipping session without persisted binding",
+            { threadId: session.threadId, provider: session.provider },
+          ).pipe(Effect.ignore);
           continue;
         }
 
@@ -1118,15 +1135,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
 
   const runStopAll = Effect.fn("runStopAll")(function* () {
-    const threadIds = yield* directory.listThreadIds();
+    const threadIds = new Set(yield* directory.listThreadIds());
     const currentAdapters = yield* getAdapterEntries;
     const activeSessions = yield* Effect.forEach(currentAdapters, ([instanceId, adapter]) =>
       adapter.listSessions().pipe(
         Effect.map((sessions) =>
-          sessions.map((session) => ({
-            ...session,
-            providerInstanceId: instanceId,
-          })),
+          sessions
+            .filter((session) => threadIds.has(session.threadId))
+            .map((session) => ({
+              ...session,
+              providerInstanceId: instanceId,
+            })),
         ),
       ),
     ).pipe(Effect.map((sessionsByAdapter) => sessionsByAdapter.flatMap((sessions) => sessions)));
