@@ -6,11 +6,32 @@ interface ParsedSemver {
 }
 
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
+const SEMVER_BUILD_METADATA = /^[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/;
+
+function splitSemverVersion(version: string) {
+  const trimmed = version.trim();
+  const buildMetadataIndex = trimmed.indexOf("+");
+  const versionWithoutBuildMetadata =
+    buildMetadataIndex === -1 ? trimmed : trimmed.slice(0, buildMetadataIndex);
+  const buildMetadata =
+    buildMetadataIndex === -1 ? undefined : trimmed.slice(buildMetadataIndex + 1);
+  const prereleaseIndex = versionWithoutBuildMetadata.indexOf("-");
+
+  return {
+    main:
+      prereleaseIndex === -1
+        ? versionWithoutBuildMetadata
+        : versionWithoutBuildMetadata.slice(0, prereleaseIndex),
+    prerelease:
+      prereleaseIndex === -1 ? undefined : versionWithoutBuildMetadata.slice(prereleaseIndex + 1),
+    buildMetadata,
+  };
+}
 
 export function normalizeSemverVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const { main, prerelease, buildMetadata } = splitSemverVersion(version);
   const segments: string[] = [];
-  for (const segment of (main ?? "").split(".")) {
+  for (const segment of main.split(".")) {
     const trimmed = segment.trim();
     if (trimmed.length > 0) {
       segments.push(trimmed);
@@ -26,12 +47,22 @@ export function normalizeSemverVersion(version: string): string {
     segments.push("0");
   }
 
-  return prerelease ? `${segments.join(".")}-${prerelease}` : segments.join(".");
+  const normalizedPrerelease = prerelease ? `-${prerelease}` : "";
+  const normalizedBuildMetadata = buildMetadata ? `+${buildMetadata}` : "";
+  return `${segments.join(".")}${normalizedPrerelease}${normalizedBuildMetadata}`;
 }
 
 export function parseSemver(value: string): ParsedSemver | null {
+  const { buildMetadata, prerelease: rawPrerelease } = splitSemverVersion(value);
+  if (rawPrerelease === "") {
+    return null;
+  }
+  if (buildMetadata !== undefined && !SEMVER_BUILD_METADATA.test(buildMetadata)) {
+    return null;
+  }
+
   const normalized = normalizeSemverVersion(value).replace(/^v/, "");
-  const [main = "", prerelease] = normalized.split("-", 2);
+  const { main, prerelease } = splitSemverVersion(normalized);
   const segments = main.split(".");
   if (segments.length !== 3) {
     return null;

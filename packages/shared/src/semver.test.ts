@@ -46,6 +46,33 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
+  it("ignores build metadata when comparing version precedence", () => {
+    expect(compareSemverVersions("1.2.3", "1.2.3+build.1")).toBe(0);
+    expect(compareSemverVersions("1.2.3-beta.1+build.2", "1.2.3-beta.1+build.1")).toBe(0);
+  });
+
+  it("preserves hyphens within prerelease identifiers", () => {
+    expect(normalizeSemverVersion("1.2-alpha-beta+build.1")).toBe("1.2.0-alpha-beta+build.1");
+    expect(parseSemver("1.2.3-alpha-beta+build.1")).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+      prerelease: ["alpha-beta"],
+    });
+    expect(compareSemverVersions("1.2.3-alpha-beta", "1.2.3-alpha")).toBeGreaterThan(0);
+  });
+
+  it.each(["1.2.3+", "1.2.3+!!!", "1.2.3+foo+bar"])(
+    "rejects malformed build metadata in %s",
+    (version) => {
+      expect(parseSemver(version)).toBeNull();
+    },
+  );
+
+  it.each(["1.2.3-", "1.2.3-+build.1"])("rejects an empty prerelease in %s", (version) => {
+    expect(parseSemver(version)).toBeNull();
+  });
+
   it("falls back to lexical comparison for malformed numeric segments", () => {
     expect(compareSemverVersions("1.2.3abc", "1.2.10")).toBeGreaterThan(0);
   });
