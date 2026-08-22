@@ -4814,7 +4814,13 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
 
   useEffect(() => {
-    const handler = (event: globalThis.KeyboardEvent) => {
+    const handler = () => toggleTerminalVisibility();
+    window.addEventListener("t3-action:toggle-terminal", handler);
+    return () => window.removeEventListener("t3-action:toggle-terminal", handler);
+  }, [toggleTerminalVisibility]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
@@ -4953,8 +4959,10 @@ function ChatViewContent(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
   }, [
     activeProject,
     activeRightPanelSurface,

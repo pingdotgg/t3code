@@ -207,6 +207,12 @@ export const make = Effect.gen(function* () {
           },
           { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
           { type: "separator" },
+          {
+            label: "Toggle Terminal",
+            accelerator: "CmdOrCtrl+J",
+            click: () => runMenuEffect("toggle-terminal", dispatchMenuAction("toggle-terminal")),
+          },
+          { type: "separator" },
           { role: "togglefullscreen" },
         ],
       },
