@@ -74,88 +74,112 @@ export function DesktopPortForwardsSettings() {
         description="Expose a remote loopback port on this computer. Leaving the local port blank tries the same port first, then nearby free ports. Forwards last until you stop them or quit T3 Code."
         status={error === null ? null : <span className="text-destructive">{error}</span>}
       >
-        <div className="grid gap-2 pb-2 sm:grid-cols-[minmax(0,1fr)_8rem_8rem_auto] sm:items-end">
-          <label className="space-y-1 text-xs text-muted-foreground">
-            <span className="block">Environment</span>
-            <Select
-              value={environmentId ?? ""}
-              onValueChange={(value) => {
-                if (typeof value === "string" && value !== "") {
-                  setEnvironmentId(value as EnvironmentId);
+        <div className="space-y-1 pb-2">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem_8rem_auto] sm:items-end">
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span className="block">Environment</span>
+              <Select
+                value={environmentId ?? ""}
+                onValueChange={(value) => {
+                  if (typeof value === "string" && value !== "") {
+                    setEnvironmentId(value as EnvironmentId);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  className="w-full"
+                  aria-label="Forward environment"
+                  aria-describedby={
+                    connectedEnvironments.length === 0 || forwardableEnvironments.length === 0
+                      ? "desktop-port-forward-environment-hint"
+                      : undefined
+                  }
+                >
+                  <SelectValue>
+                    {environmentId === null
+                      ? "Select"
+                      : (environmentLabels.get(environmentId) ?? environmentId)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup alignItemWithTrigger={false}>
+                  {forwardableEnvironments.map((environment) => (
+                    <SelectItem
+                      hideIndicator
+                      key={environment.environmentId}
+                      value={environment.environmentId}
+                    >
+                      {environment.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span className="block">Remote port</span>
+              <Input
+                type="number"
+                min={1}
+                max={65_535}
+                step={1}
+                inputMode="numeric"
+                value={remotePort}
+                onChange={(event) => setRemotePort(event.target.value)}
+                aria-label="Remote port"
+                aria-invalid={parsedRemotePort === null}
+                aria-describedby={
+                  parsedRemotePort === null ? "desktop-port-forward-remote-port-error" : undefined
                 }
-              }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span className="block">Local port</span>
+              <Input
+                type="number"
+                min={1}
+                max={65_535}
+                step={1}
+                inputMode="numeric"
+                value={localPort}
+                placeholder="Same as remote"
+                onChange={(event) => setLocalPort(event.target.value)}
+                aria-label="Local port"
+                aria-invalid={localPort.trim() !== "" && parsedLocalPort === null}
+                aria-describedby={
+                  localPort.trim() !== "" && parsedLocalPort === null
+                    ? "desktop-port-forward-local-port-error"
+                    : undefined
+                }
+              />
+            </label>
+            <Button size="sm" disabled={!canCreate} onClick={() => void create()}>
+              {creating ? "Starting…" : "Start"}
+            </Button>
+          </div>
+          {connectedEnvironments.length === 0 ? (
+            <p
+              id="desktop-port-forward-environment-hint"
+              className="text-[11px] text-muted-foreground"
             >
-              <SelectTrigger className="w-full" aria-label="Forward environment">
-                <SelectValue>
-                  {environmentId === null
-                    ? "Select"
-                    : (environmentLabels.get(environmentId) ?? environmentId)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup alignItemWithTrigger={false}>
-                {forwardableEnvironments.map((environment) => (
-                  <SelectItem
-                    hideIndicator
-                    key={environment.environmentId}
-                    value={environment.environmentId}
-                  >
-                    {environment.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            {connectedEnvironments.length === 0 ? (
-              <span className="block pt-1 text-[11px] text-muted-foreground">
-                Connect an environment to start forwarding ports.
-              </span>
-            ) : forwardableEnvironments.length === 0 ? (
-              <span className="block pt-1 text-[11px] text-muted-foreground">
-                Update the connected T3 server to enable port forwarding.
-              </span>
-            ) : null}
-          </label>
-          <label className="space-y-1 text-xs text-muted-foreground">
-            <span className="block">Remote port</span>
-            <Input
-              type="number"
-              min={1}
-              max={65_535}
-              step={1}
-              inputMode="numeric"
-              value={remotePort}
-              onChange={(event) => setRemotePort(event.target.value)}
-              aria-label="Remote port"
-              aria-invalid={parsedRemotePort === null}
-            />
-            {parsedRemotePort === null ? (
-              <span className="block text-[11px] text-destructive">
-                Enter a port from 1 to 65535.
-              </span>
-            ) : null}
-          </label>
-          <label className="space-y-1 text-xs text-muted-foreground">
-            <span className="block">Local port</span>
-            <Input
-              type="number"
-              min={1}
-              max={65_535}
-              step={1}
-              inputMode="numeric"
-              value={localPort}
-              placeholder="Same as remote"
-              onChange={(event) => setLocalPort(event.target.value)}
-              aria-label="Local port"
-              aria-invalid={localPort.trim() !== "" && parsedLocalPort === null}
-            />
-            {localPort.trim() !== "" && parsedLocalPort === null ? (
-              <span className="block text-[11px] text-destructive">
-                Enter a port from 1 to 65535.
-              </span>
-            ) : null}
-          </label>
-          <Button size="sm" disabled={!canCreate} onClick={() => void create()}>
-            {creating ? "Starting…" : "Start"}
-          </Button>
+              Connect an environment to start forwarding ports.
+            </p>
+          ) : forwardableEnvironments.length === 0 ? (
+            <p
+              id="desktop-port-forward-environment-hint"
+              className="text-[11px] text-muted-foreground"
+            >
+              Update the connected T3 server to enable port forwarding.
+            </p>
+          ) : null}
+          {parsedRemotePort === null ? (
+            <p id="desktop-port-forward-remote-port-error" className="text-[11px] text-destructive">
+              Remote port: enter a value from 1 to 65535.
+            </p>
+          ) : null}
+          {localPort.trim() !== "" && parsedLocalPort === null ? (
+            <p id="desktop-port-forward-local-port-error" className="text-[11px] text-destructive">
+              Local port: enter a value from 1 to 65535.
+            </p>
+          ) : null}
         </div>
       </SettingsRow>
       {forwards.map((forward) => (
