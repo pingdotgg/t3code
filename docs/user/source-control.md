@@ -2,6 +2,9 @@
 
 T3 Code connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
 
+T3 Code prefixes automatically generated worktree branches with `t3code` by default. Change or
+remove the prefix under **Settings → General → Worktree branch prefix**.
+
 ## Supported Providers
 
 T3 Code works with the platforms your team already uses:
