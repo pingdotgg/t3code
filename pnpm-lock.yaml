@@ -928,6 +928,9 @@ importers:
       '@t3tools/tailscale':
         specifier: workspace:*
         version: link:../packages/tailscale
+      agent-app-benchmark:
+        specifier: github:kyashrathore/agent-app-benchmark#78aa27c
+        version: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
@@ -5287,6 +5290,12 @@ packages:
   acorn@8.16.0:
     resolution: {integrity: sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw==}
     engines: {node: '>=0.4.0'}
+    hasBin: true
+
+  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de:
+    resolution: {gitHosted: true, integrity: sha512-7Bf4tdSIM1N0XojRqbmpDO7MGRLhKFab/4tn0n+IxoeQwPGuuxMs1IEqXxz8SgtEro2G9TjOIaFBJBecziHOiQ==, tarball: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de}
+    version: 0.1.0
+    engines: {node: '>=22'}
     hasBin: true
 
   agent-base@7.1.4:
@@ -15407,6 +15416,10 @@ snapshots:
       negotiator: 1.0.0
 
   acorn@8.16.0: {}
+
+  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de:
+    dependencies:
+      ajv: 8.20.0
 
   agent-base@7.1.4: {}
 

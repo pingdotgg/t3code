@@ -16,7 +16,7 @@
     "start:marketing": "vp run --filter @t3tools/marketing preview",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
     "screenshots:mobile": "node scripts/mobile-showcase.ts",
-    "benchmark:agent-app": "node scripts/agent-app-benchmark.ts",
+    "benchmark:agent-app:driver": "node scripts/lib/agent-app-benchmark/drivers/t3.ts",
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",
     "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",

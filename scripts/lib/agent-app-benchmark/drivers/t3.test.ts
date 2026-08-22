@@ -1,214 +1,162 @@
-// @effect-diagnostics nodeBuiltinImport:off - Driver conformance launches only the exact executable under test.
-import * as NodeChildProcess from "node:child_process";
-import * as NodePath from "node:path";
-import * as NodeStream from "node:stream";
-import * as NodeURL from "node:url";
 import { assert, it } from "@effect/vitest";
 
-import type { DriverRequest, DriverResponse } from "../contracts.ts";
-import {
-  parseProcessStartTime,
-  runT3DriverExecutable,
-  runT3DriverStdio,
-  semanticTimelinePaintReady,
-  warmSwitchPlan,
-  type T3Driver,
-  type T3DriverProcessHost,
-} from "./t3.ts";
+import { createT3PublicDriver, parseProcessStartTime } from "./t3.ts";
 
-const hello = {
-  protocolVersion: 1 as const,
-  application: { name: "T3 Code", version: "test", build: "production-equivalent" as const },
-  driver: { name: "t3-test", version: "1", digestSha256: "a".repeat(64) },
-  capabilities: {
-    profiles: ["workspace-core-v1" as const],
-    scenarios: ["app-cold-ready-v1" as const],
-    metrics: ["app.cold_ready_ms" as const],
-    readinessDetection: "test",
-    paintDetection: "test",
-    requiredPreparation: [],
-  },
+const receipt = {
+  endpoint: "correct-content-painted-and-input-ready" as const,
+  checks: [
+    { id: "content-identity", passed: true },
+    { id: "first-fold-painted", passed: true },
+    { id: "two-presentations", passed: true },
+    { id: "trusted-input", passed: true },
+  ],
 };
 
-function helloRequest(correlationId: string): DriverRequest {
-  return {
-    protocolVersion: 1,
-    kind: "request",
-    correlationId,
-    method: "hello",
-    params: { frameworkVersion: 1 },
-  };
+function makeHarness() {
+  const activations: string[] = [];
+  const launches: Array<{ stateHandle: string; initialSessionId: string }> = [];
+  let clock = 10;
+  const targets = new Map([
+    [
+      "control",
+      {
+        logicalSessionId: "control",
+        sessionId: "native-control",
+        title: "Control",
+        expectedMessageIds: ["control-message"],
+      },
+    ],
+    [
+      "within-workspace-warm-1048576",
+      {
+        logicalSessionId: "within-workspace-warm-1048576",
+        sessionId: "native-warm",
+        title: "Warm",
+        expectedMessageIds: ["warm-message"],
+      },
+    ],
+    [
+      "within-workspace-cold-1048576",
+      {
+        logicalSessionId: "within-workspace-cold-1048576",
+        sessionId: "native-cold",
+        title: "Cold",
+        expectedMessageIds: ["cold-message"],
+      },
+    ],
+  ]);
+  const driver = createT3PublicDriver({
+    hello: { protocolVersion: 1 },
+    prepare: async () => ({
+      materialization: {
+        corpusDigestSha256: "a".repeat(64),
+        eventSchemaDigestSha256: "b".repeat(64),
+        mappingDigestSha256: "c".repeat(64),
+        sessionMapping: { control: "native-control" },
+        readinessTargets: targets,
+        messageCount: 6,
+        transcriptBytes: 12,
+      },
+      stateHandles: { P0: "sealed-p0", P1: "sealed-p1" },
+    }),
+    launch: async (stateHandle, initialSessionId) => {
+      launches.push({ stateHandle, initialSessionId });
+      return {
+        processes: [
+          { pid: 12, startTimeMs: 1_000, owner: "application", category: "electron-main" },
+        ],
+        readiness: receipt,
+        clock: { kind: "single-monotonic-clock", clock: "test", start: 1, end: 5 },
+      };
+    },
+    activate: async (target) => {
+      activations.push(target.logicalSessionId);
+      const start = clock;
+      clock += 2;
+      return { kind: "single-monotonic-clock", clock: "test-renderer", start, end: clock };
+    },
+    shutdown: async () => ({ terminated: [], survivors: [] }),
+  });
+  return { driver, activations, launches };
 }
 
-const stubDriver: T3Driver = {
-  hello: async () => hello,
-  prepare: async () => ({ coverage: [] }),
-  launch: async () => {
-    throw new Error("not used");
-  },
-  runScenario: async () => {
-    throw new Error("not used");
-  },
-  shutdown: async () => ({ terminated: [], survivors: [] }),
-};
+async function prepare(driver: ReturnType<typeof createT3PublicDriver>) {
+  return driver.prepare({
+    scenarioId: "session-switch-v1",
+    scenarioDigestSha256: "1".repeat(64),
+    corpusDirectory: "/tmp/corpus",
+    corpusManifestPath: "/tmp/corpus/manifest.json",
+    corpusDigestSha256: "a".repeat(64),
+    corpusDefinitionDigestSha256: "2".repeat(64),
+    eventSchemaDigestSha256: "b".repeat(64),
+    runDirectory: "/tmp/run",
+  });
+}
 
-it("accepts only a complete first fold containing the target thread's canonical latest turn", () => {
-  const target = { expectedMessageIds: ["user-latest", "assistant-latest"] };
-  const ready = {
-    expectedVisibleMessageId: "assistant-latest",
-    expectedVisibleMessageTextLength: 42,
-    visibleSemanticMessageCount: 3,
-    visibleRowIds: ["message:user-latest", "message:assistant-latest"],
-    overflowPx: 2_000,
-    topGapPx: 24,
-  };
-
-  assert.equal(semanticTimelinePaintReady(ready, target), true);
-  assert.equal(
-    semanticTimelinePaintReady({ ...ready, expectedVisibleMessageId: null }, target),
-    false,
-  );
-  assert.equal(
-    semanticTimelinePaintReady(
-      {
-        ...ready,
-        expectedVisibleMessageId: "assistant-latest",
-        expectedVisibleMessageTextLength: 0,
-      },
-      target,
-    ),
-    false,
-  );
-  assert.equal(semanticTimelinePaintReady({ ...ready, topGapPx: 280 }, target), false);
-  assert.equal(
-    semanticTimelinePaintReady(
-      { ...ready, expectedVisibleMessageId: "stale-message", topGapPx: 24 },
-      target,
-    ),
-    false,
-  );
+it("attests to translated corpus identity and returns sealed P0/P1 handles", async () => {
+  const { driver } = makeHarness();
+  const result = await prepare(driver);
+  assert.equal(result.materializationMode, "translated");
+  assert.deepStrictEqual(result.stateHandles, { P0: "sealed-p0", P1: "sealed-p1" });
+  assert.equal(result.corpusDigestSha256, "a".repeat(64));
 });
 
-it("warms every work item before a seeded measured pass of real switches", () => {
-  const targets = Array.from({ length: 20 }, (_, index) => ({
-    sessionId: `session-${index}`,
-    title: `Session ${index}`,
-    expectedMessageIds: [`message-${index}`],
-  }));
-  const plan = warmSwitchPlan(targets, "benchmark-seed");
-
-  assert.deepStrictEqual(plan.warmup, targets);
-  assert.equal(plan.measured.length, 20);
-  assert.deepStrictEqual(
-    plan.measured.map((target) => target.sessionId).toSorted(),
-    targets.map((target) => target.sessionId).toSorted(),
-  );
-  assert.notEqual(plan.measured[0]?.sessionId, plan.warmup.at(-1)?.sessionId);
+it("enforces cold and warm session-switch preparation around one measured activation", async () => {
+  const { driver, activations } = makeHarness();
+  await prepare(driver);
+  await driver.launch({
+    scenarioId: "session-switch-v1",
+    stateHandle: "sealed-p1",
+    initialSessionId: "control",
+    groupId: "group",
+  });
+  const cold = await driver.execute({
+    scenarioId: "session-switch-v1",
+    case: {
+      caseId: "cold",
+      workload: "isolated-latency",
+      sessionState: "cold",
+      sourceSessionId: "control",
+      destinationSessionId: "within-workspace-cold-1048576",
+    },
+  });
+  const warm = await driver.execute({
+    scenarioId: "session-switch-v1",
+    case: {
+      caseId: "warm",
+      workload: "isolated-latency",
+      sessionState: "warm",
+      sourceSessionId: "control",
+      destinationSessionId: "within-workspace-warm-1048576",
+    },
+  });
+  assert.deepStrictEqual(activations, [
+    "control",
+    "within-workspace-cold-1048576",
+    "within-workspace-warm-1048576",
+    "control",
+    "within-workspace-warm-1048576",
+  ]);
+  assert.equal(cold.durationMs, 2);
+  assert.equal(warm.durationMs, 2);
 });
 
-it("normalizes the authoritative OS process start time to the monitor's second bucket", () => {
+it("measures app start from the exact requested sealed state", async () => {
+  const { driver, launches } = makeHarness();
+  await prepare(driver);
+  const result = await driver.execute({
+    scenarioId: "app-start-v1",
+    stateHandle: "sealed-p0",
+    case: { caseId: "new-start", startMode: "new-application-state" },
+  });
+  assert.deepStrictEqual(launches, [{ stateHandle: "sealed-p0", initialSessionId: "control" }]);
+  assert.equal(result.durationMs, 4);
+});
+
+it("normalizes the OS process start time to the monitor second bucket", () => {
   assert.equal(
     parseProcessStartTime("Sun Aug  9 13:35:41 2026\n", 200),
     Date.parse("Sun Aug  9 13:35:41 2026"),
   );
-  assert.throws(() => parseProcessStartTime("not-a-process-time", 200), /invalid start time/u);
-});
-
-it("serializes successful responses and bounded duplicate-correlation failures", async () => {
-  const input = NodeStream.Readable.from(
-    `${JSON.stringify(helloRequest("same"))}\n${JSON.stringify(helloRequest("same"))}\n`,
-  );
-  const output = new NodeStream.PassThrough();
-  let serialized = "";
-  output.setEncoding("utf8");
-  output.on("data", (chunk: string) => {
-    serialized += chunk;
-  });
-  await runT3DriverStdio(stubDriver, input, output);
-  const responses = serialized
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line) as DriverResponse);
-  assert.equal(responses[0]?.ok, true);
-  assert.equal(responses[1]?.ok, false);
-  if (responses[1]?.ok === false)
-    assert.match(responses[1].error.message, /Duplicate correlation ID/u);
-});
-
-it("cleans up the exact driver handles before exiting on termination", async () => {
-  const input = new NodeStream.PassThrough();
-  const output = new NodeStream.PassThrough();
-  const listeners = new Map<"SIGINT" | "SIGTERM", () => void>();
-  const exitCodes: number[] = [];
-  const shutdownReasons: string[] = [];
-  const lifecycle: string[] = [];
-  const host: T3DriverProcessHost = {
-    once: (signal, listener) => listeners.set(signal, listener),
-    off: (signal, listener) => {
-      if (listeners.get(signal) === listener) listeners.delete(signal);
-    },
-    exit: (code) => {
-      lifecycle.push("exit");
-      exitCodes.push(code);
-    },
-  };
-  const driver: T3Driver = {
-    ...stubDriver,
-    shutdown: async ({ reason }) => {
-      lifecycle.push("shutdown");
-      shutdownReasons.push(reason);
-      return { terminated: [], survivors: [] };
-    },
-  };
-  const running = runT3DriverExecutable(driver, input, output, host);
-  listeners.get("SIGTERM")?.();
-  await Promise.resolve();
-  input.end();
-  await running;
-  assert.deepStrictEqual(shutdownReasons, ["driver-sigterm"]);
-  assert.deepStrictEqual(exitCodes, [143]);
-  assert.deepStrictEqual(lifecycle, ["shutdown", "exit"]);
-});
-
-it("the default TypeScript executable always answers protocol hello", async () => {
-  const testFile = NodeURL.fileURLToPath(import.meta.url);
-  const entry = NodePath.join(NodePath.dirname(testFile), "t3.ts");
-  const child = NodeChildProcess.spawn(process.execPath, [entry], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const stdout: Array<Buffer> = [];
-  const stderr: Array<Buffer> = [];
-  child.stdout.on("data", (chunk: Buffer) => stdout.push(Buffer.from(chunk)));
-  child.stderr.on("data", (chunk: Buffer) => stderr.push(Buffer.from(chunk)));
-  child.stdin.end(`${JSON.stringify(helloRequest("hello-1"))}\n`);
-  const exitCode = await new Promise<number | null>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", resolve);
-  });
-  assert.equal(exitCode, 0, Buffer.concat(stderr).toString("utf8"));
-  const response = JSON.parse(Buffer.concat(stdout).toString("utf8")) as DriverResponse;
-  assert.equal(response.ok, true);
-  assert.equal(response.method, "hello");
-  if (response.ok && response.method === "hello") {
-    assert.equal(response.result.application.name, "T3 Code");
-    assert.equal(response.result.protocolVersion, 1);
-    assert.deepStrictEqual(response.result.capabilities.profiles, [
-      "workspace-core-v1",
-      "resource-core-v1",
-    ]);
-    assert.deepStrictEqual(response.result.capabilities.scenarios, [
-      "app-cold-ready-v1",
-      "work-item-cold-open-v1",
-      "work-item-warm-switch-v1",
-      "resource-sweep-v1",
-      "resource-quiescence-v1",
-    ]);
-    assert.deepStrictEqual(response.result.capabilities.metrics, [
-      "app.cold_ready_ms",
-      "work_item.cold_open_ms",
-      "work_item.warm_switch_p95_ms",
-      "resource.peak_process_family_rss_mib",
-      "resource.quiescent_cpu_p95_pct",
-    ]);
-  }
+  assert.throws(() => parseProcessStartTime("not-a-process-time", 200), /Invalid start time/u);
 });

@@ -1,9 +1,0 @@
-{
-  "protocolVersion": 1,
-  "kind": "request",
-  "correlationId": "hello-1",
-  "method": "hello",
-  "params": {
-    "frameworkVersion": 1
-  }
-}

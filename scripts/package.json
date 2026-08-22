@@ -12,6 +12,7 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
+    "agent-app-benchmark": "github:kyashrathore/agent-app-benchmark#78aa27c",
     "effect": "catalog:",
     "playwright-core": "1.60.0",
     "pngjs": "7.0.0",
