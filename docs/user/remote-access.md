@@ -136,6 +136,18 @@ After setup, the renderer connects to a local forwarded HTTP/WebSocket endpoint.
 
 SSH launch is a desktop feature because it needs local process and SSH access. Once the environment is paired and saved, it uses the same environment list and connection model as direct LAN, Tailscale, HTTPS, or future tunnel-backed environments.
 
+#### Open a Remote Worktree in a Local Editor
+
+From a remote thread, **Open** connects a supported editor on the viewing machine to the worktree
+over SSH. The local machine must be able to authenticate to the SSH host shown by T3 Code. The
+desktop app lists supported editors whose command-line tools it can find locally.
+
+Zed and Zed Preview both support this through Zed's `zed://ssh/...` links. They share the same
+`zed://` system handler, so the Zed release channel that registered the scheme is the one that opens.
+To use Preview when both channels are installed, open the command palette in Zed Preview and run
+**cli: register zed scheme**. Install its command-line tool as well so the T3 Code desktop app can
+detect it.
+
 #### SSH Launch Troubleshooting
 
 The desktop SSH launcher connects with a non-interactive `sh` session, writes a small launcher script under `~/.t3/ssh-launch/<host-key>/`, starts or reuses a remote T3 server, and forwards the remote loopback port back to your desktop.

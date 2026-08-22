@@ -1,4 +1,9 @@
-import { REMOTE_CAPABLE_EDITOR_IDS, remoteSchemeForEditor } from "@t3tools/contracts";
+import {
+  REMOTE_CAPABLE_EDITOR_IDS,
+  type RemoteEditorUrlStyle,
+  remoteSchemeForEditor,
+  remoteUrlStyleForEditor,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,23 +11,37 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
-// Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`)
-// must reach the OS handler; every other non-web scheme stays blocked.
+// Remote open-in-editor deep links must reach the OS handler; every other
+// non-web scheme and every unrelated route within an editor scheme stays blocked.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
-const REMOTE_EDITOR_PROTOCOLS = new Set(
+const REMOTE_EDITOR_STYLES_BY_PROTOCOL = new Map<string, RemoteEditorUrlStyle>(
   REMOTE_CAPABLE_EDITOR_IDS.flatMap((id) => {
     const scheme = remoteSchemeForEditor(id);
-    return scheme === undefined ? [] : [`${scheme}:`];
+    const style = remoteUrlStyleForEditor(id);
+    return scheme === undefined || style === undefined ? [] : [[`${scheme}:`, style] as const];
   }),
 );
 
-const isRemoteEditorUrl = (url: URL) =>
-  REMOTE_EDITOR_PROTOCOLS.has(url.protocol) &&
-  url.username.length === 0 &&
-  url.password.length === 0 &&
-  url.host === "vscode-remote" &&
-  url.pathname.startsWith("/ssh-remote+") &&
-  url.pathname.length > "/ssh-remote+".length;
+const isRemoteEditorUrl = (url: URL) => {
+  if (url.username.length > 0 || url.password.length > 0) {
+    return false;
+  }
+  const style = REMOTE_EDITOR_STYLES_BY_PROTOCOL.get(url.protocol);
+  switch (style) {
+    case "vscode-remote":
+      return (
+        url.host === "vscode-remote" &&
+        url.pathname.startsWith("/ssh-remote+") &&
+        url.pathname.length > "/ssh-remote+".length
+      );
+    case "zed-ssh": {
+      const [remoteHost, ...pathSegments] = url.pathname.slice(1).split("/");
+      return url.host === "ssh" && remoteHost !== "" && pathSegments.some(Boolean);
+    }
+    case undefined:
+      return false;
+  }
+};
 
 export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   if (typeof rawUrl !== "string") {
