@@ -1,0 +1,14 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <shortcut
+    android:shortcutId="new-task"
+    android:enabled="true"
+    android:icon="@drawable/ic_shortcut"
+    android:shortcutShortLabel="@string/shortcut_new_task"
+    android:shortcutLongLabel="@string/shortcut_new_task_long">
+    <intent
+      android:action="android.intent.action.VIEW"
+      android:targetPackage="com.t3tools.t3code.native.experimental"
+      android:targetClass="com.t3tools.android.nativeapp.MainActivity"
+      android:data="t3code-native://new" />
+  </shortcut>
+</shortcuts>

@@ -1,0 +1,4 @@
+<resources>
+  <string name="shortcut_new_task">New task</string>
+  <string name="shortcut_new_task_long">Create a new T3 Code task</string>
+</resources>
