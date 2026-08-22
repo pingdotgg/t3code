@@ -103,6 +103,7 @@ export function DesktopPortForwardControl({
                       : "Port forwarding"
                   }
                   className="relative shrink-0 [--control-icon-color:var(--foreground)]"
+                  data-toolbar-control=""
                   size="icon-xs"
                   variant="outline"
                 />
