@@ -955,10 +955,12 @@ describe("deriveWorkLogEntries", () => {
   });
 
   it("collapses the reasoning update chain into one row with the final thinking text", () => {
+    const turnId = "turn-reasoning-chain";
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "reasoning-started",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId,
         kind: "tool.started",
         summary: "Reasoning started",
         tone: "tool",
@@ -970,6 +972,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "reasoning-updated-1",
         createdAt: "2026-02-23T00:00:02.000Z",
+        turnId,
         kind: "tool.updated",
         summary: "Reasoning",
         tone: "tool",
@@ -983,6 +986,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "reasoning-updated-2",
         createdAt: "2026-02-23T00:00:03.000Z",
+        turnId,
         kind: "tool.updated",
         summary: "Reasoning",
         tone: "tool",
@@ -996,6 +1000,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "reasoning-completed",
         createdAt: "2026-02-23T00:00:04.000Z",
+        turnId,
         kind: "tool.completed",
         summary: "Reasoning",
         tone: "tool",
@@ -1018,10 +1023,12 @@ describe("deriveWorkLogEntries", () => {
   it("collapses reasoning updates interleaved with streaming tool calls into one anchored row", () => {
     // Claude streams thinking deltas interleaved with tool_call input deltas;
     // adjacent-only folding used to split one block into a row per update.
+    const turnId = "turn-reasoning-interleaved";
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "reasoning-updated-1",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId,
         kind: "tool.updated",
         summary: "Reasoning",
         payload: {
@@ -1034,6 +1041,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "grep-updated",
         createdAt: "2026-02-23T00:00:02.000Z",
+        turnId,
         kind: "tool.updated",
         summary: "Tool call",
         payload: {
@@ -1046,6 +1054,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "reasoning-completed",
         createdAt: "2026-02-23T00:00:03.000Z",
+        turnId,
         kind: "tool.completed",
         summary: "Reasoning",
         payload: {
@@ -1058,6 +1067,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "grep-completed",
         createdAt: "2026-02-23T00:00:04.000Z",
+        turnId,
         kind: "tool.completed",
         summary: "Tool call",
         payload: {
@@ -1092,6 +1102,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id,
         createdAt,
+        turnId: "turn-reasoning-blocks",
         kind,
         summary: "Reasoning",
         payload: {
@@ -1563,6 +1574,54 @@ describe("deriveWorkLogEntries", () => {
     expect(deriveWorkLogEntries(activities)).toHaveLength(2);
   });
 
+  it("does not identity-collapse reused tool call ids without turn boundaries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "turnless-tool-first",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "reused-call",
+          status: "inProgress",
+          detail: "first turnless chain",
+        },
+      }),
+      makeActivity({
+        id: "turnless-tool-interleaved",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Other tool",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "other-call",
+          status: "inProgress",
+          detail: "interleaved chain",
+        },
+      }),
+      makeActivity({
+        id: "turnless-tool-second",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Tool",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "reused-call",
+          status: "inProgress",
+          detail: "second turnless chain",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      EventId.make("turnless-tool-first"),
+      EventId.make("turnless-tool-interleaved"),
+      EventId.make("turnless-tool-second"),
+    ]);
+  });
+
   it("unwraps PowerShell command wrappers for displayed command text", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1734,10 +1793,12 @@ describe("deriveWorkLogEntries", () => {
   });
 
   it("uses grep raw output summaries instead of repeating the generic tool label", () => {
+    const turnId = "turn-grep-preview";
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "grep-update",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId,
         kind: "tool.updated",
         summary: "grep",
         payload: {
@@ -1754,6 +1815,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "grep-complete",
         createdAt: "2026-02-23T00:00:02.000Z",
+        turnId,
         kind: "tool.completed",
         summary: "grep",
         payload: {
@@ -1783,10 +1845,12 @@ describe("deriveWorkLogEntries", () => {
   });
 
   it("uses completed read-file output previews and still collapses the same tool call", () => {
+    const turnId = "turn-read-preview";
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "read-update",
         createdAt: "2026-02-23T00:00:01.000Z",
+        turnId,
         kind: "tool.updated",
         summary: "Read File",
         payload: {
@@ -1803,6 +1867,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "read-complete",
         createdAt: "2026-02-23T00:00:02.000Z",
+        turnId,
         kind: "tool.completed",
         summary: "Read File",
         payload: {

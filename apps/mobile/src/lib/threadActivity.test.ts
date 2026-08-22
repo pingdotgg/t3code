@@ -329,6 +329,62 @@ describe("buildThreadFeed", () => {
     expect(activities[1]?.getFullDetail()).toContain("second run");
   });
 
+  it("does not identity-collapse reused toolCallIds without turn boundaries", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-turnless-identity"),
+      projectId: ProjectId.make("project-1"),
+      title: "Turnless identities",
+      activities: [
+        makeActivity({
+          id: EventId.make("turnless-tool-first"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Tool",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: {
+            title: "Tool",
+            itemType: "command_execution",
+            toolCallId: "reused-call",
+            detail: "first turnless chain",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("turnless-tool-interleaved"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Other tool",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            title: "Other tool",
+            itemType: "command_execution",
+            toolCallId: "other-call",
+            detail: "interleaved chain",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("turnless-tool-second"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Tool",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          payload: {
+            title: "Tool",
+            itemType: "command_execution",
+            toolCallId: "reused-call",
+            detail: "second turnless chain",
+          },
+        }),
+      ],
+    });
+
+    const activities = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities).toHaveLength(3);
+    expect(activities[0]?.getFullDetail()).toContain("first turnless chain");
+    expect(activities[2]?.getFullDetail()).toContain("second turnless chain");
+  });
+
   it("collapses matching tool lifecycle rows like desktop", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-2"),

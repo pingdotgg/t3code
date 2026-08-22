@@ -1057,7 +1057,7 @@ function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undef
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
   }
-  return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
+  return entry.toolCallId && entry.turnId ? `tool:${entry.turnId}:${entry.toolCallId}` : undefined;
 }
 
 function collapseDerivedWorkLogEntries(
@@ -1076,6 +1076,9 @@ function collapseDerivedWorkLogEntries(
   // own turn splintered one batch into a stream of "Kicked off N subagents"
   // rows (live-test finding, thread 7ac7ef05).
   const groupKeyByTaskId = new Map<string, string>();
+  // Tool-call ids are only globally safe inside a known turn. Turnless rows
+  // retain the adjacent fuzzy fallback below instead of sharing one identity
+  // map for the lifetime of the thread.
   const toolLifecycleRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
@@ -1246,8 +1249,11 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
   }
-  if (entry.toolCallId) {
-    return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
+  // A provider may reuse an id in a later chain. The turn boundary makes the
+  // identity safe for non-adjacent streaming updates; without one, fall back
+  // to the local fuzzy key below.
+  if (entry.toolCallId && entry.turnId) {
+    return `tool:${entry.turnId}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";

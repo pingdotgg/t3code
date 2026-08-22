@@ -458,13 +458,13 @@ function collapseDerivedWorkLogEntries(
   // Subagent rows collapse by identity, not adjacency (quiet-timeline
   // guarantee; mirrors web's session-logic).
   const taskRowIndex = new Map<string, number>();
-  // Rows carrying a toolCallId identity also collapse by identity (mirrors
-  // web): Claude streams thinking deltas interleaved with tool_call input
-  // deltas, and adjacent-only folding split one reasoning block into a row
-  // per update whenever a tool call streamed in between. The anchor keeps
+  // Turn-stamped rows carrying a toolCallId also collapse by identity
+  // (mirrors web): Claude streams thinking deltas interleaved with tool_call
+  // input deltas, and adjacent-only folding split one reasoning block into a
+  // row per update whenever a tool call streamed in between. The anchor keeps
   // the FIRST row's id/createdAt/turnId so the row grows in place with a
-  // stable key. The fuzzy collapseKey fallback (no toolCallId) stays
-  // adjacency-only.
+  // stable key. Turnless rows keep the adjacency-only fuzzy fallback; their
+  // ids are not safe identities across the lifetime of the thread.
   const toolRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
@@ -484,6 +484,7 @@ function collapseDerivedWorkLogEntries(
     }
     const toolIdentityKey =
       entry.toolCallId !== undefined &&
+      entry.turnId !== null &&
       (entry.activityKind === "tool.updated" || entry.activityKind === "tool.completed")
         ? entry.collapseKey
         : undefined;
@@ -586,11 +587,11 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
   }
-  // An explicit toolCallId (adapters emit one for streaming items like
-  // reasoning) is a stable identity across the whole update chain; keying on
-  // the growing detail instead would render every update as its own row.
-  if (entry.toolCallId) {
-    return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
+  // An explicit toolCallId is a stable identity for streaming items like
+  // reasoning only inside a known turn. Without that boundary, a provider may
+  // reuse the id for a later chain, so retain the local fuzzy fallback.
+  if (entry.toolCallId && entry.turnId) {
+    return `tool:${entry.turnId}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
