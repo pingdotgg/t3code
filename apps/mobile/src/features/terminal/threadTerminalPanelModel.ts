@@ -13,18 +13,6 @@ export interface TerminalGridSize {
   readonly rows: number;
 }
 
-export function threadTerminalSubscriptionKey(
-  identity: ThreadTerminalSubscriptionIdentity,
-): string {
-  return JSON.stringify([
-    identity.environmentId,
-    identity.threadId,
-    identity.terminalId,
-    identity.cwd,
-    identity.worktreePath,
-  ]);
-}
-
 export function buildThreadTerminalAttachInput(
   identity: ThreadTerminalSubscriptionIdentity,
   gridSize: TerminalGridSize,

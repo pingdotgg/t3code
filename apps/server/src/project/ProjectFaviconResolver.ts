@@ -137,22 +137,25 @@ export const make = Effect.gen(function* () {
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
     projectCwd: string,
     relativeCandidates: ReadonlyArray<string>,
+    candidateScope: "workspace" | "filesystem",
   ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
     for (const relativePath of relativeCandidates) {
-      const candidate = yield* workspacePaths
-        .resolveRelativePathWithinRoot({
-          workspaceRoot: projectCwd,
-          relativePath,
-        })
-        .pipe(
-          Effect.map(Option.some),
-          Effect.catchTags({
-            WorkspacePathOutsideRootError: () =>
-              Effect.succeed(
-                Option.none<{ readonly absolutePath: string; readonly relativePath: string }>(),
-              ),
-          }),
-        );
+      const candidate = yield* (
+        candidateScope === "filesystem" && path.isAbsolute(relativePath)
+          ? Effect.succeed({ absolutePath: relativePath, relativePath })
+          : workspacePaths.resolveRelativePathWithinRoot({
+              workspaceRoot: projectCwd,
+              relativePath,
+            })
+      ).pipe(
+        Effect.map(Option.some),
+        Effect.catchTags({
+          WorkspacePathOutsideRootError: () =>
+            Effect.succeed(
+              Option.none<{ readonly absolutePath: string; readonly relativePath: string }>(),
+            ),
+        }),
+      );
       if (Option.isNone(candidate)) {
         continue;
       }
@@ -191,7 +194,7 @@ export const make = Effect.gen(function* () {
     // A grouped project's saved path can be absent from one checkout. Use it
     // where it exists and retain automatic discovery for the other checkouts.
     if (faviconPath !== undefined) {
-      const existing = yield* findExistingFile(projectCwd, [faviconPath]);
+      const existing = yield* findExistingFile(projectCwd, [faviconPath], "filesystem");
       if (existing) {
         return existing;
       }
@@ -200,14 +203,18 @@ export const make = Effect.gen(function* () {
     // A t3.json iconPath takes precedence over the well-known locations.
     const projectFile = yield* projectFileLoader.load(projectCwd);
     if (Option.isSome(projectFile) && projectFile.value.iconPath !== undefined) {
-      const existing = yield* findExistingFile(projectCwd, [projectFile.value.iconPath]);
+      const existing = yield* findExistingFile(
+        projectCwd,
+        [projectFile.value.iconPath],
+        "workspace",
+      );
       if (existing) {
         return existing;
       }
     }
 
     for (const candidate of FAVICON_CANDIDATES) {
-      const existing = yield* findExistingFile(projectCwd, [candidate]);
+      const existing = yield* findExistingFile(projectCwd, [candidate], "workspace");
       if (existing) {
         return existing;
       }
@@ -251,7 +258,7 @@ export const make = Effect.gen(function* () {
       if (!href) {
         continue;
       }
-      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href));
+      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
       if (existing) {
         return existing;
       }
