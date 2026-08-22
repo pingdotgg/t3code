@@ -161,6 +161,11 @@ export const UsagePricing = Schema.Struct({
 export type UsagePricing = typeof UsagePricing.Type;
 
 export const UsageSummaryInput = Schema.Struct({
+  /**
+   * Highest response contract the client can decode. Omitted clients receive
+   * the pre-ZCode v4 shape so rolling upgrades remain wire-compatible.
+   */
+  contractVersion: Schema.optional(Schema.Number),
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
   /** Inclusive last day of the window, in `timeZone`. */

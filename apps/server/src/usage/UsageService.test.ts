@@ -1,6 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { summarizeSourceReadFailures } from "./UsageService.ts";
+import { negotiateUsageContractVersion, summarizeSourceReadFailures } from "./UsageService.ts";
+
+describe("negotiateUsageContractVersion", () => {
+  it("keeps the v4 response shape for clients that do not advertise support", () => {
+    expect(negotiateUsageContractVersion(undefined)).toBe(4);
+    expect(negotiateUsageContractVersion(4)).toBe(4);
+  });
+
+  it("serves the current response shape to compatible clients", () => {
+    expect(negotiateUsageContractVersion(5)).toBe(5);
+    expect(negotiateUsageContractVersion(6)).toBe(5);
+  });
+});
 
 describe("summarizeSourceReadFailures", () => {
   it("reports a healthy source when every file was readable", () => {

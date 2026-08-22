@@ -68,6 +68,9 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** Clients predating ZCode omit their supported response contract. */
+const PRE_ZCODE_USAGE_CONTRACT_VERSION = 4 as const;
+
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
@@ -119,13 +122,21 @@ export function summarizeSourceReadFailures(
   };
 }
 
+export function negotiateUsageContractVersion(
+  requestedVersion: number | undefined,
+): typeof PRE_ZCODE_USAGE_CONTRACT_VERSION | typeof USAGE_CONTRACT_VERSION {
+  return requestedVersion !== undefined && requestedVersion >= USAGE_CONTRACT_VERSION
+    ? USAGE_CONTRACT_VERSION
+    : PRE_ZCODE_USAGE_CONTRACT_VERSION;
+}
+
 /** Empty summary, for suites that only need the RPC surface to resolve. */
 export const layerTest = Layer.succeed(
   UsageService,
   UsageService.of({
     readSummary: (input) =>
       Effect.succeed({
-        contractVersion: USAGE_CONTRACT_VERSION,
+        contractVersion: negotiateUsageContractVersion(input.contractVersion),
         readAt: "1970-01-01T00:00:00.000Z",
         timeZone: input.timeZone,
         sinceDay: input.sinceDay,
@@ -328,6 +339,7 @@ export const make = Effect.gen(function* () {
     });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+    const contractVersion = negotiateUsageContractVersion(input.contractVersion);
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -367,7 +379,13 @@ export const make = Effect.gen(function* () {
     const hostId = NodeOS.hostname();
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so `readSummary` stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const resolvedDirs = yield* resolveTranscriptDirs().pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    const dirs =
+      contractVersion >= USAGE_CONTRACT_VERSION
+        ? resolvedDirs
+        : resolvedDirs.filter((source) => source.provider !== "zcode");
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -480,7 +498,7 @@ export const make = Effect.gen(function* () {
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
-      contractVersion: USAGE_CONTRACT_VERSION,
+      contractVersion,
       readAt: DateTime.formatIso(readAt),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
