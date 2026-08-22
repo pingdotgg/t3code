@@ -601,6 +601,9 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
+  if (input.phase === "connecting") {
+    return false;
+  }
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;

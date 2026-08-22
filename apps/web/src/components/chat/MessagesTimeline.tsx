@@ -446,7 +446,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const anchoredEndSpace = useMemo(() => {
     const config = resolveChatListAnchoredEndSpace(rows, anchorMessageId, (row) =>
-      row.kind === "message" ? row.message.id : null,
+      row.kind === "message" && row.message.role === "user" ? row.message.id : null,
     );
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
   }, [anchorMessageId, handleAnchorReady, rows]);

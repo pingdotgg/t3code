@@ -12,6 +12,24 @@ export type ThreadFeedLiveFollowEvent =
       readonly userScrollSessionActive: boolean;
     };
 
+export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
+  readonly currentAnchorMessageId: AnchorId | null;
+  readonly submittedMessageId: AnchorId;
+  readonly hasStartedTurn: boolean;
+  readonly hasUserMessage: boolean;
+  readonly queuedMessageCount: number;
+}): AnchorId | null {
+  if (input.hasStartedTurn || input.hasUserMessage) {
+    return null;
+  }
+
+  if (input.currentAnchorMessageId !== null) {
+    return input.currentAnchorMessageId;
+  }
+
+  return input.queuedMessageCount > 0 ? null : input.submittedMessageId;
+}
+
 export function resolveThreadFeedLiveFollow(
   current: boolean,
   event: ThreadFeedLiveFollowEvent,
