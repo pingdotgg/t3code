@@ -1,7 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useAssetUrl } from "../../state/assets";
+import { useAssetUrlState } from "../../state/assets";
 import { resolveWorkspaceFilePath } from "./filePath";
 
 export function useWorkspaceFileAssetUrl(props: {
@@ -18,7 +18,7 @@ export function useWorkspaceFileAssetUrl(props: {
     [props.cwd, props.relativePath],
   );
 
-  return useAssetUrl(
+  return useAssetUrlState(
     props.environmentId,
     absolutePath !== null && props.threadId !== null
       ? {
