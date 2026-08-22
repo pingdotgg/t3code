@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  ExternalLauncherUnknownApplicationError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -68,6 +69,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as InstalledApplications from "./process/InstalledApplications.ts";
 import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
@@ -423,6 +425,7 @@ const makeWsRpcLayer = (
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
+      const installedApplications = yield* InstalledApplications.InstalledApplications;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
@@ -1919,6 +1922,28 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
           }),
+        [WS_METHODS.shellListInstalledApplications]: () =>
+          observeRpcEffect(WS_METHODS.shellListInstalledApplications, installedApplications.list, {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.shellOpenInApplication]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.shellOpenInApplication,
+            // The command comes from this host's scan, never from the payload.
+            Effect.gen(function* () {
+              const applications = yield* installedApplications.list;
+              const application = applications.find(
+                (candidate) => candidate.id === input.applicationId,
+              );
+              if (application === undefined) {
+                return yield* new ExternalLauncherUnknownApplicationError({
+                  applicationId: input.applicationId,
+                });
+              }
+              yield* externalLauncher.launchApplication({ application, cwd: input.cwd });
+            }),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.filesystemBrowse]: (input) =>
           observeRpcEffect(
             WS_METHODS.filesystemBrowse,

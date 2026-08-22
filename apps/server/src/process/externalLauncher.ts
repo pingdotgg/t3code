@@ -15,9 +15,11 @@ import {
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   type EditorId,
+  type InstalledApplication,
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { withProjectPath } from "./InstalledApplications.ts";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -47,7 +49,7 @@ export {
 } from "@t3tools/contracts";
 export type { LaunchEditorInput };
 interface EditorLaunch {
-  readonly editor: EditorId;
+  readonly editor: string;
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -337,6 +339,11 @@ export class ExternalLauncher extends Context.Service<
      * Launches the editor as a detached process so server startup is not blocked.
      */
     readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+    /** Launch a workspace path in an application discovered on this host. */
+    readonly launchApplication: (input: {
+      readonly application: InstalledApplication;
+      readonly cwd: string;
+    }) => Effect.Effect<void, ExternalLauncherError>;
   }
 >()("t3/process/externalLauncher") {}
 
@@ -492,6 +499,15 @@ export const make = Effect.gen(function* () {
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    launchApplication: ({ application, cwd }) =>
+      provideCommandResolutionServices(
+        launchEditorProcess({
+          editor: application.id,
+          target: cwd,
+          command: application.command,
+          args: withProjectPath(application.args, cwd),
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
       ),
     launchEditor: (input) =>
       provideCommandResolutionServices(

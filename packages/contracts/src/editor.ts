@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -68,6 +69,15 @@ export const EDITORS = [
 
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));
 export type EditorId = typeof EditorId.Type;
+
+/** Discovered on the host. Clients name the `id`; the command stays server-side. */
+export const InstalledApplication = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  args: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type InstalledApplication = typeof InstalledApplication.Type;
 
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -148,7 +158,8 @@ export class ExternalLauncherUnsupportedEditorError extends Schema.TaggedErrorCl
 export class ExternalLauncherCommandNotFoundError extends Schema.TaggedErrorClass<ExternalLauncherCommandNotFoundError>()(
   "ExternalLauncherCommandNotFoundError",
   {
-    editor: EditorId,
+    /** An editor id, or the id of a discovered application. */
+    editor: Schema.String,
     command: Schema.String,
   },
 ) {
@@ -179,7 +190,7 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedErrorClass<Ex
   "ExternalLauncherEditorSpawnError",
   {
     ...ExternalLauncherSpawnFields,
-    editor: EditorId,
+    editor: Schema.String,
     target: Schema.String,
   },
 ) {
@@ -188,8 +199,20 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedErrorClass<Ex
   }
 }
 
+export class ExternalLauncherUnknownApplicationError extends Schema.TaggedErrorClass<ExternalLauncherUnknownApplicationError>()(
+  "ExternalLauncherUnknownApplicationError",
+  {
+    applicationId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Unknown application: ${this.applicationId}`;
+  }
+}
+
 export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnknownEditorError,
+  ExternalLauncherUnknownApplicationError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherBrowserSpawnError,
