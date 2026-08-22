@@ -324,6 +324,18 @@ describe("parseOpenCodexUsageEntry", () => {
       }),
     ).toBeNull();
   });
+
+  it("drops timestamps outside JavaScript's Date range", () => {
+    expect(
+      parseOpenCodexUsageEntry({
+        requestId: "bad-time",
+        provider: "openai",
+        model: "gpt-5.4",
+        timestamp: 1e100,
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("normalizeOpenCodexProvider", () => {

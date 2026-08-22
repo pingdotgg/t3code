@@ -30,6 +30,9 @@ const EMPTY_TOTALS: UsageTokenTotals = {
   reasoningTokens: 0,
 };
 
+/** Inclusive upper bound accepted by JavaScript's Date time clip. */
+const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000_000;
+
 function int(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
@@ -329,7 +332,7 @@ export function normalizeOpenCodexProvider(provider: string): string {
 /** Maps one canonical row from OpenCodex's append-only `usage.jsonl` ledger. */
 export function parseOpenCodexUsageEntry(row: Record<string, unknown>): UsageRecord | null {
   const timestampMs = int(row["timestamp"]);
-  if (timestampMs === 0) return null;
+  if (timestampMs === 0 || timestampMs > MAX_DATE_TIMESTAMP_MS) return null;
 
   const rawUsage = row["usage"];
   if (typeof rawUsage !== "object" || rawUsage === null) return null;
