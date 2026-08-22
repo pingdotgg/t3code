@@ -101,11 +101,21 @@ export const ResolvedKeybindingsFromConfig = Schema.Array(ResolvedKeybindingFrom
 );
 
 function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
-  return (
-    left.command === right.command &&
-    left.key === right.key &&
-    (left.when ?? undefined) === (right.when ?? undefined)
-  );
+  if (left.command !== right.command) return false;
+  if ((left.when ?? undefined) !== (right.when ?? undefined)) return false;
+  if (left.key === right.key) return true;
+  // A key can be spelled more than one way ("esc"/"escape", "space"/" "), and
+  // the settings UI renders a stored rule back as the alias. Comparing raw
+  // strings would then fail to match a rule against itself, so replacing that
+  // rule would leave the original behind instead of updating it.
+  const leftKey = canonicalKeybindingKey(left);
+  return leftKey !== null && leftKey === canonicalKeybindingKey(right);
+}
+
+function canonicalKeybindingKey(rule: KeybindingRule): string | null {
+  const parsed = parseKeybindingShortcut(rule.key);
+  if (!parsed) return null;
+  return encodeShortcut(parsed);
 }
 
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
