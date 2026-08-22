@@ -6,7 +6,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+  parseGrokModelsCliOutput,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -91,7 +95,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
+  it.effect("does not mark Grok broken when the CLI is installed but lists no models", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -111,10 +115,118 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
         }),
       );
 
-      expect(snapshot.status).toBe("error");
+      expect(snapshot.status).toBe("ready");
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
-      expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+
+  it.effect("discovers models and auth from `grok models` instead of an ACP session", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-models-" });
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            grokPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "--version" ]; then',
+              '  printf "grok 1.0.5\\n"',
+              "  exit 0",
+              "fi",
+              'if [ "$1" = "models" ]; then',
+              "  cat <<'EOF'",
+              "You are logged in with grok.com.",
+              "",
+              "Default model: grok-4.6",
+              "",
+              "Available models:",
+              "  * grok-4.6 (default)",
+              "  - grok-4.5",
+              "EOF",
+              "  exit 0",
+              "fi",
+              "exit 1",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.version).toBe("1.0.5");
+      expect(snapshot.auth).toEqual({
+        status: "authenticated",
+        type: "cached_token",
+        label: "Grok Subscription",
+      });
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-4.5"]);
+    }),
+  );
+
+  it.effect("warns instead of erroring when Grok is installed but not logged in", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-nologin-" });
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            grokPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "--version" ]; then',
+              '  printf "grok 1.0.5\\n"',
+              "  exit 0",
+              "fi",
+              'printf "You are not logged in.\\nPlease run grok login.\\n"',
+              "exit 0",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.auth.status).toBe("unauthenticated");
+      expect(snapshot.message).toContain("grok login");
+    }),
+  );
+});
+
+describe("parseGrokModelsCliOutput", () => {
+  it("reads login state and bullet model ids from grok models", () => {
+    const parsed = parseGrokModelsCliOutput(`You are logged in with grok.com.
+
+Default model: grok-4.6
+
+Available models:
+  * grok-4.6 (default)
+  - grok-4.5
+`);
+    expect(parsed.authenticated).toBe(true);
+    expect(parsed.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-4.5"]);
+  });
+
+  it("detects a logged-out CLI without treating it as a missing install", () => {
+    const parsed = parseGrokModelsCliOutput("You are not logged in.\nPlease run grok login.\n");
+    expect(parsed.authenticated).toBe(false);
+    expect(parsed.models).toEqual([]);
+  });
 });
