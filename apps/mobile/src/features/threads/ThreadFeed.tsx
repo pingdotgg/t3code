@@ -51,6 +51,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
+import { resolveMarkdownTextDirection } from "../../lib/textDirection";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -336,6 +337,8 @@ function MarkdownCodeBlock(props: {
             color: props.textColor,
             fontSize: props.fontSize,
             lineHeight: props.lineHeight,
+            textAlign: "left",
+            writingDirection: "ltr",
             ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
           }}
         >
@@ -622,6 +625,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               color: inlineCodeTextColor,
               fontSize: markdownFontSizes.codeBlockFontSize,
               lineHeight: markdownFontSizes.bodyLineHeight,
+              textAlign: "left",
+              writingDirection: "ltr",
             }}
           >
             {value}
@@ -792,6 +797,33 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
   ]);
 }
 
+const NitroMarkdownMessage = memo(function NitroMarkdownMessage(props: {
+  readonly text: string;
+  readonly markdownStyles: MarkdownStyleSet;
+}) {
+  const styles = useMemo<NodeStyleOverrides>(
+    () => ({
+      ...props.markdownStyles.styles,
+      paragraph: {
+        ...props.markdownStyles.styles.paragraph,
+        direction: resolveMarkdownTextDirection(props.text),
+      },
+    }),
+    [props.markdownStyles.styles, props.text],
+  );
+
+  return (
+    <Markdown
+      options={{ gfm: true }}
+      renderers={props.markdownStyles.renderers}
+      styles={styles}
+      theme={props.markdownStyles.theme}
+    >
+      {props.text}
+    </Markdown>
+  );
+});
+
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
   props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
@@ -956,14 +988,7 @@ function renderFeedEntry(
               onLinkPress={props.onMarkdownLinkPress}
             />
           ) : (
-            <Markdown
-              options={{ gfm: true }}
-              renderers={styles.renderers}
-              styles={styles.styles}
-              theme={styles.theme}
-            >
-              {message.text}
-            </Markdown>
+            <NitroMarkdownMessage text={message.text} markdownStyles={styles} />
           )
         ) : null}
         {attachments.map((attachment) => {
@@ -1054,16 +1079,7 @@ function UserMessageContent(props: {
         />
       );
     }
-    return (
-      <Markdown
-        options={{ gfm: true }}
-        renderers={props.markdownStyles.renderers}
-        styles={props.markdownStyles.styles}
-        theme={props.markdownStyles.theme}
-      >
-        {props.text}
-      </Markdown>
-    );
+    return <NitroMarkdownMessage text={props.text} markdownStyles={props.markdownStyles} />;
   }
 
   return (
@@ -1094,15 +1110,11 @@ function UserMessageContent(props: {
             onLinkPress={props.onLinkPress}
           />
         ) : (
-          <Markdown
+          <NitroMarkdownMessage
             key={segment.id}
-            options={{ gfm: true }}
-            renderers={props.markdownStyles.renderers}
-            styles={props.markdownStyles.styles}
-            theme={props.markdownStyles.theme}
-          >
-            {text}
-          </Markdown>
+            text={text}
+            markdownStyles={props.markdownStyles}
+          />
         );
       })}
     </View>

@@ -467,6 +467,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       ref={containerRef}
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
+      dir="ltr"
     >
       <ScrollArea
         chainVerticalScroll
@@ -674,6 +675,7 @@ function MarkdownCodeBlock({
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
+      dir="ltr"
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
         <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
@@ -1301,6 +1303,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       <TooltipTrigger
         render={
           <a
+            dir="ltr"
             href={href}
             className={cn(CHAT_FILE_TAG_CHIP_CLASS_NAME, MARKDOWN_FILE_LINK_CLASS_NAME, className)}
             data-markdown-copy={copyMarkdown}
@@ -1570,7 +1573,7 @@ function ChatMarkdown({
         // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
         // text under a colored title — which is how the host renders it.
         return (
-          <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+          <div role="note" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
             <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
               <alert.Icon aria-hidden className="size-3.5 shrink-0" />
               {alert.label}
@@ -1726,7 +1729,7 @@ function ChatMarkdown({
           }
         }
         return (
-          <code {...props} className={className}>
+          <code {...props} className={className} dir="ltr">
             {children}
           </code>
         );
@@ -1734,13 +1737,23 @@ function ChatMarkdown({
       table({ node: _node, ...props }) {
         return <MarkdownTable {...props} />;
       },
+      th({ node: _node, ...props }) {
+        return <th {...props} dir="auto" />;
+      },
+      td({ node: _node, ...props }) {
+        return <td {...props} dir="auto" />;
+      },
       details({ node: _node, children, open: detailsOpen }) {
         return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
       },
       pre({ node, children, ...props }) {
         const codeBlock = extractCodeBlock(children);
         if (!codeBlock) {
-          return <pre {...props}>{children}</pre>;
+          return (
+            <pre {...props} dir="ltr">
+              {children}
+            </pre>
+          );
         }
 
         const language = extractFenceLanguage(codeBlock.className);
@@ -1752,8 +1765,20 @@ function ChatMarkdown({
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
           >
-            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
+            <RenderErrorBoundary
+              fallback={
+                <pre {...props} dir="ltr">
+                  {children}
+                </pre>
+              }
+            >
+              <Suspense
+                fallback={
+                  <pre {...props} dir="ltr">
+                    {children}
+                  </pre>
+                }
+              >
                 <SuspenseShikiCodeBlock
                   className={codeBlock.className}
                   code={codeBlock.code}
@@ -1794,6 +1819,7 @@ function ChatMarkdown({
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80 [overflow-wrap:anywhere] [word-break:break-word]",
         className,
       )}
+      dir="auto"
       onCopy={handleCopy}
     >
       <ReactMarkdown

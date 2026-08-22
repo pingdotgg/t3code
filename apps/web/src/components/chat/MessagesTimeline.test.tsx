@@ -562,6 +562,70 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
+  it("resolves user and assistant message direction from each message", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("English user message."),
+          buildUserTimelineEntry("הודעת משתמש בעברית."),
+          buildAssistantTimelineEntry("English assistant message."),
+          buildAssistantTimelineEntry("תשובת עוזר בעברית."),
+        ]}
+      />,
+    );
+
+    expect(markup.match(/class="chat-markdown[^"]*" dir="auto"/g)).toHaveLength(4);
+  });
+
+  it("keeps code left-to-right inside auto-directed messages", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        markdownCwd="/workspace"
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            ["בדוק את `src/index.ts` והריץ `vp test` ואז:", "", "```sh", "vp test run", "```"].join(
+              "\n",
+            ),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(/<a[^>]*dir="ltr"[^>]*class="[^"]*chat-markdown-file-link/);
+    expect(markup).toMatch(/<code[^>]*dir="ltr"[^>]*>vp test<\/code>/);
+    expect(markup).toMatch(/class="chat-markdown-codeblock[^"]*"[^>]*dir="ltr"/);
+  });
+
+  it("keeps table structure left-to-right while resolving each cell direction", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            ["| Name | תיאור |", "| --- | --- |", "| test | בדיקה |"].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(/class="chat-markdown-table-container"[^>]*dir="ltr"/);
+    expect(markup.match(/<(?:th|td)[^>]*dir="auto"/g)).toHaveLength(4);
+  });
+
+  it("uses logical spacing for GitHub alerts inside auto-directed messages", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry("> [!NOTE]\n> הודעת התראה בעברית.")]}
+      />,
+    );
+
+    expect(markup).toMatch(/<div role="note" class="[^"]*border-s-2[^"]*ps-3/);
+    expect(markup).not.toContain("border-l-2");
+  });
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -607,7 +671,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('<code data-inline-code="">&lt;tag attr=&quot;x&quot;&gt;</code>');
+    expect(markup).toContain(
+      '<code data-inline-code="" dir="ltr">&lt;tag attr=&quot;x&quot;&gt;</code>',
+    );
     expect(markup).toContain("&lt;root&gt;&lt;child enabled=&quot;true&quot; /&gt;&lt;/root&gt;");
   });
 
