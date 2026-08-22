@@ -971,6 +971,120 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports line counts for untracked files inside new directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(
+          cwd,
+          "new/nested.txt",
+          Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join("\n") + "\n",
+        );
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(status.workingTree.files, [
+          {
+            path: "new/nested.txt",
+            insertions: 100,
+            deletions: 0,
+          },
+        ]);
+        assert.equal(status.workingTree.insertions, 100);
+        assert.equal(status.workingTree.deletions, 0);
+        assert.equal(yield* git(cwd, ["ls-files", "--stage", "--", "new/nested.txt"]), "");
+      }),
+    );
+
+    it.effect("falls back when an untracked nested repository has no commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "nested-repo/file.txt", "uncommitted\n");
+        yield* git(cwd, ["-C", "nested-repo", "init"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(status.workingTree.files, [
+          {
+            path: "nested-repo/",
+            insertions: 0,
+            deletions: 0,
+          },
+        ]);
+        assert.equal(status.hasWorkingTreeChanges, true);
+      }),
+    );
+
+    it.effect("falls back when an untracked file cannot be diffed", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, ".gitattributes", "*.dat filter=broken\n");
+        yield* git(cwd, ["add", ".gitattributes"]);
+        yield* git(cwd, ["commit", "-m", "configure filter"]);
+        yield* git(cwd, ["config", "filter.broken.clean", "false"]);
+        yield* git(cwd, ["config", "filter.broken.required", "true"]);
+        yield* writeTextFile(cwd, "untracked.dat", "first\nsecond\n");
+        yield* writeTextFile(cwd, "README.md", "# test\ntracked change\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(status.workingTree.files, [
+          { path: "README.md", insertions: 1, deletions: 0 },
+          { path: "untracked.dat", insertions: 0, deletions: 0 },
+        ]);
+        assert.equal(status.workingTree.insertions, 1);
+        assert.equal(status.workingTree.deletions, 0);
+        assert.equal(status.hasWorkingTreeChanges, true);
+      }),
+    );
+
+    it.effect("does not count lines in oversized untracked files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "large.log", "x".repeat(1024 * 1024 + 1));
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(status.workingTree.files, [
+          {
+            path: "large.log",
+            insertions: 0,
+            deletions: 0,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("falls back for oversized untracked file sets", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const generatedDirectory = pathService.join(cwd, "generated");
+        yield* fileSystem.makeDirectory(generatedDirectory);
+        yield* Effect.forEach(
+          Array.from({ length: 1_001 }, (_, index) => index),
+          (index) =>
+            fileSystem.writeFileString(pathService.join(generatedDirectory, `${index}.txt`), ""),
+          { concurrency: 32, discard: true },
+        );
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(status.workingTree.files, [
+          {
+            path: "generated/",
+            insertions: 0,
+            deletions: 0,
+          },
+        ]);
+      }),
+    );
+
     it.effect("reports default-branch delta separately from upstream delta", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

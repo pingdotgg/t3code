@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -53,6 +54,10 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
+const STATUS_UNTRACKED_NUMSTAT_MAX_FILES = 1_000;
+const STATUS_UNTRACKED_NUMSTAT_MAX_PATH_BYTES = 128 * 1024;
+const STATUS_UNTRACKED_NUMSTAT_MAX_TOTAL_BYTES = 1024 * 1024;
+const STATUS_UNTRACKED_NUMSTAT_TIMEOUT = Duration.seconds(2);
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
@@ -101,6 +106,10 @@ const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemot
   aheadCount: 0,
   behindCount: 0,
   aheadOfDefaultCount: 0,
+});
+const INCOMPLETE_UNTRACKED_NUMSTAT = Object.freeze({
+  stdout: "",
+  complete: false,
 });
 
 type TraceTailState = {
@@ -1566,6 +1575,85 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const readUntrackedNumstat = Effect.fn("readUntrackedNumstat")(function* (
+    cwd: string,
+    hasUntrackedFiles: boolean,
+  ) {
+    if (!hasUntrackedFiles) return { stdout: "", complete: true } as const;
+
+    const operation = "GitVcsDriver.statusDetails.numstat.untracked";
+    const untrackedResult = yield* executeGitWithStableDiagnostics(
+      `${operation}.list`,
+      cwd,
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      {
+        maxOutputBytes: STATUS_UNTRACKED_NUMSTAT_MAX_PATH_BYTES,
+        appendTruncationMarker: true,
+      },
+    );
+    if (untrackedResult.stdoutTruncated) return INCOMPLETE_UNTRACKED_NUMSTAT;
+
+    const untrackedPaths = splitNullSeparatedGitStdoutPaths(untrackedResult);
+    if (
+      untrackedPaths.length === 0 ||
+      untrackedPaths.length > STATUS_UNTRACKED_NUMSTAT_MAX_FILES ||
+      untrackedPaths.some((filePath) => filePath.endsWith("/"))
+    ) {
+      return INCOMPLETE_UNTRACKED_NUMSTAT;
+    }
+
+    const fileInfos = yield* Effect.forEach(
+      untrackedPaths,
+      (filePath) => fileSystem.stat(path.join(cwd, filePath)),
+      { concurrency: 16 },
+    );
+    const totalBytes = fileInfos.reduce((total, info) => total + info.size, 0n);
+    if (
+      fileInfos.some((info) => info.type !== "File") ||
+      totalBytes > BigInt(STATUS_UNTRACKED_NUMSTAT_MAX_TOTAL_BYTES)
+    ) {
+      return INCOMPLETE_UNTRACKED_NUMSTAT;
+    }
+
+    const tempDirectory = yield* fileSystem
+      .makeTempDirectoryScoped({ prefix: "t3-status-index-" })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              ...gitCommandContext({ operation, cwd, args: [] }),
+              detail: "Failed to create a temporary Git index.",
+              cause,
+            }),
+        ),
+      );
+    const indexPath = path.join(tempDirectory, "index");
+    const env = { GIT_INDEX_FILE: indexPath };
+
+    yield* executeGitWithStableDiagnostics(
+      `${operation}.intentToAdd`,
+      cwd,
+      ["--literal-pathspecs", "add", "-N", "--pathspec-from-file=-", "--pathspec-file-nul"],
+      {
+        env,
+        stdin: `${untrackedPaths.join("\0")}\0`,
+      },
+    );
+
+    const result = yield* executeGitWithStableDiagnostics(
+      operation,
+      cwd,
+      ["diff", "--numstat", "--"],
+      {
+        env,
+        maxOutputBytes: STATUS_UNTRACKED_NUMSTAT_MAX_PATH_BYTES,
+        appendTruncationMarker: true,
+      },
+    );
+    if (result.stdoutTruncated) return INCOMPLETE_UNTRACKED_NUMSTAT;
+    return { stdout: result.stdout, complete: true } as const;
+  }, Effect.scoped);
+
   const readStatusDetailsLocal = Effect.fn("readStatusDetailsLocal")(function* (cwd: string) {
     const statusResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetails.status",
@@ -1602,11 +1690,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
+    const statusStdout = statusResult.stdout;
+    const untrackedPaths = statusStdout
+      .split(/\r?\n/g)
+      .filter((line) => line.startsWith("? "))
+      .map(parsePorcelainPath)
+      .filter((filePath): filePath is string => filePath !== null);
+    const untrackedPathSet = new Set(untrackedPaths);
+
     const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
       Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
     );
     const statusCacheKey = repositoryPaths?.gitCommonDir;
-    const [numstatStdout, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
+    const untrackedNumstatFiber = yield* readUntrackedNumstat(cwd, untrackedPaths.length > 0).pipe(
+      Effect.timeoutOption(STATUS_UNTRACKED_NUMSTAT_TIMEOUT),
+      Effect.map(Option.getOrElse(() => INCOMPLETE_UNTRACKED_NUMSTAT)),
+      Effect.orElseSucceed(() => INCOMPLETE_UNTRACKED_NUMSTAT),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const [trackedNumstatStdout, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
       [
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
@@ -1672,7 +1774,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       { concurrency: "unbounded" },
     );
-    const statusStdout = statusResult.stdout;
+    const untrackedNumstat = yield* Fiber.join(untrackedNumstatFiber);
+    const numstatStdout = `${trackedNumstatStdout}\n${untrackedNumstat.stdout}`;
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
@@ -1745,7 +1848,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .toSorted((a, b) => a.path.localeCompare(b.path));
 
     for (const filePath of changedFilesWithoutNumstat) {
-      if (fileStatMap.has(filePath)) continue;
+      if (
+        fileStatMap.has(filePath) ||
+        (untrackedNumstat.complete && untrackedPathSet.has(filePath))
+      ) {
+        continue;
+      }
       files.push({ path: filePath, insertions: 0, deletions: 0 });
     }
     files.sort((a, b) => a.path.localeCompare(b.path));
