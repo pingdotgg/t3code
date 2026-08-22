@@ -66,7 +66,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         className={cn(
           "flex items-center justify-between gap-2 rounded-xl",
           expanded &&
-            "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]",
+            "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--contrast-foreground)_2.5%,var(--background))]",
         )}
       >
         <button

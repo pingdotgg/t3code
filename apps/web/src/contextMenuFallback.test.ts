@@ -315,7 +315,7 @@ describe("showContextMenuFallback", () => {
     expect(siblingButton).toBeTruthy();
     expect(childButton?.focused).toBe(true);
     expect(childButton?.style.background).toBe("var(--accent)");
-    expect(childButton?.style.color).toBe("var(--accent-foreground)");
+    expect(childButton?.style.color).toBe("var(--contrast-accent-foreground)");
     siblingButton?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
     expect(childButton?.focused).toBe(false);
     expect(childButton?.style.background).toBe("transparent");

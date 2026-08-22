@@ -278,7 +278,7 @@ export function showContextMenuFallback<T extends string>(
       menu.className =
         "dropdown-glass fixed z-[10000] min-w-32 max-w-sm overflow-hidden rounded-lg bg-clip-padding text-popover-foreground outline-none";
       menu.style.cssText =
-        "position:fixed;z-index:10000;min-width:8rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-lg);background-clip:padding-box;color:var(--popover-foreground);outline:none;pointer-events:auto;";
+        "position:fixed;z-index:10000;min-width:8rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-lg);background-clip:padding-box;color:var(--contrast-popover-foreground);outline:none;pointer-events:auto;";
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
@@ -293,7 +293,8 @@ export function showContextMenuFallback<T extends string>(
         if (item.separatorBefore === true && inner.children.length > 0) {
           const separator = document.createElement("div");
           separator.className = "mx-2 my-1 h-px bg-border";
-          separator.style.cssText = "height:1px;margin:0.25rem 0.5rem;background:var(--border);";
+          separator.style.cssText =
+            "height:1px;margin:0.25rem 0.5rem;background:var(--contrast-border);";
           separator.dataset.contextMenuSeparator = "true";
           separator.setAttribute("role", "separator");
           inner.appendChild(separator);
@@ -323,12 +324,12 @@ export function showContextMenuFallback<T extends string>(
             ? `${rowBase} text-destructive-foreground hover:bg-destructive/10 hover:text-destructive-foreground`
             : `${rowBase} text-foreground hover:bg-accent hover:text-accent-foreground`;
         button.style.cssText =
-          "display:flex;width:100%;min-height:1.75rem;align-items:center;gap:0.5rem;border:0;border-radius:var(--radius-sm);background:transparent;padding:0.25rem 0.5rem;color:var(--foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.875rem;line-height:1.25rem;text-align:left;cursor:default;";
+          "display:flex;width:100%;min-height:1.75rem;align-items:center;gap:0.5rem;border:0;border-radius:var(--radius-sm);background:transparent;padding:0.25rem 0.5rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.875rem;line-height:1.25rem;text-align:left;cursor:default;";
         if (isLeafDestructive) {
           button.style.color = "var(--destructive-foreground)";
         }
         if (isDisabled) {
-          button.style.color = "var(--muted-foreground)";
+          button.style.color = "var(--contrast-muted-foreground)";
           button.style.opacity = "0.64";
           button.style.pointerEvents = "none";
         }
@@ -373,10 +374,10 @@ export function showContextMenuFallback<T extends string>(
             button.style.color = isHighlighted
               ? isLeafDestructive
                 ? "var(--destructive-foreground)"
-                : "var(--accent-foreground)"
+                : "var(--contrast-accent-foreground)"
               : isLeafDestructive
                 ? "var(--destructive-foreground)"
-                : "var(--foreground)";
+                : "var(--contrast-foreground)";
           };
           button.addEventListener("mouseenter", () => {
             button.focus({ preventScroll: true });

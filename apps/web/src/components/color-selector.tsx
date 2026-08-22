@@ -13,7 +13,7 @@ interface ColorSelectorProps {
 }
 
 const colorMap = {
-  default: "var(--foreground)",
+  default: "var(--contrast-foreground)",
   red: "var(--color-red-500)",
   green: "var(--color-green-500)",
   blue: "var(--color-blue-500)",
