@@ -114,7 +114,7 @@ export const makeConnectTarget = (createConnection: CreateTargetConnection) =>
                   host,
                   port,
                   cause: new AggregateError(
-                    [ipv4Error.cause, ipv6Error.cause],
+                    [ipv4Error, ipv6Error],
                     `Could not connect to loopback target on port ${port}`,
                   ),
                 }),

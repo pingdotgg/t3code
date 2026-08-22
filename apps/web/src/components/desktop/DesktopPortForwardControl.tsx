@@ -177,20 +177,40 @@ export function DesktopPortForwardControl({
               <span className="mb-1.5 block">Remote port</span>
               <Input
                 aria-label="Remote port"
+                aria-invalid={parsedRemotePort === null}
+                type="number"
+                min={1}
+                max={65_535}
+                step={1}
                 inputMode="numeric"
                 value={remotePort}
                 onChange={(event) => setRemotePort(event.target.value)}
               />
+              {parsedRemotePort === null ? (
+                <span className="mt-1 block text-[11px] text-destructive">
+                  Enter a port from 1 to 65535.
+                </span>
+              ) : null}
             </label>
             <label className="text-xs text-muted-foreground">
               <span className="mb-1.5 block">Local port</span>
               <Input
                 aria-label="Local port"
+                aria-invalid={localPort.trim() !== "" && parsedLocalPort === null}
+                type="number"
+                min={1}
+                max={65_535}
+                step={1}
                 inputMode="numeric"
                 placeholder="Same as remote"
                 value={localPort}
                 onChange={(event) => setLocalPort(event.target.value)}
               />
+              {localPort.trim() !== "" && parsedLocalPort === null ? (
+                <span className="mt-1 block text-[11px] text-destructive">
+                  Enter a port from 1 to 65535.
+                </span>
+              ) : null}
             </label>
           </div>
           <Button className="w-full" size="sm" disabled={!canCreate} onClick={() => void create()}>

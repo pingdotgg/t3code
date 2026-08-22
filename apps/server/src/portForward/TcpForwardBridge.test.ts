@@ -117,9 +117,15 @@ it("fails after both loopback addresses are unavailable", async () => {
     return createSocket("error");
   });
 
-  await expect(
-    Effect.runPromise(makeConnectTarget(createConnection)("127.0.0.1", 5173)),
-  ).rejects.toMatchObject({ host: "127.0.0.1", port: 5173 });
+  const failure = await Effect.runPromise(
+    Effect.flip(makeConnectTarget(createConnection)("127.0.0.1", 5173)),
+  );
+  expect(failure).toMatchObject({ host: "127.0.0.1", port: 5173 });
+  expect(failure.cause).toBeInstanceOf(AggregateError);
+  expect((failure.cause as AggregateError).errors).toMatchObject([
+    { host: "127.0.0.1", port: 5173 },
+    { host: "::1", port: 5173 },
+  ]);
   expect(attemptedHosts).toEqual(["127.0.0.1", "::1"]);
 });
 

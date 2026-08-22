@@ -63,13 +63,15 @@ export class DesktopPortForwardError extends Schema.TaggedErrorClass<DesktopPort
       "stop",
       "validate-ticket-url",
     ]),
+    localPort: Schema.optionalKey(Schema.Number),
     cause: Schema.optionalKey(Schema.Defect()),
     detail: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
+    const target = this.localPort === undefined ? "" : ` on local port ${this.localPort}`;
     const suffix = this.detail === undefined ? "" : `: ${this.detail}`;
-    return `Desktop port forward ${this.operation} failed${suffix}.`;
+    return `Desktop port forward ${this.operation} failed${target}${suffix}.`;
   }
 }
 
@@ -93,7 +95,9 @@ const listen = (server: NodeNet.Server, port: number) =>
   Effect.callback<number, DesktopPortForwardError>((resume) => {
     const onError = (cause: Error) => {
       server.off("listening", onListening);
-      resume(Effect.fail(new DesktopPortForwardError({ operation: "listen", cause })));
+      resume(
+        Effect.fail(new DesktopPortForwardError({ operation: "listen", localPort: port, cause })),
+      );
     };
     const onListening = () => {
       server.off("error", onError);
@@ -103,6 +107,7 @@ const listen = (server: NodeNet.Server, port: number) =>
           Effect.fail(
             new DesktopPortForwardError({
               operation: "resolve-listener-address",
+              localPort: port,
               detail: "The listener returned an unusable address.",
             }),
           ),

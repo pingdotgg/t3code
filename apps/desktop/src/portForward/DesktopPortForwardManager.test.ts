@@ -106,6 +106,16 @@ it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
     );
   });
 
+  it("identifies the local port for listener failures", () => {
+    const error = new DesktopPortForwardManager.DesktopPortForwardError({
+      operation: "listen",
+      localPort: 4321,
+      cause: new Error("address in use"),
+    });
+
+    expect(error.message).toContain("local port 4321");
+  });
+
   it.effect("flushes credit-blocked local data before sending write end", () =>
     Effect.gen(function* () {
       const socket = makeConnectionSocket();
