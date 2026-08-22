@@ -1,9 +1,12 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
+  type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
@@ -19,6 +22,8 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  resolveGeneralSettingsEnvironmentId,
+  resolveTextGenerationModelDefault,
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
@@ -149,6 +154,101 @@ describe("project grouping toggle", () => {
   it("restores repository path grouping when the toggle is cycled", () => {
     expect(projectGroupingModeFromToggle(false, "repository_path")).toBe("separate");
     expect(projectGroupingModeFromToggle(true, "repository_path")).toBe("repository_path");
+  });
+});
+
+describe("text generation model defaults", () => {
+  it("ignores an enabled but unusable Codex snapshot and preserves target model preferences", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      },
+      {
+        instanceId,
+        driver: ProviderDriverKind.make("opencode"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: ["openai/gpt-5", "anthropic/claude-sonnet-4-6"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {},
+        })),
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        opencode: { ...DEFAULT_UNIFIED_SETTINGS.providers.opencode, enabled: true },
+      },
+      providerModelPreferences: {
+        [instanceId]: {
+          hiddenModels: [],
+          modelOrder: ["anthropic/claude-sonnet-4-6", "openai/gpt-5"],
+        },
+      },
+    };
+
+    const resolvedDefault = resolveTextGenerationModelDefault(settings, providers);
+
+    expect(resolvedDefault).toMatchObject({
+      instanceId,
+      model: "anthropic/claude-sonnet-4-6",
+    });
+    expect(resolvedDefault).not.toEqual(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+  });
+
+  it("returns no reset default when no provider is picker-ready", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        opencode: { ...DEFAULT_UNIFIED_SETTINGS.providers.opencode, enabled: true },
+      },
+    };
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId,
+        driver: ProviderDriverKind.make("opencode"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "warning",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [
+          {
+            slug: "openai/gpt-5",
+            name: "GPT-5",
+            isCustom: false,
+            capabilities: {},
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+
+    expect(resolveTextGenerationModelDefault(settings, providers)).toBeNull();
   });
 });
 
@@ -293,5 +393,128 @@ describe("isSamePreviewViewport", () => {
         { _tag: "preset", width: 390, height: 844, presetId: "iphone-12-pro" },
       ),
     ).toBe(false);
+  });
+});
+
+describe("resolveGeneralSettingsEnvironmentId", () => {
+  const primaryEnvId = EnvironmentId.make("primary");
+  const wslEnvId = EnvironmentId.make("wsl");
+  const remoteEnvId = EnvironmentId.make("remote");
+  const mockModel: ServerProviderModel = {
+    slug: "model-1",
+    name: "Model 1",
+    isCustom: false,
+    capabilities: null,
+  };
+  const provider = (overrides: Partial<ServerProvider> = {}): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("opencode"),
+    driver: ProviderDriverKind.make("opencode"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [mockModel],
+    slashCommands: [],
+    skills: [],
+    ...overrides,
+  });
+  const enabledSettings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providers: {
+      ...DEFAULT_SERVER_SETTINGS.providers,
+      opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: true },
+    },
+  };
+  const env = (
+    id: EnvironmentId,
+    providers: ReadonlyArray<ServerProvider> = [provider()],
+    settings = enabledSettings,
+  ) => ({
+    environmentId: id,
+    serverConfig: {
+      providers,
+      settings,
+    },
+  });
+
+  it("returns primary environment when primary has installed models", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId([env(primaryEnvId), env(wslEnvId)], primaryEnvId),
+    ).toBe(primaryEnvId);
+  });
+
+  it("falls back to connected environment with models when primary environment has no models", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId([env(primaryEnvId, []), env(wslEnvId)], primaryEnvId),
+    ).toBe(wslEnvId);
+  });
+
+  it("falls back to connected environment with models when primary environment has installed models that are disabled", () => {
+    const disabledSettings = {
+      ...enabledSettings,
+      providers: {
+        ...enabledSettings.providers,
+        opencode: { ...enabledSettings.providers.opencode, enabled: false },
+      },
+    };
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, [provider()], disabledSettings), env(wslEnvId)],
+        primaryEnvId,
+      ),
+    ).toBe(wslEnvId);
+  });
+
+  it("returns remote environment with models in a remote-only setup", () => {
+    expect(resolveGeneralSettingsEnvironmentId([env(remoteEnvId)], null)).toBe(remoteEnvId);
+  });
+
+  it("prefers a ready remote over an errored primary with cached models", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, [provider({ status: "error" })]), env(remoteEnvId)],
+        primaryEnvId,
+      ),
+    ).toBe(remoteEnvId);
+  });
+
+  it("ignores a snapshot that the current settings overlay disables", () => {
+    const disabledSettings = {
+      ...enabledSettings,
+      providers: {
+        ...enabledSettings.providers,
+        opencode: { ...enabledSettings.providers.opencode, enabled: false },
+      },
+    };
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, [provider()], disabledSettings), env(remoteEnvId)],
+        primaryEnvId,
+      ),
+    ).toBe(remoteEnvId);
+  });
+
+  it("keeps a connected remote fallback when the disconnected primary is absent", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(remoteEnvId, [provider({ status: "warning" })])],
+        primaryEnvId,
+      ),
+    ).toBe(remoteEnvId);
+  });
+
+  it("falls back to primary or first environment when no models exist in any environment", () => {
+    expect(
+      resolveGeneralSettingsEnvironmentId(
+        [env(primaryEnvId, []), { environmentId: wslEnvId, serverConfig: null }],
+        primaryEnvId,
+      ),
+    ).toBe(primaryEnvId);
+
+    expect(resolveGeneralSettingsEnvironmentId([env(wslEnvId, [])], null)).toBe(wslEnvId);
+
+    expect(resolveGeneralSettingsEnvironmentId([], null)).toBe(null);
   });
 });

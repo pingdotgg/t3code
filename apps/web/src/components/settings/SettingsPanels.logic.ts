@@ -1,10 +1,12 @@
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceConfig,
   PreviewViewportSetting,
   ProviderInstanceId,
+  ServerProvider,
   ServerSettings,
   SidebarProjectGroupingMode,
   UnifiedSettings,
@@ -18,6 +20,12 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import { resolveAppModelSelectionState } from "../../modelSelection";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
+} from "../../providerInstances";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -194,6 +202,32 @@ export function backgroundActivitySharedPolicySettings(
   };
 }
 
+export function resolveTextGenerationModelDefault(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+) {
+  const usableProviders = resolvePickerUsableProviders(settings, providers);
+  if (usableProviders.length === 0) {
+    return null;
+  }
+  return resolveAppModelSelectionState(
+    {
+      ...settings,
+      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+    },
+    usableProviders,
+  );
+}
+
+function resolvePickerUsableProviders(
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings)
+    .filter((entry) => isProviderInstancePickerReady(entry) && entry.models.length > 0)
+    .map((entry) => ({ ...entry.snapshot, enabled: entry.enabled }));
+}
+
 function collapseOtelSignalsUrl(input: {
   readonly tracesUrl: string;
   readonly metricsUrl: string;
@@ -330,4 +364,34 @@ export function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
+}
+
+export function resolveGeneralSettingsEnvironmentId(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly serverConfig?: {
+      readonly providers?: ReadonlyArray<ServerProvider> | null;
+      readonly settings: Pick<ServerSettings, "providerInstances" | "providers">;
+    } | null;
+  }>,
+  primaryEnvironmentId: EnvironmentId | null,
+): EnvironmentId | null {
+  const hasModels = (env?: (typeof environments)[number]) =>
+    Boolean(
+      env?.serverConfig?.providers &&
+      resolvePickerUsableProviders(env.serverConfig.settings, env.serverConfig.providers).length >
+        0,
+    );
+
+  const primary = environments.find((env) => env.environmentId === primaryEnvironmentId);
+  if (hasModels(primary)) {
+    return primaryEnvironmentId;
+  }
+
+  return (
+    environments.find(hasModels)?.environmentId ??
+    primary?.environmentId ??
+    environments[0]?.environmentId ??
+    null
+  );
 }

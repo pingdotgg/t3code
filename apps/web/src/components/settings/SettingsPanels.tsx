@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type BackgroundActivityProfile,
+  DEFAULT_SERVER_SETTINGS,
   type DesktopUpdateChannel,
+  type EnvironmentId,
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
@@ -62,7 +64,12 @@ import {
   useTheme,
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useEnvironmentSettings,
+  usePrimarySettings,
+  useUpdateEnvironmentSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -77,7 +84,14 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
-import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  EMPTY_SERVER_PROVIDERS,
+  primaryServerObservabilityAtom,
+  primaryServerProvidersAtom,
+  primaryServerSettingsAtom,
+  serverEnvironment,
+} from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -133,6 +147,8 @@ import {
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
+  resolveGeneralSettingsEnvironmentId,
+  resolveTextGenerationModelDefault,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -464,10 +480,54 @@ export function useSettingsRestore(onRestored?: () => void) {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
-  const isTextGenerationModelDirty = !Equal.equals(
-    settings.textGenerationModelSelection ?? null,
-    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const targetEnvironmentId =
+    resolveGeneralSettingsEnvironmentId(
+      environments.filter((environment) => environment.connection.phase === "connected"),
+      primaryEnvironmentId,
+    ) ?? primaryEnvironmentId;
+  const textGenSettings = useEnvironmentSettings(
+    targetEnvironmentId ?? (primaryEnvironmentId as EnvironmentId),
   );
+  const updateTextGenSettings = useUpdateEnvironmentSettings(
+    targetEnvironmentId ?? (primaryEnvironmentId as EnvironmentId),
+  );
+  const serverProviders =
+    useAtomValue(
+      targetEnvironmentId
+        ? serverEnvironment.providersValueAtom(targetEnvironmentId)
+        : primaryServerProvidersAtom,
+    ) ?? EMPTY_SERVER_PROVIDERS;
+
+  const textGenerationModelSelection = resolveAppModelSelectionState(
+    textGenSettings,
+    serverProviders,
+  );
+  const defaultTextGenerationModelSelection = resolveTextGenerationModelDefault(
+    textGenSettings,
+    serverProviders,
+  );
+
+  const textGenerationResetStateRef = useRef({
+    targetEnvironmentId,
+    updateTextGenSettings,
+    resetTextGenerationModelSelection: defaultTextGenerationModelSelection,
+  });
+  textGenerationResetStateRef.current = {
+    targetEnvironmentId,
+    updateTextGenSettings,
+    resetTextGenerationModelSelection: defaultTextGenerationModelSelection,
+  };
+
+  const isTextGenerationModelDirty =
+    defaultTextGenerationModelSelection !== null &&
+    (textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
+      textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
+      !Equal.equals(
+        textGenerationModelSelection.options ?? [],
+        defaultTextGenerationModelSelection.options ?? [],
+      ));
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = useMemo(
@@ -577,6 +637,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
+    const initialTargetEnvironmentId = targetEnvironmentId;
     const api = readLocalApi();
     const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
@@ -659,7 +720,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
-      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -677,14 +737,30 @@ export function useSettingsRestore(onRestored?: () => void) {
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
+    // The target environment can change while the confirmation dialog is open.
+    // Use its latest updater, but do not reset a different environment from the
+    // one the user chose before confirming.
+    const currentTextGenerationResetState = textGenerationResetStateRef.current;
+    if (
+      isTextGenerationModelDirty &&
+      currentTextGenerationResetState.targetEnvironmentId === initialTargetEnvironmentId &&
+      currentTextGenerationResetState.resetTextGenerationModelSelection !== null
+    ) {
+      currentTextGenerationResetState.updateTextGenSettings({
+        textGenerationModelSelection:
+          currentTextGenerationResetState.resetTextGenerationModelSelection,
+      });
+    }
     onRestored?.();
   }, [
     changedSettingLabels,
     clearThemeHalves,
+    isTextGenerationModelDirty,
     onRestored,
     setFollowSystem,
     setTheme,
     setThemeHalf,
+    targetEnvironmentId,
     theme,
     themeHalves,
     updateSettings,
@@ -1789,12 +1865,38 @@ function LegacyFeaturesSection() {
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const targetEnvironmentId =
+    resolveGeneralSettingsEnvironmentId(
+      environments.filter((environment) => environment.connection.phase === "connected"),
+      primaryEnvironmentId,
+    ) ?? primaryEnvironmentId;
+  const textGenSettings = useEnvironmentSettings(
+    targetEnvironmentId ?? (primaryEnvironmentId as EnvironmentId),
+  );
+  const updateTextGenSettings = useUpdateEnvironmentSettings(
+    targetEnvironmentId ?? (primaryEnvironmentId as EnvironmentId),
+  );
+
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
   const observability = useAtomValue(primaryServerObservabilityAtom);
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const serverProviders =
+    useAtomValue(
+      targetEnvironmentId
+        ? serverEnvironment.providersValueAtom(targetEnvironmentId)
+        : primaryServerProvidersAtom,
+    ) ?? EMPTY_SERVER_PROVIDERS;
+  const targetServerSettings =
+    useAtomValue(
+      targetEnvironmentId
+        ? serverEnvironment.settingsValueAtom(targetEnvironmentId)
+        : primaryServerSettingsAtom,
+    ) ?? DEFAULT_SERVER_SETTINGS;
   const diagnosticsDescription = formatDiagnosticsDescription({
     localTracingEnabled: observability?.localTracingEnabled ?? false,
     otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
@@ -1803,12 +1905,18 @@ export function GeneralSettingsPanel() {
     otlpMetricsUrl: observability?.otlpMetricsUrl,
   });
 
-  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenerationModelSelection = resolveAppModelSelectionState(
+    textGenSettings,
+    serverProviders,
+  );
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
   const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(serverProviders),
+      targetServerSettings,
+    ),
   );
   const textGenInstanceEntry = textGenerationModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenInstanceId,
@@ -1816,15 +1924,28 @@ export function GeneralSettingsPanel() {
   const textGenProvider: ProviderDriverKind =
     textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
   const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
-    settings,
+    {
+      ...textGenSettings,
+      providerInstances: targetServerSettings.providerInstances,
+      providers: targetServerSettings.providers,
+    },
     serverProviders,
     textGenInstanceId,
     textGenModel,
   );
-  const isTextGenerationModelDirty = !Equal.equals(
-    settings.textGenerationModelSelection ?? null,
-    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+
+  const defaultTextGenerationModelSelection = resolveTextGenerationModelDefault(
+    textGenSettings,
+    serverProviders,
   );
+  const isTextGenerationModelDirty =
+    defaultTextGenerationModelSelection !== null &&
+    (textGenerationModelSelection.instanceId !== defaultTextGenerationModelSelection.instanceId ||
+      textGenerationModelSelection.model !== defaultTextGenerationModelSelection.model ||
+      !Equal.equals(
+        textGenerationModelSelection.options ?? [],
+        defaultTextGenerationModelSelection.options ?? [],
+      ));
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
@@ -2307,13 +2428,12 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("text-generation-model")}
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
           resetAction={
-            isTextGenerationModelDirty ? (
+            isTextGenerationModelDirty && defaultTextGenerationModelSelection !== null ? (
               <SettingResetButton
                 label="text generation model"
                 onClick={() =>
-                  updateSettings({
-                    textGenerationModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+                  updateTextGenSettings({
+                    textGenerationModelSelection: defaultTextGenerationModelSelection,
                   })
                 }
               />
@@ -2330,10 +2450,10 @@ export function GeneralSettingsPanel() {
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onInstanceModelChange={(instanceId, model) => {
-                  updateSettings({
+                  updateTextGenSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
-                        ...settings,
+                        ...textGenSettings,
                         textGenerationModelSelection: createModelSelection(instanceId, model),
                       },
                       serverProviders,
@@ -2359,10 +2479,10 @@ export function GeneralSettingsPanel() {
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onModelOptionsChange={(nextOptions) => {
-                  updateSettings({
+                  updateTextGenSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
-                        ...settings,
+                        ...textGenSettings,
                         textGenerationModelSelection: createModelSelection(
                           textGenInstanceId,
                           textGenModel,
