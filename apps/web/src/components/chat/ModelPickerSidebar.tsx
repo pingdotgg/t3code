@@ -1,9 +1,17 @@
 import { type ProviderInstanceId } from "@t3tools/contracts";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+} from "react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { useUiStateStore } from "~/uiStateStore";
 import {
   isProviderInstancePickerReady,
   shouldShowInstanceBadge,
@@ -67,6 +75,45 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   };
   const showFavorites = props.showFavorites ?? true;
   const [hoveredInstanceId, setHoveredInstanceId] = useState<ProviderInstanceId | null>(null);
+  const [draggedInstanceId, setDraggedInstanceId] = useState<ProviderInstanceId | null>(null);
+  const [dragOverInstanceId, setDragOverInstanceId] = useState<ProviderInstanceId | null>(null);
+  const providerOrder = useUiStateStore((state) => state.providerOrder);
+  const reorderProviders = useUiStateStore((state) => state.reorderProviders);
+
+  const handleDragStart = useCallback((e: ReactDragEvent, instanceId: ProviderInstanceId) => {
+    e.dataTransfer.setData("text/plain", instanceId);
+    e.dataTransfer.effectAllowed = "move";
+    setDraggedInstanceId(instanceId);
+  }, []);
+
+  const handleDragOver = useCallback((e: ReactDragEvent, instanceId: ProviderInstanceId) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverInstanceId(instanceId);
+  }, []);
+
+  const handleDragLeave = useCallback((instanceId: ProviderInstanceId) => {
+    setDragOverInstanceId((current) => (current === instanceId ? null : current));
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: ReactDragEvent, targetInstanceId: ProviderInstanceId) => {
+      e.preventDefault();
+      if (draggedInstanceId && draggedInstanceId !== targetInstanceId) {
+        const allInstanceIds = props.instanceEntries.map((entry) => entry.instanceId);
+        reorderProviders(providerOrder, allInstanceIds, draggedInstanceId, targetInstanceId);
+      }
+      setDraggedInstanceId(null);
+      setDragOverInstanceId(null);
+    },
+    [draggedInstanceId, props.instanceEntries, providerOrder, reorderProviders],
+  );
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedInstanceId(null);
+    setDragOverInstanceId(null);
+  }, []);
+
   const sidebarContentRef = useRef<HTMLDivElement>(null);
   const [selectedIndicatorTop, setSelectedIndicatorTop] = useState<number | null>(null);
   useLayoutEffect(() => {
@@ -207,11 +254,24 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               button
             );
 
+            const isDragged = draggedInstanceId === entry.instanceId;
+            const isDragOver = dragOverInstanceId === entry.instanceId;
+
             return (
               <div
                 key={entry.instanceId}
-                className="relative w-full"
+                className={cn(
+                  "relative w-full transition-all duration-150",
+                  isDragged && "opacity-40 scale-95",
+                  isDragOver && !isDragged && "ring-2 ring-primary/80 rounded-md",
+                )}
                 data-model-picker-provider={entry.instanceId}
+                draggable={!isDisabled}
+                onDragStart={(e) => handleDragStart(e, entry.instanceId)}
+                onDragOver={(e) => handleDragOver(e, entry.instanceId)}
+                onDragLeave={() => handleDragLeave(entry.instanceId)}
+                onDrop={(e) => handleDrop(e, entry.instanceId)}
+                onDragEnd={handleDragEnd}
               >
                 <Tooltip>
                   <TooltipTrigger render={trigger} />
