@@ -16,6 +16,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
@@ -52,6 +53,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_COLLAB_PROGRESS_DEBOUNCE = "250 millis" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -999,6 +1001,41 @@ export const makeCodexSessionRuntime = (
         message,
       });
 
+    type CollabProgressEvent = Parameters<typeof emitEvent>[0];
+    interface PendingCollabProgress {
+      readonly item?: CollabProgressEvent;
+      readonly tokenUsage?: CollabProgressEvent;
+    }
+    const collabProgressWorker = yield* makeKeyedCoalescingWorker<
+      string,
+      PendingCollabProgress,
+      never,
+      never
+    >({
+      cooldown: CODEX_COLLAB_PROGRESS_DEBOUNCE,
+      merge: (current, next) => ({
+        ...current,
+        ...(next.item ? { item: next.item } : {}),
+        ...(next.tokenUsage ? { tokenUsage: next.tokenUsage } : {}),
+      }),
+      process: (agentThreadId, progress) =>
+        Effect.gen(function* () {
+          if (progress.item) {
+            yield* emitEvent(progress.item);
+          }
+          if (progress.tokenUsage) {
+            yield* emitEvent(progress.tokenUsage);
+          }
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to emit coalesced Codex subagent progress.", {
+              agentThreadId,
+              cause,
+            }),
+          ),
+        ),
+    }).pipe(Effect.provideService(Scope.Scope, runtimeScope));
+
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
       Ref.get(pendingApprovalsRef).pipe(
         Effect.flatMap((pendingApprovals) =>
@@ -1188,6 +1225,7 @@ export const makeCodexSessionRuntime = (
             return true;
           }
           case "turn/completed":
+            yield* collabProgressWorker.flushKey(child.agentThreadId);
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
               next.delete(child.agentThreadId);
@@ -1205,6 +1243,9 @@ export const makeCodexSessionRuntime = (
             });
             return true;
           case "thread/status/changed":
+            if (notification.params.status.type !== "active") {
+              yield* collabProgressWorker.flushKey(child.agentThreadId);
+            }
             yield* emitEvent({
               kind: "notification",
               threadId: options.threadId,
@@ -1217,27 +1258,31 @@ export const makeCodexSessionRuntime = (
             });
             return true;
           case "thread/tokenUsage/updated":
-            yield* emitEvent({
-              kind: "notification",
-              threadId: options.threadId,
-              ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
-              method: "collabAgent/tokenUsage",
-              payload: {
-                ...childIdentity,
-                tokenUsage: notification.params.tokenUsage,
+            yield* collabProgressWorker.enqueue(child.agentThreadId, {
+              tokenUsage: {
+                kind: "notification",
+                threadId: options.threadId,
+                ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+                method: "collabAgent/tokenUsage",
+                payload: {
+                  ...childIdentity,
+                  tokenUsage: notification.params.tokenUsage,
+                },
               },
             });
             return true;
           case "item/started":
           case "item/completed":
-            yield* emitEvent({
-              kind: "notification",
-              threadId: options.threadId,
-              ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
-              method: "collabAgent/item",
-              payload: {
-                ...childIdentity,
-                item: notification.params.item,
+            yield* collabProgressWorker.enqueue(child.agentThreadId, {
+              item: {
+                kind: "notification",
+                threadId: options.threadId,
+                ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+                method: "collabAgent/item",
+                payload: {
+                  ...childIdentity,
+                  item: notification.params.item,
+                },
               },
             });
             return true;
@@ -1245,6 +1290,7 @@ export const makeCodexSessionRuntime = (
             // The child is gone: drop its live-turn entry so a later Stop
             // doesn't waste a turn/interrupt RPC on a closed thread before
             // reaching the parent (review finding).
+            yield* collabProgressWorker.flushKey(child.agentThreadId);
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
               next.delete(child.agentThreadId);
@@ -1271,6 +1317,7 @@ export const makeCodexSessionRuntime = (
             if (willRetry) {
               return true;
             }
+            yield* collabProgressWorker.flushKey(child.agentThreadId);
             yield* Ref.update(collabChildLiveTurnsRef, (current) => {
               const next = new Map(current);
               next.delete(child.agentThreadId);
@@ -1790,12 +1837,16 @@ export const makeCodexSessionRuntime = (
         status: "closed",
         activeTurnId: undefined,
       });
+      // Runtime close cancels pending best-effort progress before publishing
+      // the terminal session event. The worker shares this scope with the
+      // notification consumer, so neither can offer after the event queue is
+      // shut down below.
+      yield* Scope.close(runtimeScope, Exit.void);
       yield* emitSessionEvent("session/closed", "Session stopped").pipe(
         Effect.catch((cause) =>
           Effect.logError("Failed to emit Codex session closed event.", { cause }),
         ),
       );
-      yield* Scope.close(runtimeScope, Exit.void);
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);
     });
