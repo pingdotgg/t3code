@@ -23,6 +23,7 @@ import { resolveRelayClerkTokenOptions } from "./publicConfig";
 import {
   isDesktopConnectAuthIdentityPending,
   shouldRetryDesktopConnectAuthState,
+  startSettledPolling,
 } from "./connectAuthState";
 
 /**
@@ -202,8 +203,7 @@ export function DesktopConnectAuthProvider({ children }: { readonly children: Re
   const shouldRetryAuthState = shouldRetryDesktopConnectAuthState(state);
   useEffect(() => {
     if (!shouldRetryAuthState) return;
-    const interval = setInterval(() => void refresh(), 3_000);
-    return () => clearInterval(interval);
+    return startSettledPolling(refresh, 3_000);
   }, [refresh, shouldRetryAuthState]);
 
   // The credential is shared with `t3 connect`, so a CLI sign-in or logout
@@ -220,8 +220,7 @@ export function DesktopConnectAuthProvider({ children }: { readonly children: Re
   const pendingLogin = state?.pendingLogin ?? false;
   useEffect(() => {
     if (!pendingLogin) return;
-    const interval = setInterval(() => void refresh(), LOGIN_WATCH_INTERVAL_MS);
-    return () => clearInterval(interval);
+    return startSettledPolling(refresh, LOGIN_WATCH_INTERVAL_MS);
   }, [pendingLogin, refresh]);
 
   const getToken = useCallback(async () => {
