@@ -39,11 +39,13 @@ import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  type ChangeRequestProviderReadiness,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
+  resolveChangeRequestProviderReadiness,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
@@ -269,11 +271,13 @@ function getMenuActionDisabledReason({
   gitStatus,
   isBusy,
   hasPrimaryRemote,
+  changeRequestProviderReadiness,
 }: {
   item: GitActionMenuItem;
   gitStatus: VcsStatusResult | null;
   isBusy: boolean;
   hasPrimaryRemote: boolean;
+  changeRequestProviderReadiness: ChangeRequestProviderReadiness;
 }): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
@@ -283,6 +287,7 @@ function getMenuActionDisabledReason({
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
+  const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const isBehind = gitStatus.behindCount > 0;
   const terminology = getSourceControlPresentation(gitStatus.sourceControlProvider).terminology;
 
@@ -324,11 +329,19 @@ function getMenuActionDisabledReason({
   if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
     return `Add an "origin" remote before creating a ${terminology.singular}.`;
   }
-  if (!isAhead) {
+  if (!hasDefaultBranchDelta) {
     return `No local commits to include in a ${terminology.singular}.`;
   }
   if (isBehind) {
     return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
+  }
+  // Auth readiness last: git-state blockers above are the user's immediate
+  // next step; the provider hint shows once the branch is otherwise PR-ready.
+  if (!changeRequestProviderReadiness.ready) {
+    return (
+      changeRequestProviderReadiness.hint ??
+      `Create ${terminology.singular} is currently unavailable.`
+    );
   }
   return `Create ${terminology.singular} is currently unavailable.`;
 }
@@ -1110,6 +1123,24 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
 
+  const sourceControlDiscovery = useEnvironmentQuery(
+    activeEnvironmentId === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId: activeEnvironmentId,
+          input: {},
+        }),
+  );
+  const refreshSourceControlDiscovery = sourceControlDiscovery.refresh;
+  const changeRequestProviderReadiness: ChangeRequestProviderReadiness = useMemo(
+    () =>
+      resolveChangeRequestProviderReadiness(
+        gitStatusForActions?.sourceControlProvider,
+        sourceControlDiscovery.data?.sourceControlProviders ?? null,
+      ),
+    [gitStatusForActions?.sourceControlProvider, sourceControlDiscovery.data],
+  );
+
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
@@ -1155,13 +1186,31 @@ export default function GitActionsControl({
   }, [gitStatusForActions?.isDefaultRef]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
+    () =>
+      buildMenuItems(
+        gitStatusForActions,
+        isGitActionRunning,
+        hasPrimaryRemote,
+        changeRequestProviderReadiness,
+      ),
+    [changeRequestProviderReadiness, gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
   );
   const quickAction = useMemo(
     () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
+      resolveQuickAction(
+        gitStatusForActions,
+        isGitActionRunning,
+        isDefaultRef,
+        hasPrimaryRemote,
+        changeRequestProviderReadiness,
+      ),
+    [
+      changeRequestProviderReadiness,
+      gitStatusForActions,
+      hasPrimaryRemote,
+      isDefaultRef,
+      isGitActionRunning,
+    ],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
@@ -1201,6 +1250,12 @@ export default function GitActionsControl({
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
         requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+        // Re-probe provider auth when it is currently blocking PR actions so
+        // authenticating in a terminal (e.g. `gh auth login`) re-enables them
+        // on window focus.
+        if (!changeRequestProviderReadiness.ready) {
+          refreshSourceControlDiscovery();
+        }
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
     };
     const handleVisibilityChange = () => {
@@ -1219,7 +1274,13 @@ export default function GitActionsControl({
       window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [activeEnvironmentId, gitCwd, refreshVcsStatus]);
+  }, [
+    activeEnvironmentId,
+    changeRequestProviderReadiness.ready,
+    gitCwd,
+    refreshSourceControlDiscovery,
+    refreshVcsStatus,
+  ]);
 
   const openExistingPr = useCallback(async () => {
     const openPr = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr : null;
@@ -1762,6 +1823,7 @@ export default function GitActionsControl({
                   gitStatus: gitStatusForActions,
                   isBusy: isGitActionRunning,
                   hasPrimaryRemote,
+                  changeRequestProviderReadiness,
                 });
                 if (item.disabled && disabledReason) {
                   return (
