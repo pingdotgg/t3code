@@ -18,28 +18,22 @@ export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =
     cliVersion: packageJson.version,
   }).pipe(Layer.provide(ProcessRunner.layer));
 
-export type ServiceReconcileResult =
-  | {
-      readonly changed: false;
-      readonly status: BootService.BootServiceStatus;
-    }
-  | {
-      readonly changed: true;
-      readonly previouslyInstalled: boolean;
-      readonly plan: BootService.BootServicePlan;
-    };
+export interface ServiceReconcileResult {
+  readonly changed: true;
+  readonly previouslyInstalled: boolean;
+  readonly previouslyCurrent: boolean;
+  readonly plan: BootService.BootServicePlan;
+}
 
 /** Install, update, or repair the service using the CLI version running this command. */
 export const reconcileService = Effect.fn("cli.service.reconcile")(function* () {
   const service = yield* BootService.BootService;
   const status = yield* service.status;
-  if (status.installed && status.current) {
-    return { changed: false, status } satisfies ServiceReconcileResult;
-  }
   const plan = yield* service.install;
   return {
     changed: true,
     previouslyInstalled: status.installed,
+    previouslyCurrent: status.current,
     plan,
   } satisfies ServiceReconcileResult;
 });
@@ -79,14 +73,13 @@ const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe
       flags,
       Effect.gen(function* () {
         const result = yield* reconcileService();
-        if (!result.changed) {
-          yield* Console.log(
-            `T3 Code service is already installed with t3@${packageJson.version}.`,
-          );
-          return;
-        }
+        const action = result.previouslyCurrent
+          ? "Restarted"
+          : result.previouslyInstalled
+            ? "Updated and restarted"
+            : "Installed and started";
         yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          `${action} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
         );
       }),
     ),
@@ -102,12 +95,13 @@ const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
       flags,
       Effect.gen(function* () {
         const result = yield* reconcileService();
-        if (!result.changed) {
-          yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
-          return;
-        }
+        const action = result.previouslyCurrent
+          ? "Restarted"
+          : result.previouslyInstalled
+            ? "Updated and restarted"
+            : "Installed and started";
         yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          `${action} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
         );
       }),
     ),
@@ -172,11 +166,9 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     return false;
   }
   const result = yield* reconcileService();
-  if (result.changed) {
-    yield* Console.log(
-      `Background service ${result.previouslyInstalled ? "updated" : "installed"}. Logs: ${result.plan.logPath}`,
-    );
-  }
+  yield* Console.log(
+    `Background service ${result.previouslyInstalled ? "updated" : "installed"}. Logs: ${result.plan.logPath}`,
+  );
   return true;
 });
 

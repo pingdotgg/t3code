@@ -11,16 +11,12 @@ Install it with the latest T3 Code release:
 npx t3@latest service install
 ```
 
+The same command repairs and restarts an existing service, so there is no separate restart step.
+
 Check whether it is installed:
 
 ```sh
 npx t3@latest service status
-```
-
-Update or repair it:
-
-```sh
-npx t3@latest service update
 ```
 
 Stop it and remove it from startup:
@@ -29,7 +25,8 @@ Stop it and remove it from startup:
 npx t3@latest service uninstall
 ```
 
-Updating restarts T3 Code briefly. Let active agent work and terminal commands finish first.
+Repairing with `service install` restarts T3 Code briefly. Let active agent work and terminal
+commands finish first.
 If a remote update is already in progress, wait for it to finish before retrying a local update.
 
 The service runs a small stable launcher. Exact T3 Code versions are installed separately, so a
