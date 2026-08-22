@@ -9,6 +9,7 @@ import {
   DEFAULT_SANS_FONT_STACK,
   appearanceFontStack,
   cssFontFamilies,
+  filterFontFamiliesWithoutBlocking,
   resolveDefaultFamilyLabel,
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
@@ -24,6 +25,36 @@ describe("areFontAdvancesMonospace", () => {
   it("fails open when canvas metrics are unavailable", () => {
     expect(areFontAdvancesMonospace([])).toBe(true);
     expect(areFontAdvancesMonospace([Number.NaN, Number.NaN])).toBe(true);
+  });
+});
+
+describe("filterFontFamiliesWithoutBlocking", () => {
+  it("yields when the time budget is exhausted and preserves accepted-family order", async () => {
+    let elapsed = 0;
+    const evaluated: string[] = [];
+    const yieldedAfter: string[][] = [];
+
+    const result = await filterFontFamiliesWithoutBlocking(
+      ["Alpha", "Beta", "Gamma", "Delta"],
+      (family) => {
+        evaluated.push(family);
+        elapsed += 5;
+        return family !== "Beta";
+      },
+      {
+        timeBudgetMs: 8,
+        now: () => elapsed,
+        yieldControl: async () => {
+          yieldedAfter.push([...evaluated]);
+        },
+      },
+    );
+
+    expect(result).toEqual(["Alpha", "Gamma", "Delta"]);
+    expect(yieldedAfter).toEqual([
+      ["Alpha", "Beta"],
+      ["Alpha", "Beta", "Gamma", "Delta"],
+    ]);
   });
 });
 

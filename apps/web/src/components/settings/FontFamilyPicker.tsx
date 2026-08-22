@@ -1,7 +1,11 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import {
+  filterFontFamiliesWithoutBlocking,
+  isMonospaceFamily,
+  queryInstalledFontFamilies,
+} from "../../appearanceFonts";
 import {
   Combobox,
   ComboboxEmpty,
@@ -58,42 +62,25 @@ export function discoverInstalledFonts(): void {
   });
 }
 
-let grantedProbeStarted = false;
-
-/**
- * Discover eagerly when the permission is already granted, so the picker
- * renders without waiting for a focus. Electron's default permission handler
- * approves silently (it has no prompt UI), and a browser that granted once
- * reports "granted" on later visits — in both, no user gesture is needed.
- * "prompt" and "denied" states change nothing: the focus-driven flow stays,
- * because raising the browser prompt still requires a gesture.
- */
-function probeAlreadyGrantedPermission(): void {
-  if (grantedProbeStarted || enumerationState.status !== "unknown") return;
-  grantedProbeStarted = true;
-  const permissions = typeof navigator !== "undefined" ? navigator.permissions : undefined;
-  if (typeof permissions?.query !== "function") return;
-  permissions.query({ name: "local-fonts" as PermissionName }).then(
-    (status) => {
-      if (status.state === "granted") discoverInstalledFonts();
-    },
-    () => {
-      // The engine does not recognize the permission name; keep the
-      // focus-driven flow.
-    },
-  );
-}
-
 /**
  * Whether the engine can list installed fonts (Local Font Access API —
  * Chromium and Electron). "unknown" until discovery resolves the permission;
  * rows render a plain family-name input until the state is known granted,
- * then upgrade to the picker. Where the permission is already granted,
- * discovery starts at mount and the picker appears without a focus.
+ * then upgrade to the picker. Discovery only starts from the plain input's
+ * focus gesture, so opening Appearance never scans the machine's font catalog.
  */
 export function useFontEnumeration(): FontEnumerationState {
-  useEffect(probeAlreadyGrantedPermission, []);
   return useSyncExternalStore(subscribeToEnumeration, readEnumerationState);
+}
+
+const monospaceFamiliesCache = new WeakMap<readonly string[], Promise<readonly string[]>>();
+
+function readMonospaceFamilies(families: readonly string[]): Promise<readonly string[]> {
+  const cached = monospaceFamiliesCache.get(families);
+  if (cached !== undefined) return cached;
+  const pending = filterFontFamiliesWithoutBlocking(families, isMonospaceFamily);
+  monospaceFamiliesCache.set(families, pending);
+  return pending;
 }
 
 /**
@@ -132,6 +119,22 @@ export function FontFamilyPicker({
   }, []);
   const listRef = useRef<LegendListRef | null>(null);
   const enumeration = useFontEnumeration();
+  const [monospaceClassification, setMonospaceClassification] = useState<{
+    readonly source: readonly string[];
+    readonly families: readonly string[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!requireMonospace || enumeration.status !== "granted") return;
+    const source = enumeration.families;
+    let cancelled = false;
+    void readMonospaceFamilies(source).then((families) => {
+      if (!cancelled) setMonospaceClassification({ source, families });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enumeration, requireMonospace]);
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -140,8 +143,15 @@ export function FontFamilyPicker({
 
   const families = useMemo(() => {
     if (enumeration.status !== "granted") return [];
-    return requireMonospace ? enumeration.families.filter(isMonospaceFamily) : enumeration.families;
-  }, [enumeration, requireMonospace]);
+    if (!requireMonospace) return enumeration.families;
+    return monospaceClassification?.source === enumeration.families
+      ? monospaceClassification.families
+      : [];
+  }, [enumeration, monospaceClassification, requireMonospace]);
+  const classifyingMonospaceFamilies =
+    requireMonospace &&
+    enumeration.status === "granted" &&
+    monospaceClassification?.source !== enumeration.families;
 
   const items = useMemo(() => {
     const trimmedQuery = query.trim().toLowerCase();
@@ -232,6 +242,11 @@ export function FontFamilyPicker({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {classifyingMonospaceFamilies ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground" role="status">
+              Checking installed fonts…
+            </div>
+          ) : null}
           <ComboboxEmpty>No fonts found.</ComboboxEmpty>
           <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
             <ComboboxListVirtualized className="size-full min-w-0 p-0">
