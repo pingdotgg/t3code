@@ -1,3 +1,4 @@
+import { BlurView } from "expo-blur";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type { ReactNode } from "react";
 import {
@@ -8,8 +9,9 @@ import {
   type ViewProps,
   type ViewStyle,
 } from "react-native";
-import { useThemeColor } from "../lib/useThemeColor";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { appBlurTargetRef } from "../lib/appBlurTarget";
+import { useThemeColor } from "../lib/useThemeColor";
 
 interface GlassSurfaceProps extends Omit<ViewProps, "className"> {
   readonly children: ReactNode;
@@ -18,6 +20,8 @@ interface GlassSurfaceProps extends Omit<ViewProps, "className"> {
   readonly chrome?: "default" | "none";
   /** Styling used only when native Liquid Glass is unavailable. */
   readonly fallbackStyle?: StyleProp<ViewStyle>;
+  /** Opts an Android fallback into the app-level blur target. */
+  readonly androidBlur?: boolean;
 }
 
 export function GlassSurface({
@@ -26,6 +30,7 @@ export function GlassSurface({
   chrome = "default",
   tintColor,
   fallbackStyle,
+  androidBlur = false,
   style,
   ...props
 }: GlassSurfaceProps) {
@@ -68,6 +73,21 @@ export function GlassSurface({
       >
         {children}
       </GlassView>
+    );
+  }
+
+  if (Platform.OS === "android" && androidBlur) {
+    return (
+      <BlurView
+        {...props}
+        blurMethod="dimezisBlurView"
+        blurTarget={appBlurTargetRef}
+        intensity={40}
+        tint={isDarkMode ? "dark" : "light"}
+        style={[surfaceStyle, fallbackStyle, style]}
+      >
+        {children}
+      </BlurView>
     );
   }
 
