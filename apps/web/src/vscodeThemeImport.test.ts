@@ -174,6 +174,20 @@ describe("VS Code theme import", () => {
     expect(green).toBeGreaterThan(red);
   });
 
+  it("accepts case-insensitive CSS color function names", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Uppercase color function",
+      type: "dark",
+      colors: {
+        "editor.background": "COLOR(SRGB 0 0 0)",
+        "editor.foreground": "COLOR(SRGB 1 1 1)",
+      },
+    });
+
+    expect(asHex(theme.colors.canvas)).toBe("#000000");
+    expect(asHex(theme.colors.text)).toBe("#ffffff");
+  });
+
   it("pairs light and dark files from one family into dual-mode themes", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({
