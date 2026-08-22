@@ -521,6 +521,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
+      ...(settings.defaultTerminalShell !== DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell
+        ? ["Default terminal shell"]
+        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -548,6 +551,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.defaultTerminalShell,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
@@ -656,6 +660,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      defaultTerminalShell: DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
@@ -2223,6 +2228,33 @@ export function GeneralSettingsPanel() {
               placeholder="~/"
               spellCheck={false}
               aria-label="Add project base directory"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("default-terminal-shell")}
+          description="Executable used for new terminals in this environment. Leave empty for the platform default; paths such as Git Bash are supported."
+          resetAction={
+            settings.defaultTerminalShell !== DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell ? (
+              <SettingResetButton
+                label="default terminal shell"
+                onClick={() =>
+                  updateSettings({
+                    defaultTerminalShell: DEFAULT_UNIFIED_SETTINGS.defaultTerminalShell,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-72"
+              value={settings.defaultTerminalShell}
+              onCommit={(next) => updateSettings({ defaultTerminalShell: next })}
+              placeholder="Platform default"
+              spellCheck={false}
+              aria-label="Default terminal shell"
             />
           }
         />

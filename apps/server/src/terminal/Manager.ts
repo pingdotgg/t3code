@@ -34,6 +34,7 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
@@ -49,9 +50,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 import {
   increment,
   terminalRestartsTotal,
@@ -59,6 +62,7 @@ import {
 } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -460,13 +464,14 @@ function normalizeShellCommand(
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
 
-  if (platform === "win32") {
-    return trimmed;
-  }
+  const quotedExecutable = trimmed.match(/^(["'])(.*?)\1(?:\s|$)/u)?.[2];
+  if (quotedExecutable) return expandHomePath(quotedExecutable);
+
+  if (platform === "win32") return expandHomePath(trimmed);
 
   const firstToken = trimmed.split(/\s+/g)[0]?.trim();
   if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
+  return expandHomePath(firstToken.replace(/^['"]|['"]$/g, ""));
 }
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
@@ -539,15 +544,22 @@ function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellC
   return ordered;
 }
 
-function resolveShellCandidates(
+const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(function* (
   shellResolver: () => string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-): ShellCandidate[] {
-  const requested = shellCandidateFromCommand(
-    normalizeShellCommand(shellResolver(), platform),
-    platform,
-  );
+): Effect.fn.Return<ShellCandidate[], never, FileSystem.FileSystem | Path.Path> {
+  const requestedCommand = normalizeShellCommand(shellResolver(), platform);
+  const resolvedRequestedCommand =
+    platform === "win32" && requestedCommand !== null
+      ? yield* resolveCommandPath(requestedCommand, { env }).pipe(
+          Effect.provideService(HostProcessPlatform, platform),
+          Effect.catchTags({
+            CommandResolutionError: () => Effect.succeed(requestedCommand),
+          }),
+        )
+      : requestedCommand;
+  const requested = shellCandidateFromCommand(resolvedRequestedCommand, platform);
 
   if (platform === "win32") {
     return uniqueShellCandidates([
@@ -571,7 +583,7 @@ function resolveShellCandidates(
     shellCandidateFromCommand("bash", platform),
     shellCandidateFromCommand("sh", platform),
   ]);
-}
+});
 
 function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
   const queue: unknown[] = [error];
@@ -1133,9 +1145,21 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const { terminalLogsDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
+  const settingsService = yield* ServerSettings.ServerSettingsService;
+  const settingsChanges = yield* settingsService.subscribeChanges;
+  let configuredShell = (yield* settingsService.getSettings).defaultTerminalShell;
+  yield* settingsChanges.pipe(
+    Stream.runForEach((settings) =>
+      Effect.sync(() => {
+        configuredShell = settings.defaultTerminalShell;
+      }),
+    ),
+    Effect.forkScoped,
+  );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
+    shellResolver: () => configuredShell,
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
   });
@@ -1867,8 +1891,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+            const shellCandidates = yield* resolveShellCandidates(
+              shellResolver,
+              platform,
+              terminalEnv,
+            ).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            );
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
