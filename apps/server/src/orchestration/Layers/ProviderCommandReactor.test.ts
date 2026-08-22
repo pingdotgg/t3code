@@ -150,6 +150,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly worktreeBranchPrefix?: string;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -412,7 +413,13 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest(
+          input?.worktreeBranchPrefix === undefined
+            ? {}
+            : { worktreeBranchPrefix: input.worktreeBranchPrefix },
+        ),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -1456,59 +1463,72 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Reconnect spinner resume bug");
   });
 
-  it("generates a worktree branch name for the first turn", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
+  it.each([
+    {
+      prefix: undefined,
+      generated: "feature/gpt-5-6-luna",
+      expected: "t3code/feature/gpt-5-6-luna",
+    },
+    {
+      prefix: "my-team",
+      generated: "My-Team/feature/gpt-5-6-luna",
+      expected: "my-team/feature/gpt-5-6-luna",
+    },
+    {
+      prefix: "t3code/my-team",
+      generated: "t3code/my-team/feature/gpt-5-6-luna",
+      expected: "t3code/my-team/feature/gpt-5-6-luna",
+    },
+    { prefix: "", generated: "feature/gpt-5-6-luna", expected: "feature/gpt-5-6-luna" },
+  ])(
+    "generates a worktree branch name with prefix $prefix",
+    async ({ prefix, generated, expected }) => {
+      const harness = await createHarness(
+        prefix === undefined ? undefined : { worktreeBranchPrefix: prefix },
+      );
+      const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-branch"),
-        threadId: ThreadId.make("thread-1"),
-        branch: "t3code/1234abcd",
-        worktreePath: "/tmp/provider-project-worktree",
-      }),
-    );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-branch"),
+          threadId: ThreadId.make("thread-1"),
+          branch: "t3code/1234abcd",
+          worktreePath: "/tmp/provider-project-worktree",
+        }),
+      );
 
-    harness.generateBranchName.mockImplementation((input: unknown) =>
-      Effect.succeed({
-        branch:
-          typeof input === "object" &&
-          input !== null &&
-          "modelSelection" in input &&
-          typeof input.modelSelection === "object" &&
-          input.modelSelection !== null &&
-          "model" in input.modelSelection &&
-          typeof input.modelSelection.model === "string"
-            ? `feature/${input.modelSelection.model}`
-            : "feature/generated",
-      }),
-    );
+      harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: generated }));
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-branch-model"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-branch-model"),
-          role: "user",
-          text: "Add a safer reconnect backoff.",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-branch-model"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-branch-model"),
+            role: "user",
+            text: "Add a safer reconnect backoff.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
 
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
-    await waitFor(() => harness.refreshStatus.mock.calls.length === 1);
-    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
-      message: "Add a safer reconnect backoff.",
-    });
-    expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
-  });
+      await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+      await waitFor(() => harness.refreshStatus.mock.calls.length === 1);
+      expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+        message: "Add a safer reconnect backoff.",
+      });
+      expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+      expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+        oldBranch: "t3code/1234abcd",
+        newBranch: expected,
+      });
+    },
+  );
 
   it("forwards codex model options through session start and turn send", async () => {
     const harness = await createHarness();
