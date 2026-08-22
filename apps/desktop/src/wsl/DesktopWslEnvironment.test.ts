@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -19,7 +20,9 @@ import {
   parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
+  parseWslListeningPorts,
   probeWslDistros,
+  probeWslListeningPorts,
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
@@ -257,5 +260,59 @@ describe("formatMissingToolsReason", () => {
     expect(reason).toContain("python3");
     expect(reason).toContain("build-essential");
     expect(reason).not.toContain("nvm");
+  });
+});
+
+describe("parseWslListeningPorts", () => {
+  const procNetTcp = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: FEFFFF0A:0035 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 8206 1 0000000000000000 100 0 0 10 0
+   1: 00000000:0EBD 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 75100 1 0000000000000000 100 0 0 10 0
+   2: 0100007F:0EBD 0100007F:E03C 01 00000000:00000000 00:00000000 00000000  1000        0 57112 1 0000000000000000 20 4 31 10 -1
+`;
+
+  const procNetTcp6 = `  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000000000000:6066 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 201935 1 0000000000000000 100 0 0 10 0
+`;
+
+  it("collects listening ports from both address families and ignores live connections", () => {
+    const ports = parseWslListeningPorts(`${procNetTcp}${procNetTcp6}`);
+
+    expect(Option.isSome(ports)).toBe(true);
+    // 0EBD is the 3773 the background `t3` service holds; E03C is a client
+    // socket on the same port and must not be mistaken for a listener.
+    expect([...Option.getOrThrow(ports)].sort((a, b) => a - b)).toEqual([53, 3773, 24_678]);
+  });
+
+  it("reads an empty table as nothing listening", () => {
+    const header = procNetTcp.split("\n")[0] ?? "";
+
+    expect(parseWslListeningPorts(header)).toEqual(Option.some(new Set<number>()));
+  });
+
+  it("reports unknown rather than empty when no table was read", () => {
+    expect(parseWslListeningPorts("")).toEqual(Option.none());
+    expect(parseWslListeningPorts("wsl.exe: no such distribution\n")).toEqual(Option.none());
+  });
+});
+
+describe("probeWslListeningPorts", () => {
+  it.effect("gives a cold WSL VM the same ten seconds pre-warm allows", () => {
+    const layer = Layer.merge(
+      TestClock.layer(),
+      // Never exits, standing in for a distro still booting.
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, makeDistroListSpawner({})),
+    );
+    return Effect.gen(function* () {
+      const fiber = yield* probeWslListeningPorts("Ubuntu").pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* TestClock.adjust(Duration.seconds(9));
+      expect(fiber.pollUnsafe()).toBeUndefined();
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      // Degrades to "unknown", never to "nothing is listening" -- an empty set
+      // would hand the scan a port the distro may already hold.
+      expect(yield* Fiber.join(fiber)).toEqual(Option.none());
+    }).pipe(Effect.provide(layer));
   });
 });
