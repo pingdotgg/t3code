@@ -14,6 +14,7 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { canRefreshProviders, ProviderRefreshButton } from "./ProviderRefreshButton";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   return connectionStatusText({
@@ -28,6 +29,9 @@ export function ConnectionEnvironmentRow(props: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly onReconnect: (environmentId: EnvironmentId) => void;
+  readonly onRefreshProviders: (
+    environmentId: EnvironmentId,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly onRemove: (environmentId: EnvironmentId) => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
@@ -200,6 +204,11 @@ export function ConnectionEnvironmentRow(props: {
               <SymbolView name="trash" size={14} tintColor={dangerFg} type="monochrome" />
             </Pressable>
           </View>
+          {canRefreshProviders(props.environment.connectionState) ? (
+            <ProviderRefreshButton
+              onRefresh={() => props.onRefreshProviders(props.environment.environmentId)}
+            />
+          ) : null}
         </Animated.View>
       ) : null}
     </Animated.View>
