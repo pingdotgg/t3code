@@ -371,7 +371,7 @@ describe("buildThreadFeed", () => {
     expect(serializedToolOutputs).toBe(1);
   });
 
-  it("folds settled turn work while leaving the terminal answer visible", () => {
+  it("keeps the first and terminal assistant messages visible around settled work", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({
       id: ThreadId.make("thread-3"),
@@ -387,9 +387,9 @@ describe("buildThreadFeed", () => {
       },
       messages: [
         {
-          id: MessageId.make("assistant-commentary"),
+          id: MessageId.make("assistant-first"),
           role: "assistant",
-          text: "I am checking.",
+          text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
           turnId,
           streaming: false,
           createdAt: "2026-04-01T00:00:02.000Z",
@@ -424,8 +424,12 @@ describe("buildThreadFeed", () => {
 
     const feed = buildThreadFeed(thread);
     const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
-    expect(collapsed.map((entry) => entry.id)).toEqual(["turn-fold:turn-1", "assistant-final"]);
-    expect(collapsed[0]).toMatchObject({
+    expect(collapsed.map((entry) => entry.id)).toEqual([
+      "assistant-first",
+      "turn-fold:turn-1",
+      "assistant-final",
+    ]);
+    expect(collapsed[1]).toMatchObject({
       type: "turn-fold",
       label: "Worked for 17s",
       expanded: false,
@@ -433,9 +437,64 @@ describe("buildThreadFeed", () => {
 
     const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
     expect(expanded.map((entry) => entry.id)).toEqual([
+      "assistant-first",
       "turn-fold:turn-1",
-      "assistant-commentary",
       "tool-completed",
+      "assistant-final",
+    ]);
+  });
+
+  it("folds assistant messages between the first and terminal messages", () => {
+    const turnId = TurnId.make("turn-1");
+    const thread = makeThread({
+      id: ThreadId.make("thread-middle-message"),
+      projectId: ProjectId.make("project-1"),
+      title: "Bounded narration",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:06.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-first"),
+          role: "assistant",
+          text: "The main result is ready.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:02.000Z",
+        },
+        {
+          id: MessageId.make("assistant-middle"),
+          role: "assistant",
+          text: "I am checking one more detail.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:03.000Z",
+          updatedAt: "2026-04-01T00:00:04.000Z",
+        },
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "Verification finished.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:05.000Z",
+          updatedAt: "2026-04-01T00:00:06.000Z",
+        },
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const rows = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+
+    expect(rows.map((entry) => entry.id)).toEqual([
+      "assistant-first",
+      "turn-fold:turn-1",
       "assistant-final",
     ]);
   });
