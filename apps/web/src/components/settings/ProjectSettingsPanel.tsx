@@ -81,8 +81,6 @@ import {
   type NewProjectScriptInput,
   type ProjectScriptEditorRequest,
 } from "../projectScriptEditor";
-import { cn } from "../../lib/utils";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
@@ -103,13 +101,17 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
+import {
+  canPickExternalProjectFavicon,
+  ProjectFaviconPickerDialog,
+} from "./ProjectFaviconPickerDialog";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -175,26 +177,9 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        {!isElectron && (
-          <header
-            className={cn(
-              "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-            )}
-          >
-            <ProjectSettingsBreadcrumb projectKey={projectKey} />
-          </header>
-        )}
-        {isElectron && (
-          <div
-            className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-            )}
-          >
-            <ProjectSettingsBreadcrumb projectKey={projectKey} />
-          </div>
-        )}
+        <WorkspacePageHeader electron={isElectron}>
+          <ProjectSettingsBreadcrumb projectKey={projectKey} />
+        </WorkspacePageHeader>
         <ProjectSettingsPanel projectKey={projectKey} />
       </div>
     </SidebarInset>
@@ -304,6 +289,7 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
 
 function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const navigate = useNavigate();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const settings = usePrimarySettings();
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -337,6 +323,15 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       (member) => member.environmentId === group.environmentId && member.id === group.id,
     ) ?? group.memberProjects[0]!;
   const faviconPath = representative.faviconPath ?? null;
+  const pickProjectFavicon =
+    typeof window !== "undefined" &&
+    group.memberProjects.every(
+      (member) =>
+        member.environmentId === primaryEnvironmentId &&
+        canPickExternalProjectFavicon(member.workspaceRoot, navigator.platform),
+    )
+      ? window.desktopBridge?.pickProjectFavicon
+      : undefined;
 
   const threadCountByMember = useMemo(() => {
     const counts = new Map<string, number>();
@@ -849,6 +844,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     onPromptChange={() => {}}
                     modelOptions={resolvedSelection.options ?? []}
                     allowPromptInjectedEffort={false}
+                    planModeEnabled={settings.planModeEnabled}
                     triggerVariant="outline"
                     triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                     onModelOptionsChange={(nextOptions) => {
@@ -1183,6 +1179,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         cwd={representative.workspaceRoot}
         environmentId={representative.environmentId}
         onOpenChange={setFaviconPickerOpen}
+        {...(pickProjectFavicon
+          ? { onPickExternal: () => pickProjectFavicon(representative.workspaceRoot) }
+          : {})}
         onSelect={(path) => void setFaviconPath(path)}
         open={faviconPickerOpen}
         projectName={group.displayName}

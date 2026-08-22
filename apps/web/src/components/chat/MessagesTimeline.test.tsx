@@ -176,7 +176,6 @@ const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
 function buildProps() {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
@@ -237,6 +236,44 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders the worked-for row at assistant response text size", () => {
+    const turnId = TurnId.make("turn-with-fold");
+    const assistantEntry = buildAssistantTimelineEntry("Done.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "completed",
+          startedAt: "2026-03-17T19:12:20.000Z",
+          completedAt: "2026-03-17T19:12:28.000Z",
+        }}
+        timelineEntries={[
+          {
+            id: "work-entry-with-fold",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:22.000Z",
+            entry: {
+              id: "work-with-fold",
+              createdAt: "2026-03-17T19:12:22.000Z",
+              turnId,
+              label: "Ran command",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            ...assistantEntry,
+            message: { ...assistantEntry.message, turnId },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Worked for 8.0s");
+    expect(markup).toContain("px-1 text-sm leading-relaxed text-muted-foreground");
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
@@ -441,6 +478,56 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+  });
+
+  it("hands end-following back to the list once the send anchor is released", () => {
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+      },
+    };
+    const timelineEntries = [firstEntry, secondEntry];
+
+    // While the send anchor holds the end space open, ChatView owns streaming
+    // scrolls and LegendList must not re-pin behind it.
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={secondEntry.message.id}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).not.toContain('data-maintain-scroll-at-end="enabled"');
+
+    // Dropping the anchor is what actually gives end-following back, so
+    // returning to the live edge has to release it — re-enabling live follow
+    // alone leaves nothing pinned to the stream.
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={null}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).toContain('data-maintain-scroll-at-end="enabled"');
+
+    // Reading history still wins over both.
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={null}
+          liveFollowEnabled={false}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
   it("renders collapse controls for long user messages", () => {
@@ -700,7 +787,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
-  it("formats changed file paths from the workspace root", () => {
+  it("summarizes changed files in one line", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -722,8 +809,157 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
+    expect(markup).toContain("Changed 1 file");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+  });
+
+  it("shows the animated one-line label for a live tool group", () => {
+    const turnId = TurnId.make("turn-live");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-live",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-live",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "call-live",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "pnpm test",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Working for");
+    expect(markup).toContain("Running pnpm");
+    expect(markup).toContain("live-activity-focus");
+  });
+
+  it("scopes a live row failure to the tool named by the row", () => {
+    const turnId = TurnId.make("turn-live");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-failed",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "call-failed",
+              label: "Run lint",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "pnpm lint",
+              toolLifecycleStatus: "failed",
+            },
+          },
+          {
+            id: "entry-running",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-running",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "call-running",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "pnpm test",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Running pnpm");
+    expect(markup).not.toContain("tool call failed");
+  });
+
+  it("keeps terminal command copy live while the parent turn is active", () => {
+    const turnId = TurnId.make("turn-live");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-failed",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "call-failed",
+              label: "Run lint",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "pnpm lint",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Running pnpm");
+    expect(markup).toContain("tool call failed");
+  });
+
+  it("aligns the iconless Thinking row with the working timer", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        timelineEntries={[]}
+      />,
+    );
+
+    expect(markup).toContain("Working for");
+    expect(markup).toContain("Thinking");
+    expect(markup).toContain("gap-1.5 py-0.5 px-1");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {
