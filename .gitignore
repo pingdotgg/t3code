@@ -35,6 +35,9 @@ artifacts/app-store/screenshots/
 native/**/target/
 node_modules/
 .alchemy/
+# ClaudeTextGeneration.test.ts writes a real .claude.json here and leaves it
+# behind, so an unscoped `git add` would commit live session data.
+.claude-work-test/
 *.log
 .env*
 !.env.example

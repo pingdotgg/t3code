@@ -15,6 +15,7 @@ import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tool
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
@@ -40,6 +41,7 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
@@ -105,6 +107,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const { cwd } = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -131,13 +134,18 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         instanceId,
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
+      const ptyAdapter = Option.getOrUndefined(yield* Effect.serviceOption(PtyAdapter.PtyAdapter));
 
-      const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
+      const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv, cwd).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
+        (effect) =>
+          ptyAdapter
+            ? effect.pipe(Effect.provideService(PtyAdapter.PtyAdapter, ptyAdapter))
+            : effect,
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

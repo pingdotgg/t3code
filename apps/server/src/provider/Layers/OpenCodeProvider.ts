@@ -23,6 +23,11 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
+import {
+  connectedManagedOpenCodeProviders,
+  resolveOpenCodeManagedUsageLimits,
+} from "../openCodeUsageLimits.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const OPENCODE_PRESENTATION = {
@@ -459,6 +464,23 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   );
   const skills = flattenOpenCodeSkills(inventoryExit.value);
   const connectedCount = inventoryExit.value.providerList.connected.length;
+  // Only OpenCode-managed providers (Go / Zen) expose usage, so the warning is
+  // gated on *those* being connected. An inventory with only BYO upstreams
+  // (OpenAI, Anthropic, ...) reports no usage section at all rather than
+  // claiming usage information was withheld.
+  const managedConnectedCount = connectedManagedOpenCodeProviders(inventoryExit.value).length;
+  const usageLimits =
+    resolveOpenCodeManagedUsageLimits({
+      checkedAt,
+      inventory: inventoryExit.value,
+    }) ??
+    (managedConnectedCount > 0
+      ? makeUnavailableUsageLimits({
+          source: "opencodeManaged",
+          checkedAt,
+          reason: "Connected OpenCode providers did not report usage information",
+        })
+      : undefined);
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
@@ -479,6 +501,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           : isExternalServer
             ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
             : "OpenCode is available, but it did not report any connected upstream providers.",
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });

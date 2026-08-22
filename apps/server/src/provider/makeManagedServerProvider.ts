@@ -1,6 +1,7 @@
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   type ServerProvider,
+  type ServerProviderUsageWindow,
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -17,11 +18,14 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { applyRuntimeUsageLimits, resolveUsageLimitsAfterRefresh } from "./providerUsageLimits.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  readonly usageEpoch: number;
+  readonly usageWindowEpochs: ReadonlyMap<ServerProviderUsageWindow["kind"], number>;
 }
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
@@ -57,6 +61,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
+    usageEpoch: 0,
+    usageWindowEpochs: new Map(),
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -67,14 +73,23 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     nextSnapshot: ServerProvider,
   ) {
     const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-      if (state.enrichmentGeneration !== generation || Equal.equals(state.snapshot, nextSnapshot)) {
+      if (state.enrichmentGeneration !== generation) {
+        return [null, state] as const;
+      }
+      // Live usage patches can land while enrichment is in flight. Keep the
+      // current usageLimits so a stale enriched snapshot cannot revert them.
+      const mergedSnapshot =
+        nextSnapshot.usageLimits === state.snapshot.usageLimits
+          ? nextSnapshot
+          : { ...nextSnapshot, usageLimits: state.snapshot.usageLimits };
+      if (Equal.equals(state.snapshot, mergedSnapshot)) {
         return [null, state] as const;
       }
       return [
-        nextSnapshot,
+        mergedSnapshot,
         {
           ...state,
-          snapshot: nextSnapshot,
+          snapshot: mergedSnapshot,
         },
       ] as const;
     });
@@ -110,6 +125,50 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* Ref.set(enrichmentFiberRef, fiber);
   });
 
+  /**
+   * Runtime usage updates arrive between probes and must not disturb the
+   * enrichment generation: they patch only `usageLimits` on whatever snapshot
+   * is currently published, and publish again only when that actually changed.
+   */
+  const applyUsageLimits: ServerProviderShape["applyUsageLimits"] = (update) =>
+    Effect.gen(function* () {
+      const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
+        const nextUsageLimits = applyRuntimeUsageLimits({
+          previous: state.snapshot.usageLimits,
+          source: update.source,
+          checkedAt: update.checkedAt,
+          windows: update.windows,
+        });
+        if (
+          nextUsageLimits === undefined ||
+          Equal.equals(state.snapshot.usageLimits, nextUsageLimits)
+        ) {
+          return [null, state] as const;
+        }
+        const nextSnapshot = { ...state.snapshot, usageLimits: nextUsageLimits };
+        const usageEpoch = state.usageEpoch + 1;
+        const previousWindows =
+          state.snapshot.usageLimits?.available === true
+            ? state.snapshot.usageLimits.windows
+            : ([] as const);
+        const usageWindowEpochs = new Map(state.usageWindowEpochs);
+        for (const nextWindow of nextUsageLimits.windows) {
+          const previousWindow = previousWindows.find((window) => window.kind === nextWindow.kind);
+          if (!Equal.equals(previousWindow, nextWindow)) {
+            usageWindowEpochs.set(nextWindow.kind, usageEpoch);
+          }
+        }
+        return [
+          nextSnapshot,
+          { ...state, snapshot: nextSnapshot, usageEpoch, usageWindowEpochs },
+        ] as const;
+      });
+      if (snapshotToPublish === null) {
+        return;
+      }
+      yield* PubSub.publish(changesPubSub, snapshotToPublish);
+    });
+
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
     options?: { readonly forceRefresh?: boolean },
@@ -121,23 +180,42 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
 
+    const usageEpochAtStart = (yield* Ref.get(snapshotStateRef)).usageEpoch;
     const nextSnapshot = yield* input.checkProvider;
-    const nextGeneration = yield* Ref.modify(snapshotStateRef, (state) => {
-      const generation = input.enrichSnapshot
-        ? state.enrichmentGeneration + 1
-        : state.enrichmentGeneration;
-      return [
-        generation,
-        {
-          snapshot: nextSnapshot,
+    const { snapshot: publishedSnapshot, generation } = yield* Ref.modify(
+      snapshotStateRef,
+      (state) => {
+        const generation = input.enrichSnapshot
+          ? state.enrichmentGeneration + 1
+          : state.enrichmentGeneration;
+        const livePatchedWindows =
+          state.snapshot.usageLimits?.available === true
+            ? state.snapshot.usageLimits.windows.filter(
+                (window) => (state.usageWindowEpochs.get(window.kind) ?? 0) > usageEpochAtStart,
+              )
+            : [];
+        const usageLimits = resolveUsageLimitsAfterRefresh({
+          published: state.snapshot.usageLimits,
+          probed: nextSnapshot.usageLimits,
+          livePatchedWindows,
+        });
+        const snapshot =
+          usageLimits === nextSnapshot.usageLimits
+            ? nextSnapshot
+            : { ...nextSnapshot, usageLimits };
+        const nextState = {
+          snapshot,
           enrichmentGeneration: generation,
-        },
-      ] as const;
-    });
+          usageEpoch: state.usageEpoch,
+          usageWindowEpochs: state.usageWindowEpochs,
+        };
+        return [{ snapshot, generation }, nextState] as const;
+      },
+    );
     yield* Ref.set(settingsRef, nextSettings);
-    yield* PubSub.publish(changesPubSub, nextSnapshot);
-    yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
-    return nextSnapshot;
+    yield* PubSub.publish(changesPubSub, publishedSnapshot);
+    yield* restartSnapshotEnrichment(nextSettings, publishedSnapshot, generation);
+    return publishedSnapshot;
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
@@ -222,6 +300,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     maintenanceCapabilities: input.maintenanceCapabilities,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    applyUsageLimits,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

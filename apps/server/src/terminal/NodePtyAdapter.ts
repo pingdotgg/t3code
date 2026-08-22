@@ -69,9 +69,11 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
 
 class NodePtyProcess implements PtyAdapter.PtyProcess {
   private readonly process: import("node-pty").IPty;
+  private readonly platform: NodeJS.Platform;
 
-  constructor(process: import("node-pty").IPty) {
+  constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
     this.process = process;
+    this.platform = platform;
   }
 
   get pid(): number {
@@ -87,6 +89,22 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   kill(signal?: string): void {
+    // node-pty 1.1.0's Windows conpty teardown resolves its console process
+    // list as `undefined` and then calls `.forEach` on it inside its own
+    // promise continuation (`windowsPtyAgent.js:141`). Nothing handles that
+    // rejection, so killing a live PTY on Windows terminates this entire
+    // process. The throw is asynchronous, so no try/catch around `kill()` can
+    // intercept it — the only reliable avoidance is to not enter that code
+    // path. Signal the OS process directly instead; conpty resources are
+    // reclaimed when the process goes away.
+    if (this.platform === "win32") {
+      try {
+        process.kill(this.process.pid);
+      } catch {
+        // Already gone, or we lack permission — nothing useful to do.
+      }
+      return;
+    }
     this.process.kill(signal);
   }
 
@@ -164,7 +182,7 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
             cause,
           }),
       });
-      return new NodePtyProcess(ptyProcess);
+      return new NodePtyProcess(ptyProcess, platform);
     }),
   });
 });

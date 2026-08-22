@@ -345,6 +345,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
+                rateLimits: {
+                  primary: { usedPercent: 28, windowDurationMins: 300 },
+                  secondary: { usedPercent: 61, windowDurationMins: 10080 },
+                },
                 skills: [
                   {
                     name: "github:gh-fix-ci",
@@ -381,6 +385,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               shortDescription: "Debug failing GitHub Actions checks",
             },
           ]);
+          assert.deepStrictEqual(
+            status.usageLimits?.windows.map((window) => window.kind),
+            ["session", "weekly"],
+          );
         }),
       );
 
@@ -458,6 +466,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "apiKey");
           assert.strictEqual(status.auth.label, "OpenAI API Key");
+          assert.deepStrictEqual(status.usageLimits, {
+            source: "codexAppServer",
+            available: false,
+            reason: "Usage limits unavailable for API key Codex accounts.",
+            windows: [],
+            checkedAt: status.checkedAt,
+          });
         }),
       );
 
@@ -855,6 +870,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 Effect.andThen(Effect.never),
               ),
               streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -944,6 +960,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               getSnapshot: Effect.succeed(initialProvider),
               refresh: Effect.succeed(refreshedProvider),
               streamChanges: Stream.fromPubSub(changes),
+              applyUsageLimits: () => Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1073,6 +1090,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 getSnapshot: Effect.succeed(initialProvider),
                 refresh: Effect.succeed(authoritativeProvider),
                 streamChanges: Stream.fromPubSub(changes),
+                applyUsageLimits: () => Effect.void,
               },
               adapter: {} as ProviderInstance["adapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1180,6 +1198,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               getSnapshot: Effect.succeed(cachedProvider),
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1273,6 +1292,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               getSnapshot: Effect.succeed(provider),
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],

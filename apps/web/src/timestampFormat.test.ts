@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  formatDateTimeTimestamp,
   formatDayAwareTimestamp,
   formatElapsedDurationLabel,
   formatExpiresInLabel,
@@ -94,6 +95,10 @@ describe("formatRelativeTimeUntilLabel", () => {
     expect(formatRelativeTimeUntilLabel("2026-04-07T12:00:45.000Z")).toBe("45s left");
   });
 
+  it("formats near-future instants as Soon", () => {
+    expect(formatRelativeTimeUntilLabel("2026-04-07T12:00:03.000Z")).toBe("Soon");
+  });
+
   it("formats minutes remaining", () => {
     expect(formatRelativeTimeUntilLabel("2026-04-07T12:15:00.000Z")).toBe("15m left");
   });
@@ -129,6 +134,31 @@ describe("formatExpiresInLabel", () => {
   it("uses hours with minute and second remainder", () => {
     expect(formatExpiresInLabel("2026-04-07T14:02:03.000Z")).toBe("Expires in 2h 2m 3s");
     expect(formatExpiresInLabel("2026-04-07T18:00:00.000Z")).toBe("Expires in 6h");
+  });
+});
+
+describe("formatDateTimeTimestamp", () => {
+  const iso = (y: number, monthIndex: number, d: number, h: number, mi: number) =>
+    new Date(y, monthIndex, d, h, mi).toISOString();
+
+  it("returns empty for an invalid instant", () => {
+    expect(formatDateTimeTimestamp("not-a-date", "12-hour")).toBe("");
+  });
+
+  it("prefixes the locale date with the clock from timestampFormat", () => {
+    const resetAt = iso(2026, 7, 16, 15, 30);
+    const datePart = new Intl.DateTimeFormat(undefined, {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+    }).format(new Date(resetAt));
+
+    expect(formatDateTimeTimestamp(resetAt, "12-hour")).toBe(
+      `${datePart} ${formatShortTimestamp(resetAt, "12-hour")}`,
+    );
+    expect(formatDateTimeTimestamp(resetAt, "24-hour")).toBe(
+      `${datePart} ${formatShortTimestamp(resetAt, "24-hour")}`,
+    );
   });
 });
 
@@ -182,10 +212,14 @@ describe("formatDayAwareTimestamp", () => {
     });
     vi.resetModules();
 
-    const { formatDayAwareTimestamp: formatWithHostLocale } = await import("./timestampFormat");
+    const {
+      formatDayAwareTimestamp: formatWithHostLocale,
+      formatUtcDateTimestamp: formatUtcDateWithHostLocale,
+    } = await import("./timestampFormat");
     const messageAt = iso(2026, 7, 12, 15, 44);
 
     expect(formatWithHostLocale(messageAt, "locale", now)).toBe("12/08 15:44");
+    expect(formatUtcDateWithHostLocale("2026-08-12T00:00:00.000Z")).toBe("12/08/2026");
 
     vi.unstubAllGlobals();
   });

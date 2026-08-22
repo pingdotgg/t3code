@@ -37,12 +37,22 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "../ProviderDriver.ts";
+import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
@@ -50,7 +60,10 @@ import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
-import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import {
+  makeProviderInstanceRegistry,
+  ProviderInstanceRegistryLayer,
+} from "./ProviderInstanceRegistryLive.ts";
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -469,5 +482,106 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+/**
+ * `PtyAdapter` is the one service the drivers do NOT declare in their env
+ * union: Claude/Cursor/Grok read it with `Effect.serviceOption` so a runtime
+ * without a PTY still boots. It reaches them purely because `server.ts`
+ * attaches `Layer.provide(PtyAdapterLive)` to the hydration layer and
+ * `makeProviderInstanceRegistry` captures the *whole* fiber context with
+ * `Effect.context<R>()` before replaying it into `driver.create`.
+ *
+ * Nothing else in the suite covers that path — the type checker cannot,
+ * because `PtyAdapter` is deliberately absent from `BuiltInDriversEnv` — so
+ * dropping that `Layer.provide` would silently downgrade every PTY usage probe
+ * to "Usage limits are unavailable in this runtime" with a green build.
+ */
+describe("ProviderInstanceRegistryLive — PtyAdapter context propagation", () => {
+  const probeDriverKind = ProviderDriverKind.make("codex");
+  const probeInstanceId = ProviderInstanceId.make("pty_probe");
+
+  const PtyAdapterStubLive = Layer.succeed(PtyAdapter, {
+    spawn: () => Effect.die("the stub adapter is never spawned"),
+  });
+
+  const makeProbeDriver = (
+    sawAdapter: Ref.Ref<boolean | null>,
+  ): ProviderDriver<Record<string, never>> => ({
+    driverKind: probeDriverKind,
+    metadata: { displayName: "PTY probe" },
+    configSchema: Schema.Struct({}) as unknown as Schema.Codec<Record<string, never>, unknown>,
+    defaultConfig: () => ({}) as Record<string, never>,
+    create: ({ instanceId }) =>
+      Effect.gen(function* () {
+        const adapter = yield* Effect.serviceOption(PtyAdapter);
+        yield* Ref.set(sawAdapter, Option.isSome(adapter));
+        return {
+          instanceId,
+          driverKind: probeDriverKind,
+          continuationIdentity: defaultProviderContinuationIdentity({
+            driverKind: probeDriverKind,
+            instanceId,
+          }),
+          displayName: undefined,
+          enabled: false,
+          snapshot: {} as ProviderInstance["snapshot"],
+          adapter: {} as ProviderInstance["adapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+      }),
+  });
+
+  it.live("hands drivers a PtyAdapter that was provided to the unwrapped layer", () =>
+    Effect.gen(function* () {
+      const sawAdapter = yield* Ref.make<boolean | null>(null);
+
+      // Mirrors the server.ts composition: `Layer.provide` on a `Layer.unwrap`
+      // layer, with the adapter absent from the driver's declared env.
+      const registryLayer = Layer.unwrap(
+        Effect.succeed(
+          ProviderInstanceRegistryLayer({
+            drivers: [makeProbeDriver(sawAdapter)],
+            configMap: {
+              [probeInstanceId]: {
+                driver: probeDriverKind,
+                enabled: false,
+                config: {},
+              },
+            } as ProviderInstanceConfigMap,
+          }),
+        ),
+      ).pipe(Layer.provide(PtyAdapterStubLive));
+
+      yield* ProviderInstanceRegistry.pipe(Effect.provide(registryLayer));
+
+      expect(yield* Ref.get(sawAdapter)).toBe(true);
+    }),
+  );
+
+  it.live("reports the adapter as absent when it was never provided", () =>
+    Effect.gen(function* () {
+      const sawAdapter = yield* Ref.make<boolean | null>(null);
+
+      const registryLayer = Layer.unwrap(
+        Effect.succeed(
+          ProviderInstanceRegistryLayer({
+            drivers: [makeProbeDriver(sawAdapter)],
+            configMap: {
+              [probeInstanceId]: {
+                driver: probeDriverKind,
+                enabled: false,
+                config: {},
+              },
+            } as ProviderInstanceConfigMap,
+          }),
+        ),
+      );
+
+      yield* ProviderInstanceRegistry.pipe(Effect.provide(registryLayer));
+
+      expect(yield* Ref.get(sawAdapter)).toBe(false);
+    }),
   );
 });

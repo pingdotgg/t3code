@@ -14,11 +14,15 @@ import {
 import { useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId, ServerConfig, ServerProvider } from "@t3tools/contracts";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useServerConfigs } from "../../state/entities";
+import { environmentPresentations } from "../../state/presentation";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import type { UsageChartMetric } from "./usageChartData";
@@ -114,6 +118,8 @@ export function UsageRouteScreen() {
           selected={windowDays}
           onSelect={selectWindow}
         />
+
+        <ProviderQuotaSection />
 
         <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
 
@@ -497,4 +503,181 @@ function UsageCoverageNotice(props: {
       ) : null}
     </View>
   );
+}
+
+function providerQuotaLabel(provider: ServerProvider): string {
+  if (provider.displayName) return provider.displayName;
+  if (provider.driver === "codex") return "Codex";
+  if (provider.driver === "claudeAgent" || provider.driver === "claude") return "Claude";
+  if (provider.driver === "cursor") return "Cursor";
+  if (provider.driver === "grok") return "Grok";
+  if (provider.driver === "opencode") return "OpenCode";
+  return provider.instanceId;
+}
+
+function shouldShowProviderQuota(provider: ServerProvider): boolean {
+  if (provider.driver === "opencode") return false;
+  return provider.enabled && provider.installed && provider.availability !== "unavailable";
+}
+
+function isGrokFreeTier(provider: ServerProvider): boolean {
+  if (provider.driver !== "grok") return false;
+  const tier = (provider.auth.label ?? provider.auth.type ?? "").trim().toLowerCase();
+  return tier === "free";
+}
+
+function providerQuotaNotice(provider: ServerProvider): string | null {
+  if (isGrokFreeTier(provider)) {
+    return "Usage is only shown for paid tiers";
+  }
+  if (!provider.usageLimits) return null;
+  if (provider.usageLimits.available) return null;
+  return provider.usageLimits.reason ?? "Usage data unavailable";
+}
+
+function formatQuotaResetDate(resetsAt: string | undefined): string | null {
+  if (!resetsAt) return null;
+  const date = new Date(resetsAt);
+  if (Number.isNaN(date.getTime())) return null;
+  if (/T00:00:00(?:\.000)?Z$/.test(resetsAt)) {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(date);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function sharedUsageResetAt(
+  windows: NonNullable<ServerProvider["usageLimits"]>["windows"],
+): string | undefined {
+  if (windows.length === 0) return undefined;
+  const first = windows[0]?.resetsAt;
+  if (!first) return undefined;
+  return windows.every((window) => window.resetsAt === first) ? first : undefined;
+}
+
+function quotaBarColor(percent: number): string {
+  if (percent >= 90) return "bg-destructive";
+  return "bg-foreground";
+}
+
+function ProviderQuotaSection() {
+  const configs = useServerConfigs();
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const groups = collectMobileQuotaGroups(configs, presentations);
+  if (groups.length === 0) return null;
+
+  return (
+    <SettingsSection title="Provider limits" card>
+      {groups.flatMap((group, groupIndex) =>
+        group.providers.map((provider, providerIndex) => {
+          const first = groupIndex === 0 && providerIndex === 0;
+          const notice = providerQuotaNotice(provider);
+          const usageLimits = provider.usageLimits;
+          const sharedReset = usageLimits?.available
+            ? sharedUsageResetAt(usageLimits.windows)
+            : undefined;
+          const sharedResetStr = formatQuotaResetDate(sharedReset);
+          return (
+            <View
+              key={`${group.environmentId}:${provider.instanceId}`}
+              className={first ? "gap-3 p-4" : "gap-3 border-t border-border-subtle p-4"}
+            >
+              <Text className="text-lg text-foreground">
+                {group.environmentLabel
+                  ? `${group.environmentLabel} · ${providerQuotaLabel(provider)}`
+                  : providerQuotaLabel(provider)}
+              </Text>
+              {notice ? (
+                <Text className="text-sm text-foreground-muted">{notice}</Text>
+              ) : usageLimits?.available ? (
+                <>
+                  {usageLimits.windows.map((window) => {
+                    const roundedPercent = Math.round(
+                      Math.max(0, Math.min(100, window.usedPercent)),
+                    );
+                    const remainingPercent = 100 - roundedPercent;
+                    const resetDateStr = sharedReset ? null : formatQuotaResetDate(window.resetsAt);
+                    return (
+                      <View
+                        key={`${window.kind}:${window.label}:${window.resetsAt ?? "none"}`}
+                        className="gap-1.5"
+                      >
+                        <View className="flex-row items-baseline justify-between gap-3">
+                          <Text className="text-sm text-foreground">{window.label}</Text>
+                          <Text className="text-sm text-foreground-muted">
+                            {remainingPercent}% remaining
+                          </Text>
+                        </View>
+                        <View className="h-1.5 overflow-hidden rounded-full bg-subtle">
+                          <View
+                            className={`h-full rounded-full ${quotaBarColor(roundedPercent)}`}
+                            style={{ width: `${roundedPercent}%` }}
+                          />
+                        </View>
+                        {resetDateStr ? (
+                          <Text className="text-xs text-foreground-muted">
+                            Resets {resetDateStr}
+                          </Text>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                  {sharedResetStr ? (
+                    <Text className="text-xs text-foreground-muted">Resets {sharedResetStr}</Text>
+                  ) : null}
+                </>
+              ) : usageLimits ? (
+                <Text className="text-sm text-foreground-muted">
+                  {usageLimits.reason ?? "Usage data unavailable"}
+                </Text>
+              ) : null}
+            </View>
+          );
+        }),
+      )}
+    </SettingsSection>
+  );
+}
+
+function collectMobileQuotaGroups(
+  configs: ReadonlyMap<EnvironmentId, ServerConfig>,
+  presentations: ReadonlyMap<
+    EnvironmentId,
+    { readonly entry: { readonly target: { readonly label: string } } }
+  >,
+): ReadonlyArray<{
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string | null;
+  readonly providers: readonly ServerProvider[];
+}> {
+  const showEnvironmentLabels = configs.size > 1;
+  const groups: Array<{
+    readonly environmentId: EnvironmentId;
+    readonly environmentLabel: string | null;
+    readonly providers: readonly ServerProvider[];
+  }> = [];
+
+  for (const [environmentId, config] of configs) {
+    const providers = config.providers.filter(shouldShowProviderQuota);
+    if (providers.length === 0) continue;
+    groups.push({
+      environmentId,
+      environmentLabel: showEnvironmentLabels
+        ? (presentations.get(environmentId)?.entry.target.label ?? environmentId)
+        : null,
+      providers,
+    });
+  }
+
+  return groups;
 }

@@ -334,31 +334,56 @@ describe("buildCursorProviderSnapshot", () => {
           auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
         },
         discoveryWarning: "Cursor ACP model discovery timed out after 15000ms.",
+        usageLimits: {
+          source: "cursorStatusProbe",
+          available: true,
+          windows: [{ kind: "weekly", label: "Included", usedPercent: 23 }],
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
       }),
     ).toMatchObject({
       status: "warning",
       message: "Cursor ACP model discovery timed out after 15000ms.",
       models: [],
+      usageLimits: {
+        source: "cursorStatusProbe",
+        available: true,
+        windows: [{ label: "Included", usedPercent: 23 }],
+      },
     });
   });
 
+  it("omits usageLimits when the caller does not supply any", () => {
+    const snapshot = buildCursorProviderSnapshot({
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      cursorSettings: baseCursorSettings,
+      parsed: {
+        version: "2026.04.09-f2b0fcd",
+        status: "ready",
+        auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
+      },
+    });
+
+    expect(snapshot.usageLimits).toBeUndefined();
+  });
+
   it("preserves provider error state while appending discovery warnings", () => {
-    expect(
-      buildCursorProviderSnapshot({
-        checkedAt: "2026-01-01T00:00:00.000Z",
-        cursorSettings: {
-          ...baseCursorSettings,
-          customModels: ["claude-sonnet-4-6"],
-        },
-        parsed: {
-          version: "2026.04.09-f2b0fcd",
-          status: "error",
-          auth: { status: "unauthenticated" },
-          message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
-        },
-        discoveryWarning: cursorAcpDiscoveryFailedMessage,
-      }),
-    ).toMatchObject({
+    const snapshot = buildCursorProviderSnapshot({
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      cursorSettings: {
+        ...baseCursorSettings,
+        customModels: ["claude-sonnet-4-6"],
+      },
+      parsed: {
+        version: "2026.04.09-f2b0fcd",
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
+      },
+      discoveryWarning: cursorAcpDiscoveryFailedMessage,
+    });
+
+    expect(snapshot).toMatchObject({
       status: "error",
       message: `Cursor Agent is not authenticated. Run \`agent login\` and try again. ${cursorAcpDiscoveryFailedMessage}`,
       models: [
@@ -368,6 +393,7 @@ describe("buildCursorProviderSnapshot", () => {
         },
       ],
     });
+    expect(snapshot.usageLimits).toBeUndefined();
   });
 });
 

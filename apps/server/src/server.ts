@@ -34,6 +34,7 @@ import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRe
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
+import { ProviderUsageLimitsIngestionLive } from "./provider/Layers/ProviderUsageLimitsIngestion.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
@@ -364,6 +365,9 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 );
 
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
+  // Subscribes to `account.rate-limits.updated` so Claude/Codex usage bars
+  // track live telemetry instead of waiting for the next status probe.
+  Layer.provideMerge(ProviderUsageLimitsIngestionLive),
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
 );
@@ -385,7 +389,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // PtyAdapter must be in the driver create context (BuiltInDriversEnv) so Grok/Claude
+  // usage probes can spawn TUIs. TerminalLayerLive only provide()s it privately.
+  Layer.provideMerge(ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(PtyAdapterLive))),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

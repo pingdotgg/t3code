@@ -306,6 +306,97 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       );
     }),
   );
+
+  it.effect("includes managed OpenCode subscription usage windows", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["opencode-go", "opencode-zen"],
+          all: [
+            {
+              id: "opencode-go",
+              name: "OpenCode Go",
+              env: [],
+              models: {},
+              usage: { usedPercent: 20 },
+            },
+            {
+              id: "opencode-zen",
+              name: "OpenCode Zen",
+              env: [],
+              models: {},
+              usage: { used: 45, limit: 90 },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.usageLimits?.source, "opencodeManaged");
+      NodeAssert.equal(snapshot.usageLimits?.available, true);
+      NodeAssert.deepEqual(
+        snapshot.usageLimits?.windows.map((window) => window.label),
+        ["OpenCode Go", "OpenCode Zen"],
+      );
+    }),
+  );
+
+  it.effect("returns unavailable usage when connected managed providers omit usage data", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["opencode-go"],
+          all: [
+            {
+              id: "opencode-go",
+              name: "OpenCode Go",
+              env: [],
+              models: {},
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.usageLimits?.available, false);
+      NodeAssert.equal(
+        snapshot.usageLimits?.reason,
+        "Connected OpenCode providers did not report usage information",
+      );
+    }),
+  );
+
+  it.effect("omits usage entirely when only non-managed providers are connected", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              env: [],
+              models: {},
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      // Usage limits only cover OpenCode Go / Zen, so a BYO-only inventory must
+      // not claim upstream providers withheld usage information.
+      NodeAssert.equal(snapshot.usageLimits, undefined);
+    }),
+  );
 });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (it) => {

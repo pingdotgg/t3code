@@ -33,6 +33,7 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { ProviderQuotaLimitsSection } from "./ProviderQuotaLimits";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -197,6 +198,8 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
+            <ProviderQuotaLimitsSection />
+
             {settling ? (
               <>
                 {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}

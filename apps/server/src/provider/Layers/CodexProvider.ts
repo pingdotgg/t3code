@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,8 @@ import type {
   ServerProviderSkill,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import { resolveCodexRateLimitSnapshotUsageLimits } from "../codexUsageProbe.ts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -45,6 +48,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitSnapshot;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -410,9 +414,20 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ],
     { concurrency: "unbounded" },
   );
+  // Rate limits are an optional enrichment of the snapshot. Recover typed
+  // failures and decode defects so they degrade to "no usage", but rethrow
+  // interrupts so a cancelled probe cannot finish as success.
+  const rateLimitsResponse = yield* client
+    .request("account/rateLimits/read", undefined)
+    .pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.void,
+      ),
+    );
 
   return {
     account: accountResponse,
+    ...(rateLimitsResponse?.rateLimits ? { rateLimits: rateLimitsResponse.rateLimits } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
@@ -600,6 +615,17 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const usageLimits =
+    snapshot.account.account?.type === "apiKey"
+      ? makeUnavailableUsageLimits({
+          source: "codexAppServer",
+          checkedAt,
+          reason: "Usage limits unavailable for API key Codex accounts.",
+        })
+      : resolveCodexRateLimitSnapshotUsageLimits({
+          checkedAt,
+          ...(snapshot.rateLimits ? { snapshot: snapshot.rateLimits } : {}),
+        });
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -613,6 +639,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      usageLimits,
     },
   });
 });
