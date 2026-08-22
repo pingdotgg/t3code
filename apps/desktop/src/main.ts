@@ -37,6 +37,7 @@ import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogSt
 import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
+import * as WindowsChromiumSandbox from "./app/windowsChromiumSandbox.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
@@ -63,6 +64,27 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+
+// Keep Chromium's process sandbox enabled by default on Windows (preview
+// webviews rely on that containment). Only disable it when explicitly opted
+// in, already requested via argv, or a prior GPU STATUS_BREAKPOINT crash left
+// a recovery marker. Otherwise watch for that crash and relaunch once.
+// Must run before the Effect runtime / GPU process starts, so HostProcessPlatform
+// is unavailable here.
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Early Chromium switch bootstrap runs before Effect HostProcessPlatform is provided.
+const hostPlatform = NodeOS.platform();
+WindowsChromiumSandbox.applyWindowsChromiumSandboxSwitches({
+  platform: hostPlatform,
+  appendSwitch: (switchName) => {
+    Electron.app.commandLine.appendSwitch(switchName);
+  },
+});
+if (hostPlatform === "win32") {
+  WindowsChromiumSandbox.installWindowsChromiumSandboxRecovery({
+    platform: hostPlatform,
+    app: Electron.app,
+  });
+}
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {

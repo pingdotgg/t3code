@@ -5,6 +5,7 @@ import {
   resolveElectronBinaryPath,
   resolveMacLauncherIconPaths,
   resolveMacLauncherPaths,
+  resolveSandboxArgs,
 } from "./electron-launcher.mjs";
 
 describe("electron development launcher", () => {
@@ -88,5 +89,30 @@ describe("electron development launcher", () => {
     assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
     assert.match(production.sourceIconPath, /assets\/prod\/black-macos-1024\.png$/);
     assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
+  });
+});
+
+describe("resolveSandboxArgs", () => {
+  it("keeps the Chromium sandbox enabled on Windows by default", () => {
+    assert.deepEqual(
+      resolveSandboxArgs("/unused/electron", "win32", {
+        T3CODE_DISABLE_CHROMIUM_SANDBOX: undefined,
+        T3CODE_HOME: "C:\\missing-t3-home",
+      }),
+      [],
+    );
+  });
+
+  it("disables the Chromium sandbox on Windows when explicitly opted in", () => {
+    assert.deepEqual(
+      resolveSandboxArgs("/unused/electron", "win32", {
+        T3CODE_DISABLE_CHROMIUM_SANDBOX: "1",
+      }),
+      ["--no-sandbox"],
+    );
+  });
+
+  it("leaves sandbox args empty on macOS", () => {
+    assert.deepEqual(resolveSandboxArgs("/unused/electron", "darwin"), []);
   });
 });
