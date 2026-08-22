@@ -1,7 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
@@ -16,6 +21,32 @@ export const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 // it is always spawned directly rather than through cmd.exe shell mode.
 const tailscaleCommandForPlatform = (platform: NodeJS.Platform): "tailscale" | "tailscale.exe" =>
   platform === "win32" ? "tailscale.exe" : "tailscale";
+
+// The Tailscale macOS app doesn't put `tailscale` on PATH; Tailscale's own
+// docs have users add a shell alias to this binary instead, which is
+// invisible to a direct (non-shell) subprocess spawn.
+export const MACOS_TAILSCALE_APP_EXECUTABLE =
+  "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+
+export type TailscaleExecutableFileCheck = (filePath: string) => boolean;
+
+function isExistingFile(filePath: string): boolean {
+  try {
+    return NodeFS.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** Injectable file-existence check so tests can run against a fake filesystem. */
+export const TailscaleExecutableFileCheck = Context.Reference<TailscaleExecutableFileCheck>(
+  "@t3tools/tailscale/TailscaleExecutableFileCheck",
+  { defaultValue: () => isExistingFile },
+);
+
+function isSpawnNotFoundError(error: PlatformError.PlatformError): boolean {
+  return error.reason._tag === "NotFound";
+}
 
 const TailscaleCommandContext = {
   executable: Schema.Literals(["tailscale", "tailscale.exe"]),
@@ -221,6 +252,7 @@ export const readTailscaleStatus = Effect.gen(function* () {
   const args = ["status", "--json"];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcessPlatform;
+  const isExecutableFile = yield* TailscaleExecutableFileCheck;
   const executable = tailscaleCommandForPlatform(hostPlatform);
   const commandContext = {
     executable,
@@ -228,11 +260,16 @@ export const readTailscaleStatus = Effect.gen(function* () {
     argumentCount: args.length,
   };
   return yield* Effect.gen(function* () {
-    const child = yield* spawner
-      .spawn(ChildProcess.make(executable, args))
-      .pipe(
-        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      );
+    const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
+      Effect.catchIf(
+        (error) => hostPlatform === "darwin" && isSpawnNotFoundError(error),
+        (error) =>
+          isExecutableFile(MACOS_TAILSCALE_APP_EXECUTABLE)
+            ? spawner.spawn(ChildProcess.make(MACOS_TAILSCALE_APP_EXECUTABLE, args))
+            : Effect.fail(error),
+      ),
+      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+    );
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectStdout(child.stdout),
@@ -291,6 +328,7 @@ const runTailscaleCommand = (
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostPlatform = yield* HostProcessPlatform;
+    const isExecutableFile = yield* TailscaleExecutableFileCheck;
     const executable = tailscaleCommandForPlatform(hostPlatform);
     const commandContext = {
       executable,
@@ -299,11 +337,16 @@ const runTailscaleCommand = (
     };
     const timeout = Duration.fromInputUnsafe(timeoutInput);
     return yield* Effect.gen(function* () {
-      const child = yield* spawner
-        .spawn(ChildProcess.make(executable, args))
-        .pipe(
-          Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        );
+      const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
+        Effect.catchIf(
+          (error) => hostPlatform === "darwin" && isSpawnNotFoundError(error),
+          (error) =>
+            isExecutableFile(MACOS_TAILSCALE_APP_EXECUTABLE)
+              ? spawner.spawn(ChildProcess.make(MACOS_TAILSCALE_APP_EXECUTABLE, args))
+              : Effect.fail(error),
+        ),
+        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+      );
       const [stderr, exitCode] = yield* Effect.all(
         [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
         { concurrency: "unbounded" },
