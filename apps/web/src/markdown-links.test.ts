@@ -213,6 +213,13 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("does not treat app routes as file links", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
   });
+
+  it("does not treat device nodes and kernel state as file links", () => {
+    expect(resolveMarkdownFileLinkTarget("/dev/kvm")).toBeNull();
+    expect(resolveMarkdownFileLinkTarget("/dev/null")).toBeNull();
+    expect(resolveMarkdownFileLinkTarget("/proc/cpuinfo")).toBeNull();
+    expect(resolveMarkdownFileLinkTarget("/sys/class/net/eth0")).toBeNull();
+  });
 });
 
 describe("resolveInlineCodeFileLinkMeta", () => {
@@ -236,6 +243,15 @@ describe("resolveInlineCodeFileLinkMeta", () => {
       basename: "Makefile",
     });
     expect(resolveInlineCodeFileLinkMeta("/chat/settings")).toBeNull();
+  });
+
+  it("ignores device nodes and kernel state", () => {
+    expect(resolveInlineCodeFileLinkMeta("/dev/kvm", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("/dev/null", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("/proc/cpuinfo", "/Users/julius/project")).toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("/sys/class/net/eth0", "/Users/julius/project"),
+    ).toBeNull();
   });
 
   it("links windows drive paths", () => {

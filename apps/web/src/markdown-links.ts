@@ -15,7 +15,10 @@ const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
-// prefixes like /app/ or /chat/ so SPA routes never read as files.
+// prefixes like /app/ or /chat/ so SPA routes never read as files, and roots
+// holding device nodes, kernel state, or boot images rather than editable
+// files. Entries under an excluded root still link when they carry a file
+// extension or a :line suffix.
 const POSIX_FILE_ROOT_PREFIXES = [
   "/Users/",
   "/home/",
@@ -33,11 +36,6 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/lib/",
   "/lib64/",
   "/srv/",
-  "/dev/",
-  "/proc/",
-  "/sys/",
-  "/run/",
-  "/boot/",
   "/media/",
   "/workspace/",
   "/workspaces/",
