@@ -596,7 +596,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           provider_session_id AS "providerSessionId",
           provider_thread_id AS "providerThreadId",
           runtime_mode AS "runtimeMode",
-          active_turn_id AS "activeTurnId",
+          CASE WHEN TRIM(active_turn_id) = '' THEN NULL ELSE active_turn_id END AS "activeTurnId",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
@@ -617,7 +617,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.provider_session_id AS "providerSessionId",
           sessions.provider_thread_id AS "providerThreadId",
           sessions.runtime_mode AS "runtimeMode",
-          sessions.active_turn_id AS "activeTurnId",
+          CASE
+            WHEN TRIM(sessions.active_turn_id) = '' THEN NULL
+            ELSE sessions.active_turn_id
+          END AS "activeTurnId",
           sessions.last_error AS "lastError",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
@@ -642,7 +645,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.provider_session_id AS "providerSessionId",
           sessions.provider_thread_id AS "providerThreadId",
           sessions.runtime_mode AS "runtimeMode",
-          sessions.active_turn_id AS "activeTurnId",
+          CASE
+            WHEN TRIM(sessions.active_turn_id) = '' THEN NULL
+            ELSE sessions.active_turn_id
+          END AS "activeTurnId",
           sessions.last_error AS "lastError",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
@@ -1056,7 +1062,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
           runtime_mode AS "runtimeMode",
-          active_turn_id AS "activeTurnId",
+          CASE WHEN TRIM(active_turn_id) = '' THEN NULL ELSE active_turn_id END AS "activeTurnId",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
