@@ -253,6 +253,19 @@ export function areProjectPathSearchTargetsEqual(
   );
 }
 
+export function shouldSearchProjectPath(
+  target: ProjectPathSearchTarget,
+  allowEmptyQuery = false,
+): boolean {
+  const query = target.query?.trim() ?? "";
+  return (
+    target.environmentId !== null &&
+    target.cwd !== null &&
+    target.query !== null &&
+    (allowEmptyQuery || query.length > 0)
+  );
+}
+
 export function useProjectPathSearch(
   target: ProjectPathSearchTarget,
   limit: number,
@@ -271,15 +284,12 @@ export function useProjectPathSearch(
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
-    debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query !== null &&
-      (allowEmptyQuery || debouncedTarget.query.length > 0)
+    shouldSearchProjectPath(debouncedTarget, allowEmptyQuery)
       ? projectEnvironment.searchEntries({
-          environmentId: debouncedTarget.environmentId,
+          environmentId: debouncedTarget.environmentId!,
           input: {
-            cwd: debouncedTarget.cwd,
-            query: debouncedTarget.query,
+            cwd: debouncedTarget.cwd!,
+            query: debouncedTarget.query!,
             limit,
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
             ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
@@ -299,7 +309,7 @@ export function useProjectPathSearch(
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
-  return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
+  return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT, { allowEmptyQuery: true });
 }
 
 interface ProjectContentSearchTarget {

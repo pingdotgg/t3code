@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { areProjectPathSearchTargetsEqual } from "./queries";
+import { areProjectPathSearchTargetsEqual, shouldSearchProjectPath } from "./queries";
 
 describe("areProjectPathSearchTargetsEqual", () => {
   const target = {
@@ -22,5 +22,18 @@ describe("areProjectPathSearchTargetsEqual", () => {
     expect(areProjectPathSearchTargetsEqual(target, { ...target, query: "readme" })).toBe(false);
     expect(areProjectPathSearchTargetsEqual(target, { ...target, kind: "file" })).toBe(false);
     expect(areProjectPathSearchTargetsEqual(target, { ...target, imageOnly: true })).toBe(false);
+  });
+});
+
+describe("shouldSearchProjectPath", () => {
+  const target = {
+    environmentId: EnvironmentId.make("environment-a"),
+    cwd: "/project-a",
+    query: "",
+  };
+
+  it("allows the composer to search recent project files for an empty @ query", () => {
+    expect(shouldSearchProjectPath(target)).toBe(false);
+    expect(shouldSearchProjectPath(target, true)).toBe(true);
   });
 });
