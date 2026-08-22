@@ -52,8 +52,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
-  // Signing in writes provider credentials on the host, like other provider mutations.
+  // Authentication mutates provider credentials on the host.
   [WS_METHODS.kimiAuthSignIn]: AuthOrchestrationOperateScope,
+  [WS_METHODS.kimiAuthSignOut]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,

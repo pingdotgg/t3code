@@ -28,6 +28,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  type ServerSettings as ServerSettingsValue,
+  ServerSettingsError,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -56,6 +58,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -4369,6 +4372,83 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(record.resourceAttributes["service.name"], "t3-web");
         assert.equal(record.status?.code, String(span.status.code));
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes Kimi sign-out to the targeted home and refreshes that instance", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-kimi-sign-out-rpc-" });
+        const credentialsDir = path.join(homePath, "credentials");
+        const credentialsPath = path.join(credentialsDir, "kimi-code.json");
+        yield* fs.makeDirectory(credentialsDir, { recursive: true });
+        yield* fs.writeFileString(credentialsPath, "credential");
+        const instanceId = ProviderInstanceId.make("kimi_work");
+        const refreshed = yield* Ref.make<ReadonlyArray<string>>([]);
+        const settings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("kimi"),
+              enabled: true,
+              config: { homePath },
+            },
+          },
+        } satisfies ServerSettingsValue;
+        yield* buildAppUnderTest({
+          layers: {
+            serverSettings: { getSettings: Effect.succeed(settings) },
+            providerRegistry: {
+              refreshInstance: (targetInstanceId) =>
+                Ref.update(refreshed, (current) => [...current, targetInstanceId]).pipe(
+                  Effect.as([]),
+                ),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.kimiAuthSignOut]({ instanceId }),
+        );
+
+        assert.deepEqual(result, { type: "completed" });
+        assert.isFalse(yield* fs.exists(credentialsPath));
+        assert.deepEqual(yield* Ref.get(refreshed), [instanceId]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("fails Kimi sign-in when provider settings cannot be loaded", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.fail(
+              new ServerSettingsError({
+                settingsPath: "<test>",
+                operation: "read-file",
+                cause: new Error("settings unavailable"),
+              }),
+            ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const error = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.kimiAuthSignIn]({}).pipe(Stream.runCollect, Effect.flip),
+        ),
+      );
+
+      assert.equal(error._tag, "KimiAuthError");
+      if (error._tag === "KimiAuthError") {
+        assert.equal(error.reason, "request-failed");
+        assert.include(error.detail ?? "", "provider settings");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc server.upsertKeybinding", () =>

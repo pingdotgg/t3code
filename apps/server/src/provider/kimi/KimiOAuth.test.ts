@@ -14,6 +14,8 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
   buildKimiCredentialsJson,
+  removeKimiCredentials,
+  resolveKimiAuthTarget,
   resolveKimiCodeHome,
   resolveKimiSignInHomePath,
   signInWithKimi,
@@ -64,35 +66,58 @@ describe("resolveKimiCodeHome", () => {
 });
 
 describe("resolveKimiSignInHomePath", () => {
-  it("returns undefined without settings", () => {
-    expect(resolveKimiSignInHomePath(undefined, undefined)).toBeUndefined();
-  });
+  it.effect("prefers the targeted instance's homePath", () =>
+    Effect.gen(function* () {
+      const settings = decodeServerSettings({
+        providers: { kimi: { homePath: "/legacy/home" } },
+        providerInstances: {
+          kimi_work: { driver: "kimi", config: { homePath: "/work/home" } },
+        },
+      });
+      expect(yield* resolveKimiSignInHomePath(settings, ProviderInstanceId.make("kimi_work"))).toBe(
+        "/work/home",
+      );
+    }),
+  );
 
-  it("prefers the targeted instance's homePath", () => {
-    const settings = decodeServerSettings({
-      providers: { kimi: { homePath: "/legacy/home" } },
-      providerInstances: {
-        kimi_work: { driver: "kimi", config: { homePath: "/work/home" } },
-      },
-    });
-    expect(resolveKimiSignInHomePath(settings, ProviderInstanceId.make("kimi_work"))).toBe(
-      "/work/home",
-    );
-  });
+  it.effect("uses the legacy home only for the synthesized default Kimi instance", () =>
+    Effect.gen(function* () {
+      const settings = decodeServerSettings({
+        providers: { kimi: { homePath: "/legacy/home" } },
+      });
+      expect(yield* resolveKimiSignInHomePath(settings, undefined)).toBe("/legacy/home");
+      expect(yield* resolveKimiSignInHomePath(settings, ProviderInstanceId.make("kimi"))).toBe(
+        "/legacy/home",
+      );
+    }),
+  );
 
-  it("falls back to the legacy providers.kimi blob", () => {
-    const settings = decodeServerSettings({
-      providers: { kimi: { homePath: "/legacy/home" } },
-    });
-    expect(resolveKimiSignInHomePath(settings, undefined)).toBe("/legacy/home");
-    expect(resolveKimiSignInHomePath(settings, ProviderInstanceId.make("kimi"))).toBe(
-      "/legacy/home",
-    );
-  });
+  it.effect("rejects missing and non-Kimi explicit instances", () =>
+    Effect.gen(function* () {
+      const settings = decodeServerSettings({
+        providerInstances: {
+          codex_work: { driver: "codex", config: {} },
+        },
+      });
+      const missing = yield* resolveKimiAuthTarget(
+        settings,
+        ProviderInstanceId.make("kimi_missing"),
+      ).pipe(Effect.flip);
+      const wrongDriver = yield* resolveKimiAuthTarget(
+        settings,
+        ProviderInstanceId.make("codex_work"),
+      ).pipe(Effect.flip);
 
-  it("returns undefined when no home path is configured anywhere", () => {
-    expect(resolveKimiSignInHomePath(decodeServerSettings({}), undefined)).toBeUndefined();
-  });
+      expect(missing.reason).toBe("invalid-instance");
+      expect(wrongDriver.reason).toBe("invalid-instance");
+    }),
+  );
+
+  it.effect("returns undefined when no home path is configured anywhere", () =>
+    Effect.gen(function* () {
+      expect(yield* resolveKimiSignInHomePath(decodeServerSettings({}), undefined)).toBe(undefined);
+    }),
+  );
 });
 
 interface RecordedRequest {
@@ -225,6 +250,34 @@ it.layer(NodeServices.layer)("signInWithKimi", (it) => {
     }),
   );
 
+  it.effect("stops at the deadline without polling after an oversized interval", () =>
+    Effect.gen(function* () {
+      const requests: Array<RecordedRequest> = [];
+      const httpLayer = makeKimiOAuthHttpLayer(requests, (url) =>
+        url.includes("device_authorization")
+          ? {
+              status: 200,
+              body: { ...DEVICE_AUTHORIZATION_BODY, expires_in: 1, interval: 5 },
+            }
+          : { status: 500, body: { error: "unexpected_poll" } },
+      );
+      const outcome = yield* signInWithKimi({}).pipe(
+        Stream.runCollect,
+        Effect.flip,
+        Effect.provide(httpLayer),
+        Effect.forkChild,
+      );
+
+      yield* TestClock.adjust("1 second");
+      const error = yield* Fiber.join(outcome);
+
+      expect(error.reason).toBe("expired");
+      expect(requests.filter((request) => request.url.includes("/api/oauth/token"))).toHaveLength(
+        0,
+      );
+    }),
+  );
+
   it.effect("fails with `expired` when the device authorization lapses", () =>
     Effect.gen(function* () {
       const requests: Array<RecordedRequest> = [];
@@ -269,6 +322,24 @@ it.layer(NodeServices.layer)("writeKimiCredentials", (it) => {
       // No stray temp files left behind.
       const entries = yield* fs.readDirectory(path.join(home, "credentials"));
       expect(entries).toEqual(["kimi-code.json"]);
+    }),
+  );
+
+  it.effect("removes only the targeted instance credential file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-kimi-sign-out-" });
+      const credentialsPath = yield* writeKimiCredentials(home, {
+        access_token: "access-1",
+        refresh_token: "refresh-1",
+      });
+      const siblingPath = path.join(home, "credentials", "keep.txt");
+      yield* fs.writeFileString(siblingPath, "keep");
+
+      expect(yield* removeKimiCredentials(home)).toBe(credentialsPath);
+      expect(yield* fs.exists(credentialsPath)).toBe(false);
+      expect(yield* fs.readFileString(siblingPath)).toBe("keep");
     }),
   );
 });
