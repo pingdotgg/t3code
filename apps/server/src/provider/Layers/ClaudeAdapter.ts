@@ -617,34 +617,30 @@ function normalizeClaudeTaskProgressTokenUsage(
     return undefined;
   }
 
-  const lastUsedTokens = context.lastKnownTokenUsage?.usedTokens;
-  const activeTokens =
-    lastUsedTokens !== undefined ? Math.max(totalTokens, lastUsedTokens) : totalTokens;
-  if (lastUsedTokens !== undefined && activeTokens === lastUsedTokens) {
+  // Task progress reports cumulative spend (often a subagent's), not active
+  // context. Without a prior active reading, inventing usedTokens from that
+  // total ratchets the meter up and undoes compaction.
+  const lastGood = context.lastKnownTokenUsage;
+  if (!lastGood) {
     return undefined;
   }
 
-  const usage = value as Record<string, unknown>;
-  const snapshot = makeClaudeTokenUsageSnapshot({
-    activeTokens,
-    ...(context.lastKnownContextWindow !== undefined
-      ? { contextWindow: context.lastKnownContextWindow }
-      : {}),
-    totalProcessedTokens: Math.max(
-      totalTokens,
-      context.lastKnownTotalProcessedTokens ?? totalTokens,
-    ),
-  });
-  if (!snapshot) {
+  const previousProcessed =
+    lastGood.totalProcessedTokens ?? context.lastKnownTotalProcessedTokens ?? lastGood.usedTokens;
+  const nextProcessed = Math.max(totalTokens, previousProcessed);
+  if (nextProcessed <= lastGood.usedTokens) {
+    return undefined;
+  }
+  if (
+    lastGood.totalProcessedTokens !== undefined &&
+    nextProcessed <= lastGood.totalProcessedTokens
+  ) {
     return undefined;
   }
 
-  const toolUses = finiteNonNegativeInteger(usage.tool_uses);
-  const durationMs = finiteNonNegativeInteger(usage.duration_ms);
   return {
-    ...snapshot,
-    ...(toolUses !== undefined ? { toolUses } : {}),
-    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...lastGood,
+    totalProcessedTokens: nextProcessed,
   };
 }
 
@@ -2115,6 +2111,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return normalizeClaudeContextUsageApiSnapshot(usage, totalProcessedTokens);
   });
 
+  const resolveCompactBoundaryTokenUsage = Effect.fn("resolveCompactBoundaryTokenUsage")(function* (
+    context: ClaudeSessionContext,
+    message: Record<string, unknown>,
+  ) {
+    const metadataSnapshot = compactBoundaryTokenUsageSnapshot(
+      message,
+      context.lastKnownContextWindow,
+      context.lastKnownTotalProcessedTokens,
+    );
+    if (metadataSnapshot) {
+      return metadataSnapshot;
+    }
+
+    return yield* queryCurrentContextUsage(context, context.lastKnownTotalProcessedTokens);
+  });
+
   const emitProposedPlanCompleted = Effect.fn("emitProposedPlanCompleted")(function* (
     context: ClaudeSessionContext,
     input: {
@@ -3122,19 +3134,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "compact_boundary":
-        yield* emitThreadTokenUsage(
+      case "compact_boundary": {
+        const snapshot = yield* resolveCompactBoundaryTokenUsage(
           context,
-          compactBoundaryTokenUsageSnapshot(
-            message as unknown as Record<string, unknown>,
-            context.lastKnownContextWindow,
-            context.lastKnownTotalProcessedTokens,
-          ),
-          {
-            rawMethod: "claude/system/compact_boundary",
-            rawPayload: message,
-          },
+          message as unknown as Record<string, unknown>,
         );
+        yield* emitThreadTokenUsage(context, snapshot, {
+          rawMethod: "claude/system/compact_boundary",
+          rawPayload: message,
+        });
         yield* offerRuntimeEvent({
           ...base,
           type: "thread.state.changed",
@@ -3144,6 +3152,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
+      }
       case "hook_started":
         yield* offerRuntimeEvent({
           ...base,
