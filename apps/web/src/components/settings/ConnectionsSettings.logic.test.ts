@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  remoteEnvironmentVersionLabel,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 
@@ -14,6 +15,22 @@ const baseWslState: DesktopWslState = {
   distros: [],
   preflightError: null,
 };
+
+describe("remoteEnvironmentVersionLabel", () => {
+  it("shows the complete connected server version, including nightly suffixes", () => {
+    expect(remoteEnvironmentVersionLabel("0.0.33-nightly.20260816", true)).toBe(
+      "v0.0.33-nightly.20260816",
+    );
+  });
+
+  it("marks a cached disconnected version as last seen", () => {
+    expect(remoteEnvironmentVersionLabel("0.0.32", false)).toBe("Last seen v0.0.32");
+  });
+
+  it("omits the label before a server version is known", () => {
+    expect(remoteEnvironmentVersionLabel(null, true)).toBeNull();
+  });
+});
 
 describe("applyWslEnableSelection", () => {
   it("clears WSL-only and updates the distro before enabling both backends", async () => {

@@ -43,6 +43,7 @@ import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  remoteEnvironmentVersionLabel,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -1413,6 +1414,10 @@ function SavedBackendListRow({
   const metadataBits = [
     sshTarget ? `SSH ${formatDesktopSshTarget(sshTarget)}` : null,
     environment.relayManaged ? "T3 Connect" : null,
+    remoteEnvironmentVersionLabel(
+      environment.serverConfig?.environment.serverVersion ?? null,
+      isConnected,
+    ),
   ].filter((value): value is string => value !== null);
 
   // The WSL backend is a desktop-managed local backend (it surfaces as a bearer
