@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -19,6 +20,7 @@ import {
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderRuntimeEvent,
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -625,6 +627,187 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         events.map((event) => event.type),
         ["session.started", "thread.started", "session.exited"],
       );
+    }),
+  );
+
+  it.effect("cancels pending permission requests when stopping a session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-stop-pending-permission");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "perm-stop-1",
+            sessionID: "http://127.0.0.1:9999/session",
+            permission: "bash",
+            patterns: ["rm *"],
+            metadata: {},
+          },
+        },
+      ];
+      const opened = yield* Deferred.make<ProviderRuntimeEvent>();
+      const resolved = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => {
+          if (event.threadId !== threadId) {
+            return Effect.void;
+          }
+          if (event.type === "request.opened") {
+            return Deferred.succeed(opened, event).pipe(Effect.asVoid, Effect.ignore);
+          }
+          if (event.type === "request.resolved") {
+            return Deferred.succeed(resolved, event).pipe(Effect.asVoid, Effect.ignore);
+          }
+          return Effect.void;
+        }),
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const openedEvent = yield* Deferred.await(opened).pipe(Effect.timeout("1 second"));
+      yield* adapter.stopSession(threadId);
+      const resolvedEvent = yield* Deferred.await(resolved).pipe(Effect.timeout("1 second"));
+
+      NodeAssert.equal(openedEvent.type, "request.opened");
+      if (openedEvent.type === "request.opened") {
+        NodeAssert.equal(openedEvent.requestId, "perm-stop-1");
+        NodeAssert.equal(openedEvent.payload.requestType, "command_execution_approval");
+      }
+      NodeAssert.equal(resolvedEvent.type, "request.resolved");
+      if (resolvedEvent.type === "request.resolved") {
+        NodeAssert.equal(resolvedEvent.requestId, "perm-stop-1");
+        NodeAssert.equal(resolvedEvent.payload.decision, "cancel");
+      }
+      yield* Fiber.interrupt(eventsFiber);
+    }),
+  );
+
+  it.effect("cancels pending permission requests on stopAll", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-stop-all-pending-permission");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "perm-stop-all-1",
+            sessionID: "http://127.0.0.1:9999/session",
+            permission: "edit",
+            patterns: [],
+            metadata: {},
+          },
+        },
+      ];
+      const opened = yield* Deferred.make<ProviderRuntimeEvent>();
+      const resolved = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => {
+          if (event.threadId !== threadId) {
+            return Effect.void;
+          }
+          if (event.type === "request.opened") {
+            return Deferred.succeed(opened, event).pipe(Effect.asVoid, Effect.ignore);
+          }
+          if (event.type === "request.resolved") {
+            return Deferred.succeed(resolved, event).pipe(Effect.asVoid, Effect.ignore);
+          }
+          return Effect.void;
+        }),
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* Deferred.await(opened).pipe(Effect.timeout("1 second"));
+      yield* adapter.stopAll();
+      const resolvedEvent = yield* Deferred.await(resolved).pipe(Effect.timeout("1 second"));
+
+      NodeAssert.equal(resolvedEvent.type, "request.resolved");
+      if (resolvedEvent.type === "request.resolved") {
+        NodeAssert.equal(resolvedEvent.requestId, "perm-stop-all-1");
+        NodeAssert.equal(resolvedEvent.payload.requestType, "file_change_approval");
+        NodeAssert.equal(resolvedEvent.payload.decision, "cancel");
+      }
+      yield* Fiber.interrupt(eventsFiber);
+    }),
+  );
+
+  it.effect("cancels pending permission requests when the adapter scope closes", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make("sequential");
+      let scopeClosed = false;
+      try {
+        const adapterLayer = Layer.effect(
+          OpenCodeAdapter,
+          makeOpenCodeAdapter(openCodeAdapterTestSettings),
+        ).pipe(
+          Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+          Layer.provideMerge(ServerSettingsService.layerTest()),
+          Layer.provideMerge(providerSessionDirectoryTestLayer),
+          Layer.provideMerge(NodeServices.layer),
+        );
+        const context = yield* Layer.buildWithScope(adapterLayer, scope);
+        const adapter = yield* Effect.service(OpenCodeAdapter).pipe(Effect.provide(context));
+        const threadId = asThreadId("thread-opencode-finalizer-pending-permission");
+        runtimeMock.state.subscribedEvents = [
+          {
+            type: "permission.asked",
+            properties: {
+              id: "perm-finalizer-1",
+              sessionID: "http://127.0.0.1:9999/session",
+              permission: "bash",
+              patterns: ["rm *"],
+              metadata: {},
+            },
+          },
+        ];
+        const opened = yield* Deferred.make<ProviderRuntimeEvent>();
+        const resolved = yield* Deferred.make<ProviderRuntimeEvent>();
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) => {
+            if (event.threadId !== threadId) {
+              return Effect.void;
+            }
+            if (event.type === "request.opened") {
+              return Deferred.succeed(opened, event).pipe(Effect.asVoid, Effect.ignore);
+            }
+            if (event.type === "request.resolved") {
+              return Deferred.succeed(resolved, event).pipe(Effect.asVoid, Effect.ignore);
+            }
+            return Effect.void;
+          }),
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        yield* Deferred.await(opened).pipe(Effect.timeout("1 second"));
+        yield* Scope.close(scope, Exit.void);
+        scopeClosed = true;
+        const resolvedEvent = yield* Deferred.await(resolved).pipe(Effect.timeout("1 second"));
+        NodeAssert.equal(resolvedEvent.type, "request.resolved");
+        if (resolvedEvent.type === "request.resolved") {
+          NodeAssert.equal(resolvedEvent.requestId, "perm-finalizer-1");
+          NodeAssert.equal(resolvedEvent.payload.decision, "cancel");
+        }
+        yield* Fiber.interrupt(eventsFiber);
+      } finally {
+        if (!scopeClosed) {
+          yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+        }
+      }
     }),
   );
 
