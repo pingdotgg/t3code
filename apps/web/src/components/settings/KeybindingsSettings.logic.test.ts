@@ -9,6 +9,7 @@ import {
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
+  shouldSkipKeybindingCapture,
   shortcutToKeybindingInput,
   unknownWhenVariables,
   whenAstToExpression,
@@ -62,6 +63,24 @@ describe("KeybindingsSettings.logic", () => {
         "Win32",
       ),
     ).toBe("mod+shift+k");
+  });
+
+  it("preserves plain Tab navigation while capturing modified Tab chords", () => {
+    const plainTab = {
+      key: "Tab",
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+    };
+    const ctrlTab = { ...plainTab, ctrlKey: true };
+    const cmdOptionTab = { ...plainTab, metaKey: true, altKey: true };
+
+    expect(shouldSkipKeybindingCapture(plainTab)).toBe(true);
+    expect(shouldSkipKeybindingCapture(ctrlTab)).toBe(false);
+    expect(shouldSkipKeybindingCapture(cmdOptionTab)).toBe(false);
+    expect(keybindingFromKeyboardEvent(ctrlTab, "MacIntel")).toBe("ctrl+tab");
+    expect(keybindingFromKeyboardEvent(cmdOptionTab, "MacIntel")).toBe("mod+alt+tab");
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {

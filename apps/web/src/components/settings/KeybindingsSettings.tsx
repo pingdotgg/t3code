@@ -63,6 +63,7 @@ import {
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
+  shouldSkipKeybindingCapture,
   type KeybindingCommandOption,
   type KeybindingRow,
   type WhenVariableOption,
@@ -775,7 +776,7 @@ function KeybindingTableRow({
   };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Tab") return;
+    if (shouldSkipKeybindingCapture(event.nativeEvent)) return;
     event.preventDefault();
     if (event.key === "Escape") {
       setDraft({ keyDraft: row.key, isRecording: false });
@@ -946,7 +947,7 @@ function NewKeybindingTableRow({
   };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Tab") return;
+    if (shouldSkipKeybindingCapture(event.nativeEvent)) return;
     event.preventDefault();
     if (event.key === "Escape") {
       setDraft({ keyDraft: "", isRecording: false });
