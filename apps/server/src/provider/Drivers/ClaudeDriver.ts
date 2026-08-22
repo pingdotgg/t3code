@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -28,6 +29,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { retainClaudeSlashCommands } from "./ClaudeSlashCommands.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
   checkClaudeProviderStatus,
@@ -163,12 +165,29 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
+      const lastGoodSlashCommands = yield* Ref.make<ServerProvider["slashCommands"]>([]);
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
         processEnv,
         cwd,
       ).pipe(
+        Effect.flatMap((snapshot) =>
+          Effect.gen(function* () {
+            const previous = yield* Ref.get(lastGoodSlashCommands);
+            const slashCommands = retainClaudeSlashCommands(
+              snapshot.slashCommands,
+              previous,
+              snapshot.status !== "ready",
+            );
+            if (slashCommands.length > 0) {
+              yield* Ref.set(lastGoodSlashCommands, slashCommands);
+            }
+            return slashCommands === snapshot.slashCommands
+              ? snapshot
+              : { ...snapshot, slashCommands };
+          }),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
