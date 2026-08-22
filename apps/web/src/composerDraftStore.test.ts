@@ -1705,6 +1705,107 @@ describe("composerDraftStore sticky composer settings", () => {
       },
       activeProvider: "claudeAgent",
     });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(false);
+  });
+
+  it("replaceExisting overwrites a seeded model with the sticky pick", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-sticky-replace-existing");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setStickyModelSelection(modelSelection(CLAUDE_AGENT_DRIVER, "claude-sonnet-4-6"));
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+    store.applyStickyState(threadRef, { replaceExisting: true });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      modelSelectionByProvider: {
+        claudeAgent: modelSelection(CLAUDE_AGENT_DRIVER, "claude-sonnet-4-6"),
+      },
+      activeProvider: "claudeAgent",
+      modelSelectionExplicit: false,
+    });
+  });
+
+  it("replaceExisting clears a seeded model when sticky state is empty", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-sticky-clear-empty");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+    store.applyStickyState(threadRef, { replaceExisting: true });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("keeps a draft's existing model when applying sticky without replaceExisting", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-sticky-keep-existing");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setStickyModelSelection(modelSelection(CLAUDE_AGENT_DRIVER, "claude-sonnet-4-6"));
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+    store.applyStickyState(threadRef);
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+  });
+
+  it("marks picker writes as explicit and project-default seeds as not", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-model-explicit");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(false);
+
+    store.setModelSelection(threadRef, modelSelection(CURSOR_DRIVER, "grok-4"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      activeProvider: "cursor",
+      modelSelectionExplicit: false,
+    });
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      explicit: true,
+    });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      activeProvider: "claudeAgent",
+      modelSelectionExplicit: true,
+    });
+  });
+
+  it("does not let a project-default seed replace an explicit picker choice", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-explicit-survives-seed");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"), {
+      explicit: true,
+    });
+    store.setModelSelection(threadRef, modelSelection(CURSOR_DRIVER, "grok-4"), {
+      replaceOptions: true,
+      explicit: false,
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      activeProvider: "claudeAgent",
+      modelSelectionExplicit: true,
+    });
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
   });
 });
 

@@ -223,6 +223,10 @@ import {
   type DraftId,
 } from "../composerDraftStore";
 import {
+  shouldHonorProjectDefaultModel,
+  shouldRestoreStickyAfterProjectPinClear,
+} from "../lib/newThreadModelSeed";
+import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
   type TerminalContextDraft,
@@ -1347,6 +1351,9 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionExplicit = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
+  );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -1360,6 +1367,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const applyStickyComposerState = useComposerDraftStore((store) => store.applyStickyState);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -1775,6 +1783,67 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  const projectDefaultModelKey = activeProject?.defaultModelSelection
+    ? `${activeProject.defaultModelSelection.instanceId}:${activeProject.defaultModelSelection.model}`
+    : null;
+  const previousProjectDefaultByDraftRef = useRef<{
+    draftKey: string;
+    modelKey: string | null;
+  } | null>(null);
+  useEffect(() => {
+    const composerDraftKey =
+      typeof composerDraftTarget === "string"
+        ? composerDraftTarget
+        : scopedThreadKey(composerDraftTarget);
+    if (!isLocalDraftThread) {
+      previousProjectDefaultByDraftRef.current = {
+        draftKey: composerDraftKey,
+        modelKey: projectDefaultModelKey,
+      };
+      return;
+    }
+    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    if (draft?.modelSelectionExplicit === true) {
+      previousProjectDefaultByDraftRef.current = {
+        draftKey: composerDraftKey,
+        modelKey: projectDefaultModelKey,
+      };
+      return;
+    }
+    const projectDefault = activeProject?.defaultModelSelection ?? null;
+    const previous = previousProjectDefaultByDraftRef.current;
+    previousProjectDefaultByDraftRef.current = {
+      draftKey: composerDraftKey,
+      modelKey: projectDefaultModelKey,
+    };
+    if (projectDefault != null) {
+      setComposerDraftModelSelection(composerDraftTarget, projectDefault, {
+        replaceOptions: true,
+        explicit: false,
+      });
+      return;
+    }
+    // Resetting the pin should restore sticky/carry, not leave the last seeded
+    // pin stuck on this unsent draft. Only the same draft counts: ChatView
+    // stays mounted across draft routes.
+    if (
+      shouldRestoreStickyAfterProjectPinClear({
+        previousDraftKey: previous?.draftKey ?? null,
+        previousModelKey: previous?.modelKey ?? null,
+        draftKey: composerDraftKey,
+        projectDefaultModelKey,
+      })
+    ) {
+      applyStickyComposerState(composerDraftTarget, { replaceExisting: true });
+    }
+  }, [
+    activeProject?.defaultModelSelection,
+    applyStickyComposerState,
+    composerDraftTarget,
+    isLocalDraftThread,
+    projectDefaultModelKey,
+    setComposerDraftModelSelection,
+  ]);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -2052,7 +2121,13 @@ function ChatViewContent(props: ChatViewProps) {
     [openOrReuseProjectDraftThread],
   );
 
-  const selectedProviderByThreadId = composerActiveProvider ?? null;
+  const selectedProviderByThreadId = shouldHonorProjectDefaultModel({
+    isLocalDraftThread,
+    modelSelectionExplicit: composerModelSelectionExplicit,
+    projectDefaultModelSelection: activeProject?.defaultModelSelection,
+  })
+    ? (activeProject?.defaultModelSelection?.instanceId ?? null)
+    : (composerActiveProvider ?? null);
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
@@ -6162,6 +6237,7 @@ function ChatViewContent(props: ChatViewProps) {
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
+        { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();
