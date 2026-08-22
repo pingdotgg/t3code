@@ -1650,6 +1650,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const deleteAllHistoryForThread = Effect.fn("terminal.deleteAllHistoryForThread")(function* (
     threadId: string,
   ) {
+    const sessionPrefix = `${threadId}\u0000`;
+    for (const sessionKey of failedPersistByKey.keys()) {
+      if (sessionKey.startsWith(sessionPrefix)) {
+        failedPersistByKey.delete(sessionKey);
+      }
+    }
     const threadPrefix = `${toSafeThreadId(threadId)}_`;
     const entries = yield* fileSystem
       .readDirectory(logsDir, { recursive: false })

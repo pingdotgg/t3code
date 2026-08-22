@@ -1434,6 +1434,47 @@ it.layer(
     }),
   );
 
+  it.effect("does not restore failed writes after deleting all thread history", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const failedWrite = yield* Deferred.make<void>();
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "writeFileString",
+        pathOrDescriptor: "terminal-history",
+      });
+      let writesFail = true;
+      const recoveringFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (path, contents, options) => {
+          if (path.endsWith(".log") && writesFail) {
+            return Deferred.succeed(failedWrite, undefined).pipe(
+              Effect.andThen(Effect.fail(cause)),
+            );
+          }
+          return fileSystem.writeFileString(path, contents, options);
+        },
+      });
+      const { manager, ptyAdapter } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, recoveringFileSystem),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("must stay deleted\r");
+      yield* Deferred.await(failedWrite);
+      yield* manager.close({ threadId: "thread-1" });
+      yield* manager.close({ threadId: "thread-1", deleteHistory: true });
+      writesFail = false;
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history).toBe("");
+    }),
+  );
+
   it.effect("closes all terminals for a thread when close omits terminalId", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();
