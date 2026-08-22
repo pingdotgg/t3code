@@ -207,17 +207,28 @@ export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
 }
 
 /**
- * Whether a family renders every character on the same advance. Cell-grid
- * surfaces (the terminal) require this: a proportional face draws its text
- * narrower than the lattice the cursor and selection are placed on, which
- * reads as ragged gaps and a cursor stranded to the right of the text.
- *
- * Unmeasurable environments answer true, so a missing canvas never blocks a
- * legitimate font.
+ * Probing a family is up to 32 measureText calls, and setting the canvas font
+ * to a new family string forces engine font matching on top. Verdicts cannot
+ * change while the page lives (the installed font list is itself cached for
+ * the session), so both passes and failures are kept, keyed by the normalized
+ * family list.
  */
-export function isMonospaceFamily(family: string): boolean {
-  const families = cssFontFamilies(family);
-  if (families === null) return true;
+export function createCachedFamilyProbe(
+  probe: (families: string) => boolean,
+): (family: string) => boolean {
+  const verdicts = new Map<string, boolean>();
+  return (family) => {
+    const families = cssFontFamilies(family);
+    if (families === null) return true;
+    const cached = verdicts.get(families);
+    if (cached !== undefined) return cached;
+    const verdict = probe(families);
+    verdicts.set(families, verdict);
+    return verdict;
+  };
+}
+
+function measureMonospaceFamilies(families: string): boolean {
   try {
     if (fontProbeContext === undefined) {
       fontProbeContext = document.createElement("canvas").getContext("2d");
@@ -236,6 +247,17 @@ export function isMonospaceFamily(family: string): boolean {
     return true;
   }
 }
+
+/**
+ * Whether a family renders every character on the same advance. Cell-grid
+ * surfaces (the terminal) require this: a proportional face draws its text
+ * narrower than the lattice the cursor and selection are placed on, which
+ * reads as ragged gaps and a cursor stranded to the right of the text.
+ *
+ * Unmeasurable environments answer true, so a missing canvas never blocks a
+ * legitimate font.
+ */
+export const isMonospaceFamily = createCachedFamilyProbe(measureMonospaceFamilies);
 
 // Nameable faces the platform generics commonly map to, likeliest first.
 // Pixel-comparing a generic against these names the actual face; Apple's own
