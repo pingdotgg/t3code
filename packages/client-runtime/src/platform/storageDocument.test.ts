@@ -222,4 +222,35 @@ describe("ConnectionCatalogDocument", () => {
 
     expect(document.credentials).toEqual([{ connectionId: target.connectionId, credential }]);
   });
+
+  it("preserves an SSH bearer credential when re-registration supplies no replacement", () => {
+    const target = new SshConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "SSH",
+      connectionId: "ssh-1",
+    });
+    const profile = new SshConnectionProfile({
+      connectionId: target.connectionId,
+      environmentId: target.environmentId,
+      label: target.label,
+      target: {
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "developer",
+        port: 22,
+      },
+    });
+    const credential = new BearerConnectionCredential({ token: "ssh-bearer" });
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new SshConnectionRegistration({ target, profile, credential }),
+    );
+
+    const reRegistered = registerConnectionInCatalog(
+      registered,
+      new SshConnectionRegistration({ target, profile }),
+    );
+
+    expect(reRegistered.credentials).toEqual([{ connectionId: target.connectionId, credential }]);
+  });
 });

@@ -459,7 +459,7 @@ const REMOTE_STATE_LOCK_SCRIPT = `acquire_state_lock() {
   STATE_LOCK_MODE=""
   if command -v flock >/dev/null 2>&1; then
     exec 9>"$STATE_LOCK_FILE"
-    if ! flock -w 120 9; then
+    if ! flock -w 45 9; then
       printf 'Timed out waiting for another T3 SSH operation to finish.\n' >&2
       return 1
     fi
@@ -468,9 +468,26 @@ const REMOTE_STATE_LOCK_SCRIPT = `acquire_state_lock() {
   fi
 
   STATE_LOCK_WAIT_COUNT=0
+  STATE_LOCK_MISSING_PID_COUNT=0
   while ! mkdir "$STATE_LOCK_DIR" 2>/dev/null; do
+    STATE_LOCK_OWNER_PID="$(cat "$STATE_LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -n "$STATE_LOCK_OWNER_PID" ]; then
+      STATE_LOCK_MISSING_PID_COUNT=0
+      if ! kill -0 "$STATE_LOCK_OWNER_PID" 2>/dev/null; then
+        rm -f "$STATE_LOCK_DIR/pid"
+        rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
+        continue
+      fi
+    else
+      STATE_LOCK_MISSING_PID_COUNT=$((STATE_LOCK_MISSING_PID_COUNT + 1))
+      if [ "$STATE_LOCK_MISSING_PID_COUNT" -ge 10 ]; then
+        rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
+        STATE_LOCK_MISSING_PID_COUNT=0
+        continue
+      fi
+    fi
     STATE_LOCK_WAIT_COUNT=$((STATE_LOCK_WAIT_COUNT + 1))
-    if [ "$STATE_LOCK_WAIT_COUNT" -ge 1200 ]; then
+    if [ "$STATE_LOCK_WAIT_COUNT" -ge 450 ]; then
       printf 'Timed out waiting for another T3 SSH operation to finish.\n' >&2
       return 1
     fi
@@ -521,7 +538,9 @@ abort_remote_launch() {
       sleep 0.1
     done
   fi
-  rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
+  if [ -n "$LAUNCHED_PID" ]; then
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
+  fi
   exit 1
 }
 trap cleanup_runner_next EXIT
@@ -559,7 +578,6 @@ wait_for_pid_exit() {
   done
 }
 discover_running_runtime() {
-  rm -f "$BASE_DIR_FILE"
   SERVICE_PID=""
   if command -v systemctl >/dev/null 2>&1; then
     SERVICE_PID="$(systemctl --user show t3code.service --property=MainPID --value 2>/dev/null || true)"
@@ -725,7 +743,7 @@ if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" >>"$LOG_FILE" 2>&1 < /dev/null 9>&- &
   REMOTE_PID="$!"
   LAUNCHED_PID="$REMOTE_PID"
   printf '%s\\n' "\${T3CODE_HOME:-$DEFAULT_SERVER_HOME}" >"$BASE_DIR_FILE"
