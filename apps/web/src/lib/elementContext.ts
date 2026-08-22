@@ -156,7 +156,12 @@ function buildSingleContextLines(context: ElementContextSelection): string[] {
       lineNumber != null
         ? `${fileName}:${lineNumber}${columnNumber != null ? `:${columnNumber}` : ""}`
         : fileName;
-    lines.push(`  source: ${location}`);
+    // Deliberately not labelled `source`. The location resolves to where the
+    // enclosing component is defined, not to the picked element's own markup,
+    // so a bare `source:` reads as a precise pointer and sends the agent to the
+    // wrong line. Naming the relationship keeps it useful as a starting file
+    // without implying the element lives there.
+    lines.push(`  component defined at: ${location}`);
   }
   const html = context.htmlPreview.trim();
   if (html.length > 0) {
