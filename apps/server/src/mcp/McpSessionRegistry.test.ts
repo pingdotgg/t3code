@@ -15,6 +15,7 @@ const makeFakeHttpServer = (hostname: string, port = 43123) =>
   });
 const fakeHttpServer = makeFakeHttpServer("127.0.0.1");
 const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
+  setEnvironmentLabel: () => Effect.void,
   getEnvironmentId: Effect.succeed(environmentId),
   getDescriptor: Effect.die("unused"),
 });

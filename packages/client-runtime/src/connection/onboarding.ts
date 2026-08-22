@@ -45,7 +45,7 @@ export interface SshConnectionInput {
 
 export interface BearerConnectionUpdateInput {
   readonly environmentId: EnvironmentId;
-  readonly label: string;
+  readonly label?: string;
   readonly httpBaseUrl: string;
 }
 
@@ -177,13 +177,14 @@ export const prepareBearerConnectionUpdate = Effect.fn(
     });
   }
 
-  const label = options.input.label.trim();
-  if (label === "") {
+  const submittedLabel = options.input.label?.trim();
+  if (submittedLabel === "") {
     return yield* new ConnectionBlockedError({
       reason: "configuration",
       detail: "Environment label cannot be empty.",
     });
   }
+  const label = submittedLabel ?? entry.profile.value.label;
   const httpBaseUrl = yield* Effect.try({
     try: () => normalizeHttpBaseUrl(options.input.httpBaseUrl),
     catch: (cause) =>

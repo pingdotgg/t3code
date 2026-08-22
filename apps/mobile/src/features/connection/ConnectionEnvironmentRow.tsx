@@ -1,7 +1,7 @@
 import { SymbolView } from "../../components/AppSymbol";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
@@ -14,6 +14,7 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { useEnvironmentSessionState } from "../../state/session";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   return connectionStatusText({
@@ -29,12 +30,12 @@ export function ConnectionEnvironmentRow(props: {
   readonly onToggle: () => void;
   readonly onReconnect: (environmentId: EnvironmentId) => void;
   readonly onRemove: (environmentId: EnvironmentId) => void;
+  readonly onRename: (environmentId: EnvironmentId) => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
-    updates: { readonly label: string; readonly displayUrl: string },
+    updates: { readonly label?: string; readonly displayUrl: string },
   ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
-  const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
 
   const mutedColor = useThemeColor("--color-icon-subtle");
@@ -46,9 +47,15 @@ export function ConnectionEnvironmentRow(props: {
   const isRetrying =
     props.environment.connectionState === "connecting" ||
     props.environment.connectionState === "reconnecting";
+  const sessionState = useEnvironmentSessionState(props.environment.environmentId);
+  const canRename =
+    props.environment.connectionState === "connected" &&
+    Boolean(
+      sessionState.data?.authenticated &&
+      sessionState.data.scopes?.includes(AuthOrchestrationOperateScope),
+    );
   const handleSave = useCallback(async () => {
     const result = await props.onUpdate(props.environment.environmentId, {
-      label: label.trim(),
       displayUrl: url.trim(),
     });
     if (AsyncResult.isSuccess(result)) {
@@ -60,7 +67,7 @@ export function ConnectionEnvironmentRow(props: {
       "Could not update environment",
       error instanceof Error ? error.message : "The environment could not be updated.",
     );
-  }, [label, url, props]);
+  }, [url, props]);
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-card">
@@ -114,15 +121,30 @@ export function ConnectionEnvironmentRow(props: {
           ) : null}
         </View>
 
-        <SymbolView
-          name="chevron.down"
-          size={12}
-          tintColor={mutedColor}
-          type="monochrome"
-          style={{
-            transform: [{ rotate: props.expanded ? "180deg" : "0deg" }],
-          }}
-        />
+        <View className="flex-row items-center gap-2">
+          {canRename ? (
+            <Pressable
+              accessibilityLabel={`Rename ${props.environment.environmentLabel}`}
+              accessibilityRole="button"
+              className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
+              onPress={(event) => {
+                event.stopPropagation();
+                props.onRename(props.environment.environmentId);
+              }}
+            >
+              <SymbolView name="pencil" size={13} tintColor={mutedColor} type="monochrome" />
+            </Pressable>
+          ) : null}
+          <SymbolView
+            name="chevron.down"
+            size={12}
+            tintColor={mutedColor}
+            type="monochrome"
+            style={{
+              transform: [{ rotate: props.expanded ? "180deg" : "0deg" }],
+            }}
+          />
+        </View>
       </Pressable>
 
       {props.expanded ? (
@@ -137,20 +159,6 @@ export function ConnectionEnvironmentRow(props: {
             </Text>
           ) : (
             <>
-              <View className="gap-1.5">
-                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                  Label
-                </Text>
-                <TextInput
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  placeholder="My MacBook"
-                  value={label}
-                  onChangeText={setLabel}
-                  className="rounded-[14px] border border-input-border bg-input px-4 py-3 text-base text-foreground"
-                />
-              </View>
-
               <View className="gap-1.5">
                 <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
                   URL

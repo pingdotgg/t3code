@@ -35,6 +35,23 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ServerSettings environment label", () => {
+  it("defaults to automatic naming", () => {
+    expect(decodeServerSettings({}).environmentLabel).toBe("");
+  });
+
+  it("trims labels and accepts an empty reset", () => {
+    expect(
+      decodeServerSettingsPatch({ environmentLabel: "  Build server  " }).environmentLabel,
+    ).toBe("Build server");
+    expect(decodeServerSettingsPatch({ environmentLabel: "   " }).environmentLabel).toBe("");
+  });
+
+  it("rejects labels longer than 40 characters", () => {
+    expect(() => decodeServerSettingsPatch({ environmentLabel: "x".repeat(41) })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

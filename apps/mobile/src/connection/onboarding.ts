@@ -29,7 +29,7 @@ export const updateBearerConnection = createRuntimeCommand(connectionAtomRuntime
   },
   execute: (input: {
     readonly environmentId: EnvironmentId;
-    readonly label: string;
+    readonly label?: string;
     readonly httpBaseUrl: string;
   }) => ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.updateBearer(input))),
 });

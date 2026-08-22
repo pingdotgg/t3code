@@ -41,6 +41,7 @@ import {
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
+  verifyEnvironmentLabelUpdate,
 } from "./server.ts";
 
 const CONFIG = {
@@ -127,6 +128,39 @@ describe("update restart reconnect nudges", () => {
 });
 
 describe("server state projection", () => {
+  it.effect("detects servers that ignore environment label updates", () =>
+    Effect.gen(function* () {
+      yield* verifyEnvironmentLabelUpdate("Build server", { environmentLabel: "Build server" });
+      const error = yield* Effect.flip(
+        verifyEnvironmentLabelUpdate("Build server", { environmentLabel: "" }),
+      );
+      expect(error.message).toBe("This environment server does not support renaming.");
+    }),
+  );
+
+  it("projects environment label updates into the server descriptor", () => {
+    const current = applyServerConfigProjection(
+      Option.none(),
+      snapshotEvent({
+        ...CONFIG,
+        environment: {
+          environmentId: EnvironmentId.make("environment-1"),
+          label: "Before",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.33",
+          capabilities: { repositoryIdentity: true },
+        },
+      }),
+    );
+    const next = applyServerConfigProjection(current, {
+      version: 1,
+      type: "environmentLabelUpdated",
+      payload: { label: "After" },
+    });
+
+    expect(Option.getOrThrow(next).config.environment.label).toBe("After");
+  });
+
   it("only treats a legacy transport interruption as an unacknowledged handoff", () => {
     expect(isLegacyUpdateHandoffLoss(Cause.interrupt(1))).toBe(true);
     expect(

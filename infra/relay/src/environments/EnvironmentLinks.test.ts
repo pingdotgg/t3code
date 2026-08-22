@@ -8,6 +8,48 @@ import { relayEnvironmentLinks } from "../persistence/schema.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 
 describe("EnvironmentLinks", () => {
+  it.effect("updates only the active link with matching environment credentials", () => {
+    const updateValues: Array<Record<string, unknown>> = [];
+    const whereConditions: Array<unknown> = [];
+    const fakeDb = {
+      update: (table: unknown) => {
+        expect(table).toBe(relayEnvironmentLinks);
+        return {
+          set: (values: Record<string, unknown>) => {
+            updateValues.push(values);
+            return {
+              where: (condition: unknown) => {
+                whereConditions.push(condition);
+                return Effect.void;
+              },
+            };
+          },
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      yield* links.updateLabel({
+        environmentId: "env-1",
+        environmentPublicKey: "public-key-1",
+        label: "Build server",
+      });
+
+      expect(updateValues[0]?.environmentLabel).toBe("Build server");
+      expect(typeof updateValues[0]?.updatedAt).toBe("string");
+      const query = new PgDialect().sqlToQuery(whereConditions[0] as never);
+      expect(query.sql).toContain('"relay_environment_links"."environment_id" = $1');
+      expect(query.sql).toContain('"relay_environment_links"."environment_public_key" = $2');
+      expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
+      expect(query.params).toEqual(["env-1", "public-key-1"]);
+    }).pipe(
+      Effect.provide(
+        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
   it.effect("retains link lookup failures with user and environment identity", () => {
     const cause = new Error("database unavailable");
     const fakeDb = {
