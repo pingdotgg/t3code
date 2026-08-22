@@ -8,7 +8,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
@@ -19,6 +19,8 @@ import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { EnvironmentOsIcon } from "../EnvironmentOsIcon";
+import { resolveEnvironmentOs } from "../settings/ConnectionsSettings.logic";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
@@ -28,6 +30,7 @@ import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnec
 export interface SavedCloudEnvironmentConnection {
   readonly environmentId: EnvironmentId;
   readonly connection: EnvironmentConnectionPresentation;
+  readonly serverConfig: ServerConfig | null;
 }
 
 export function RemoteEnvironmentRowsSkeleton() {
@@ -171,7 +174,7 @@ export function CloudEnvironmentConnectRows({
     return empty;
   }
 
-  return visibleEnvironments.map(({ environment, availability, error }) => {
+  return visibleEnvironments.map(({ environment, availability, status, error }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
     const savedConnection = savedEnvironment
       ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
@@ -226,6 +229,12 @@ export function CloudEnvironmentConnectRows({
                 }
               />
               <p className="truncate text-sm font-medium">{environment.label}</p>
+              <EnvironmentOsIcon
+                os={resolveEnvironmentOs({
+                  serverConfig: savedEnvironment?.serverConfig ?? null,
+                  discoveredDescriptor: Option.getOrNull(status)?.descriptor ?? null,
+                })}
+              />
             </div>
             <p
               className={cn(

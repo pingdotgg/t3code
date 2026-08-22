@@ -1,6 +1,35 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  DesktopBridge,
+  DesktopWslState,
+  ExecutionEnvironmentDescriptor,
+  ExecutionEnvironmentPlatformOs,
+  ServerConfig,
+} from "@t3tools/contracts";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
+
+/**
+ * Which OS a remote environment runs on, for the platform glyph in the
+ * environment list. The server config is authoritative and survives
+ * disconnects (it is cached per environment), so a previously-connected
+ * environment keeps its glyph while offline. Relay discovery only reports a
+ * descriptor while the environment is reachable, so it is the fallback for
+ * environments this client has never connected to.
+ *
+ * Returns null when neither source knows the platform, or when the server
+ * reported "unknown" — callers render no glyph rather than a placeholder.
+ */
+export function resolveEnvironmentOs(input: {
+  readonly serverConfig?: ServerConfig | null;
+  readonly discoveredDescriptor?: ExecutionEnvironmentDescriptor | null;
+}): ExecutionEnvironmentPlatformOs | null {
+  const os =
+    input.serverConfig?.environment.platform.os ??
+    input.discoveredDescriptor?.platform.os ??
+    "unknown";
+  return os === "unknown" ? null : os;
+}
 
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so

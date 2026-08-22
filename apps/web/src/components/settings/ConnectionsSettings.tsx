@@ -43,6 +43,7 @@ import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  resolveEnvironmentOs,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -127,6 +128,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "~/state/server";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { EnvironmentOsIcon } from "../EnvironmentOsIcon";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
@@ -1436,6 +1438,9 @@ function SavedBackendListRow({
               }
             />
             <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
+            <EnvironmentOsIcon
+              os={resolveEnvironmentOs({ serverConfig: environment.serverConfig })}
+            />
           </div>
           {metadataBits.length > 0 ? (
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>

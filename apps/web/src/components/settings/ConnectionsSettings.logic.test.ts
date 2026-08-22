@@ -1,8 +1,15 @@
-import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  DesktopWslState,
+  ExecutionEnvironmentDescriptor,
+  ExecutionEnvironmentPlatformOs,
+  ServerConfig,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  resolveEnvironmentOs,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 
@@ -161,5 +168,36 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+describe("resolveEnvironmentOs", () => {
+  const descriptorWith = (os: ExecutionEnvironmentPlatformOs) =>
+    ({ platform: { os, arch: "arm64" } }) as ExecutionEnvironmentDescriptor;
+  const serverConfigWith = (os: ExecutionEnvironmentPlatformOs) =>
+    ({ environment: descriptorWith(os) }) as ServerConfig;
+
+  it("prefers the cached server config so a disconnected environment keeps its glyph", () => {
+    expect(
+      resolveEnvironmentOs({
+        serverConfig: serverConfigWith("darwin"),
+        discoveredDescriptor: descriptorWith("linux"),
+      }),
+    ).toBe("darwin");
+  });
+
+  it("falls back to relay discovery for an environment this client never connected to", () => {
+    expect(
+      resolveEnvironmentOs({ serverConfig: null, discoveredDescriptor: descriptorWith("windows") }),
+    ).toBe("windows");
+  });
+
+  it("returns null when neither source knows the platform", () => {
+    expect(resolveEnvironmentOs({})).toBeNull();
+    expect(resolveEnvironmentOs({ serverConfig: null, discoveredDescriptor: null })).toBeNull();
+  });
+
+  it("treats a reported 'unknown' as no glyph rather than a placeholder", () => {
+    expect(resolveEnvironmentOs({ serverConfig: serverConfigWith("unknown") })).toBeNull();
   });
 });
