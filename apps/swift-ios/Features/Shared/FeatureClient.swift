@@ -166,11 +166,13 @@ public protocol FeatureClient: AnyObject {
     ) async throws -> FeatureReviewFileContents?
 
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus
+    /// Completes at the mutation boundary. Callers refresh status separately so a refresh
+    /// failure cannot make an already-completed non-idempotent action retryable.
     func performSourceControlAction(
         threadID: String,
         action: FeatureSourceControlAction,
         message: String?
-    ) async throws -> FeatureSourceControlStatus
+    ) async throws
 
     func terminalSnapshot(threadID: String, terminalID: String) async throws -> FeatureTerminalSnapshot
     func terminalEvents(threadID: String, terminalID: String) -> AsyncStream<FeatureTerminalSnapshot>
@@ -453,7 +455,7 @@ public extension FeatureClient {
         threadID: String,
         action: FeatureSourceControlAction,
         message: String?
-    ) async throws -> FeatureSourceControlStatus {
+    ) async throws {
         throw FeatureCapabilityUnavailable("Source control actions")
     }
 

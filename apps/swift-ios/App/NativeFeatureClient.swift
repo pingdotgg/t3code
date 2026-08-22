@@ -2063,7 +2063,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         threadID: String,
         action: FeatureSourceControlAction,
         message: String?
-    ) async throws -> FeatureSourceControlStatus {
+    ) async throws {
         let route = try threadRoute(for: threadID)
         let client = route.client
         let context = try workspaceContext(route: route)
@@ -2082,10 +2082,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 }
             }
         }
-
-        return NativeWorkspaceMapper.sourceControl(
-            try await client.refreshVCSStatus(cwd: context.cwd)
-        )
     }
 
     func terminalSnapshot(
