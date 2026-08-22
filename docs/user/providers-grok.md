@@ -53,8 +53,10 @@ T3 Code now maps those updates onto the same Agents / task surface used by Claud
 - member tokens stay on the child `typedUsage` snapshot — they do not replace the thread context window
 - standalone Grok `subagent_spawned` / `subagent_progress` / `subagent_finished` updates use the same child-task path
 
-Slash commands such as `/workflow pause|resume|stop` still belong to the Grok CLI session. T3
-does not reimplement the Rhai host. It consumes the ACP notifications the host already emits.
+T3 does not reimplement the Rhai host. Composer `/` lists `/workflow pause`, `/workflow resume`,
+`/workflow stop`, and each script in `~/.grok/workflows` plus the project `.grok/workflows`
+directory. Picking one sends that slash text as a prompt so the Grok CLI can run it. Project
+scripts override user scripts of the same name.
 
 ## Usage
 
@@ -90,4 +92,4 @@ Settings when ACP login fails.
 
 Grok Build's ACP session channel also carries queued prompts, plugins, and marketplace
 updates. Those notifications are accepted and ignored until a later change maps them. The
-Grok CLI TUI remains the source of truth for `/workflows` and `/usage`.
+Grok CLI TUI remains the source of truth for `/usage`.

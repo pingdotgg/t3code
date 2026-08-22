@@ -43,6 +43,9 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.message).toContain("Checking Grok");
       expect(snapshot.requiresNewThreadForModelChange).toBe(false);
       expect(snapshot.showInteractionModeToggle).toBe(true);
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(
+        expect.arrayContaining(["workflow pause", "workflow resume", "workflow stop"]),
+      );
       expect(snapshot.models[0]?.capabilities?.optionDescriptors?.[0]?.id).toBe("reasoningEffort");
     }),
   );
