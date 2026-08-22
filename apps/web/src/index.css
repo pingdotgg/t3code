@@ -1783,6 +1783,12 @@ html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
   color: var(--code-foreground);
 }
 
+/* Overlay is portaled onto document.body, so it cannot use the .chat-markdown
+   ancestor the inline mermaid code block uses. */
+html[data-theme-id] .chat-markdown-mermaid-overlay-scene {
+  background: var(--code-background);
+}
+
 html[data-theme-id] .chat-markdown pre {
   background-color: var(--code-background);
   color: var(--code-foreground);
@@ -2206,6 +2212,91 @@ code {
 }
 
 .chat-markdown .chat-markdown-shiki .shiki {
+  background: transparent !important;
+}
+
+.chat-markdown .chat-markdown-mermaid {
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 0.75rem 0.85rem 0.9rem;
+}
+
+.chat-markdown .chat-markdown-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+  background: transparent !important;
+}
+
+/* Three classes so color wins over `html[data-theme-id] .chat-markdown pre`. */
+.chat-markdown .chat-markdown-codeblock .chat-markdown-mermaid-pending {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem 0.85rem 0.9rem;
+  overflow-x: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: var(--font-size-code, 0.75rem);
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--foreground) 78%, transparent);
+}
+
+.chat-markdown .chat-markdown-mermaid-error {
+  padding: 0.75rem 0.85rem 0.9rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
+}
+
+.chat-markdown .chat-markdown-mermaid-error p {
+  margin: 0;
+}
+
+.chat-markdown .chat-markdown-mermaid-error p + p {
+  margin-top: 0.25rem;
+  color: color-mix(in srgb, var(--foreground) 58%, transparent);
+}
+
+.chat-markdown-mermaid-overlay-scene {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  /* Default palette matches the inline mermaid code block. Custom themes tint
+     --secondary/--input with the accent, so the overlay uses --code-background
+     via html[data-theme-id] .chat-markdown-mermaid-overlay-scene. */
+  background: var(--secondary);
+
+  @variant dark {
+    background: color-mix(in srgb, var(--input) 32%, transparent);
+  }
+}
+
+.chat-markdown-mermaid-overlay-scene[data-panning="true"] {
+  cursor: grabbing;
+}
+
+.chat-markdown-mermaid-overlay-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  color: unset;
+}
+
+.chat-markdown-mermaid-overlay-canvas svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: none;
+  overflow: visible;
   background: transparent !important;
 }
 

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
   ChevronRightIcon,
+  CodeIcon,
   CopyIcon,
   GlobeIcon,
   InfoIcon,
@@ -11,6 +12,7 @@ import {
   Minimize2Icon,
   OctagonAlertIcon,
   TriangleAlertIcon,
+  WorkflowIcon,
   WrapTextIcon,
 } from "lucide-react";
 import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
@@ -63,7 +65,10 @@ import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { isMermaidFenceLanguage, mermaidSourceAsMarkdownFence } from "../lib/mermaidRendering";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { MermaidDiagram } from "./chat/MermaidDiagram";
+import { MermaidOverlay } from "./chat/MermaidOverlay";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings } from "../hooks/useSettings";
@@ -617,19 +622,28 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  diagram,
+  canExpandDiagram = false,
+  onExpandDiagram,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  diagram?: ReactNode;
+  canExpandDiagram?: boolean;
+  onExpandDiagram?: () => void;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
+  const [view, setView] = useState<"code" | "diagram">(diagram ? "diagram" : "code");
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showingDiagram = diagram != null && view === "diagram";
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
+  const diagramToggleLabel = showingDiagram ? "Show code" : "Show diagram";
 
   const handleCopy = useCallback(() => {
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -674,6 +688,7 @@ function MarkdownCodeBlock({
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
+      data-mermaid-view={diagram != null ? view : undefined}
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
         <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
@@ -684,24 +699,72 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
+          {diagram != null ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={showingDiagram}
+                    onClick={() =>
+                      setView((current) => (current === "diagram" ? "code" : "diagram"))
+                    }
+                    aria-label={diagramToggleLabel}
+                  />
+                }
+              >
+                {showingDiagram ? (
+                  <CodeIcon className="size-3" />
+                ) : (
+                  <WorkflowIcon className="size-3" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{diagramToggleLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {showingDiagram && canExpandDiagram && onExpandDiagram != null ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    onClick={onExpandDiagram}
+                    aria-label="Expand diagram"
+                    data-mermaid-expand=""
+                  />
+                }
+              >
+                <Maximize2Icon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Expand diagram</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {showingDiagram ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={wrapped}
+                    onClick={() => setWrapped((value) => !value)}
+                    aria-label={wrapLabel}
+                  />
+                }
+              >
+                <WrapTextIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -721,8 +784,70 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
+      {showingDiagram ? diagram : children}
     </div>
+  );
+}
+
+function MermaidMarkdownCodeBlock({
+  code,
+  language,
+  fenceTitle,
+  theme,
+  isStreaming,
+  children,
+}: {
+  code: string;
+  language: string;
+  fenceTitle: string | null;
+  theme: "light" | "dark";
+  isStreaming: boolean;
+  children: ReactNode;
+}) {
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [svg, setSvg] = useState<string | null>(null);
+
+  return (
+    <>
+      <MarkdownCodeBlock
+        code={code}
+        language={language}
+        fenceTitle={fenceTitle}
+        theme={theme}
+        canExpandDiagram={svg != null}
+        onExpandDiagram={() => setOverlayOpen(true)}
+        diagram={
+          <RenderErrorBoundary
+            fallback={
+              <div
+                className="chat-markdown-mermaid-error"
+                data-markdown-copy={mermaidSourceAsMarkdownFence(code)}
+                role="alert"
+              >
+                <p>Couldn't render this diagram.</p>
+              </div>
+            }
+          >
+            <MermaidDiagram
+              code={code}
+              theme={theme}
+              isStreaming={isStreaming}
+              onSvgChange={setSvg}
+            />
+          </RenderErrorBoundary>
+        }
+      >
+        {children}
+      </MarkdownCodeBlock>
+      {svg != null ? (
+        <MermaidOverlay
+          open={overlayOpen}
+          svg={svg}
+          title={fenceTitle ?? "Diagram"}
+          onOpenChange={setOverlayOpen}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1417,6 +1542,19 @@ function ChatMarkdown({
     ];
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
+  // ReactMarkdown remounts every custom tag whose component identity changes.
+  // Streaming updates `text` (and the file-link maps derived from it) on every
+  // token; keep those on refs so mermaid state survives until the fence settles.
+  const textRef = useRef(text);
+  textRef.current = text;
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
+  const markdownFileLinkMetaByHrefRef = useRef(markdownFileLinkMetaByHref);
+  markdownFileLinkMetaByHrefRef.current = markdownFileLinkMetaByHref;
+  const inlineCodeFileLinkMetaByTextRef = useRef(inlineCodeFileLinkMetaByText);
+  inlineCodeFileLinkMetaByTextRef.current = inlineCodeFileLinkMetaByText;
+  const fileLinkParentSuffixByPathRef = useRef(fileLinkParentSuffixByPath);
+  fileLinkParentSuffixByPathRef.current = fileLinkParentSuffixByPath;
   const markdownUrlTransform = useCallback((href: string) => {
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
@@ -1511,14 +1649,14 @@ function ChatMarkdown({
   );
   /* eslint-disable react/no-unstable-nested-components -- ReactMarkdown requires component
    * renderers that close over this message's metadata. useMemo keeps them stable until that
-   * metadata changes. */
+   * metadata changes. Streaming text is read from refs so mermaid diagrams do not remount. */
   const markdownComponents = useMemo<Components>(() => {
     const fileLinkChip = (
       fileLinkMeta: MarkdownFileLinkMeta,
       copyMarkdown: string,
       className?: string,
     ) => {
-      const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+      const parentSuffix = fileLinkParentSuffixByPathRef.current.get(fileLinkMeta.filePath);
       const labelParts = [fileLinkMeta.basename];
       if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
         labelParts.push(parentSuffix);
@@ -1591,7 +1729,9 @@ function ChatMarkdown({
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
         const markerOffset =
-          typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+          typeof listItemStart === "number"
+            ? findTaskListMarkerOffset(textRef.current, listItemStart)
+            : null;
         return (
           <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
             {renderSkillInlineMarkdownChildren(children, skills)}
@@ -1629,7 +1769,9 @@ function ChatMarkdown({
       },
       a({ node, href, children, title: _title, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? markdownFileLinkMetaByHrefRef.current.get(normalizedHref)
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1719,7 +1861,7 @@ function ChatMarkdown({
         if (node?.properties?.dataInlineCode != null) {
           const codeText = nodeToPlainText(children);
           const fileLinkMeta =
-            inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
+            inlineCodeFileLinkMetaByTextRef.current.get(codeText.trim()) ??
             resolveInlineCodeFileLinkMeta(codeText, cwd);
           if (fileLinkMeta) {
             return fileLinkChip(fileLinkMeta, `\`${codeText}\``);
@@ -1745,6 +1887,31 @@ function ChatMarkdown({
 
         const language = extractFenceLanguage(codeBlock.className);
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+        const highlighted = (
+          <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+            <Suspense fallback={<pre {...props}>{children}</pre>}>
+              <SuspenseShikiCodeBlock
+                className={codeBlock.className}
+                code={codeBlock.code}
+                themeName={diffThemeName}
+                isStreaming={isStreamingRef.current}
+              />
+            </Suspense>
+          </RenderErrorBoundary>
+        );
+        if (isMermaidFenceLanguage(language)) {
+          return (
+            <MermaidMarkdownCodeBlock
+              code={codeBlock.code}
+              language={language}
+              fenceTitle={fenceTitle}
+              theme={resolvedTheme}
+              isStreaming={isStreamingRef.current}
+            >
+              {highlighted}
+            </MermaidMarkdownCodeBlock>
+          );
+        }
         return (
           <MarkdownCodeBlock
             code={codeBlock.code}
@@ -1752,16 +1919,7 @@ function ChatMarkdown({
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
           >
-            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </RenderErrorBoundary>
+            {highlighted}
           </MarkdownCodeBlock>
         );
       },
@@ -1769,10 +1927,6 @@ function ChatMarkdown({
   }, [
     cwd,
     diffThemeName,
-    fileLinkParentSuffixByPath,
-    inlineCodeFileLinkMetaByText,
-    isStreaming,
-    markdownFileLinkMetaByHref,
     onTaskListChange,
     openFileInPanel,
     openInPreferredEditor,
@@ -1780,7 +1934,6 @@ function ChatMarkdown({
     openMarkdownFileInPreview,
     resolvedTheme,
     skills,
-    text,
     threadRef,
   ]);
   /* eslint-enable react/no-unstable-nested-components */

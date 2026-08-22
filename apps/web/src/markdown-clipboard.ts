@@ -322,6 +322,17 @@ export function chatMarkdownClipboardPayload(
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    const mermaid = ancestorElement?.closest(
+      ".chat-markdown-mermaid, .chat-markdown-mermaid-error, .chat-markdown-mermaid-pending",
+    );
+    if (mermaid) {
+      const fence = mermaid.getAttribute("data-markdown-copy");
+      if (fence) {
+        texts.push(fence);
+        htmls.push(sanitizedHtmlFrom(container));
+      }
+      continue;
+    }
     if (ancestorElement?.closest("pre")) {
       const text = range.toString();
       if (text) {
