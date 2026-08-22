@@ -51,6 +51,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
+import { isPrivateHost } from "@t3tools/shared/privateHost";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -240,7 +241,11 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
   readonly host: string;
   readonly href: string;
 }) {
-  const [failed, setFailed] = useState(() => failedMarkdownFaviconHosts.has(props.host));
+  // A favicon service cannot resolve a private host. Skip the request so the
+  // host name stays inside the network.
+  const [failed, setFailed] = useState(
+    () => isPrivateHost(props.host) || failedMarkdownFaviconHosts.has(props.host),
+  );
 
   return (
     <NativeText
