@@ -361,7 +361,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   -webkit-mask-position: top, bottom, right;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-size:
-    100% var(--topbar-scroll-fade-height),
+    100% calc(var(--topbar-scroll-fade-height) + 1px),
     100% calc(100% - var(--topbar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
   mask-image:
@@ -379,7 +379,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   mask-position: top, bottom, right;
   mask-repeat: no-repeat;
   mask-size:
-    100% var(--topbar-scroll-fade-height),
+    100% calc(var(--topbar-scroll-fade-height) + 1px),
     100% calc(100% - var(--topbar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
 
