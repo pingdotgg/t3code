@@ -7,7 +7,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -49,11 +49,13 @@ const withHostPlatform = <ROut, E, RIn>(
   layer: Layer.Layer<ROut, E, RIn>,
   platform: NodeJS.Platform,
   hostname: string,
+  env: NodeJS.ProcessEnv = {},
 ) =>
   Layer.mergeAll(
     layer,
     Layer.succeed(HostProcessPlatform, platform),
     Layer.succeed(HostProcessHostname, hostname),
+    Layer.succeed(HostProcessEnvironment, env),
   );
 
 afterEach(() => {
@@ -280,6 +282,81 @@ describe("resolveServerEnvironmentLabel", () => {
       }).pipe(Effect.provide(withHostPlatform(TestLayer, "linux", "   ")));
 
       expect(result).toBe("t3code");
+    }),
+  );
+  it.effect("appends WSL distro name when WSL_DISTRO_NAME is present", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          stdout: "",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+      );
+
+      const WslLayer = Layer.merge(
+        ProcessRunnerTest,
+        FileSystem.layerNoop({
+          exists: (path) => Effect.succeed(path === "/proc/sys/kernel/osrelease"),
+          readFileString: (path) =>
+            path === "/proc/sys/kernel/osrelease"
+              ? Effect.succeed("5.15.90.1-microsoft-standard-WSL2")
+              : Effect.succeed(""),
+        }),
+      );
+      
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+      }).pipe(
+        Effect.provide(
+          withHostPlatform(WslLayer, "linux", "WINDOWS-HOST", { WSL_DISTRO_NAME: "Ubuntu-22.04" })
+        )
+      );
+
+      expect(result).toBe("WINDOWS-HOST (WSL: Ubuntu-22.04)");
+    }),
+  );
+
+  it.effect("appends generic WSL label when WSL_DISTRO_NAME is absent", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          stdout: "",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+      );
+
+      const WslLayer = Layer.merge(
+        ProcessRunnerTest,
+        FileSystem.layerNoop({
+          exists: (path) => Effect.succeed(path === "/proc/sys/kernel/osrelease"),
+          readFileString: (path) =>
+            path === "/proc/sys/kernel/osrelease"
+              ? Effect.succeed("5.15.90.1-microsoft-standard-WSL2")
+              : Effect.succeed(""),
+        }),
+      );
+      
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+      }).pipe(
+        Effect.provide(
+          withHostPlatform(WslLayer, "linux", "WINDOWS-HOST", {})
+        )
+      );
+
+      expect(result).toBe("WINDOWS-HOST (WSL)");
     }),
   );
 });
