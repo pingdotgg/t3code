@@ -1216,13 +1216,14 @@ const make = Effect.gen(function* () {
       });
     }
 
-    yield* providerService
+    const responseSucceeded = yield* providerService
       .respondToRequest({
         threadId: event.payload.threadId,
         requestId: event.payload.requestId,
         decision: event.payload.decision,
       })
       .pipe(
+        Effect.as(true),
         Effect.catchCause((cause) =>
           appendProviderFailureActivity({
             threadId: event.payload.threadId,
@@ -1234,9 +1235,24 @@ const make = Effect.gen(function* () {
             turnId: null,
             createdAt: event.payload.createdAt,
             requestId: event.payload.requestId,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+
+    if (responseSucceeded && event.payload.decision === "cancel") {
+      yield* providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.interrupt.failed",
+            summary: "Provider turn interrupt failed",
+            detail: Cause.pretty(cause),
+            turnId: thread.session?.activeTurnId ?? null,
+            createdAt: event.payload.createdAt,
           }),
         ),
       );
+    }
   });
 
   const processUserInputResponseRequested = Effect.fn("processUserInputResponseRequested")(
