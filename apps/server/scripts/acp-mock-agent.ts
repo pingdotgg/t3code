@@ -297,6 +297,7 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 const enableRewind = process.env.T3_ACP_ENABLE_REWIND === "1";
+const ghostRewindOnCancel = process.env.T3_ACP_REWIND_GHOST_ON_CANCEL === "1";
 const emitUsage = process.env.T3_ACP_EMIT_USAGE === "1";
 const emitWorkflow = process.env.T3_ACP_EMIT_WORKFLOW === "1";
 const emitSubagent = process.env.T3_ACP_EMIT_SUBAGENT === "1";
@@ -461,6 +462,12 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (enableRewind && ghostRewindOnCancel) {
+        rewindPoints.push({
+          prompt_index: rewindPoints.length,
+          prompt_preview: "cancelled-ghost",
+        });
+      }
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -903,7 +910,7 @@ const program = Effect.gen(function* () {
         },
       });
 
-      if (enableRewind) {
+      if (enableRewind && !cancelledSessions.has(requestedSessionId)) {
         const preview =
           request.prompt.find((block) => block.type === "text" && "text" in block)?.text ?? "";
         rewindPoints.push({

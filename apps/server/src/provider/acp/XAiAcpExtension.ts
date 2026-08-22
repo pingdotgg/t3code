@@ -497,19 +497,10 @@ export function parseGrokRewindPoints(payload: unknown): ReadonlyArray<GrokRewin
   });
 }
 
-/** Target for rolling back the last `numTurns` user prompts. Execute discards the target and everything after it. */
-export function grokRewindTargetForTurnCount(
-  points: ReadonlyArray<GrokRewindPoint>,
-  numTurns: number,
-): GrokRewindPoint | undefined {
-  if (!Number.isInteger(numTurns) || numTurns < 1 || points.length === 0) {
-    return undefined;
-  }
-  const ordered = [...points].sort((left, right) => left.promptIndex - right.promptIndex);
-  if (numTurns > ordered.length) {
-    return undefined;
-  }
-  return ordered[ordered.length - numTurns];
+export function grokPromptCount(
+  turns: ReadonlyArray<{ readonly items: ReadonlyArray<unknown> }>,
+): number {
+  return turns.reduce((count, turn) => count + turn.items.length, 0);
 }
 
 export function grokPromptCountForTurns(
@@ -519,7 +510,32 @@ export function grokPromptCountForTurns(
   if (!Number.isInteger(numTurns) || numTurns < 1) {
     return 0;
   }
-  return turns.slice(-numTurns).reduce((count, turn) => count + turn.items.length, 0);
+  return grokPromptCount(turns.slice(-numTurns));
+}
+
+function orderedGrokRewindPoints(
+  points: ReadonlyArray<GrokRewindPoint>,
+): ReadonlyArray<GrokRewindPoint> {
+  return [...points].sort((left, right) => left.promptIndex - right.promptIndex);
+}
+
+/**
+ * First rewind point to discard so Grok keeps `keepPromptCount` user prompts.
+ * Execute drops the target and everything after it, including extra points from
+ * a cancelled in-flight prompt that still landed on the list.
+ */
+export function grokRewindTargetKeepingPromptCount(
+  points: ReadonlyArray<GrokRewindPoint>,
+  keepPromptCount: number,
+): GrokRewindPoint | undefined {
+  if (!Number.isInteger(keepPromptCount) || keepPromptCount < 0) {
+    return undefined;
+  }
+  const ordered = orderedGrokRewindPoints(points);
+  if (keepPromptCount >= ordered.length) {
+    return undefined;
+  }
+  return ordered[keepPromptCount];
 }
 
 export function parseGrokRewindExecute(payload: unknown): GrokRewindExecuteResult | undefined {

@@ -1505,6 +1505,75 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }).pipe(TestClock.withLive),
   );
 
+  it.effect("rewinds past a cancelled prompt that still appears in Grok rewind points", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-rewind-ghost");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-rewind-ghost-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_ENABLE_REWIND: "1",
+          T3_ACP_PROMPT_DELAY_MS: "400",
+          T3_ACP_REWIND_GHOST_ON_CANCEL: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const firstTurnDone = yield* Deferred.make<void>();
+      const secondTurnDone = yield* Deferred.make<void>();
+      const completedTurns = yield* Ref.make(0);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "turn.completed"
+          ? Ref.updateAndGet(completedTurns, (count) => count + 1).pipe(
+              Effect.flatMap((count) => {
+                if (count === 1) {
+                  return Deferred.succeed(firstTurnDone, undefined);
+                }
+                if (count === 2) {
+                  return Deferred.succeed(secondTurnDone, undefined);
+                }
+                return Effect.void;
+              }),
+            )
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "first", attachments: [] });
+      yield* Deferred.await(firstTurnDone).pipe(Effect.timeout("5 seconds"));
+      yield* adapter.sendTurn({ threadId, input: "second", attachments: [] });
+      yield* Deferred.await(secondTurnDone).pipe(Effect.timeout("5 seconds"));
+
+      const thirdSend = yield* adapter
+        .sendTurn({ threadId, input: "third-in-flight", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* waitForFileContent(requestLogPath, 80, "third-in-flight");
+
+      const rolled = yield* adapter.rollbackThread(threadId, 1);
+      yield* Fiber.join(thirdSend).pipe(Effect.timeout("5 seconds"), Effect.ignore);
+
+      assert.equal(rolled.turns.length, 1);
+      const lines = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const execute = lines.find((line) => line.method === "_x.ai/rewind/execute");
+      assert.isDefined(execute);
+      assert.equal(
+        (execute?.params as { targetPromptIndex?: number } | undefined)?.targetPromptIndex,
+        1,
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("projects Grok workflow_updated notifications as task events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-workflow");

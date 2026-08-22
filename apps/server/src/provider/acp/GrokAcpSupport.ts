@@ -367,6 +367,30 @@ export function grokReasoningEffortMenusFromSessionSetup(
   return menus;
 }
 
+/**
+ * Effort menu for a composer selection. `grok-build` is a product slug; live
+ * ACP menus are keyed by `grok-4.6` / `grok-4.5`. Resolve the alias before
+ * reading the map so sendTurn does not treat the menu as empty.
+ */
+export function advertisedGrokReasoningEffortsForModel(input: {
+  readonly menus: ReadonlyMap<string, ReadonlyArray<string>>;
+  readonly requestedModelId: string | undefined;
+  readonly currentModelId: string | undefined;
+  readonly availableModelIds: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  const liveId = resolveGrokSessionModelId({
+    requested: input.requestedModelId,
+    current: input.currentModelId,
+    availableIds: input.availableModelIds,
+  });
+  for (const id of [liveId, input.requestedModelId, input.currentModelId]) {
+    if (id && input.menus.has(id)) {
+      return input.menus.get(id) ?? [];
+    }
+  }
+  return [];
+}
+
 export function advertisedGrokReasoningEffortsFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
@@ -374,12 +398,12 @@ export function advertisedGrokReasoningEffortsFromSessionSetup(
     | EffectAcpSchema.ResumeSessionResponse,
   modelId: string | undefined,
 ): ReadonlyArray<string> {
-  const menus = grokReasoningEffortMenusFromSessionSetup(sessionSetupResult);
-  if (modelId && menus.has(modelId)) {
-    return menus.get(modelId) ?? [];
-  }
-  const current = sessionSetupResult.models?.currentModelId;
-  return (current ? menus.get(current) : undefined) ?? [];
+  return advertisedGrokReasoningEffortsForModel({
+    menus: grokReasoningEffortMenusFromSessionSetup(sessionSetupResult),
+    requestedModelId: modelId,
+    currentModelId: currentGrokModelIdFromSessionSetup(sessionSetupResult),
+    availableModelIds: availableGrokSessionModelIds(sessionSetupResult),
+  });
 }
 
 export function currentGrokReasoningEffortFromSessionSetup(

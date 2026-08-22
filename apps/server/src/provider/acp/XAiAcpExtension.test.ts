@@ -11,9 +11,10 @@ import { describe, expect } from "vite-plus/test";
 import {
   extractGrokTokenUsage,
   extractXAiAskUserQuestions,
+  grokPromptCount,
   grokPromptCountForTurns,
   grokRewindFailureDetail,
-  grokRewindTargetForTurnCount,
+  grokRewindTargetKeepingPromptCount,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
@@ -338,7 +339,7 @@ describe("XAiAcpExtension", () => {
 });
 
 describe("Grok rewind and usage helpers", () => {
-  it("picks the rewind target that drops the last N turns", () => {
+  it("picks the rewind target so Grok keeps the remaining local prompts", () => {
     const points = parseGrokRewindPoints({
       rewind_points: [
         { prompt_index: 0, prompt_preview: "first" },
@@ -346,10 +347,26 @@ describe("Grok rewind and usage helpers", () => {
         { prompt_index: 2, prompt_preview: "third" },
       ],
     });
-    expect(grokRewindTargetForTurnCount(points, 1)?.promptIndex).toBe(2);
-    expect(grokRewindTargetForTurnCount(points, 2)?.promptIndex).toBe(1);
-    expect(grokRewindTargetForTurnCount(points, 4)).toBeUndefined();
+    expect(grokRewindTargetKeepingPromptCount(points, 2)?.promptIndex).toBe(2);
+    expect(grokRewindTargetKeepingPromptCount(points, 1)?.promptIndex).toBe(1);
+    expect(grokRewindTargetKeepingPromptCount(points, 0)?.promptIndex).toBe(0);
+    expect(grokRewindTargetKeepingPromptCount(points, 3)).toBeUndefined();
+    expect(grokPromptCount([{ items: [1] }, { items: [2, 3] }])).toBe(3);
     expect(grokPromptCountForTurns([{ items: [1] }, { items: [2, 3] }], 1)).toBe(2);
+  });
+
+  it("discards a cancelled-prompt ghost with the rest of the dropped history", () => {
+    const points = parseGrokRewindPoints({
+      rewind_points: [
+        { prompt_index: 0, prompt_preview: "first" },
+        { prompt_index: 1, prompt_preview: "second" },
+        { prompt_index: 2, prompt_preview: "cancelled-ghost" },
+      ],
+    });
+    // Two completed local turns, rewind one: keep prompt 0, drop local turn 2
+    // and the ghost that landed after cancel. End-relative targeting would
+    // keep prompt 1 on Grok.
+    expect(grokRewindTargetKeepingPromptCount(points, 1)?.promptIndex).toBe(1);
   });
 
   it("keeps rewind failure detail bounded and includes the provider error", () => {

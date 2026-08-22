@@ -61,7 +61,8 @@ treated as token counts only.
 ## Rewind
 
 Conversation rollback uses Grok's `_x.ai/rewind` extension. T3 maps "undo N turns" onto rewind
-points and trims the in-memory turn list when execute succeeds.
+points from the remaining conversation, so a cancelled in-flight prompt cannot leave Grok and T3
+on different histories, then trims the in-memory turn list when execute succeeds.
 
 ## If Grok looks ready but will not start
 

@@ -11,6 +11,7 @@ import {
   isGrokAcpAuthFailure,
   parseGrokAcpModelMeta,
   grokDiscoveredModelCapabilities,
+  advertisedGrokReasoningEffortsForModel,
   requestedGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
   resolveGrokSessionModelId,
@@ -136,6 +137,64 @@ describe("requestedGrokReasoningEffort", () => {
         [],
       ),
     ).toBe("xhigh");
+  });
+});
+
+describe("advertisedGrokReasoningEffortsForModel", () => {
+  const liveMenu = ["xhigh", "high", "medium"] as const;
+  const menus = new Map<string, ReadonlyArray<string>>([
+    ["grok-4.6", [...liveMenu]],
+    ["grok-4.5", ["high", "medium", "low"]],
+  ]);
+
+  it("resolves grok-build onto the live ACP model's effort menu", () => {
+    expect(
+      advertisedGrokReasoningEffortsForModel({
+        menus,
+        requestedModelId: "grok-build",
+        currentModelId: "grok-4.6",
+        availableModelIds: ["grok-4.6", "grok-4.5"],
+      }),
+    ).toEqual([...liveMenu]);
+  });
+
+  it("uses the requested live model menu instead of spawnable fallback", () => {
+    const advertised = advertisedGrokReasoningEffortsForModel({
+      menus,
+      requestedModelId: "grok-4.5",
+      currentModelId: "grok-4.6",
+      availableModelIds: ["grok-4.6", "grok-4.5"],
+    });
+    expect(advertised).toEqual(["high", "medium", "low"]);
+    expect(
+      requestedGrokReasoningEffort(
+        {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-4.5",
+          options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "xhigh" }],
+        },
+        advertised,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("keeps live-model-only efforts when the composer still says grok-build", () => {
+    const advertised = advertisedGrokReasoningEffortsForModel({
+      menus: new Map([["grok-4.6", ["max", "high"]]]),
+      requestedModelId: "grok-build",
+      currentModelId: "grok-4.6",
+      availableModelIds: ["grok-4.6"],
+    });
+    expect(
+      requestedGrokReasoningEffort(
+        {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+          options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "max" }],
+        },
+        advertised,
+      ),
+    ).toBe("max");
   });
 });
 
