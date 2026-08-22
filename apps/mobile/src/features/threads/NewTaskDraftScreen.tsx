@@ -109,7 +109,7 @@ export function NewTaskDraftScreen(props: {
     reserveShare,
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
-  const { themeAppearance: colorScheme } = useAppearancePreferences();
+  const { themeAppearance: colorScheme, materialYouStyleLayoutActive } = useAppearancePreferences();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
   const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
@@ -293,6 +293,7 @@ export function NewTaskDraftScreen(props: {
 
   const foregroundColor = useThemeColor("--color-foreground");
   const sheetColor = String(useThemeColor("--color-sheet"));
+  const composerPanel = useThemeColor("--color-composer-panel");
   const projectUnderlineColor = useThemeColor("--color-foreground-muted");
   const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
@@ -955,7 +956,13 @@ export function NewTaskDraftScreen(props: {
   );
 
   const composerDock = (
-    <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+    <View
+      className={materialYouStyleLayoutActive ? "px-4 pt-1" : "bg-sheet px-4 pt-1"}
+      style={{
+        backgroundColor: materialYouStyleLayoutActive ? composerPanel : undefined,
+        paddingBottom: controlsBottomPadding,
+      }}
+    >
       <View className="pb-1">{workspaceControls}</View>
 
       <ComposerSurface

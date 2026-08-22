@@ -19,6 +19,7 @@ import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useNativePaste } from "../lib/useNativePaste";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import {
   acknowledgeComposerNativeEvent,
   assumeComposerControlledState,
@@ -113,6 +114,8 @@ export function ComposerEditor({
   const confirmedTokensRef = useRef(initialConfirmedTokens);
   const textColor = useThemeColor("--color-foreground");
   const placeholderColor = useThemeColor("--color-placeholder");
+  const selectionColor = useThemeColor("--color-primary");
+  const { systemColorsActive } = useAppearancePreferences();
   const chipBackground = useThemeColor("--color-subtle");
   const chipBorder = useThemeColor("--color-border");
   const chipText = useThemeColor("--color-foreground");
@@ -222,6 +225,7 @@ export function ComposerEditor({
   const themeJson = JSON.stringify({
     text: String(textColor),
     placeholder: String(placeholderColor),
+    selection: systemColorsActive ? String(selectionColor) : null,
     chipBackground: String(chipBackground),
     chipBorder: String(chipBorder),
     chipText: String(chipText),

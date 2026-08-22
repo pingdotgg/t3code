@@ -1,5 +1,14 @@
-import { createContext, use, useCallback, useLayoutEffect, useMemo, type ReactNode } from "react";
-import { useColorScheme } from "react-native";
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { AppState, Platform, useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -14,6 +23,12 @@ import {
 } from "../../../lib/appearancePreferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import type { Preferences } from "../../../persistence/mobile-preferences";
+import {
+  isSystemColorsAvailable,
+  readSystemColorPalettes,
+  type MaterialYouPalettes,
+} from "../../../lib/materialYouPalette";
+import { materialYouPaletteToMobileThemeVariables } from "../../../lib/materialYouTheme";
 import {
   createMobileThemePairPatch,
   createMobileThemeSelectionPatch,
@@ -34,6 +49,11 @@ interface AppearancePreferencesContextValue {
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
   readonly themeAppearance: MobileThemeAppearance;
+  readonly systemColorsAvailable: boolean;
+  readonly systemColorsEnabled: boolean;
+  readonly systemColorsActive: boolean;
+  readonly materialYouStyleLayoutEnabled: boolean;
+  readonly materialYouStyleLayoutActive: boolean;
   readonly isReady: boolean;
   readonly setThemeIdForAppearance: (
     appearance: MobileThemeAppearance,
@@ -41,6 +61,8 @@ interface AppearancePreferencesContextValue {
   ) => void;
   readonly setThemeIdForBothAppearances: (value: MobileThemeId) => void;
   readonly setThemeMode: (value: MobileThemeMode) => void;
+  readonly setSystemColorsEnabled: (value: boolean) => void;
+  readonly setMaterialYouStyleLayoutEnabled: (value: boolean) => void;
   readonly setBaseFontSize: (value: number) => void;
   /** Pass null to clear the override and follow the base font size. */
   readonly setTerminalFontSize: (value: number | null) => void;
@@ -55,21 +77,40 @@ const AppearancePreferencesContext = createContext<AppearancePreferencesContextV
  * Injects palette and text-scale variables into both adaptive stylesheets.
  * Updating the active sheet last lets the visible app settle in one pass.
  */
-function applyAppearanceVariables(baseFontSize: number, themeIds: MobileThemeIds) {
+function applyAppearanceVariables(
+  baseFontSize: number,
+  themeIds: MobileThemeIds,
+  systemColorPalettes: MaterialYouPalettes | null,
+) {
   const textVariables = resolveTextScaleVariables(baseFontSize);
   const currentTheme = Uniwind.currentTheme;
   const activeAppearance =
     currentTheme === "light" || currentTheme === "dark" ? currentTheme : null;
 
   for (const theme of ["light", "dark"] as const) {
-    const variables = { ...getMobileThemeVariables(themeIds[theme], theme), ...textVariables };
+    const authoredVariables = getMobileThemeVariables(themeIds[theme], theme);
+    const colorVariables = systemColorPalettes
+      ? materialYouPaletteToMobileThemeVariables(
+          systemColorPalettes[theme],
+          theme,
+          authoredVariables,
+        )
+      : authoredVariables;
+    const variables = { ...colorVariables, ...textVariables };
     if (theme !== activeAppearance) {
       Uniwind.updateCSSVariables(theme, variables);
     }
   }
   if (activeAppearance !== null) {
+    const authoredVariables = getMobileThemeVariables(themeIds[activeAppearance], activeAppearance);
     Uniwind.updateCSSVariables(activeAppearance, {
-      ...getMobileThemeVariables(themeIds[activeAppearance], activeAppearance),
+      ...(systemColorPalettes
+        ? materialYouPaletteToMobileThemeVariables(
+            systemColorPalettes[activeAppearance],
+            activeAppearance,
+            authoredVariables,
+          )
+        : authoredVariables),
       ...textVariables,
     });
   }
@@ -78,6 +119,7 @@ function applyAppearanceVariables(baseFontSize: number, themeIds: MobileThemeIds
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const [systemColorsRefreshKey, setSystemColorsRefreshKey] = useState(0);
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -94,12 +136,34 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
   const themeId = themeIds[themeAppearance];
   const isReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const systemColorsEnabled = storedPreferences?.systemColorsEnabled ?? false;
+  const systemColorsActive = systemColorsEnabled && isSystemColorsAvailable;
+  const materialYouStyleLayoutEnabled = storedPreferences?.materialYouStyleLayoutEnabled ?? false;
+  const materialYouStyleLayoutActive = Platform.OS === "android" && materialYouStyleLayoutEnabled;
+  const systemColorPalettes = useMemo(
+    () => (systemColorsActive ? readSystemColorPalettes() : null),
+    [systemColorsActive, systemColorsRefreshKey],
+  );
+
+  useEffect(() => {
+    if (!systemColorsActive) return;
+    const refreshPalette = () => setSystemColorsRefreshKey((key) => key + 1);
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refreshPalette();
+    });
+    const focusSubscription =
+      Platform.OS === "android" ? AppState.addEventListener("focus", refreshPalette) : null;
+    return () => {
+      appStateSubscription.remove();
+      focusSubscription?.remove();
+    };
+  }, [systemColorsActive]);
 
   useLayoutEffect(() => {
-    applyAppearanceVariables(preferences.baseFontSize, themeIds);
+    applyAppearanceVariables(preferences.baseFontSize, themeIds, systemColorPalettes);
     Uniwind.setTheme(themeMode);
     cacheTerminalFontSize(resolveAppearance(preferences).terminalFontSize);
-  }, [preferences, themeIds, themeMode]);
+  }, [preferences, systemColorPalettes, themeIds, themeMode]);
 
   const updatePreferences = useCallback(
     (patch: Partial<Preferences>) => {
@@ -127,6 +191,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const setThemeMode = useCallback(
     (value: MobileThemeMode) => {
       updatePreferences({ themeMode: value });
+    },
+    [updatePreferences],
+  );
+
+  const setSystemColorsEnabled = useCallback(
+    (value: boolean) => {
+      updatePreferences({ systemColorsEnabled: value });
+    },
+    [updatePreferences],
+  );
+
+  const setMaterialYouStyleLayoutEnabled = useCallback(
+    (value: boolean) => {
+      updatePreferences({ materialYouStyleLayoutEnabled: value });
     },
     [updatePreferences],
   );
@@ -166,10 +244,17 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeIds,
       themeMode,
       themeAppearance,
+      systemColorsAvailable: isSystemColorsAvailable,
+      systemColorsEnabled,
+      systemColorsActive,
+      materialYouStyleLayoutEnabled,
+      materialYouStyleLayoutActive,
       isReady,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
+      setSystemColorsEnabled,
+      setMaterialYouStyleLayoutEnabled,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,
@@ -181,10 +266,16 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeIds,
       themeMode,
       themeAppearance,
+      systemColorsEnabled,
+      systemColorsActive,
+      materialYouStyleLayoutEnabled,
+      materialYouStyleLayoutActive,
       isReady,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
+      setSystemColorsEnabled,
+      setMaterialYouStyleLayoutEnabled,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,

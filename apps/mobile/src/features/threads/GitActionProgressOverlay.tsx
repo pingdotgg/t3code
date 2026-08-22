@@ -67,14 +67,26 @@ export function GitActionProgressOverlay(props: {
 
 function OverlayContent(props: { readonly progress: GitActionProgress }) {
   const { progress } = props;
+  const { materialYouStyleLayoutActive, themeAppearance } = useAppearancePreferences();
   const iconColor = useThemeColor("--color-icon");
+  const primaryColor = useThemeColor("--color-primary");
+  const primaryForegroundColor = useThemeColor("--color-primary-foreground");
+  const dangerColor = useThemeColor("--color-danger");
+  const dangerForegroundColor = useThemeColor("--color-danger-foreground");
   const glassBorder = useThemeColor("--color-header-border");
   const glassTint = useThemeColor("--color-glass-tint");
-  const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
   const content = (
     <>
-      <OverlayIcon phase={progress.phase} iconColor={iconColor} />
+      <OverlayIcon
+        phase={progress.phase}
+        iconColor={iconColor}
+        materialYouStyleLayoutActive={materialYouStyleLayoutActive}
+        primaryColor={primaryColor}
+        primaryForegroundColor={primaryForegroundColor}
+        dangerColor={dangerColor}
+        dangerForegroundColor={dangerForegroundColor}
+      />
 
       <View className="flex-1 gap-0.5">
         {progress.label ? (
@@ -132,13 +144,18 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
 
   const bgClass =
     progress.phase === "error"
-      ? "bg-red-50 dark:bg-red-950/80 border-red-200 dark:border-red-800"
-      : "bg-card border-border";
+      ? materialYouStyleLayoutActive
+        ? "border-danger-border bg-danger"
+        : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/80"
+      : materialYouStyleLayoutActive
+        ? "border-header-border bg-header"
+        : "border-border bg-card";
+  const shadowClass = materialYouStyleLayoutActive ? "" : "shadow-lg shadow-black/10";
 
   return (
     <Animated.View
       layout={OVERLAY_LAYOUT_TRANSITION}
-      className={`flex-row items-center gap-2.5 rounded-[26px] border border-continuous px-3.5 py-3 shadow-lg shadow-black/10 ${bgClass}`}
+      className={`flex-row items-center gap-2.5 rounded-[26px] border border-continuous px-3.5 py-3 ${shadowClass} ${bgClass}`}
     >
       {content}
     </Animated.View>
@@ -148,23 +165,43 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
 function OverlayIcon(props: {
   readonly phase: GitActionProgress["phase"];
   readonly iconColor: ReturnType<typeof useThemeColor>;
+  readonly materialYouStyleLayoutActive: boolean;
+  readonly primaryColor: ReturnType<typeof useThemeColor>;
+  readonly primaryForegroundColor: ReturnType<typeof useThemeColor>;
+  readonly dangerColor: ReturnType<typeof useThemeColor>;
+  readonly dangerForegroundColor: ReturnType<typeof useThemeColor>;
 }) {
   switch (props.phase) {
     case "running":
       return <ActivityIndicator size="small" />;
     case "success":
       return (
-        <View className="h-6 w-6 items-center justify-center rounded-full bg-green-500">
-          <SymbolView name="checkmark" size={12} tintColor="white" type="monochrome" />
+        <View
+          className="h-6 w-6 items-center justify-center rounded-full"
+          style={{
+            backgroundColor: props.materialYouStyleLayoutActive ? props.primaryColor : "#22c55e",
+          }}
+        >
+          <SymbolView
+            name="checkmark"
+            size={12}
+            tintColor={props.materialYouStyleLayoutActive ? props.primaryForegroundColor : "white"}
+            type="monochrome"
+          />
         </View>
       );
     case "error":
       return (
-        <View className="h-6 w-6 items-center justify-center rounded-full bg-red-500">
+        <View
+          className="h-6 w-6 items-center justify-center rounded-full"
+          style={{
+            backgroundColor: props.materialYouStyleLayoutActive ? props.dangerColor : "#ef4444",
+          }}
+        >
           <SymbolView
             name="exclamationmark.triangle"
             size={12}
-            tintColor="white"
+            tintColor={props.materialYouStyleLayoutActive ? props.dangerForegroundColor : "white"}
             type="monochrome"
           />
         </View>

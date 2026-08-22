@@ -439,9 +439,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   >["simultaneousWithExternalGesture"];
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const { themeAppearance: colorScheme } = useAppearancePreferences();
+  const { themeAppearance: colorScheme, materialYouStyleLayoutActive } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
+  const visuallySelected = selected && (!compact || materialYouStyleLayoutActive);
   // Recycling-safe: resets when the list container is reused for another
   // thread, so a hover highlight can't leak across rows.
   const [hovered, setHovered] = useRecyclingState(false);
@@ -453,6 +454,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const pressedBackgroundColor = useThemeColor("--color-subtle");
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
   const selectedForegroundColor = useThemeColor("--color-user-bubble-foreground");
+  const materialSelectedBackgroundColor = useThemeColor("--color-thread-selected");
+  const materialSelectedForegroundColor = useThemeColor("--color-thread-selected-foreground");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread, onRegenerateThreadTitle } =
     props;
@@ -467,15 +470,25 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
 
   const backgroundColor = compact ? screenColor : drawerColor;
-  const effectivePressedBackground = selected
-    ? themeColorWithAlpha(String(selectedForegroundColor), 0.16)
+  const effectiveSelectedBackground = materialYouStyleLayoutActive
+    ? materialSelectedBackgroundColor
+    : selectedBackgroundColor;
+  const effectiveSelectedForeground = materialYouStyleLayoutActive
+    ? materialSelectedForegroundColor
+    : selectedForegroundColor;
+  const effectivePressedBackground = visuallySelected
+    ? themeColorWithAlpha(String(effectiveSelectedForeground), 0.16)
     : pressedBackgroundColor;
   const effectiveStatus =
-    selected && status
+    visuallySelected && status
       ? {
           ...status,
-          pillClassName: "bg-user-bubble-foreground/20",
-          textClassName: "text-user-bubble-foreground",
+          pillClassName: materialYouStyleLayoutActive
+            ? "bg-thread-selected-foreground/20"
+            : "bg-user-bubble-foreground/20",
+          textClassName: materialYouStyleLayoutActive
+            ? "text-thread-selected-foreground"
+            : "text-user-bubble-foreground",
         }
       : status;
 
@@ -530,9 +543,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <Text
               className={cn(
                 "shrink",
-                compact ? "text-sm text-foreground-muted" : "text-xs",
-                !compact &&
-                  (selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted"),
+                compact ? "text-sm" : "text-xs",
+                visuallySelected
+                  ? materialYouStyleLayoutActive
+                    ? "text-thread-selected-foreground-muted"
+                    : "text-user-bubble-foreground-muted"
+                  : "text-foreground-muted",
               )}
               numberOfLines={1}
             >
@@ -545,14 +561,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <PullRequestIcon
               size={compact ? 13 : 11}
               color={
-                selected
-                  ? String(selectedForegroundColor)
+                visuallySelected
+                  ? String(effectiveSelectedForeground)
                   : pullRequestTintColor(pr.state, colorScheme)
               }
             />
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${
-                selected ? "text-user-bubble-foreground" : pr.textClassName
+                visuallySelected
+                  ? materialYouStyleLayoutActive
+                    ? "text-thread-selected-foreground"
+                    : "text-user-bubble-foreground"
+                  : pr.textClassName
               }`}
             >
               {pr.label}
@@ -568,12 +588,20 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         accessibilityHint="Swipe left for archive and delete actions"
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
-        className="bg-screen"
+        className={materialYouStyleLayoutActive ? undefined : "bg-screen"}
         onPress={() => {
           close();
           onSelectThread(thread);
         }}
-        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+        style={({ pressed }) => ({
+          backgroundColor: visuallySelected
+            ? effectiveSelectedBackground
+            : pressed
+              ? effectivePressedBackground
+              : backgroundColor,
+          borderRadius: materialYouStyleLayoutActive ? SIDEBAR_ROW_RADIUS : 0,
+          opacity: pressed ? 0.7 : 1,
+        })}
       >
         <View
           style={{
@@ -591,12 +619,33 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             }}
           >
             <View className="flex-row items-center justify-between gap-2">
-              <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
+              <Text
+                className={cn(
+                  "flex-1 text-lg font-t3-bold",
+                  visuallySelected
+                    ? materialYouStyleLayoutActive
+                      ? "text-thread-selected-foreground"
+                      : "text-user-bubble-foreground"
+                    : "text-foreground",
+                )}
+                numberOfLines={1}
+              >
                 {thread.title}
               </Text>
               <View className="flex-row items-center gap-2">
                 {statusPill}
-                <Text className="text-base tabular-nums text-foreground-tertiary">{timestamp}</Text>
+                <Text
+                  className={cn(
+                    "text-base tabular-nums",
+                    visuallySelected
+                      ? materialYouStyleLayoutActive
+                        ? "text-thread-selected-foreground-muted"
+                        : "text-user-bubble-foreground-muted"
+                      : "text-foreground-tertiary",
+                  )}
+                >
+                  {timestamp}
+                </Text>
                 <SymbolView
                   name="chevron.right"
                   size={13}
@@ -610,6 +659,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 compact
                 match={props.searchMatch}
                 query={props.searchQuery ?? ""}
+                selected={visuallySelected}
               />
             ) : null}
             {subtitleRow}
@@ -629,8 +679,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           onSelectThread(thread);
         }}
         style={({ pressed }) => ({
-          backgroundColor: selected
-            ? selectedBackgroundColor
+          backgroundColor: visuallySelected
+            ? effectiveSelectedBackground
             : pressed || hovered
               ? effectivePressedBackground
               : backgroundColor,
@@ -647,7 +697,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <Text
               className={cn(
                 "flex-1 text-base font-t3-medium",
-                selected ? "text-user-bubble-foreground" : "text-foreground",
+                visuallySelected
+                  ? materialYouStyleLayoutActive
+                    ? "text-thread-selected-foreground"
+                    : "text-user-bubble-foreground"
+                  : "text-foreground",
               )}
               numberOfLines={1}
             >
@@ -658,7 +712,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               <Text
                 className={cn(
                   "text-xs tabular-nums",
-                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+                  visuallySelected
+                    ? materialYouStyleLayoutActive
+                      ? "text-thread-selected-foreground-muted"
+                      : "text-user-bubble-foreground-muted"
+                    : "text-foreground-muted",
                 )}
                 numberOfLines={1}
               >
@@ -670,7 +728,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <ThreadSearchMatchExcerpt
               match={props.searchMatch}
               query={props.searchQuery ?? ""}
-              selected={selected}
+              selected={visuallySelected}
             />
           ) : null}
           {subtitleRow}
@@ -682,7 +740,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     <ThreadSwipeable
       backgroundColor={backgroundColor}
       containerStyle={
-        compact ? undefined : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
+        compact && !materialYouStyleLayoutActive
+          ? undefined
+          : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
       }
       enableTrackpadSwipe
       fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}

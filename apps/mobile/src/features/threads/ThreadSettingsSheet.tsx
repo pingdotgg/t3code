@@ -48,6 +48,7 @@ import {
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
@@ -91,7 +92,11 @@ function ModelRow(props: {
   readonly isFirst: boolean;
   readonly isLast: boolean;
 }) {
-  const checkmarkColor = useThemeColor("--color-icon");
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
+  const iconColor = useThemeColor("--color-icon");
+  const primaryColor = useThemeColor("--color-primary");
+  const primaryForegroundColor = useThemeColor("--color-primary-foreground");
+  const selectedMaterialRow = materialYouStyleLayoutActive && props.selected;
   return (
     <Pressable
       accessibilityLabel={props.option.label}
@@ -100,16 +105,31 @@ function ModelRow(props: {
       onPress={props.onPress}
       className={cn(
         "mx-4 min-h-11 flex-row items-center gap-2 bg-card px-4 py-2 active:bg-subtle",
+        selectedMaterialRow && "bg-primary",
         props.isFirst && "rounded-t-2xl",
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
       )}
     >
-      <Text className="min-w-0 shrink text-base font-t3-medium text-foreground" numberOfLines={1}>
+      <Text
+        className={cn(
+          "min-w-0 shrink text-base font-t3-medium",
+          selectedMaterialRow ? "text-primary-foreground" : "text-foreground",
+        )}
+        numberOfLines={1}
+      >
         {props.option.label}
       </Text>
       {props.option.isDefault ? (
-        <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
-          <Text className="text-3xs font-t3-bold text-foreground-muted">Default</Text>
+        <View
+          className={cn("rounded-md px-1.5 py-0.5", !selectedMaterialRow && "bg-subtle-strong")}
+          style={selectedMaterialRow ? { backgroundColor: primaryForegroundColor } : undefined}
+        >
+          <Text
+            className={cn("text-3xs font-t3-bold", !selectedMaterialRow && "text-foreground-muted")}
+            style={selectedMaterialRow ? { color: primaryColor } : undefined}
+          >
+            Default
+          </Text>
         </View>
       ) : null}
       {props.option.isLegacy ? (
@@ -122,7 +142,7 @@ function ModelRow(props: {
         <SymbolView
           name="checkmark"
           size={16}
-          tintColor={checkmarkColor}
+          tintColor={selectedMaterialRow ? primaryForegroundColor : iconColor}
           type="monochrome"
           weight="semibold"
         />
