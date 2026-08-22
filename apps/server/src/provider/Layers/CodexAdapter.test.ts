@@ -513,6 +513,67 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("does not reactivate an idle child after a parent interaction", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+
+      const childEvent = (id: string, method: string, payload: Record<string, unknown>) => ({
+        id: asEventId(id),
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload,
+      });
+
+      yield* runtime.emit(
+        childEvent("evt-child-running", "collabAgent/turnStarted", {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+        }),
+      );
+      yield* runtime.emit(
+        childEvent("evt-child-idle", "collabAgent/turnCompleted", {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+          turn: { status: "completed" },
+        }),
+      );
+      yield* runtime.emit(
+        childEvent("evt-child-interacted", "collabAgent/activity", {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+          activityKind: "interacted",
+        }),
+      );
+      yield* runtime.emit(
+        childEvent("evt-other-child-running", "collabAgent/turnStarted", {
+          agentThreadId: "child-2",
+          agentPath: "/root/other",
+        }),
+      );
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) =>
+          event.type === "task.updated"
+            ? { taskId: event.payload.taskId, status: event.payload.status }
+            : { type: event.type },
+        ),
+        [
+          { taskId: "child-1", status: "running" },
+          { taskId: "child-1", status: "idle" },
+          { taskId: "child-2", status: "running" },
+        ],
+      );
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
