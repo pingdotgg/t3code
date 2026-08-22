@@ -1,4 +1,5 @@
-import type { ProjectEntry } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectEntry, VcsWorkingTreeFileStatus } from "@t3tools/contracts";
+import { workingTreeGitStatusByPath } from "@t3tools/shared/fileTreeGitStatus";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, View } from "react-native";
@@ -10,6 +11,9 @@ import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironmentQuery } from "../../state/query";
+import { vcsEnvironment } from "../../state/vcs";
 import {
   buildFileTree,
   defaultExpandedTreePaths,
@@ -22,6 +26,17 @@ const fileTreeCache = new WeakMap<ReadonlyArray<ProjectEntry>, ReadonlyArray<Fil
 const FILE_TREE_INITIAL_RENDER_COUNT = 20;
 const FILE_TREE_RENDER_BATCH_SIZE = 12;
 const OPTIMISTIC_SELECTION_TIMEOUT_MS = 1_000;
+
+const GIT_STATUS_DECORATION: Record<
+  VcsWorkingTreeFileStatus,
+  { readonly letter: string; readonly label: string; readonly className: string }
+> = {
+  added: { letter: "A", label: "added", className: "text-emerald-600" },
+  deleted: { letter: "D", label: "deleted", className: "text-rose-600" },
+  modified: { letter: "M", label: "modified", className: "text-amber-600" },
+  renamed: { letter: "R", label: "renamed", className: "text-amber-600" },
+  untracked: { letter: "U", label: "untracked", className: "text-emerald-600" },
+};
 
 function cachedFileTree(entries: ReadonlyArray<ProjectEntry>): ReadonlyArray<FileTreeNode> {
   const cached = fileTreeCache.get(entries);
@@ -46,17 +61,19 @@ const FileTreeRow = memo(function FileTreeRow(props: {
   readonly item: VisibleFileTreeNode;
   readonly selected: boolean;
   readonly expanded: boolean;
+  readonly gitStatus: VcsWorkingTreeFileStatus | undefined;
   readonly iconColor: string;
   readonly onPressDirectory: (path: string) => void;
   readonly onPreviewFile?: (path: string) => void;
   readonly onPressFile: (path: string) => void;
 }) {
   const { node, depth } = props.item;
+  const decoration = props.gitStatus === undefined ? null : GIT_STATUS_DECORATION[props.gitStatus];
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={node.path}
+      accessibilityLabel={decoration === null ? node.path : `${node.path}, ${decoration.label}`}
       onPressIn={() => {
         if (node.kind === "file") {
           props.onPreviewFile?.(node.path);
@@ -89,9 +106,9 @@ const FileTreeRow = memo(function FileTreeRow(props: {
       <Text
         className={cn(
           "min-w-0 flex-1 text-sm leading-normal",
-          props.selected
-            ? "font-t3-bold text-foreground"
-            : "font-t3-medium text-foreground-secondary",
+          props.selected ? "font-t3-bold" : "font-t3-medium",
+          decoration?.className ??
+            (props.selected ? "text-foreground" : "text-foreground-secondary"),
         )}
         numberOfLines={1}
       >
@@ -102,11 +119,18 @@ const FileTreeRow = memo(function FileTreeRow(props: {
           {node.children.length}
         </Text>
       ) : null}
+      {decoration !== null ? (
+        <Text className={cn("w-3 text-center text-2xs font-t3-bold", decoration.className)}>
+          {decoration.letter}
+        </Text>
+      ) : null}
     </Pressable>
   );
 });
 
 export function FileTreeBrowser(props: {
+  readonly cwd: string;
+  readonly environmentId: EnvironmentId;
   readonly entries: ReadonlyArray<ProjectEntry>;
   readonly error: string | null;
   readonly isPending: boolean;
@@ -126,7 +150,14 @@ export function FileTreeBrowser(props: {
   // observed adjustedContentInset bottom (~102) seen in the native trace.
   const headerInset = NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + IOS_NAV_BAR_HEIGHT : 0;
   const iconColor = String(useThemeColor("--color-icon-muted"));
-  const { onPreviewFile, onSelectFile, selectedPath: controlledSelectedPath } = props;
+  const {
+    cwd,
+    environmentId,
+    onPreviewFile,
+    onRefresh,
+    onSelectFile,
+    selectedPath: controlledSelectedPath,
+  } = props;
   const controlledSelectedPathRef = useRef(controlledSelectedPath);
   const pendingSelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   controlledSelectedPathRef.current = controlledSelectedPath;
@@ -135,7 +166,26 @@ export function FileTreeBrowser(props: {
     pendingSelection?.selectedPathAtPress === controlledSelectedPath
       ? pendingSelection.path
       : controlledSelectedPath;
+  const gitStatusQuery = useEnvironmentQuery(
+    vcsEnvironment.status({
+      environmentId,
+      input: { cwd },
+    }),
+  );
+  const refreshGitStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
+  const handleRefresh = useCallback(() => {
+    onRefresh();
+    void refreshGitStatus({
+      environmentId,
+      input: { cwd },
+    });
+  }, [cwd, environmentId, onRefresh, refreshGitStatus]);
   const tree = useMemo(() => cachedFileTree(props.entries), [props.entries]);
+  const treePaths = useMemo(() => props.entries.map((entry) => entry.path), [props.entries]);
+  const gitStatusByPath = useMemo(
+    () => workingTreeGitStatusByPath(gitStatusQuery.data?.workingTree.files ?? [], treePaths),
+    [gitStatusQuery.data?.workingTree.files, treePaths],
+  );
   const defaultExpanded = useMemo(() => defaultExpandedTreePaths(tree), [tree]);
   const visibleNodes = useMemo(
     () =>
@@ -145,6 +195,10 @@ export function FileTreeBrowser(props: {
         searchQuery: props.searchQuery,
       }),
     [expandedPaths, props.searchQuery, tree],
+  );
+  const listExtraData = useMemo(
+    () => ({ gitStatusByPath, selectedPath }),
+    [gitStatusByPath, selectedPath],
   );
 
   useEffect(() => {
@@ -216,13 +270,22 @@ export function FileTreeBrowser(props: {
         item={item}
         selected={item.node.kind === "file" && item.node.path === selectedPath}
         expanded={expandedPaths.has(item.node.path)}
+        gitStatus={gitStatusByPath.get(item.node.path)}
         iconColor={iconColor}
         onPressDirectory={toggleDirectory}
         onPreviewFile={onPreviewFile}
         onPressFile={handleSelectFile}
       />
     ),
-    [expandedPaths, handleSelectFile, iconColor, onPreviewFile, selectedPath, toggleDirectory],
+    [
+      expandedPaths,
+      gitStatusByPath,
+      handleSelectFile,
+      iconColor,
+      onPreviewFile,
+      selectedPath,
+      toggleDirectory,
+    ],
   );
 
   if (props.error && props.entries.length === 0) {
@@ -243,6 +306,7 @@ export function FileTreeBrowser(props: {
     <FlatList
       className="flex-1"
       data={visibleNodes}
+      extraData={listExtraData}
       keyExtractor={(item) => item.node.path}
       contentInsetAdjustmentBehavior={NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"}
       scrollIndicatorInsets={
@@ -257,7 +321,7 @@ export function FileTreeBrowser(props: {
       updateCellsBatchingPeriod={16}
       windowSize={5}
       contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
-      refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={props.onRefresh} />}
+      refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={handleRefresh} />}
       renderItem={renderItem}
       ListEmptyComponent={
         <View className="px-4 py-5">

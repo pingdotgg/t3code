@@ -160,7 +160,18 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     yield* driver.listRefs({ cwd });
 
     assert.deepStrictEqual(commands, [
-      { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
+      {
+        args: [
+          "-c",
+          "core.quotepath=false",
+          "-c",
+          "status.relativePaths=true",
+          "status",
+          "--porcelain=2",
+          "--branch",
+        ],
+        lcAll: "C",
+      },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
       { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
     ]);
@@ -967,6 +978,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           path: "HEAD",
           insertions: 1,
           deletions: 0,
+          status: "modified",
         });
       }),
     );
@@ -1217,6 +1229,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         // Combined net from HEAD: +2 insertions.
         assert.equal(file.insertions, 2);
         assert.equal(file.deletions, 0);
+        assert.equal(file.status, "modified");
       }),
     );
 
@@ -1238,7 +1251,76 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         if (file) {
           assert.equal(file.path, "initial.ts");
           assert.equal(file.insertions, 1);
+          assert.equal(file.status, "added");
         }
+      }),
+    );
+
+    it.effect("classifies untracked, added, modified, deleted, and renamed files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "untracked.ts", "export const next = 1;\n");
+        yield* writeTextFile(cwd, "added.ts", "export const added = 1;\n");
+        yield* git(cwd, ["add", "added.ts"]);
+        yield* writeTextFile(cwd, "added.ts", "export const added = 2;\n");
+        yield* writeTextFile(cwd, "README.md", "# changed\n");
+        yield* writeTextFile(cwd, "gone.ts", "gone\n");
+        yield* git(cwd, ["add", "gone.ts"]);
+        yield* git(cwd, ["commit", "-m", "add gone", "--", "gone.ts"]);
+        yield* git(cwd, ["rm", "gone.ts"]);
+        yield* writeTextFile(cwd, "old-name.ts", "rename me\n");
+        yield* git(cwd, ["add", "old-name.ts"]);
+        yield* git(cwd, ["commit", "-m", "add old name", "--", "old-name.ts"]);
+        yield* git(cwd, ["mv", "old-name.ts", "new-name.ts"]);
+        yield* writeTextFile(cwd, "new-name.ts", "rename me\nthen edit\n");
+        yield* writeTextFile(cwd, "café.ts", "unicode\n");
+        yield* writeTextFile(cwd, "my file.ts", "spaced\n");
+        yield* git(cwd, ["add", "my file.ts"]);
+        yield* git(cwd, ["commit", "-m", "add spaced name", "--", "my file.ts"]);
+        yield* writeTextFile(cwd, "my file.ts", "spaced\nthen edit\n");
+        yield* writeTextFile(cwd, "naïve.ts", "unicode tracked\n");
+        yield* git(cwd, ["add", "naïve.ts"]);
+        yield* git(cwd, ["commit", "-m", "add unicode name", "--", "naïve.ts"]);
+        yield* writeTextFile(cwd, "naïve.ts", "unicode tracked\nthen edit\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+        const byPath = new Map(status.workingTree.files.map((file) => [file.path, file]));
+
+        assert.equal(byPath.get("untracked.ts")?.status, "untracked");
+        assert.equal(byPath.get("added.ts")?.status, "added");
+        assert.equal(byPath.get("README.md")?.status, "modified");
+        assert.equal(byPath.get("gone.ts")?.status, "deleted");
+        assert.equal(byPath.get("new-name.ts")?.status, "renamed");
+        assert.equal(byPath.get("café.ts")?.status, "untracked");
+        assert.equal(byPath.get("my file.ts")?.status, "modified");
+        assert.equal(byPath.get("naïve.ts")?.status, "modified");
+        assert.equal(
+          status.workingTree.files.filter((file) => file.path === "my file.ts").length,
+          1,
+        );
+        assert.equal(status.workingTree.files.filter((file) => file.path === "naïve.ts").length, 1);
+      }),
+    );
+
+    it.effect("reports nested project paths relative to the project cwd", () =>
+      Effect.gen(function* () {
+        const repo = yield* makeTmpDir();
+        yield* initRepoWithCommit(repo);
+        yield* writeTextFile(repo, "packages/app/src/index.ts", "export const value = 1;\n");
+        yield* git(repo, ["add", "packages/app/src/index.ts"]);
+        yield* git(repo, ["commit", "-m", "add app"]);
+        yield* writeTextFile(repo, "packages/app/src/index.ts", "export const value = 2;\n");
+        yield* git(repo, ["config", "--local", "status.relativePaths", "false"]);
+
+        const pathService = yield* Path.Path;
+        const nestedCwd = pathService.join(repo, "packages", "app");
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(nestedCwd);
+        const file = status.workingTree.files.find((entry) => entry.path.endsWith("index.ts"));
+
+        assert.ok(file);
+        assert.equal(file.path, "src/index.ts");
+        assert.equal(file.status, "modified");
       }),
     );
   });
