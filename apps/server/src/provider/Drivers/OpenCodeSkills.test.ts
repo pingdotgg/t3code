@@ -215,6 +215,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
       const skillsDir = path.join(configDir, "skills");
 
       yield* writeSkill(skillsDir, "no-frontmatter", "# Just a heading\n");
+      yield* writeSkill(skillsDir, "empty-frontmatter", "---\n---\n");
       yield* writeSkill(skillsDir, "broken-yaml", "---\nname: [unclosed\n---\n");
       yield* writeSkill(skillsDir, "unterminated-frontmatter", "---\nname: unterminated\n");
       yield* fs.makeDirectory(skillsDir, { recursive: true });
@@ -227,7 +228,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
 
       assert.deepEqual(
         skills.map((skill) => skill.name),
-        ["no-frontmatter"],
+        ["empty-frontmatter", "no-frontmatter"],
       );
       assert.equal(skills[0]?.description, undefined);
     }),

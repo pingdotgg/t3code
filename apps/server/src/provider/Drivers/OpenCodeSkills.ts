@@ -28,7 +28,7 @@ import { parse as parseYamlDocument } from "yaml";
 
 type SkillScope = "user" | "project";
 
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+const FRONTMATTER_PATTERN = /^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/;
 
 type SkillFrontmatter =
   | { readonly kind: "missing" }
@@ -55,8 +55,9 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   } catch {
     return { kind: "malformed" };
   }
-  if (typeof parsed !== "object" || parsed === null) {
-    return { kind: "malformed" };
+  // Empty frontmatter parses to null; treat it like a file without frontmatter.
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "missing" };
   }
 
   const record = parsed as Record<string, unknown>;
