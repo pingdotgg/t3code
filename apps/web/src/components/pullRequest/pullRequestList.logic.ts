@@ -523,6 +523,8 @@ export function mergePullRequestLists(
 
 /** One page is what the list itself starts with, and all a cold start needs to look warm. */
 const SNAPSHOT_MAX_ENTRIES = 99;
+/** A persisted list is only a short bridge across a reload, never a durable source of truth. */
+const SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1_000;
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -548,10 +550,14 @@ export interface PullRequestPartitionsSnapshot {
 }
 
 export interface PullRequestListSnapshot {
+  readonly writtenAt: number;
   readonly scope: string;
   readonly data: MergedPullRequestList;
   readonly partitions?: PullRequestPartitionsSnapshot | undefined;
 }
+
+const viewerIdentity = (viewers: PullRequestViewers): string =>
+  JSON.stringify(Object.entries(viewers).toSorted(([left], [right]) => left.localeCompare(right)));
 
 /**
  * Decoded with the contract's own schema rather than trusted from a cast: storage is writable
@@ -571,6 +577,7 @@ const EnvironmentPullRequestErrorSchema = Schema.Struct({
 
 const decodeSnapshot = Schema.decodeUnknownOption(
   Schema.Struct({
+    writtenAt: Schema.Number,
     scope: Schema.String,
     data: Schema.Struct({
       ...PullRequestListResult.fields,
@@ -600,12 +607,19 @@ const decodeSnapshot = Schema.decodeUnknownOption(
 export function readPullRequestListSnapshot(
   storage: SnapshotStorage | undefined,
   environmentSetKey: string,
+  context: { readonly viewers: PullRequestViewers; readonly now?: number },
 ): PullRequestListSnapshot | null {
   try {
     const raw = storage?.getItem(snapshotStorageKey(environmentSetKey));
     if (!raw) return null;
     const decoded = decodeSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
+    if (decoded._tag === "None") return null;
+    const now = context.now ?? Date.now();
+    if (decoded.value.writtenAt > now || now - decoded.value.writtenAt > SNAPSHOT_MAX_AGE_MS) {
+      return null;
+    }
+    if (viewerIdentity(decoded.value.data.viewers) !== viewerIdentity(context.viewers)) return null;
+    return decoded.value;
   } catch {
     return null;
   }
@@ -614,12 +628,14 @@ export function readPullRequestListSnapshot(
 export function writePullRequestListSnapshot(
   storage: SnapshotStorage | undefined,
   environmentSetKey: string,
-  snapshot: PullRequestListSnapshot,
+  snapshot: Omit<PullRequestListSnapshot, "writtenAt">,
+  now = Date.now(),
 ): void {
   try {
     storage?.setItem(
       snapshotStorageKey(environmentSetKey),
       JSON.stringify({
+        writtenAt: now,
         scope: snapshot.scope,
         data: {
           ...snapshot.data,

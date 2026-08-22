@@ -211,6 +211,44 @@ it.effect("refines unknown self-hosted GitLab projects before listing merge requ
   }),
 );
 
+it.effect("does not refine legacy projects outside the requested project ids", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "selected",
+          workspaceRoot: "/selected",
+          repository: "group/selected",
+          provider: "unknown",
+          host: "selected.example.test",
+        }),
+        project({
+          id: "p2",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "group/unrelated",
+          provider: "unknown",
+          host: "unrelated.example.test",
+        }),
+      ],
+      providers: [fakeProvider("gitlab")],
+      resolveHandle: ({ cwd, context }) => {
+        asked.push(cwd);
+        return Effect.succeed({
+          context: { ...context!, provider: { ...context!.provider, kind: "gitlab" } },
+          provider: undefined as never,
+        });
+      },
+    });
+
+    yield* service.viewers({ projectIds: ["p1" as ProjectId] });
+
+    assert.deepStrictEqual(asked, ["/selected"]);
+  }),
+);
+
 it.effect("derives a legacy repository host after refining its provider", () =>
   Effect.gen(function* () {
     const current = project({
@@ -609,6 +647,25 @@ it.effect("calls a transient viewer failure a failed operation, not a signed-out
 
     // `cli-unauthenticated` would send the reader to `gh auth login` over a transient error.
     assert.strictEqual(error._tag, "PullRequestOperationError");
+  }),
+);
+
+it.effect("reads snapshot viewer identity freshly after the host account changes", () =>
+  Effect.gen(function* () {
+    let viewer = "Bilal";
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [fakeProvider("github", { getViewer: () => Effect.succeed(viewer) })],
+    });
+
+    const listing = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(listing.viewers, { "github.com": "Bilal" });
+
+    viewer = "Octocat";
+    const identity = yield* service.viewers({});
+    assert.deepStrictEqual(identity.viewers, { "github.com": "Octocat" });
   }),
 );
 

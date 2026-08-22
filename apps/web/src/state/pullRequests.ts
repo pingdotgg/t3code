@@ -4,6 +4,7 @@ import type {
   EnvironmentId,
   PullRequestListInput,
   PullRequestListStatsInput,
+  PullRequestViewerInput,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -87,6 +88,11 @@ const usePullRequestListsQuery = createMergedEnvironmentQuery(
   pullRequestEnvironment.list,
 );
 
+const usePullRequestViewersQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:viewers",
+  pullRequestEnvironment.viewers,
+);
+
 const usePullRequestStatsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list-stats",
   pullRequestEnvironment.listStats,
@@ -97,6 +103,27 @@ export interface MergedPullRequestListView {
   readonly error: string | null;
   readonly isPending: boolean;
   readonly refresh: () => void;
+}
+
+/** Fresh host identities, scoped by environment so equal hostnames on two servers stay distinct. */
+export function usePullRequestViewers(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestViewerInput>>,
+): { readonly viewers: Readonly<Record<string, string>> | null; readonly isPending: boolean } {
+  const query = usePullRequestViewersQuery(targets);
+  const viewers = useMemo(
+    () =>
+      query.values.length === 0
+        ? null
+        : Object.fromEntries(
+            query.values.flatMap(([environmentId, result]) =>
+              Object.entries(result.viewers).map(
+                ([host, viewer]) => [`${environmentId} ${host}`, viewer] as const,
+              ),
+            ),
+          ),
+    [query.values],
+  );
+  return { viewers, isPending: query.isPending };
 }
 
 /** One listing per environment, merged into the single list the page renders. */

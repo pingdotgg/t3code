@@ -35,6 +35,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   } as const;
   return {
+    viewers: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:viewers",
+      tag: WS_METHODS.pullRequestsViewers,
+      staleTimeMs: 0,
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
       tag: WS_METHODS.pullRequestsList,
