@@ -58,6 +58,12 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const TouchProviderSessionRuntimeInput = Schema.Struct({
+  threadId: ThreadId,
+  lastSeenAt: IsoDateTime,
+});
+export type TouchProviderSessionRuntimeInput = typeof TouchProviderSessionRuntimeInput.Type;
+
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -71,6 +77,15 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
      */
     readonly upsert: (
       runtime: ProviderSessionRuntime,
+    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    /**
+     * Update only `last_seen_at` for an existing runtime row.
+     *
+     * No-op when no row exists for the thread; never creates a row.
+     */
+    readonly touchByThreadId: (
+      input: TouchProviderSessionRuntimeInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
     /**
@@ -186,6 +201,16 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const touchRuntimeRow = SqlSchema.void({
+    Request: TouchProviderSessionRuntimeInput,
+    execute: ({ threadId, lastSeenAt }) =>
+      sql`
+        UPDATE provider_session_runtime
+        SET last_seen_at = ${lastSeenAt}
+        WHERE thread_id = ${threadId}
+      `,
+  });
+
   const getRuntimeRowByThreadId = SqlSchema.findOneOption({
     Request: GetRuntimeRequestSchema,
     Result: ProviderSessionRuntimeRawDbRowSchema,
@@ -242,6 +267,17 @@ export const make = Effect.gen(function* () {
           "ProviderSessionRuntimeRepository.upsert:query",
           "ProviderSessionRuntimeRepository.upsert:encodeRequest",
           { threadId: runtime.threadId },
+        ),
+      ),
+    );
+
+  const touchByThreadId: ProviderSessionRuntimeRepository["Service"]["touchByThreadId"] = (input) =>
+    touchRuntimeRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProviderSessionRuntimeRepository.touchByThreadId:query",
+          "ProviderSessionRuntimeRepository.touchByThreadId:encodeRequest",
+          { threadId: input.threadId },
         ),
       ),
     );
@@ -324,6 +360,7 @@ export const make = Effect.gen(function* () {
 
   return {
     upsert,
+    touchByThreadId,
     getByThreadId,
     list,
     deleteByThreadId,

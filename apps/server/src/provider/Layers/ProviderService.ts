@@ -25,6 +25,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -191,6 +192,18 @@ const dieOnMissingBindingInstanceId = (
   );
 };
 
+export const SESSION_ACTIVITY_EVENT_TYPES: ReadonlySet<ProviderRuntimeEvent["type"]> = new Set([
+  "turn.started",
+  "turn.completed",
+  "turn.aborted",
+  "task.started",
+  "task.progress",
+  "task.updated",
+  "task.completed",
+]);
+
+const SESSION_ACTIVITY_TOUCH_MIN_INTERVAL_MS = 60_000;
+
 const correlateRuntimeEventWithInstance = (
   source: {
     readonly instanceId: ProviderInstanceId;
@@ -336,6 +349,45 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  // Turn and background-task lifecycle events prove the provider session is
+  // still doing user-visible work even when no `sendTurn` call delivered it
+  // (queued follow-ups, plan-sourced turns, background tasks that outlive
+  // their foreground turn). Without this, `lastSeenAt` stays at the last
+  // explicit send and the inactivity reaper measures idleness from the last
+  // user message instead of the last completed work.
+  //
+  // Touches are throttled per thread because this runs on the event drain
+  // fiber and task.progress can fire many times per second in multi-agent
+  // sessions; the reaper thresholds are minutes, so minute-level lastSeenAt
+  // granularity is enough. The gate timestamp is set before the write so a
+  // failing database is not retried on every event.
+  const lastTouchAtByThread = new Map<ThreadId, number>();
+
+  const touchSessionActivity = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+    SESSION_ACTIVITY_EVENT_TYPES.has(event.type)
+      ? Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) => {
+            const lastTouchAt = lastTouchAtByThread.get(event.threadId);
+            if (
+              lastTouchAt !== undefined &&
+              now - lastTouchAt < SESSION_ACTIVITY_TOUCH_MIN_INTERVAL_MS
+            ) {
+              return Effect.void;
+            }
+            lastTouchAtByThread.set(event.threadId, now);
+            return directory.touch(event.threadId).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("provider.session.activity-touch-failed", {
+                  threadId: event.threadId,
+                  eventType: event.type,
+                  errorTag: causeErrorTag(cause),
+                }),
+              ),
+            );
+          }),
+        )
+      : Effect.void;
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -348,7 +400,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+          Effect.andThen(touchSessionActivity(canonicalEvent)),
+        ),
       ),
     );
 
@@ -959,6 +1014,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           yield* routed.adapter.stopSession(routed.threadId);
         }
         yield* clearMcpSession(input.threadId);
+        lastTouchAtByThread.delete(input.threadId);
         yield* directory.upsert({
           threadId: input.threadId,
           provider: routed.adapter.provider,
