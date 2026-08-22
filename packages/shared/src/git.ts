@@ -109,6 +109,37 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
 }
 
 /**
+ * Live per-keystroke sanitizer for a user-typed worktree branch name. Unlike
+ * `sanitizeBranchFragment` this preserves case — a hand-typed name is used
+ * verbatim — and only blocks what git itself refuses in a ref, while keeping
+ * edge separators so slashes and dashes can still be typed mid-name.
+ */
+export function sanitizeWorktreeBranchNameInput(raw: string): string {
+  return raw
+    .replace(/['"`]/g, "")
+    .replace(/[^A-Za-z0-9./_-]+/g, "-")
+    .replace(/(^|\/)\.+/g, "$1")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .slice(0, 64);
+}
+
+/**
+ * Final form of a user-typed worktree branch name: live sanitization, edge
+ * trimming, and dropping the `.lock` suffixes git refuses on any ref
+ * component. Null when nothing usable remains.
+ */
+export function normalizeWorktreeBranchName(raw: string): string | null {
+  const normalized = sanitizeWorktreeBranchNameInput(raw)
+    .split("/")
+    .map((component) => component.replace(/^[._-]+|(?:\.lock)*[._-]*$/g, ""))
+    .filter((component) => component.length > 0)
+    .join("/");
+  return normalized.length > 0 ? normalized : null;
+}
+
+/**
  * Normalize a git remote URL into a stable comparison key.
  */
 export function normalizeGitRemoteUrl(value: string): string {

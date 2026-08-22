@@ -126,7 +126,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { buildTemporaryWorktreeBranchName, normalizeWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
@@ -165,6 +165,7 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
+import type { WorktreeBranchNameStatus } from "./BranchToolbarWorktreeNameInput";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -1432,6 +1433,8 @@ function ChatViewContent(props: ChatViewProps) {
     pendingServerThreadStartFromOriginByThreadId,
     setPendingServerThreadStartFromOriginByThreadId,
   ] = useState<Record<string, boolean>>({});
+  const [worktreeBranchNameStatus, setWorktreeBranchNameStatus] =
+    useState<WorktreeBranchNameStatus | null>(null);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -4203,6 +4206,15 @@ function ChatViewContent(props: ChatViewProps) {
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
         primaryServerSettings.newWorktreesStartFromOrigin)
       : false;
+  const draftWorktreeBranchName = isLocalDraftThread
+    ? normalizeWorktreeBranchName(draftThread?.worktreeBranchName ?? "")
+    : null;
+  // Only a name the toolbar input is currently showing (and has checked for
+  // conflicts) can name the worktree branch; otherwise it stays generated.
+  const customWorktreeBranchName =
+    draftWorktreeBranchName !== null && worktreeBranchNameStatus?.name === draftWorktreeBranchName
+      ? draftWorktreeBranchName
+      : null;
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
@@ -5219,6 +5231,27 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
+    // A typed name is never silently dropped: sending waits for its conflict
+    // lookup to settle instead of trusting the last reported answer.
+    if (shouldCreateWorktree && draftWorktreeBranchName !== null && worktreeBranchNameStatus) {
+      if (
+        worktreeBranchNameStatus.name !== draftWorktreeBranchName ||
+        worktreeBranchNameStatus.state === "checking"
+      ) {
+        setThreadError(
+          threadIdForSend,
+          `Still checking whether branch "${draftWorktreeBranchName}" is available. Try again in a moment.`,
+        );
+        return;
+      }
+      if (worktreeBranchNameStatus.state === "conflict") {
+        setThreadError(
+          threadIdForSend,
+          `Branch "${draftWorktreeBranchName}" already exists. Pick a different worktree branch name.`,
+        );
+        return;
+      }
+    }
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -5429,7 +5462,10 @@ function ChatViewContent(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      // A custom name skips the server's LLM branch naming:
+                      // only temporary-pattern branches get renamed.
+                      branch:
+                        customWorktreeBranchName ?? buildTemporaryWorktreeBranchName(randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
@@ -6716,6 +6752,7 @@ function ChatViewContent(props: ChatViewProps) {
                                 onEnvModeChange={onEnvModeChange}
                                 startFromOrigin={startFromOrigin}
                                 onStartFromOriginChange={onStartFromOriginChange}
+                                onWorktreeBranchNameStatusChange={setWorktreeBranchNameStatus}
                                 {...(canOverrideServerThreadEnvMode
                                   ? { effectiveEnvModeOverride: envMode }
                                   : {})}

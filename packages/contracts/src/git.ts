@@ -4,7 +4,7 @@ import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceC
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
-const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
+export const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 
 // Domain Types
 

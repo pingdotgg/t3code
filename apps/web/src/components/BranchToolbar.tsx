@@ -28,6 +28,10 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import {
+  BranchToolbarWorktreeNameInput,
+  type WorktreeBranchNameStatus,
+} from "./BranchToolbarWorktreeNameInput";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -52,6 +56,7 @@ interface BranchToolbarProps {
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
+  onWorktreeBranchNameStatusChange?: (status: WorktreeBranchNameStatus | null) => void;
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -126,7 +131,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
 
   if (isLocked) {
     return (
-      <span className="inline-flex h-7 min-w-0 max-w-[48%] flex-1 items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 md:hidden">
+      <span className="inline-flex h-7 min-w-0 max-w-[48%] shrink items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 md:hidden">
         {triggerContent}
       </span>
     );
@@ -136,7 +141,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     <Menu>
       <MenuTrigger
         render={<Button variant="ghost" size="xs" />}
-        className="min-w-0 max-w-[48%] flex-1 justify-start text-muted-foreground/70 hover:text-foreground/80 md:hidden"
+        className="min-w-0 max-w-[48%] shrink justify-start text-muted-foreground/70 hover:text-foreground/80 md:hidden"
       >
         {triggerContent}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
@@ -384,6 +389,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
   onStartFromOriginChange,
+  onWorktreeBranchNameStatusChange,
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -463,7 +469,39 @@ export const BranchToolbar = memo(function BranchToolbar({
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
 
+  // Naming the next worktree's branch only makes sense before the first send,
+  // when a brand-new worktree (not a reused one) is about to be created.
+  const showWorktreeNameInput =
+    showGitControls &&
+    serverThread === null &&
+    draftThread !== null &&
+    effectiveEnvMode === "worktree" &&
+    activeWorktreePath === null &&
+    !envLocked;
+  const onWorktreeBranchNameChange = useCallback(
+    (value: string) => {
+      setDraftThreadContext(draftId ?? threadRef, {
+        worktreeBranchName: value.length > 0 ? value : null,
+      });
+    },
+    [draftId, setDraftThreadContext, threadRef],
+  );
+
   if (!hasActiveThread || !activeProject) return null;
+
+  // Rendered in both layouts: a stored name the user can't see is a name they
+  // can't clear, and the send path ignores it while the input is unmounted.
+  const worktreeNameInput = showWorktreeNameInput ? (
+    <BranchToolbarWorktreeNameInput
+      environmentId={environmentId}
+      cwd={activeProject.workspaceRoot}
+      value={draftThread?.worktreeBranchName ?? ""}
+      onValueChange={onWorktreeBranchNameChange}
+      {...(onWorktreeBranchNameStatusChange
+        ? { onStatusChange: onWorktreeBranchNameStatusChange }
+        : {})}
+    />
+  ) : null;
 
   return (
     <div
@@ -472,20 +510,23 @@ export const BranchToolbar = memo(function BranchToolbar({
       className="chat-composer-context-strip group/composer-context -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 overflow-x-clip overflow-y-visible ps-1 pe-2 pt-5 pb-1"
     >
       {isMobile && showGitControls ? (
-        <MobileRunContextSelector
-          envLocked={envLocked}
-          envModeLocked={envModeLocked}
-          environmentId={environmentId}
-          availableEnvironments={availableEnvironments}
-          showEnvironmentPicker={showEnvironmentPicker}
-          showEnvironmentIndicator={showEnvironmentIndicator}
-          onEnvironmentChange={onEnvironmentChange}
-          effectiveEnvMode={effectiveEnvMode}
-          activeWorktreePath={activeWorktreePath}
-          onEnvModeChange={onEnvModeChange}
-          previousWorktreeLabel={previousWorktreeLabel}
-          onUsePreviousWorktree={onUsePreviousWorktree}
-        />
+        <>
+          <MobileRunContextSelector
+            envLocked={envLocked}
+            envModeLocked={envModeLocked}
+            environmentId={environmentId}
+            availableEnvironments={availableEnvironments}
+            showEnvironmentPicker={showEnvironmentPicker}
+            showEnvironmentIndicator={showEnvironmentIndicator}
+            onEnvironmentChange={onEnvironmentChange}
+            effectiveEnvMode={effectiveEnvMode}
+            activeWorktreePath={activeWorktreePath}
+            onEnvModeChange={onEnvModeChange}
+            previousWorktreeLabel={previousWorktreeLabel}
+            onUsePreviousWorktree={onUsePreviousWorktree}
+          />
+          {worktreeNameInput}
+        </>
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-1">
           {showEnvironmentIndicator && availableEnvironments && (
@@ -515,12 +556,13 @@ export const BranchToolbar = memo(function BranchToolbar({
               onUsePreviousWorktree={onUsePreviousWorktree}
             />
           ) : null}
+          {worktreeNameInput}
         </div>
       )}
 
       {showGitControls ? (
         <BranchToolbarBranchSelector
-          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          className="min-w-0 flex-auto justify-end md:ml-auto md:flex-none"
           environmentId={environmentId}
           threadId={threadId}
           {...(draftId ? { draftId } : {})}
