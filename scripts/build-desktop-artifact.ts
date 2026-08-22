@@ -845,6 +845,20 @@ export const WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE = {
   from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_HASH_NAME}`,
   to: WSL_RUNTIME_ARCHIVE_HASH_NAME,
 } as const;
+// WSL runs the same CPU arch as the Windows host; universal is mac-only.
+export const resolveWslPrebuildArch = (arch: typeof BuildArch.Type): "x64" | "arm64" | undefined =>
+  arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : undefined;
+
+// A packaged WSL runtime is only usable when a Linux pty.node is bundled with
+// it, so this one predicate decides both whether the archive is built and
+// whether the packaging config ships it. Without it the build would produce an
+// archive that can never pass the install script's payload check, and every
+// launch would extract a few hundred MB from /mnt/c only to throw it away.
+export const bundlesWslRuntime = (input: {
+  readonly arch: typeof BuildArch.Type;
+  readonly prebuildPath: string | undefined;
+}): boolean => input.prebuildPath !== undefined && resolveWslPrebuildArch(input.arch) !== undefined;
+
 export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
@@ -2049,6 +2063,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  // Windows only, and false when no Linux node-pty prebuild was bundled: the
+  // sidecar staging skips the archive in that case, and listing a resource
+  // whose source file was never written fails the electron-builder step.
+  wslRuntimeBundled = false,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2066,7 +2084,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
-      ...(platform === "win" ? WSL_RUNTIME_EXTRA_RESOURCES : []),
+      ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -2215,8 +2233,7 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
     return;
   }
 
-  // WSL runs the same CPU arch as the Windows host; universal is mac-only.
-  const linuxArch = input.arch === "x64" ? "x64" : input.arch === "arm64" ? "arm64" : undefined;
+  const linuxArch = resolveWslPrebuildArch(input.arch);
   if (linuxArch === undefined) {
     yield* Effect.logWarning(
       `[desktop-artifact] No WSL node-pty prebuild mapping for arch "${input.arch}"; skipping WSL backend bundling.`,
@@ -2417,11 +2434,16 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     arch: input.arch,
     prebuildPath: input.wslPrebuildPath,
   });
-  yield* stageWslRuntimeArchive({
-    sourceDir: serverStageDir,
-    archivePath: input.wslRuntimeArchivePath,
-    hashPath: input.wslRuntimeArchiveHashPath,
-  });
+  // Skip the archive entirely rather than shipping one the install script must
+  // extract and reject on every launch. The desktop app treats a missing
+  // archive as "no WSL-local runtime" and goes straight to the mounted tree.
+  if (bundlesWslRuntime({ arch: input.arch, prebuildPath: input.wslPrebuildPath })) {
+    yield* stageWslRuntimeArchive({
+      sourceDir: serverStageDir,
+      archivePath: input.wslRuntimeArchivePath,
+      hashPath: input.wslRuntimeArchiveHashPath,
+    });
+  }
 
   yield* Effect.log("[desktop-artifact] Packing server.asar...");
   yield* fs.makeDirectory(path.dirname(input.asarPath), { recursive: true });
@@ -2988,6 +3010,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
     ),
     dependencies: stageDependencies,
     devDependencies: {

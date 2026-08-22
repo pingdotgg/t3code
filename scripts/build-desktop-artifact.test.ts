@@ -49,6 +49,7 @@ import {
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   stageWslRuntimeArchive,
+  bundlesWslRuntime,
   STAGE_INSTALL_ARGS,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -446,6 +447,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
         undefined,
         undefined,
+        true,
+      );
+      const winWithoutWslPrebuild = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
       );
 
       // All platforms keep app.asar fully packed; Windows ships the server
@@ -461,6 +473,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
         ...WSL_RUNTIME_EXTRA_RESOURCES,
+      ]);
+      // No Linux prebuild means the sidecar staging never writes the archive,
+      // so listing it here would fail the build on a missing source file.
+      assert.deepStrictEqual(winWithoutWslPrebuild.extraResources, [
+        {
+          from: "apps/desktop/prod-resources/resource-monitor",
+          to: "resource-monitor",
+        },
+        ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
       // Native binaries and helper executables cannot load from inside an
@@ -1081,6 +1102,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       from: "apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
       to: "wsl-runtime.tar.gz.sha256",
     });
+    // The archive is only usable alongside a Linux pty.node, so both the
+    // staging and the packaging config hang off this one decision.
+    assert.isTrue(bundlesWslRuntime({ arch: "x64", prebuildPath: "/tmp/pty.node" }));
+    assert.isTrue(bundlesWslRuntime({ arch: "arm64", prebuildPath: "/tmp/pty.node" }));
+    assert.isFalse(bundlesWslRuntime({ arch: "x64", prebuildPath: undefined }));
+    assert.isFalse(bundlesWslRuntime({ arch: "universal", prebuildPath: "/tmp/pty.node" }));
+
     assert.deepStrictEqual(buildWslRuntimeArchiveArgs(), [
       "-czf",
       "apps/desktop/prod-resources/wsl-runtime.tar.gz",
