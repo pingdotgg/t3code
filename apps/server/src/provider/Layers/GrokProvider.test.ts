@@ -6,9 +6,42 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildGrokModelCapabilities,
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
+
+describe("buildGrokModelCapabilities", () => {
+  it("exposes the reasoning picker advertised by the model metadata", () => {
+    const capabilities = buildGrokModelCapabilities({
+      supportsReasoningEffort: true,
+      reasoningEffort: "high",
+      reasoningEfforts: [
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    });
+    expect(capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "high", label: "High Effort", isDefault: true },
+          { id: "low", label: "Low Effort" },
+        ],
+        currentValue: "high",
+      },
+    ]);
+  });
+
+  it("exposes no options for models without reasoning metadata", () => {
+    expect(buildGrokModelCapabilities(null).optionDescriptors).toEqual([]);
+  });
+});
 
 describe("buildInitialGrokProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>

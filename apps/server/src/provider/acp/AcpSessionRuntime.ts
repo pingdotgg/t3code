@@ -226,6 +226,10 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly setSessionModel: (
       modelId: string,
+      options?: {
+        /** Agent-specific request metadata, merged into the request `_meta`. */
+        readonly meta?: Readonly<Record<string, unknown>>;
+      },
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a generic ACP extension request and records it through the request logger.
@@ -789,12 +793,14 @@ export const make = (
           Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
           Effect.asVoid,
         ),
-      setSessionModel: (modelId) =>
+      setSessionModel: (modelId, setModelOptions) =>
         getStartedState.pipe(
           Effect.flatMap((started) => {
+            const meta = setModelOptions?.meta;
             const requestPayload = {
               sessionId: started.sessionId,
               modelId,
+              ...(meta && Object.keys(meta).length > 0 ? { _meta: meta } : {}),
             } satisfies EffectAcpSchema.SetSessionModelRequest;
             return runLoggedRequest(
               "session/set_model",

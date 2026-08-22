@@ -18,6 +18,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
+  buildSelectOptionDescriptor,
   buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -29,7 +30,12 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  GROK_REASONING_EFFORT_OPTION_ID,
+  grokReasoningEffortLevelsFromModelMeta,
+  makeGrokAcpRuntime,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -99,6 +105,26 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
+export function buildGrokModelCapabilities(meta: unknown | null | undefined): ModelCapabilities {
+  const reasoningEffortLevels = grokReasoningEffortLevelsFromModelMeta(meta);
+  if (reasoningEffortLevels.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+  return createModelCapabilities({
+    optionDescriptors: [
+      buildSelectOptionDescriptor({
+        id: GROK_REASONING_EFFORT_OPTION_ID,
+        label: "Reasoning",
+        options: reasoningEffortLevels.map((level) => ({
+          value: level.value,
+          label: level.label,
+          ...(level.isDefault ? { isDefault: true } : {}),
+        })),
+      }),
+    ],
+  });
+}
+
 function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
@@ -117,7 +143,7 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities: buildGrokModelCapabilities(model._meta),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
