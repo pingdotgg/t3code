@@ -674,6 +674,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     <SidebarMenuSubItem
       className="w-full"
       data-thread-item
+      data-thread-id={thread.id}
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
     >
