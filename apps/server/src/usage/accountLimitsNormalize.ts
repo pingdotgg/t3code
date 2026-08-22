@@ -120,9 +120,32 @@ function claudeWindowFromEntry(meta: ClaudeWindowMeta, entry: unknown): AccountL
   };
 }
 
+/**
+ * A window the provider has never metered says nothing: untouched windows
+ * report 0% used with no reset clock (the reset only exists once there is
+ * traffic). Both provider parsers drop them, and AccountLimitsService
+ * re-applies the filter where windows are assembled outside these parsers
+ * (the streamed single-window patch, pre-upgrade cache rows loaded from
+ * disk) - so every client renders the array as-is without a row like a
+ * bare provider-side slug at a permanent 0%. A window appears the moment
+ * it first carries usage, which is also when its reset clock starts
+ * meaning something.
+ */
+export function windowHasTraffic(window: AccountLimitsWindow): boolean {
+  return window.usedPercent > 0 || window.resetsAt !== null;
+}
+
 export interface ClaudeUsageSnapshot {
   readonly plan: string | null;
   readonly windows: AccountLimitsWindow[];
+  /**
+   * False when the account has no rate limits at all (API key / Bedrock /
+   * Vertex). An APPLICABLE snapshot can also come back with zero windows -
+   * every window untouched, e.g. right after a reset - and the two must not
+   * conflate: not-applicable keeps whatever was known, applicable-but-empty
+   * means the meters really are clear now.
+   */
+  readonly rateLimitsApply: boolean;
 }
 
 /**
@@ -133,7 +156,8 @@ export interface ClaudeUsageSnapshot {
 export function claudeUsageSnapshotFromUnknown(value: unknown): ClaudeUsageSnapshot | null {
   if (!isRecord(value)) return null;
   const rateLimits = value.rate_limits;
-  if (rateLimits === null) return { plan: readString(value.subscription_type), windows: [] };
+  if (rateLimits === null)
+    return { plan: readString(value.subscription_type), windows: [], rateLimitsApply: false };
   if (!isRecord(rateLimits)) return null;
 
   const windows = new Map<string, AccountLimitsWindow>();
@@ -155,7 +179,11 @@ export function claudeUsageSnapshotFromUnknown(value: unknown): ClaudeUsageSnaps
     }
   }
 
-  return { plan: readString(value.subscription_type), windows: sortWindows([...windows.values()]) };
+  return {
+    plan: readString(value.subscription_type),
+    windows: sortWindows([...windows.values()].filter(windowHasTraffic)),
+    rateLimitsApply: true,
+  };
 }
 
 /** One entry of the newer `rate_limits.limits` array. */
@@ -206,6 +234,12 @@ function claudeWindowFromLimitEntry(entry: unknown): AccountLimitsWindow | null 
  * Parses the streamed `rate_limit_event` SDK message into the one window it
  * names. Returns null for shapes that are not that message, and for windows
  * we hide.
+ *
+ * Units differ from the usage response: `rate_limit_info.utilization` mirrors
+ * the `anthropic-ratelimit-unified-*-utilization` response headers, which are
+ * a 0-1 fraction (`0.11` while the usage endpoint reports `12.0` for the same
+ * window at the same moment), so it is scaled here. Passing it through would
+ * show the binding window - the only one this message names - at 1/100th.
  */
 export function claudeWindowFromRateLimitEvent(value: unknown): AccountLimitsWindow | null {
   if (!isRecord(value)) return null;
@@ -220,7 +254,7 @@ export function claudeWindowFromRateLimitEvent(value: unknown): AccountLimitsWin
   return {
     id: meta.id,
     label: meta.label,
-    usedPercent: utilization === null ? 0 : clampPercent(utilization),
+    usedPercent: utilization === null ? 0 : clampPercent(utilization * 100),
     resetsAt: resetsAt === null ? null : isoFromUnixSeconds(resetsAt),
     windowMinutes: meta.minutes,
   };
@@ -263,7 +297,7 @@ export function codexSnapshotFromUnknown(value: unknown): CodexRateLimitsSnapsho
   }
   if (windows.length === 0 && limitId === null && plan === null) return null;
 
-  return { limitId, plan, windows: sortWindows(windows) };
+  return { limitId, plan, windows: sortWindows(windows.filter(windowHasTraffic)) };
 }
 
 /**

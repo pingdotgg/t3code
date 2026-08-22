@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderRuntimeEvent,
   ProviderSession,
+  ACCOUNT_LIMITS_CONTRACT_VERSION,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
@@ -222,7 +223,10 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    accountLimitsLayer?: Layer.Layer<AccountLimitsService.AccountLimitsService>;
+  }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
@@ -247,7 +251,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
-      Layer.provideMerge(AccountLimitsService.layerTest),
+      Layer.provideMerge(options?.accountLimitsLayer ?? AccountLimitsService.layerTest),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
@@ -323,6 +327,43 @@ describe("ProviderRuntimeIngestion", () => {
       drain,
     };
   }
+
+  it("forwards the event's providerInstanceId to the account-limits cache", async () => {
+    const ingested: AccountLimitsService.AccountLimitsIngestInput[] = [];
+    const recordingLayer = Layer.succeed(
+      AccountLimitsService.AccountLimitsService,
+      AccountLimitsService.AccountLimitsService.of({
+        readSummary: () =>
+          Effect.succeed({
+            contractVersion: ACCOUNT_LIMITS_CONTRACT_VERSION,
+            readAt: "1970-01-01T00:00:00.000Z",
+            snapshots: [],
+          }),
+        ingest: (input) =>
+          Effect.sync(() => {
+            ingested.push(input);
+          }),
+      }),
+    );
+    const harness = await createHarness({ accountLimitsLayer: recordingLayer });
+
+    harness.emit({
+      type: "account.rate-limits.updated",
+      eventId: asEventId("evt-rate-limits"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex_work"),
+      // The thread is deliberately unknown: account limits are not a thread
+      // projection and must survive the thread being gone.
+      threadId: asThreadId("thread-unknown"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: { rateLimits: { limit_id: "codex" } },
+    });
+    await harness.drain();
+
+    expect(ingested).toHaveLength(1);
+    expect(ingested[0]?.provider).toBe("codex");
+    expect(ingested[0]?.providerInstanceId).toBe("codex_work");
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

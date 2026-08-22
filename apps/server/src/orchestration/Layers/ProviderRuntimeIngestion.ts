@@ -1484,6 +1484,9 @@ const make = Effect.gen(function* () {
           provider: event.provider,
           payload: event.payload.rateLimits,
           createdAt: event.createdAt,
+          ...(event.providerInstanceId !== undefined
+            ? { providerInstanceId: event.providerInstanceId }
+            : {}),
         });
       }
 

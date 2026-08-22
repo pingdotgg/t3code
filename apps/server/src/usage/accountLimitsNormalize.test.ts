@@ -6,6 +6,7 @@ import {
   claudeWindowFromRateLimitEvent,
   codexSnapshotFromUnknown,
   isPrimaryCodexLimit,
+  windowHasTraffic,
 } from "./accountLimitsNormalize.ts";
 
 describe("claudeUsageSnapshotFromUnknown", () => {
@@ -62,14 +63,29 @@ describe("claudeUsageSnapshotFromUnknown", () => {
     ]);
   });
 
-  it("treats a null utilization as an untouched window", () => {
+  it("drops an untouched window - 0% used with no reset clock says nothing", () => {
+    // The provider materializes windows it has never metered (a null
+    // utilization, no reset). Passing them through gave every Claude card a
+    // permanent 0% row per novel provider-side slug; a window appears the
+    // moment it first carries usage.
     const snapshot = claudeUsageSnapshotFromUnknown({
       subscription_type: null,
-      rate_limits: { five_hour: { utilization: null, resets_at: null } },
+      rate_limits: {
+        five_hour: { utilization: null, resets_at: null },
+        seven_day: { utilization: 12, resets_at: null },
+      },
     });
-    expect(snapshot?.windows).toEqual([
-      { id: "five_hour", label: "5h", usedPercent: 0, resetsAt: null, windowMinutes: 300 },
-    ]);
+    expect(snapshot?.windows.map((window) => window.id)).toEqual(["seven_day"]);
+  });
+
+  it("keeps a drained window whose reset clock is still running", () => {
+    const snapshot = claudeUsageSnapshotFromUnknown({
+      subscription_type: null,
+      rate_limits: {
+        five_hour: { utilization: 0, resets_at: "2026-08-15T15:00:00.000Z" },
+      },
+    });
+    expect(snapshot?.windows.map((window) => window.id)).toEqual(["five_hour"]);
   });
 
   it("returns empty windows when rate limits do not apply", () => {
@@ -82,13 +98,15 @@ describe("claudeUsageSnapshotFromUnknown", () => {
 });
 
 describe("claudeWindowFromRateLimitEvent", () => {
-  it("maps the binding window with a unix-seconds reset", () => {
+  it("maps the binding window with a unix-seconds reset, scaling the 0-1 utilization", () => {
+    // The streamed field carries the response header's fraction, not the
+    // usage endpoint's percent: 0.875 here is the 87.5 the endpoint reports.
     const window = claudeWindowFromRateLimitEvent({
       type: "rate_limit_event",
       rate_limit_info: {
         status: "allowed_warning",
         rateLimitType: "five_hour",
-        utilization: 87.5,
+        utilization: 0.875,
         resetsAt: 1_786_600_800,
       },
     });
@@ -104,7 +122,7 @@ describe("claudeWindowFromRateLimitEvent", () => {
   it("drops hidden window types", () => {
     expect(
       claudeWindowFromRateLimitEvent({
-        rate_limit_info: { rateLimitType: "seven_day_opus", utilization: 90 },
+        rate_limit_info: { rateLimitType: "seven_day_opus", utilization: 0.9 },
       }),
     ).toBeNull();
   });
@@ -167,5 +185,27 @@ describe("codexSnapshotFromUnknown", () => {
     expect(isPrimaryCodexLimit(snapshot?.limitId ?? null)).toBe(false);
     expect(isPrimaryCodexLimit("codex")).toBe(true);
     expect(isPrimaryCodexLimit(null)).toBe(true);
+  });
+});
+
+describe("windowHasTraffic", () => {
+  const window = (usedPercent: number, resetsAt: string | null) => ({
+    id: "nimbus_quill",
+    label: "Nimbus quill",
+    usedPercent,
+    resetsAt,
+    windowMinutes: null,
+  });
+
+  it("hides an untouched window", () => {
+    expect(windowHasTraffic(window(0, null))).toBe(false);
+  });
+
+  it("shows a window the moment it carries usage", () => {
+    expect(windowHasTraffic(window(1, null))).toBe(true);
+  });
+
+  it("shows a drained window whose reset clock is still running", () => {
+    expect(windowHasTraffic(window(0, "2026-08-21T07:59:00.000Z"))).toBe(true);
   });
 });
