@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import type { ReactNode } from "react";
+import { Image as NitroMarkdownImage, type CustomRenderer } from "react-native-nitro-markdown";
 
 import type { MarkdownImageRenderer } from "../native/SelectableMarkdownText";
 import { useAssetUrl } from "../state/assets";
@@ -91,6 +92,21 @@ export function MarkdownWorkspaceImage(props: {
  * workspace srcs go through the signed asset flow, everything else keeps the
  * default rendering.
  */
+/**
+ * `image` entry for the JS fallback markdown renderer (Android, and any
+ * client without the native module): routes workspace srcs through the same
+ * signed asset flow as the native renderImage override, drawn with the
+ * library's own image component.
+ */
+export function createFallbackMarkdownImageRenderer(
+  renderImage: MarkdownImageRenderer,
+): CustomRenderer {
+  return ({ url = "", alt, title }) =>
+    renderImage({ href: url, alt, title }, (uri) => (
+      <NitroMarkdownImage url={uri ?? ""} alt={alt} title={title} />
+    ));
+}
+
 export function createWorkspaceImageRenderer(context: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;

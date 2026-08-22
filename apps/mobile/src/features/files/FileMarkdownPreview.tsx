@@ -7,6 +7,7 @@ import {
 } from "react-native-nitro-markdown";
 import { RefreshControl, ScrollView, Text as NativeText, View } from "react-native";
 
+import { createFallbackMarkdownImageRenderer } from "../../components/MarkdownWorkspaceImage";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useFontFamily } from "../../lib/useFontFamily";
 import {
@@ -192,6 +193,15 @@ export function FileMarkdownPreview(props: {
   const onLinkPress = useCallback((href: string) => {
     void tryOpenExternalUrl(href, "markdown-link");
   }, []);
+  // The fallback renderer ignores SelectableMarkdownText's renderImage prop,
+  // so the workspace image flow rides its custom renderers instead.
+  const fallbackRenderers = useMemo(
+    () =>
+      props.renderImage
+        ? { ...styles.renderers, image: createFallbackMarkdownImageRenderer(props.renderImage) }
+        : styles.renderers,
+    [props.renderImage, styles.renderers],
+  );
 
   return (
     <ScrollView
@@ -217,7 +227,7 @@ export function FileMarkdownPreview(props: {
         ) : (
           <Markdown
             options={{ gfm: true }}
-            renderers={styles.renderers}
+            renderers={fallbackRenderers}
             styles={styles.styles}
             theme={styles.theme}
           >

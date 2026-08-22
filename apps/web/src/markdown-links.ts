@@ -205,9 +205,10 @@ export function resolveMarkdownImagePath(
     return null;
   }
 
-  const fileUrlTarget = normalized.toLowerCase().startsWith("file:")
-    ? parseFileUrlHref(normalized)
-    : null;
+  const isFileUrl = normalized.toLowerCase().startsWith("file:");
+  const fileUrlTarget =
+    isFileUrl && isLocalFileUrl(normalized) ? parseFileUrlHref(normalized) : null;
+  if (isFileUrl && fileUrlTarget === null) return null;
   const source = fileUrlTarget ?? stripSearchAndHash(normalized);
   const decodedPath = normalizeWindowsDrivePath(
     fileUrlTarget ? source.path : safeDecode(source.path),
@@ -234,20 +235,42 @@ interface HastNodeLike {
   children?: Array<HastNodeLike>;
 }
 
-/** `C:/...` and `C:\...` hrefs read as a "c:" scheme, so URL filters drop them. */
+/**
+ * `C:/...` and `C:\...` hrefs read as a "c:" scheme, so URL filters drop
+ * them. Tested on the decoded form — the markdown parser percent-encodes
+ * backslashes, turning `C:\repo` into `C:%5Crepo`.
+ */
 export function isWindowsDrivePathHref(href: string): boolean {
-  return WINDOWS_DRIVE_PATH_PATTERN.test(href);
+  return WINDOWS_DRIVE_PATH_PATTERN.test(safeDecode(href));
+}
+
+/**
+ * A file: url naming a file this server can read: no host, or localhost.
+ * A UNC-style host (`file://server/share`) names a network location whose
+ * path must not be reinterpreted as a local one.
+ */
+function isLocalFileUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol.toLowerCase() !== "file:") return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === "" || host === "localhost";
+  } catch {
+    return false;
+  }
 }
 
 /**
  * A src the sanitizer's protocol allowlist would drop even though it names a
  * local file: a Windows drive path parses as a scheme ("c:"), and file: urls
- * are not http(s). Tested on the decoded form — the markdown parser percent-
- * encodes backslashes, turning `C:\repo` into `C:%5Crepo`.
+ * are not http(s).
  */
 function isSanitizerStrippedImageSrc(src: string): boolean {
   const decoded = safeDecode(src);
-  return WINDOWS_DRIVE_PATH_PATTERN.test(decoded) || decoded.toLowerCase().startsWith("file:");
+  return (
+    WINDOWS_DRIVE_PATH_PATTERN.test(decoded) ||
+    (decoded.toLowerCase().startsWith("file:") && isLocalFileUrl(decoded))
+  );
 }
 
 /**

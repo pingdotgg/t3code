@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isWindowsDrivePathHref,
   rehypePreserveLocalImageSrc,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
@@ -94,6 +95,18 @@ describe("resolveMarkdownImagePath", () => {
       "/Users/julius/project/shot.png",
     );
   });
+
+  it("rejects file urls with a remote host instead of misreading their path", () => {
+    expect(resolveMarkdownImagePath("file://server/share/logo.png", undefined)).toBe(null);
+  });
+});
+
+describe("isWindowsDrivePathHref", () => {
+  it("recognizes plain and percent-encoded drive paths", () => {
+    expect(isWindowsDrivePathHref("C:/repo/file.ts")).toBe(true);
+    expect(isWindowsDrivePathHref("C:%5Crepo%5Cfile.ts")).toBe(true);
+    expect(isWindowsDrivePathHref("https://example.com/a.png")).toBe(false);
+  });
 });
 
 describe("rehypePreserveLocalImageSrc", () => {
@@ -123,6 +136,12 @@ describe("rehypePreserveLocalImageSrc", () => {
     rehypePreserveLocalImageSrc()({ type: "root", children: [externalImg, relativeImg] });
     expect(externalImg.properties).not.toHaveProperty("dataLocalSrc");
     expect(relativeImg.properties).not.toHaveProperty("dataLocalSrc");
+  });
+
+  it("does not preserve file urls with a remote host", () => {
+    const uncImg = imgNode("file://server/share/logo.png");
+    rehypePreserveLocalImageSrc()({ type: "root", children: [uncImg] });
+    expect(uncImg.properties).not.toHaveProperty("dataLocalSrc");
   });
 });
 

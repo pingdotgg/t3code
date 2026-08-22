@@ -58,7 +58,10 @@ import {
   type NativeMarkdownTextStyle,
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
-import { createWorkspaceImageRenderer } from "../../components/MarkdownWorkspaceImage";
+import {
+  createFallbackMarkdownImageRenderer,
+  createWorkspaceImageRenderer,
+} from "../../components/MarkdownWorkspaceImage";
 
 import { AppText as Text } from "../../components/AppText";
 import { CopyTextButton } from "../../components/CopyTextButton";
@@ -542,6 +545,7 @@ function useMarkdownStyles(
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
     ): CustomRenderers => ({
+      ...(renderImage ? { image: createFallbackMarkdownImageRenderer(renderImage) } : {}),
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
