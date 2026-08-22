@@ -115,6 +115,77 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
       expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.skills).toEqual([]);
+      expect(snapshot.slashCommands).toEqual([]);
+    }),
+  );
+
+  it.effect("still discovers skills when ACP fails but inspect succeeds", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-inspect-" });
+          const grokPath = path.join(dir, "grok");
+          const inspectPayload = JSON.stringify({
+            skills: [
+              {
+                name: "super-review",
+                description: "Bugs-only super review",
+                userInvocable: true,
+                source: {
+                  type: "user",
+                  path: "/Users/me/.grok/skills/super-review/SKILL.md",
+                },
+              },
+            ],
+          });
+          yield* fs.writeFileString(
+            grokPath,
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "--version" ]; then',
+              '  printf "grok-cli 1.0.0\\n"',
+              "  exit 0",
+              "fi",
+              'if [ "$1" = "inspect" ] && [ "$2" = "--json" ]; then',
+              `  printf '%s\\n' '${inspectPayload.replace(/'/g, `'\\''`)}'`,
+              "  exit 0",
+              "fi",
+              // agent stdio path fails so ACP discovery errors
+              "exit 1",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.env,
+            dir,
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.skills).toEqual([
+        {
+          name: "super-review",
+          description: "Bugs-only super review",
+          path: "/Users/me/.grok/skills/super-review/SKILL.md",
+          scope: "user",
+          enabled: true,
+        },
+      ]);
+      // Without ACP available_commands, slash commands fall back to invocable skills.
+      expect(snapshot.slashCommands).toEqual([
+        {
+          name: "super-review",
+          description: "Bugs-only super review",
+        },
+      ]);
     }),
   );
 });

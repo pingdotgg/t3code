@@ -188,6 +188,12 @@ export class AcpSessionRuntime extends Context.Service<
     /** Latest configuration options observed from session setup and configuration writes. */
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     /**
+     * Latest slash / available commands advertised via `available_commands_update`.
+     * Captured even during session startup (before the runtime is marked Started),
+     * because agents such as Grok emit the first list during `session/new`.
+     */
+    readonly getAvailableCommands: Effect.Effect<ReadonlyArray<EffectAcpSchema.AvailableCommand>>;
+    /**
      * Sends a prompt turn to the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/prompt
      */
@@ -291,6 +297,9 @@ export const make = (
     );
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+    const availableCommandsRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.AvailableCommand>>(
+      [],
+    );
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
@@ -369,6 +378,24 @@ export const make = (
 
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
+        // Capture available commands before the event-queue Started gate. Grok
+        // (and other agents) advertise the first command list during session
+        // setup while startState is still Starting.
+        //
+        // While Starting/NotStarted: accept any sessionId so setup emissions
+        // are not dropped before we know the root id. Once Started: only the
+        // root session may update the ref (child sessions must not overwrite).
+        const availableCommands = availableCommandsFromSessionUpdate(notification);
+        if (availableCommands) {
+          const startStateForCommands = yield* Ref.get(startStateRef);
+          const acceptCommands =
+            startStateForCommands._tag !== "Started" ||
+            notification.sessionId === startStateForCommands.result.sessionId;
+          if (acceptCommands) {
+            yield* Ref.set(availableCommandsRef, availableCommands);
+          }
+        }
+
         const gate = yield* Ref.get(sessionLoadGateRef);
         if (Option.isSome(gate) && gate.value.active) {
           const lastActivityAtMillis = yield* Clock.currentTimeMillis;
@@ -668,16 +695,23 @@ export const make = (
           case "Starting":
             return [Deferred.await(state.deferred), state] as const;
           case "NotStarted":
+            // Drop any commands left from a previous failed start attempt so a
+            // retry never surfaces a stale available-commands snapshot.
             return [
-              startOnce.pipe(
-                Effect.tap((result) =>
-                  Ref.set(startStateRef, { _tag: "Started", result }).pipe(
-                    Effect.andThen(Deferred.succeed(deferred, result)),
-                  ),
-                ),
-                Effect.onError((cause) =>
-                  Deferred.failCause(deferred, cause).pipe(
-                    Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+              Ref.set(availableCommandsRef, []).pipe(
+                Effect.andThen(
+                  startOnce.pipe(
+                    Effect.tap((result) =>
+                      Ref.set(startStateRef, { _tag: "Started", result }).pipe(
+                        Effect.andThen(Deferred.succeed(deferred, result)),
+                      ),
+                    ),
+                    Effect.onError((cause) =>
+                      Deferred.failCause(deferred, cause).pipe(
+                        Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+                        Effect.andThen(Ref.set(availableCommandsRef, [])),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -716,6 +750,7 @@ export const make = (
       }),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
+      getAvailableCommands: Ref.get(availableCommandsRef),
       prompt: (payload) =>
         promptSerializationSemaphore.withPermit(
           Effect.gen(function* () {
@@ -839,6 +874,16 @@ function configOptionCurrentValueMatches(
     return false;
   }
   return currentValue.trim() === String(value).trim();
+}
+
+function availableCommandsFromSessionUpdate(
+  notification: EffectAcpSchema.SessionNotification,
+): ReadonlyArray<EffectAcpSchema.AvailableCommand> | undefined {
+  const update = notification.update;
+  if (update.sessionUpdate !== "available_commands_update") {
+    return undefined;
+  }
+  return update.availableCommands;
 }
 
 const handleSessionUpdate = ({
