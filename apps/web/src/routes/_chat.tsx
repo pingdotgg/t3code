@@ -2,7 +2,7 @@ import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -182,22 +182,15 @@ function ChatRouteGlobalShortcuts() {
           (activeThreadShell.worktreePath === null || snapshot.branch === activeThreadShell.branch)
             ? snapshot.pr
             : null;
-        // Match Sidebar partition ordering: snoozed outranks settled, pinned
-        // never counts as settled. Without this, a snoozed thread that also
-        // satisfies effectiveSettled would be treated as settled and unsettled.
-        const nowIso = new Date().toISOString();
-        const isSnoozed =
-          serverConfigs.get(routeThreadRef.environmentId)?.environment.capabilities.threadSnooze ===
-            true && effectiveSnoozed(activeThreadShell, { now: nowIso });
-        const isSettled =
-          !isSnoozed &&
-          activeThreadShell.pinnedAt == null &&
-          effectiveSettled(activeThreadShell, {
-            now: `${nowIso.slice(0, 16)}:00.000Z`,
-            autoSettleAfterDays,
-            autoSettleOnMerge,
-            changeRequest,
-          });
+        // Classify like ChatView's parked-thread banner and the header menu:
+        // effectiveSettled alone, minute-quantized so it cannot disagree
+        // with those surfaces within the same minute.
+        const isSettled = effectiveSettled(activeThreadShell, {
+          now: `${new Date().toISOString().slice(0, 16)}:00.000Z`,
+          autoSettleAfterDays,
+          autoSettleOnMerge,
+          changeRequest,
+        });
         void (async () => {
           const result = isSettled
             ? await unsettleThread(routeThreadRef)
