@@ -93,7 +93,13 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
                 }),
             ),
           );
-        yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+        yield* Effect.addFinalizer(() =>
+          child.isRunning.pipe(
+            Effect.orElseSucceed(() => true),
+            Effect.flatMap((isRunning) => (isRunning ? child.kill() : Effect.void)),
+            Effect.ignore,
+          ),
+        );
 
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
