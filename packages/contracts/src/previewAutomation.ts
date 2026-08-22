@@ -435,7 +435,7 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
   returnByValue: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Serialize and return the value instead of a remote object reference. Defaults to true.",
+        "Accepted for compatibility and ignored: results are always serialized by value. A remote object reference cannot outlive the debugger session that produced it.",
     }),
   ),
 }).annotate({
