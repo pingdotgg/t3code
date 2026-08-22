@@ -111,6 +111,8 @@ export interface ContextMenuItem<T extends string = string> {
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
   icon?: string;
+  /** Inserts a visual section divider immediately before this item. */
+  separatorBefore?: boolean;
   children?: readonly ContextMenuItem<T>[];
 }
 
@@ -121,6 +123,7 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
+  readonly separatorBefore?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
@@ -131,6 +134,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
+  separatorBefore: Schema.optionalKey(Schema.Boolean),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
@@ -1106,6 +1110,8 @@ export interface DesktopBridge {
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
+  /** Optional while older desktop shells can host a newer web client. */
+  pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and

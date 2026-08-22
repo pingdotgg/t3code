@@ -9,7 +9,6 @@ describe("PreviewChromeRow", () => {
       <PreviewChromeRow
         url="https://example.com/dashboard?mode=edit&tab=1#notes"
         loading={false}
-        loadProgress={0}
         canGoBack={false}
         canGoForward={false}
         refreshDisabled={false}
