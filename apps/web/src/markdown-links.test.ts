@@ -5,6 +5,7 @@ import {
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
+  toFilesystemLinkUrl,
 } from "./markdown-links";
 
 describe("rewriteMarkdownFileUriHref", () => {
@@ -32,6 +33,60 @@ describe("rewriteMarkdownFileUriHref", () => {
     expect(
       rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
     ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
+  });
+});
+
+describe("toFilesystemLinkUrl", () => {
+  it("maps a drive destination to a file url", () => {
+    expect(toFilesystemLinkUrl("D:/tmp/example.md")).toBe("file:///D:/tmp/example.md");
+  });
+
+  it("normalizes separators so backslash and slash forms share one key", () => {
+    expect(toFilesystemLinkUrl("M:\\batches\\docs\\prompt.md")).toBe(
+      "file:///M:/batches/docs/prompt.md",
+    );
+    expect(toFilesystemLinkUrl("M:\\batches\\docs\\prompt.md")).toBe(
+      toFilesystemLinkUrl("M:/batches/docs/prompt.md"),
+    );
+  });
+
+  it("round-trips back to the path the renderer receives", () => {
+    const fileUrl = toFilesystemLinkUrl("D:/tmp/example.md");
+    expect(fileUrl).not.toBeNull();
+    expect(rewriteMarkdownFileUriHref(fileUrl!)).toBe("D:/tmp/example.md");
+  });
+
+  it("unwraps angle-bracketed drive destinations", () => {
+    expect(toFilesystemLinkUrl(" <D:/Programme/t3code/AGENTS.md> ")).toBe(
+      "file:///D:/Programme/t3code/AGENTS.md",
+    );
+  });
+
+  it("leaves everything that is not a drive destination alone", () => {
+    expect(toFilesystemLinkUrl("https://example.com")).toBeNull();
+    expect(toFilesystemLinkUrl("./relative.md")).toBeNull();
+    expect(toFilesystemLinkUrl("/Users/julius/project/AGENTS.md")).toBeNull();
+    expect(toFilesystemLinkUrl("file:///D:/tmp/example.md")).toBeNull();
+    expect(toFilesystemLinkUrl(undefined)).toBeNull();
+  });
+
+  it("resolves the shapes the link scan misses, which the anchor falls back to", () => {
+    // Balanced parentheses and spaced destinations never reach the metadata map,
+    // so the anchor resolves them directly; that only works if these resolve.
+    expect(resolveMarkdownFileLinkMeta("D:/tmp/example(1).md")).toMatchObject({
+      basename: "example(1).md",
+    });
+    expect(resolveMarkdownFileLinkMeta("D:/Program Files/example.md")).toMatchObject({
+      basename: "example.md",
+    });
+  });
+
+  it("does not take a multi-letter scheme", () => {
+    // A drive letter is one character, so nothing that could carry script
+    // matches; those stay with the transform that already rejects them.
+    expect(toFilesystemLinkUrl("javascript:alert(1)")).toBeNull();
+    expect(toFilesystemLinkUrl("data:text/html,<script>")).toBeNull();
+    expect(toFilesystemLinkUrl("D:alert(1)")).toBeNull();
   });
 });
 

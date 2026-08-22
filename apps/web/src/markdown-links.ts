@@ -108,6 +108,25 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   return `${target.path}${target.hash}`;
 }
 
+/**
+ * The `file:` URL for a Windows drive destination, or null for anything else.
+ *
+ * A destination like `D:/src/main.ts` cannot reach the anchor renderer as
+ * written: `D:` reads as an unknown protocol, so `rehype-sanitize` drops the
+ * href and React Markdown's `defaultUrlTransform` blanks it. Both already allow
+ * `file:`, and `rewriteMarkdownFileUriHref` turns that back into a plain path,
+ * so this is the one form a drive path can travel in.
+ *
+ * Separators are normalized because a `file:` URL cannot carry backslashes;
+ * link keys go through here too, so both sides of the lookup agree.
+ */
+export function toFilesystemLinkUrl(destination: string | undefined): string | null {
+  if (!destination) return null;
+  const normalized = normalizeMarkdownLinkDestination(destination);
+  if (!WINDOWS_DRIVE_PATH_PATTERN.test(normalized)) return null;
+  return `file:///${normalized.replaceAll("\\", "/")}`;
+}
+
 function looksLikePosixFilesystemPath(path: string): boolean {
   if (!path.startsWith("/")) return false;
   if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;

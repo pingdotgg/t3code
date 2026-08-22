@@ -73,11 +73,13 @@ import {
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
+import { remarkFilesystemLinkDestinations } from "../markdown-filesystem-links";
 import {
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
+  toFilesystemLinkUrl,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
@@ -175,7 +177,7 @@ export function orderedListGutterStyle(
   return { "--list-gutter": `${digits + 1}ch` };
 }
 
-const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
+export const CHAT_MARKDOWN_SANITIZE_SCHEMA: NonNullable<Parameters<typeof rehypeSanitize>[0]> = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
@@ -187,12 +189,13 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
   },
-} satisfies Parameters<typeof rehypeSanitize>[0];
+};
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
+  remarkFilesystemLinkDestinations,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
@@ -202,6 +205,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
+  remarkFilesystemLinkDestinations,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
@@ -915,7 +919,10 @@ function extractMarkdownLinkHrefs(text: string): string[] {
 }
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
-  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  // Drive destinations are keyed through the same `file:` form the remark plugin
+  // rewrites them to, so a `M:\dir\file.md` in the source text and the
+  // `M:/dir/file.md` the renderer receives resolve to one key.
+  const normalizedHref = toFilesystemLinkUrl(href) ?? normalizeMarkdownLinkDestination(href);
   return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
@@ -1629,7 +1636,16 @@ function ChatMarkdown({
       },
       a({ node, href, children, title: _title, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        // The map is keyed off a scan of the message text, which only reads
+        // inline links with a plain destination. A drive path is resolved here
+        // when that scan missed it, so a link shape the scan cannot read still
+        // opens the file rather than rendering as an ordinary dead link.
+        const fileLinkMeta = normalizedHref
+          ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
+            (toFilesystemLinkUrl(normalizedHref)
+              ? resolveMarkdownFileLinkMeta(normalizedHref, cwd)
+              : null))
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
