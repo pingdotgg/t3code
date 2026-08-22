@@ -966,9 +966,9 @@ const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
 );
 
 /**
- * Applies authored image dimensions as inline pixel sizes on rendered images and
- * workspace placeholders. Inline styles beat the default auto-sizing utilities,
- * while their max-width and max-height caps still clamp oversized images.
+ * Applies authored image dimensions to rendered images and workspace placeholders.
+ * When both axes are present, the authored ratio keeps either size cap from
+ * distorting the box.
  */
 function authoredImageSizeStyle(
   width: string | number | undefined,
@@ -979,6 +979,10 @@ function authoredImageSizeStyle(
   const style: CSSProperties = {};
   if (!Number.isNaN(parsedWidth) && parsedWidth > 0) style.width = parsedWidth;
   if (!Number.isNaN(parsedHeight) && parsedHeight > 0) style.height = parsedHeight;
+  if (style.width !== undefined && style.height !== undefined) {
+    style.aspectRatio = `${parsedWidth} / ${parsedHeight}`;
+    style.height = "auto";
+  }
   return style.width === undefined && style.height === undefined ? undefined : style;
 }
 
