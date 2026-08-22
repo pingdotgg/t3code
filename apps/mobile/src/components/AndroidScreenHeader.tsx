@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, View, type ColorValue } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { StatusPulse } from "./StatusPulse";
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
 import { useThemeColor } from "../lib/useThemeColor";
@@ -12,13 +13,17 @@ export interface AndroidHeaderAction {
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
+  readonly pulse?: boolean;
+  readonly tintColor?: ColorValue;
 }
 
-export function AndroidHeaderIconButton(props: {
+export function AppHeaderIconButton(props: {
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
   readonly onPress?: () => void;
   readonly disabled?: boolean;
+  readonly pulse?: boolean;
+  readonly tintColor?: ColorValue;
 }) {
   const foregroundColor = useThemeColor("--color-foreground");
   const disabledColor = useThemeColor("--color-icon-subtle");
@@ -35,15 +40,19 @@ export function AndroidHeaderIconButton(props: {
         props.disabled && "opacity-55",
       )}
     >
-      <SymbolView
-        name={props.icon}
-        size={20}
-        tintColor={props.disabled ? disabledColor : foregroundColor}
-        type="monochrome"
-      />
+      <StatusPulse active={props.pulse === true && !props.disabled}>
+        <SymbolView
+          name={props.icon}
+          size={20}
+          tintColor={props.disabled ? disabledColor : (props.tintColor ?? foregroundColor)}
+          type="monochrome"
+        />
+      </StatusPulse>
     </Pressable>
   );
 }
+
+export const AndroidHeaderIconButton = AppHeaderIconButton;
 
 export function AndroidScreenHeader(props: {
   readonly title: string;
@@ -96,12 +105,14 @@ export function AndroidScreenHeader(props: {
         </View>
 
         {props.actions?.map((action) => (
-          <AndroidHeaderIconButton
+          <AppHeaderIconButton
             key={action.accessibilityLabel}
             accessibilityLabel={action.accessibilityLabel}
             disabled={action.disabled}
             icon={action.icon}
             onPress={action.onPress}
+            pulse={action.pulse}
+            tintColor={action.tintColor}
           />
         ))}
         {props.trailing}

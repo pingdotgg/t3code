@@ -5,9 +5,13 @@ import {
   type KnownTerminalSession,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
+import { useAtomValue } from "@effect/atom-react";
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
+import { countRunningTerminalSessions } from "../features/terminal/terminalRunningStatus";
 import { useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
 
@@ -79,4 +83,33 @@ export function useKnownTerminalSessions(input: {
         }),
       );
   }, [input.environmentId, input.threadId, metadata.data]);
+}
+
+const EMPTY_RUNNING_TERMINAL_COUNT_ATOM = Atom.make(0).pipe(
+  Atom.withLabel("mobile-terminal-running-count:empty"),
+);
+
+const threadRunningTerminalCountAtom = Atom.family((key: string) => {
+  const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+  return Atom.make((get) => {
+    const result = get(
+      terminalEnvironment.metadata({
+        environmentId,
+        input: null,
+      }),
+    );
+    const summaries = Option.getOrElse(AsyncResult.value(result), () => []);
+    return countRunningTerminalSessions(summaries, threadId);
+  }).pipe(Atom.withLabel(`mobile-terminal-running-count:${key}`));
+});
+
+export function useThreadRunningTerminalCount(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+}): number {
+  return useAtomValue(
+    input.environmentId === null || input.threadId === null
+      ? EMPTY_RUNNING_TERMINAL_COUNT_ATOM
+      : threadRunningTerminalCountAtom(JSON.stringify([input.environmentId, input.threadId])),
+  );
 }

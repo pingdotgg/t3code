@@ -191,12 +191,28 @@ export type { SFSymbol } from "expo-symbols";
 export type AppSymbolName = SymbolViewProps["name"];
 
 export function SymbolView(props: SymbolViewProps) {
+  const materialName = typeof props.name === "string" ? undefined : props.name.android;
+  const sfSymbol = typeof props.name === "string" ? props.name : props.name.ios;
+
+  // The terminal status glyph is a product status indicator, so it must not
+  // switch visual language between SF Symbols and Tabler across platforms.
+  if (sfSymbol === "terminal" || materialName === "terminal") {
+    return (
+      <IconTerminal2
+        accessibilityLabel={props.accessibilityLabel}
+        color={props.tintColor}
+        size={props.size}
+        strokeWidth={2}
+        style={props.style}
+        testID={props.testID}
+      />
+    );
+  }
+
   if (Platform.OS !== "android") {
     return <ExpoSymbolView {...props} />;
   }
 
-  const materialName = typeof props.name === "string" ? undefined : props.name.android;
-  const sfSymbol = typeof props.name === "string" ? props.name : props.name.ios;
   const AndroidIcon =
     (materialName ? ANDROID_ICON_BY_MATERIAL_NAME[materialName] : undefined) ??
     (sfSymbol ? ANDROID_ICON_BY_SF_SYMBOL[sfSymbol] : undefined);
