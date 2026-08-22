@@ -222,39 +222,84 @@ export function resolveShortcutCommand(
   return null;
 }
 
+/**
+ * Apple's glyphs for the non-letter keys, from Apple's Human Interface
+ * Guidelines. Keys with no established glyph (function keys, punctuation) keep
+ * their word form.
+ */
+const SHORTCUT_KEY_SYMBOLS: Readonly<Record<string, string>> = {
+  " ": "␣",
+  space: "␣",
+  arrowdown: "↓",
+  arrowleft: "←",
+  arrowright: "→",
+  arrowup: "↑",
+  backspace: "⌫",
+  delete: "⌦",
+  end: "↘",
+  enter: "⏎",
+  esc: "⎋",
+  escape: "⎋",
+  home: "↖",
+  pagedown: "⇟",
+  pageup: "⇞",
+  return: "⏎",
+  tab: "⇥",
+};
+
 function formatShortcutKeyLabel(key: string): string {
-  if (key === " ") return "Space";
+  const symbol = SHORTCUT_KEY_SYMBOLS[key];
+  if (symbol) return symbol;
   if (key.length === 1) return key.toUpperCase();
-  if (key === "escape") return "Esc";
-  if (key === "arrowup") return "Up";
-  if (key === "arrowdown") return "Down";
-  if (key === "arrowleft") return "Left";
-  if (key === "arrowright") return "Right";
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
+/**
+ * Apple-style glyph for one token of a raw binding string ("mod+shift+b"), for
+ * surfaces that render a chord as separate chips rather than one label.
+ */
+export function formatShortcutTokenLabel(token: string, platform = navigator.platform): string {
+  const useMetaForMod = isMacPlatform(platform);
+  switch (token) {
+    case "mod":
+      return useMetaForMod ? "⌘" : "⌃";
+    case "meta":
+      return useMetaForMod ? "⌘" : "Super";
+    case "ctrl":
+      return "⌃";
+    case "alt":
+      return "⌥";
+    case "shift":
+      return "⇧";
+    default:
+      return formatShortcutKeyLabel(token);
+  }
+}
+
+/**
+ * Shortcuts render Apple-style everywhere: modifier and key glyphs in Apple's
+ * canonical order with no separators, on every platform. `mod+shift+e` is
+ * `⌃⇧E` on Linux/Windows and `⇧⌘E` on macOS. A non-mac meta/super key has no
+ * Apple glyph, so it stays a `+`-delimited word rather than borrowing `⌘`.
+ */
 export function formatShortcutLabel(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): string {
-  const keyLabel = formatShortcutKeyLabel(shortcut.key);
   const useMetaForMod = isMacPlatform(platform);
-  const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
-  const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
-  const showAlt = shortcut.altKey;
-  const showShift = shortcut.shiftKey;
+  const glyphModifiers = [
+    shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod) ? "⌃" : "",
+    shortcut.altKey ? "⌥" : "",
+    shortcut.shiftKey ? "⇧" : "",
+    useMetaForMod && (shortcut.metaKey || shortcut.modKey) ? "⌘" : "",
+  ].join("");
+  const keyLabel = formatShortcutKeyLabel(shortcut.key);
 
-  if (useMetaForMod) {
-    return `${showCtrl ? "\u2303" : ""}${showAlt ? "\u2325" : ""}${showShift ? "\u21e7" : ""}${showMeta ? "\u2318" : ""}${keyLabel}`;
+  if (!useMetaForMod && shortcut.metaKey) {
+    return [glyphModifiers, "Super", keyLabel].filter(Boolean).join("+");
   }
 
-  const parts: string[] = [];
-  if (showCtrl) parts.push("Ctrl");
-  if (showAlt) parts.push("Alt");
-  if (showShift) parts.push("Shift");
-  if (showMeta) parts.push("Meta");
-  parts.push(keyLabel);
-  return parts.join("+");
+  return `${glyphModifiers}${keyLabel}`;
 }
 
 export function shortcutLabelForCommand(
