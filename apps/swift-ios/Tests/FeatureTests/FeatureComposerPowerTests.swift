@@ -167,6 +167,428 @@ struct FeatureComposerPowerTests {
         #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
     }
 
+    @Test(
+        "Reasoning label follows the effective composer selection",
+        .bug("https://github.com/saphid/t3code-personal/issues/106")
+    )
+    func reasoningLabelFollowsEffectiveSelectionAndMaterializesInvalidModels() {
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "sol",
+                        name: "A deliberately long model name that must truncate",
+                        options: [
+                            .init(
+                                id: "reasoningEffort",
+                                label: "Reasoning effort",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "low", label: "Low"),
+                                    .init(id: "high", label: "High"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+        let inherited = FeatureSelection(
+            providerID: "codex",
+            modelID: "sol",
+            options: [.init(id: "reasoningEffort", value: .string("low"))]
+        )
+        let current = FeatureSelection(
+            providerID: "codex",
+            modelID: "sol",
+            options: [.init(id: "reasoningEffort", value: .string("high"))]
+        )
+
+        #expect(
+            FeatureComposerReasoningControl.resolve(
+                explicit: current,
+                inherited: inherited,
+                providers: providers,
+                materializesDefaultSelection: false
+            )?.value == "High"
+        )
+        #expect(
+            FeatureComposerReasoningControl.resolve(
+                explicit: nil,
+                inherited: inherited,
+                providers: providers,
+                materializesDefaultSelection: false
+            )?.value == "Low"
+        )
+        #expect(
+            FeatureComposerReasoningControl.resolve(
+                explicit: .init(providerID: "codex", modelID: "missing"),
+                inherited: nil,
+                providers: providers,
+                materializesDefaultSelection: true
+            )?.value == "Low"
+        )
+    }
+
+    @Test(
+        "The reasoning selector offers exactly the descriptor's own levels",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func reasoningSelectorOffersDescriptorLevelsAndMarksTheCurrentOne() {
+        let providers = [Self.solProvider]
+        let selection = FeatureSelection(
+            providerID: "codex",
+            modelID: "gpt-5.6-sol",
+            options: [
+                .init(id: "reasoningEffort", value: .string("high")),
+                .init(id: "serviceTier", value: .string("default")),
+            ]
+        )
+
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: selection,
+            inherited: nil,
+            providers: providers,
+            materializesDefaultSelection: true
+        )
+
+        #expect(control?.isInteractive == true)
+        #expect(control?.descriptorID == "reasoningEffort")
+        #expect(control?.descriptorLabel == "Reasoning effort")
+        #expect(control?.value == "High")
+        #expect(control?.currentChoiceID == "high")
+        #expect(
+            control?.choices.map(\.id) == ["low", "medium", "high", "xhigh", "max", "ultra"]
+        )
+        #expect(
+            control?.choices.map(\.label)
+                == ["Low", "Medium", "High", "Extra high", "Max", "Ultra"]
+        )
+    }
+
+    @Test(
+        "The reasoning selector materializes the same default model as the adjacent picker",
+        .bug("https://github.com/pingdotgg/t3code/pull/7344#discussion_r3826822638")
+    )
+    func reasoningSelectorMaterializesTheDefaultModel() {
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: nil,
+            inherited: nil,
+            providers: [Self.solProvider],
+            materializesDefaultSelection: true
+        )
+
+        #expect(control?.value == "Low")
+        #expect(control?.currentChoiceID == "low")
+        #expect(control?.selection(choosing: "high").providerID == "codex")
+        #expect(control?.selection(choosing: "high").modelID == "gpt-5.6-sol")
+    }
+
+    @Test(
+        "Choosing a level writes the model selection the picker would write",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func choosingALevelWritesTheSelectedOptionValueAndKeepsTheOtherOptions() {
+        let providers = [Self.solProvider]
+        let inherited = FeatureSelection(
+            providerID: "codex",
+            modelID: "gpt-5.6-sol",
+            options: [
+                .init(id: "reasoningEffort", value: .string("low")),
+                .init(id: "serviceTier", value: .string("default")),
+            ]
+        )
+
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: nil,
+            inherited: inherited,
+            providers: providers,
+            materializesDefaultSelection: false
+        )
+        let written = control?.selection(choosing: "xhigh")
+
+        #expect(written?.providerID == "codex")
+        #expect(written?.modelID == "gpt-5.6-sol")
+        #expect(
+            written?.options.first(where: { $0.id == "reasoningEffort" })?.value == .string("xhigh")
+        )
+        #expect(
+            written?.options.first(where: { $0.id == "serviceTier" })?.value == .string("default")
+        )
+        #expect(written?.options.filter { $0.id == "reasoningEffort" }.count == 1)
+
+        // The write must survive the effective-selection policy the composer
+        // reads back, otherwise the level would silently revert.
+        #expect(
+            FeatureComposerReasoningControl.resolve(
+                explicit: written,
+                inherited: inherited,
+                providers: providers,
+                materializesDefaultSelection: false
+            )?.value == "Extra high"
+        )
+    }
+
+    @Test(
+        "The reasoning control hides or stays read-only exactly as the label did",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func reasoningControlHidesWithoutADescriptorAndStaysReadOnlyForToggles() {
+        let plainProvider = FeatureProvider(
+            id: "plain",
+            name: "Plain",
+            models: [FeatureModel(id: "basic", name: "Basic")]
+        )
+        let togglingProvider = FeatureProvider(
+            id: "toggling",
+            name: "Toggling",
+            models: [
+                FeatureModel(
+                    id: "thinker",
+                    name: "Thinker",
+                    options: [
+                        .init(id: "thinking", label: "Extended thinking", kind: .boolean),
+                    ]
+                ),
+            ]
+        )
+
+        // No reasoning descriptor at all: nothing to show and nothing to change.
+        #expect(
+            FeatureComposerReasoningControl.resolve(
+                explicit: .init(providerID: "plain", modelID: "basic"),
+                inherited: nil,
+                providers: [plainProvider],
+                materializesDefaultSelection: true
+            ) == nil
+        )
+
+        // A boolean descriptor keeps the previous summary behavior: visible while
+        // enabled, hidden while disabled, and never an inline level selector.
+        let enabled = FeatureComposerReasoningControl.resolve(
+            explicit: .init(
+                providerID: "toggling",
+                modelID: "thinker",
+                options: [.init(id: "thinking", value: .boolean(true))]
+            ),
+            inherited: nil,
+            providers: [togglingProvider],
+            materializesDefaultSelection: true
+        )
+        #expect(enabled?.value == "Extended thinking")
+        #expect(enabled?.isInteractive == false)
+        #expect(enabled?.choices.isEmpty == true)
+        #expect(enabled?.currentChoiceID == nil)
+        #expect(
+            FeatureComposerReasoningControl.resolve(
+                explicit: .init(
+                    providerID: "toggling",
+                    modelID: "thinker",
+                    options: [.init(id: "thinking", value: .boolean(false))]
+                ),
+                inherited: nil,
+                providers: [togglingProvider],
+                materializesDefaultSelection: true
+            ) == nil
+        )
+
+        // An unknown persisted level is not a level this model can offer, so the
+        // control stays hidden instead of inventing one.
+        #expect(
+            FeatureComposerReasoningControl.resolve(
+                explicit: .init(
+                    providerID: "codex",
+                    modelID: "gpt-5.6-sol",
+                    options: [.init(id: "reasoningEffort", value: .string("galaxy"))]
+                ),
+                inherited: nil,
+                providers: [Self.solProvider],
+                materializesDefaultSelection: true
+            ) == nil
+        )
+    }
+
+    @Test(
+        "The selector drops the two ultra tiers and keeps the descriptor's order",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func reasoningSelectorExcludesUltraTiersAndOffersTheRestLowestFirst() {
+        let providers = [Self.claudeProvider]
+        let selection = FeatureSelection(
+            providerID: "claudeAgent",
+            modelID: "claude-opus-5",
+            options: [.init(id: "effort", value: .string("high"))]
+        )
+
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: selection,
+            inherited: nil,
+            providers: providers,
+            materializesDefaultSelection: true
+        )
+
+        // Lowest first, in the descriptor's own order, with exactly the two
+        // excluded tiers missing and nothing else dropped or reordered.
+        #expect(control?.choices.map(\.id) == ["low", "medium", "high", "xhigh", "max"])
+        #expect(
+            control?.choices.map(\.label) == ["Low", "Medium", "High", "Extra High", "Max"]
+        )
+        #expect(control?.choices.contains { $0.id == "ultracode" } == false)
+        #expect(control?.choices.contains { $0.id == "ultrathink" } == false)
+        #expect(control?.isInteractive == true)
+        #expect(control?.currentChoiceID == "high")
+        #expect(FeatureComposerReasoningControl.excludedChoiceIDs == ["ultracode", "ultrathink"])
+
+        // Codex's separate `ultra` level was not part of the verdict and is a
+        // different descriptor id, so it must survive untouched.
+        let codexControl = FeatureComposerReasoningControl.resolve(
+            explicit: .init(
+                providerID: "codex",
+                modelID: "gpt-5.6-sol",
+                options: [.init(id: "reasoningEffort", value: .string("low"))]
+            ),
+            inherited: nil,
+            providers: [Self.solProvider],
+            materializesDefaultSelection: true
+        )
+        #expect(codexControl?.choices.map(\.id).contains("ultra") == true)
+    }
+
+    @Test(
+        "An excluded level stays visible when it is already the effective one",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func excludedLevelIsStillReportedButNeverOfferedOrChecked() {
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: .init(
+                providerID: "claudeAgent",
+                modelID: "claude-opus-5",
+                options: [.init(id: "effort", value: .string("ultrathink"))]
+            ),
+            inherited: nil,
+            providers: [Self.claudeProvider],
+            materializesDefaultSelection: true
+        )
+
+        // The composer must not lie about the current setting, but it also must
+        // not offer it or mark a row that is no longer in the menu.
+        #expect(control?.value == "Ultrathink")
+        #expect(control?.currentChoiceID == nil)
+        #expect(control?.choices.contains { $0.id == "ultrathink" } == false)
+
+        // Choosing an offered level still replaces the excluded one cleanly.
+        let written = control?.selection(choosing: "max")
+        #expect(written?.options.first(where: { $0.id == "effort" })?.value == .string("max"))
+        #expect(written?.options.filter { $0.id == "effort" }.count == 1)
+    }
+
+    @Test(
+        "A descriptor offering only excluded tiers becomes read-only",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func aDescriptorOfOnlyExcludedTiersLeavesAReadOnlyLabel() {
+        let provider = FeatureProvider(
+            id: "claudeAgent",
+            name: "Claude",
+            models: [
+                FeatureModel(
+                    id: "ultra-only",
+                    name: "Ultra only",
+                    options: [
+                        .init(
+                            id: "effort",
+                            label: "Reasoning",
+                            kind: .select,
+                            choices: [
+                                .init(id: "ultracode", label: "Ultracode", isDefault: true),
+                                .init(id: "ultrathink", label: "Ultrathink"),
+                            ]
+                        ),
+                    ]
+                ),
+            ]
+        )
+
+        let control = FeatureComposerReasoningControl.resolve(
+            explicit: .init(providerID: "claudeAgent", modelID: "ultra-only"),
+            inherited: nil,
+            providers: [provider],
+            materializesDefaultSelection: true
+        )
+
+        #expect(control?.value == "Ultracode")
+        #expect(control?.choices.isEmpty == true)
+        #expect(control?.isInteractive == false)
+    }
+
+    /// Mirrors the `effort` descriptor the Claude provider advertises, which is
+    /// where the two excluded tiers actually come from.
+    private static let claudeProvider = FeatureProvider(
+        id: "claudeAgent",
+        name: "Claude",
+        models: [
+            FeatureModel(
+                id: "claude-opus-5",
+                name: "Claude Opus 5",
+                isDefault: true,
+                options: [
+                    .init(
+                        id: "effort",
+                        label: "Reasoning",
+                        kind: .select,
+                        choices: [
+                            .init(id: "low", label: "Low"),
+                            .init(id: "medium", label: "Medium"),
+                            .init(id: "high", label: "High", isDefault: true),
+                            .init(id: "xhigh", label: "Extra High"),
+                            .init(id: "max", label: "Max"),
+                            .init(id: "ultracode", label: "Ultracode"),
+                            .init(id: "ultrathink", label: "Ultrathink"),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+    )
+
+    /// Mirrors the descriptor the Codex provider actually advertises for
+    /// `gpt-5.6-sol`, including the neighbouring option the selector must not
+    /// disturb.
+    private static let solProvider = FeatureProvider(
+        id: "codex",
+        name: "Codex",
+        models: [
+            FeatureModel(
+                id: "gpt-5.6-sol",
+                name: "GPT-5.6-Sol",
+                isDefault: true,
+                options: [
+                    .init(
+                        id: "reasoningEffort",
+                        label: "Reasoning effort",
+                        kind: .select,
+                        choices: [
+                            .init(id: "low", label: "Low", isDefault: true),
+                            .init(id: "medium", label: "Medium"),
+                            .init(id: "high", label: "High"),
+                            .init(id: "xhigh", label: "Extra high"),
+                            .init(id: "max", label: "Max"),
+                            .init(id: "ultra", label: "Ultra"),
+                        ]
+                    ),
+                    .init(
+                        id: "serviceTier",
+                        label: "Service tier",
+                        kind: .select,
+                        choices: [.init(id: "default", label: "Standard", isDefault: true)]
+                    ),
+                ]
+            ),
+        ]
+    )
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
