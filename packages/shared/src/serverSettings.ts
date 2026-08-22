@@ -130,6 +130,8 @@ export function applyServerSettingsPatch(
   const {
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
+    providerSessionInactivityThreshold,
+    providerSessionSweepInterval,
     backgroundActivityProfile,
     backgroundActivity,
     ...patchForMerge
@@ -193,6 +195,10 @@ export function applyServerSettingsPatch(
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
+    ...(providerSessionInactivityThreshold !== undefined
+      ? { providerSessionInactivityThreshold }
+      : {}),
+    ...(providerSessionSweepInterval !== undefined ? { providerSessionSweepInterval } : {}),
   };
   const normalizedBackgroundActivity = normalizeBackgroundActivitySettings(
     nextWithReplacementsBase.backgroundActivity,

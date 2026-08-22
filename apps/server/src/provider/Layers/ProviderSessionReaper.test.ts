@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -23,8 +24,12 @@ import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntim
 import { ProviderValidationError } from "../Errors.ts";
 import { ProviderSessionReaper } from "../Services/ProviderSessionReaper.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
-import { makeProviderSessionReaperLive } from "./ProviderSessionReaper.ts";
+import {
+  makeProviderSessionReaperLive,
+  type ProviderSessionReaperLiveOptions,
+} from "./ProviderSessionReaper.ts";
 
 const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -150,6 +155,8 @@ describe("ProviderSessionReaper", () => {
     readonly stopSessionImplementation?: (input: {
       readonly threadId: ThreadId;
     }) => ReturnType<ProviderServiceShape["stopSession"]>;
+    readonly reaperOptions?: ProviderSessionReaperLiveOptions;
+    readonly settingsOverrides?: Parameters<typeof ServerSettings.layerTest>[0];
   }) {
     const stoppedThreadIds = new Set<ThreadId>();
     const stopSession = vi.fn<ProviderServiceShape["stopSession"]>(
@@ -193,10 +200,13 @@ describe("ProviderSessionReaper", () => {
     const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
       Layer.provide(runtimeRepositoryLayer),
     );
-    const layer = makeProviderSessionReaperLive({
-      inactivityThresholdMs: 1_000,
-      sweepIntervalMs: 60_000,
-    }).pipe(
+    const layer = makeProviderSessionReaperLive(
+      input.reaperOptions ?? {
+        inactivityThresholdMs: 1_000,
+        sweepIntervalMs: 60_000,
+      },
+    ).pipe(
+      Layer.provideMerge(ServerSettings.layerTest(input.settingsOverrides ?? {})),
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, providerService)),
@@ -272,6 +282,178 @@ describe("ProviderSessionReaper", () => {
     );
 
     await startReaper();
+
+    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+
+    expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
+    expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
+  });
+
+  // These cases seed a session idle for ~5 seconds — between the small and
+  // large candidate thresholds — so they fail if the settings plumbing is
+  // broken (hardcoded 30-minute default would not reap) or the precedence
+  // is inverted.
+  it("reads reaper timing from server settings when no options are provided", async () => {
+    const threadId = ThreadId.make("thread-reaper-settings");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+      reaperOptions: {},
+      settingsOverrides: {
+        providerSessionInactivityThreshold: Duration.millis(1_000),
+        providerSessionSweepInterval: Duration.minutes(1),
+      },
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+
+    const nowMs = await Effect.runPromise(Clock.currentTimeMillis);
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 5_000)),
+        resumeCursor: {
+          opaque: "resume-settings",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+
+    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+
+    expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
+    expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("does not reap when the configured threshold exceeds the idle time", async () => {
+    const threadId = ThreadId.make("thread-reaper-settings-fresh");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+      reaperOptions: {},
+      settingsOverrides: {
+        providerSessionInactivityThreshold: Duration.days(30),
+        providerSessionSweepInterval: Duration.minutes(1),
+      },
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+
+    const nowMs = await Effect.runPromise(Clock.currentTimeMillis);
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 5_000)),
+        resumeCursor: {
+          opaque: "resume-settings-fresh",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await Effect.runPromise(drainFibers);
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
+    expect(Option.isSome(remaining)).toBe(true);
+  });
+
+  it("prefers explicit options over server settings", async () => {
+    const threadId = ThreadId.make("thread-reaper-option-override");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+      reaperOptions: {
+        inactivityThresholdMs: 1_000,
+        sweepIntervalMs: 60_000,
+      },
+      settingsOverrides: {
+        providerSessionInactivityThreshold: Duration.days(30),
+        providerSessionSweepInterval: Duration.hours(1),
+      },
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+
+    const nowMs = await Effect.runPromise(Clock.currentTimeMillis);
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 5_000)),
+        resumeCursor: {
+          opaque: "resume-option-override",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
 
     await waitFor(() => harness.stopSession.mock.calls.length === 1);
 
