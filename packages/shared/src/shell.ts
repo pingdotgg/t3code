@@ -47,7 +47,11 @@ export type CommandAvailabilityChecker = (
 export class CommandResolutionError extends Data.TaggedError("CommandResolutionError")<{
   readonly command: string;
   readonly reason: "not-found";
-}> {}
+}> {
+  override get message(): string {
+    return `Command "${this.command}" could not be resolved (${this.reason}).`;
+  }
+}
 
 const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
 
