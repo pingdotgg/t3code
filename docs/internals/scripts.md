@@ -16,6 +16,9 @@ vp run dev
 Node 24 is required. Bun is not: the server picks Bun adapters when it detects Bun and falls back to
 Node otherwise, and nothing in contributor setup needs it.
 
+Prefer a container? `.devcontainer/` ships a ready-made CI-matching environment; see
+[devcontainer.md](devcontainer.md).
+
 `vp run dev` prints a one-time pairing URL. Open it so the first browser navigation is
 authenticated.
 
