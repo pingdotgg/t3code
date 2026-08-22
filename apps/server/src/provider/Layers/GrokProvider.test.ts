@@ -1,9 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { GrokSettings } from "@t3tools/contracts";
 
 import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
@@ -46,6 +48,28 @@ describe("buildInitialGrokProviderSnapshot", () => {
   );
 });
 
+const makeSpawnHandle = (input: {
+  readonly stdout?: string;
+  readonly stderr?: string;
+  readonly exitCode?: number;
+}) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.encodeText(Stream.make(input.stdout ?? "")),
+    stderr: Stream.encodeText(input.stderr ? Stream.make(input.stderr) : Stream.empty),
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+
+const spawnArgs = (command: { readonly _tag: string; readonly args?: ReadonlyArray<string> }) =>
+  command._tag === "StandardCommand" ? (command.args ?? []) : [];
+
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {
@@ -62,59 +86,105 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
-    Effect.gen(function* () {
-      const secretStderr = "broken grok install: secret-token-value";
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-version-" });
-          const grokPath = path.join(dir, "grok");
-          yield* fs.writeFileString(
-            grokPath,
-            ["#!/bin/sh", `printf "%s\\n" "${secretStderr}" >&2`, "exit 2", ""].join("\n"),
-          );
-          yield* fs.chmod(grokPath, 0o755);
+  it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () => {
+    const secretStderr = "broken grok install: secret-token-value";
+    const spawner = ChildProcessSpawner.make((command) => {
+      if (spawnArgs(command).includes("--version")) {
+        return Effect.succeed(makeSpawnHandle({ stderr: `${secretStderr}\n`, exitCode: 2 }));
+      }
+      return Effect.succeed(makeSpawnHandle({ stderr: "unexpected grok spawn\n", exitCode: 1 }));
+    });
 
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-          );
-        }),
-      );
+    return Effect.gen(function* () {
+      const snapshot = yield* checkGrokProviderStatus(
+        decodeGrokSettings({ enabled: true, binaryPath: "grok" }),
+      ).pipe(Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)));
 
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toBe("Grok CLI is installed but failed to run.");
       expect(snapshot.message).not.toContain(secretStderr);
-    }),
-  );
+    });
+  });
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-success-" });
-          const grokPath = path.join(dir, "grok");
-          yield* fs.writeFileString(
-            grokPath,
-            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
-          );
-          yield* fs.chmod(grokPath, 0o755);
+  it.effect("reports an error when ACP model discovery is unavailable", () => {
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = spawnArgs(command);
+      if (args.includes("--version")) {
+        return Effect.succeed(makeSpawnHandle({ stdout: "grok-cli 0.0.99\n" }));
+      }
+      if (args.includes("inspect")) {
+        return Effect.succeed(makeSpawnHandle({ stdout: JSON.stringify({ skills: [] }) }));
+      }
+      return Effect.succeed(makeSpawnHandle({ stderr: "ACP probe unavailable\n", exitCode: 1 }));
+    });
 
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-          );
-        }),
-      );
+    return Effect.gen(function* () {
+      const snapshot = yield* checkGrokProviderStatus(
+        decodeGrokSettings({ enabled: true, binaryPath: "grok" }),
+      ).pipe(Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)));
 
       expect(snapshot.status).toBe("error");
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
       expect(snapshot.message).toContain("ACP startup failed");
-    }),
-  );
+      expect(snapshot.skills).toEqual([]);
+    });
+  });
+
+  it.effect("attaches inspect skills even when ACP model discovery fails", () => {
+    const inspectCwds: Array<string | undefined> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = spawnArgs(command);
+      if (args.includes("inspect")) {
+        inspectCwds.push(command._tag === "StandardCommand" ? command.options.cwd : undefined);
+        return Effect.succeed(
+          makeSpawnHandle({
+            stdout: JSON.stringify({
+              skills: [
+                {
+                  name: "tdd",
+                  description: "Test-driven development.",
+                  source: {
+                    type: "user",
+                    path: "C:\\Users\\Drew\\.grok\\skills\\tdd\\SKILL.md",
+                  },
+                  userInvocable: true,
+                },
+              ],
+            }),
+          }),
+        );
+      }
+      if (args.includes("--version")) {
+        return Effect.succeed(makeSpawnHandle({ stdout: "grok 1.0.5\n" }));
+      }
+      return Effect.succeed(
+        makeSpawnHandle({ stderr: "ACP probe should not block skill discovery\n", exitCode: 1 }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      const snapshot = yield* checkGrokProviderStatus(
+        decodeGrokSettings({ enabled: true, binaryPath: "grok" }),
+        {},
+        "C:\\workspaces\\demo",
+      ).pipe(Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)));
+
+      expect(inspectCwds).toEqual(["C:\\workspaces\\demo"]);
+      expect(snapshot.skills).toEqual([
+        {
+          name: "tdd",
+          description: "Test-driven development.",
+          path: "C:\\Users\\Drew\\.grok\\skills\\tdd\\SKILL.md",
+          scope: "user",
+          enabled: true,
+        },
+      ]);
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("ACP startup failed");
+    });
+  });
 });

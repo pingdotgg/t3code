@@ -23,6 +23,16 @@ adapter in a child scope. Adapter implementations live beside them in
 [`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
 transport, config, and event shapes are mapped.
 
+### Grok skill catalog
+
+The composer `$` picker (and the skill rows in `/`) read `ServerProvider.skills` from the Grok
+snapshot. Claude scans disk because its handshake omits paths. Grok already resolves user, project,
+bundled, plugin, and config skills, so the Grok probe runs `grok inspect --json` after a successful
+`grok --version` and maps `skills[]` onto that snapshot. Discovery is best-effort: timeout, missing
+`inspect`, or malformed JSON yields `[]` and does not change probe status. The inspect spawn uses
+`ServerConfig.cwd` so project-scope skills under `.grok/skills` are included. Do not flatten
+`~/.grok/skills` in T3 — that misses plugin skills and ignores Grok's own disable/ignore config.
+
 ## Registry and routing
 
 Two registries separate configuration from live processes:
