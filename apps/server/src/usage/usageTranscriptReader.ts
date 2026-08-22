@@ -14,7 +14,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
-import * as NodeSqlite from "node:sqlite";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
@@ -29,6 +29,124 @@ import {
 
 /** Wait through brief writer locks without stalling the server indefinitely. */
 const MCODE_BUSY_TIMEOUT_MS = 1_000;
+
+type McodeWorkerRequest =
+  | { readonly kind: "probe"; readonly filePath: string; readonly timeoutMs: number }
+  | {
+      readonly kind: "read";
+      readonly filePath: string;
+      readonly sinceMs: number;
+      readonly timeoutMs: number;
+    };
+
+type McodeWorkerResponse =
+  | { readonly kind: "probe"; readonly status: McodeUsageStoreProbe }
+  | { readonly kind: "rows"; readonly rows: readonly Record<string, unknown>[] }
+  | { readonly kind: "failed" };
+
+// SQLite's Node API is synchronous. Keep both the busy timeout and row
+// iteration off the WebSocket server's event loop without adding a separate
+// bundle entry: this constant worker program is embedded in the server chunk.
+const MCODE_WORKER_SOURCE = String.raw`
+const NodeFS = require("node:fs");
+const NodeSqlite = require("node:sqlite");
+const { parentPort, workerData } = require("node:worker_threads");
+
+function probe() {
+  try {
+    NodeFS.statSync(workerData.filePath);
+  } catch (error) {
+    return {
+      kind: "probe",
+      status: error && error.code === "ENOENT" ? "absent" : "failed",
+    };
+  }
+
+  let db;
+  try {
+    db = new NodeSqlite.DatabaseSync(workerData.filePath, {
+      readOnly: true,
+      timeout: workerData.timeoutMs,
+    });
+    db.prepare(
+      "SELECT id, session_id, model, ts, " +
+        "input_tokens, output_tokens, reasoning_tokens, " +
+        "cache_read_tokens, cache_write_tokens, cost_usd " +
+        "FROM local_runtime_token_usage LIMIT 0",
+    );
+    return { kind: "probe", status: "ready" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    return {
+      kind: "probe",
+      status:
+        message.includes("no such table: local_runtime_token_usage") ||
+        message.includes("no such column:")
+          ? "absent"
+          : "failed",
+    };
+  } finally {
+    db?.close();
+  }
+}
+
+function readRows() {
+  let db;
+  try {
+    db = new NodeSqlite.DatabaseSync(workerData.filePath, {
+      readOnly: true,
+      timeout: workerData.timeoutMs,
+    });
+    const rows = [];
+    for (const row of db
+      .prepare(
+        "SELECT id, session_id, model, ts, " +
+          "input_tokens, output_tokens, reasoning_tokens, " +
+          "cache_read_tokens, cache_write_tokens, cost_usd " +
+          "FROM local_runtime_token_usage WHERE ts >= ? ORDER BY ts, id",
+      )
+      .iterate(workerData.sinceMs)) {
+      rows.push({ ...row });
+    }
+    return { kind: "rows", rows };
+  } catch (error) {
+    return error instanceof Error && error.message.includes("no such table: local_runtime_token_usage")
+      ? { kind: "rows", rows: [] }
+      : { kind: "failed" };
+  } finally {
+    db?.close();
+  }
+}
+
+try {
+  parentPort.postMessage(workerData.kind === "probe" ? probe() : readRows());
+} catch {
+  parentPort.postMessage({ kind: "failed" });
+}
+`;
+
+function runMcodeWorker(request: McodeWorkerRequest): Promise<McodeWorkerResponse | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value: McodeWorkerResponse | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    try {
+      const worker = new NodeWorkerThreads.Worker(MCODE_WORKER_SOURCE, {
+        eval: true,
+        workerData: request,
+      });
+      worker.once("message", (message: McodeWorkerResponse) => settle(message));
+      worker.once("error", () => settle(null));
+      worker.once("exit", () => settle(null));
+    } catch {
+      settle(null);
+    }
+  });
+}
 
 export interface TranscriptFile {
   readonly path: string;
@@ -119,27 +237,12 @@ export type McodeUsageStoreProbe = "ready" | "absent" | "failed";
 
 /** Whether a candidate MCode database contains readable canonical accounting. */
 export async function probeMcodeUsageStore(filePath: string): Promise<McodeUsageStoreProbe> {
-  let db: NodeSqlite.DatabaseSync | undefined;
-  try {
-    await NodeFSP.stat(filePath);
-  } catch (error) {
-    return errorCode(error) === "ENOENT" ? "absent" : "failed";
-  }
-  try {
-    db = new NodeSqlite.DatabaseSync(filePath, {
-      readOnly: true,
-      timeout: MCODE_BUSY_TIMEOUT_MS,
-    });
-    return db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
-      .get("local_runtime_token_usage") !== undefined
-      ? "ready"
-      : "absent";
-  } catch {
-    return "failed";
-  } finally {
-    db?.close();
-  }
+  const result = await runMcodeWorker({
+    kind: "probe",
+    filePath,
+    timeoutMs: MCODE_BUSY_TIMEOUT_MS,
+  });
+  return result?.kind === "probe" ? result.status : "failed";
 }
 
 /**
@@ -163,36 +266,20 @@ async function readMcodeUsageRecords(
   filePath: string,
   sinceMs: number,
 ): Promise<readonly UsageRecord[] | null> {
-  let db: NodeSqlite.DatabaseSync | undefined;
-  try {
-    db = new NodeSqlite.DatabaseSync(filePath, {
-      readOnly: true,
-      timeout: MCODE_BUSY_TIMEOUT_MS,
-    });
-    const rows = db
-      .prepare(
-        `SELECT id, session_id, model, ts,
-                input_tokens, output_tokens, reasoning_tokens,
-                cache_read_tokens, cache_write_tokens, cost_usd
-         FROM local_runtime_token_usage
-         WHERE ts >= ?
-         ORDER BY ts, id`,
-      )
-      .iterate(sinceMs);
-    const records: UsageRecord[] = [];
-    for (const row of rows) {
-      const record = parseMcodeUsageRow(row);
-      if (record !== null) records.push(record);
-    }
-    return records;
-  } catch (error) {
-    return error instanceof Error &&
-      error.message.includes("no such table: local_runtime_token_usage")
-      ? []
-      : null;
-  } finally {
-    db?.close();
+  const result = await runMcodeWorker({
+    kind: "read",
+    filePath,
+    sinceMs,
+    timeoutMs: MCODE_BUSY_TIMEOUT_MS,
+  });
+  if (result?.kind !== "rows") return null;
+
+  const records: UsageRecord[] = [];
+  for (const row of result.rows) {
+    const record = parseMcodeUsageRow(row);
+    if (record !== null) records.push(record);
   }
+  return records;
 }
 
 /**

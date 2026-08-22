@@ -124,7 +124,7 @@ export function chooseMcodeUsageStore(
   alternateProbe: McodeUsageStoreProbe,
 ): string {
   if (primaryProbe !== "absent") return primaryPath;
-  return alternateProbe === "ready" ? alternatePath : primaryPath;
+  return alternateProbe === "absent" ? primaryPath : alternatePath;
 }
 
 export function negotiateUsageContractVersion(

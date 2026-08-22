@@ -41,9 +41,9 @@ describe("chooseMcodeUsageStore", () => {
     );
   });
 
-  it("keeps the canonical path when neither store is definitively readable", () => {
+  it("keeps the alternate path when it is the only store but its probe fails", () => {
     expect(chooseMcodeUsageStore("primary.sqlite", "absent", "alternate.sqlite", "failed")).toBe(
-      "primary.sqlite",
+      "alternate.sqlite",
     );
   });
 });
