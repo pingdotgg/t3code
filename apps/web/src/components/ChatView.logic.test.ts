@@ -26,10 +26,14 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveBackgroundDraftWorkspaceOptions,
+  resolveDraftPromotionNavigationTarget,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
+  shouldDockDraftHeroForSubmission,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -38,6 +42,40 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("draft hero submission transition", () => {
+  it("does not dock the composer before a background submission", () => {
+    expect(
+      shouldDockDraftHeroForSubmission({
+        isDraftHeroState: true,
+        activeThreadKey: "environment-local:thread-1",
+        submissionIntent: "background",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the composer in the hero layout until navigation after server promotion", () => {
+    expect(
+      resolveDraftHeroState({
+        isLocalDraftThread: false,
+        hasTimelineEntries: true,
+        isWorking: true,
+        draftHeroDockRequested: false,
+        backgroundSubmissionPending: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not auto-navigate a background submission after server promotion", () => {
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef: { environmentId, threadId },
+        serverThreadStarted: true,
+        backgroundSubmissionPending: true,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());
@@ -379,6 +417,23 @@ describe("resolveSendEnvMode", () => {
   it("keeps worktree mode only for git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("resolveBackgroundDraftWorkspaceOptions", () => {
+  it("keeps New worktree selected without reusing the launched worktree", () => {
+    expect(
+      resolveBackgroundDraftWorkspaceOptions({
+        envMode: "worktree",
+        branch: "main",
+        startFromOrigin: true,
+      }),
+    ).toEqual({
+      envMode: "worktree",
+      branch: "main",
+      worktreePath: null,
+      startFromOrigin: true,
+    });
   });
 });
 
