@@ -30,6 +30,25 @@ export interface SavedCloudEnvironmentConnection {
   readonly connection: EnvironmentConnectionPresentation;
 }
 
+function reportEnvironmentActionFailure(title: string, fallbackMessage: string, cause: unknown) {
+  const message = cause instanceof Error ? cause.message : fallbackMessage;
+  const traceId = findErrorTraceId(cause);
+  console.error(`[t3-connect] ${title}`, { message, traceId, cause });
+  toastManager.add({
+    type: "error",
+    title,
+    description: message,
+    data: traceId
+      ? {
+          secondaryActionProps: {
+            children: "Copy trace ID",
+            onClick: () => void navigator.clipboard?.writeText(traceId),
+          },
+        }
+      : undefined,
+  });
+}
+
 export function RemoteEnvironmentRowsSkeleton() {
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -81,9 +100,13 @@ export function CloudEnvironmentConnectRows({
       ),
     [registerEnvironment],
   );
+  const removeRelayEnvironment = useAtomCommand(relayEnvironmentDiscovery.remove, {
+    reportFailure: false,
+  });
   const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
+  const [removingEnvironmentId, setRemovingEnvironmentId] = useState<EnvironmentId | null>(null);
   const savedById = new Map(
     savedEnvironments.map((environment) => [environment.environmentId, environment]),
   );
@@ -107,24 +130,36 @@ export function CloudEnvironmentConnectRows({
     if (isAtomCommandInterrupted(result)) {
       return;
     }
-    const cause = squashAtomCommandFailure(result);
-    const message =
-      cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.";
-    const traceId = findErrorTraceId(cause);
-    console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
-    toastManager.add({
-      type: "error",
-      title: "Could not connect environment",
-      description: message,
-      data: traceId
-        ? {
-            secondaryActionProps: {
-              children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
-            },
-          }
-        : undefined,
-    });
+    reportEnvironmentActionFailure(
+      "Could not connect environment",
+      "Could not connect the T3 Connect environment.",
+      squashAtomCommandFailure(result),
+    );
+  };
+
+  // Removing revokes the environment's link for the whole account rather than
+  // just this client, which is the only teardown an environment whose server is
+  // gone can still get: `t3 connect unlink` has to run on that machine.
+  const removeEnvironment = async (environment: RelayClientEnvironmentRecord) => {
+    setRemovingEnvironmentId(environment.environmentId);
+    const result = await removeRelayEnvironment(environment.environmentId);
+    setRemovingEnvironmentId(null);
+    if (result._tag === "Success") {
+      toastManager.add({
+        type: "success",
+        title: "Environment removed",
+        description: `${environment.label} is no longer linked to T3 Connect.`,
+      });
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) {
+      return;
+    }
+    reportEnvironmentActionFailure(
+      "Could not remove environment",
+      "Could not remove the T3 Connect environment.",
+      squashAtomCommandFailure(result),
+    );
   };
 
   const visibleEnvironments = [...environmentsState.environments.values()].filter(
@@ -245,13 +280,23 @@ export function CloudEnvironmentConnectRows({
               {savedConnection.buttonLabel}
             </Button>
           ) : (
-            <Button
-              size="sm"
-              disabled={connectingEnvironmentId !== null}
-              onClick={() => void connectEnvironment(environment)}
-            >
-              {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                size="sm"
+                variant="destructive-outline"
+                disabled={connectingEnvironmentId !== null || removingEnvironmentId !== null}
+                onClick={() => void removeEnvironment(environment)}
+              >
+                {removingEnvironmentId === environment.environmentId ? "Removing…" : "Remove"}
+              </Button>
+              <Button
+                size="sm"
+                disabled={connectingEnvironmentId !== null || removingEnvironmentId !== null}
+                onClick={() => void connectEnvironment(environment)}
+              >
+                {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
+              </Button>
+            </div>
           )}
         </div>
       </div>

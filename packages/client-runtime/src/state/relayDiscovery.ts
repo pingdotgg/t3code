@@ -1,3 +1,4 @@
+import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -33,9 +34,22 @@ export function createRelayEnvironmentDiscoveryAtoms<R, E>(
       ),
   });
 
+  const remove = createRuntimeCommand(runtime, {
+    label: "relay-environment-discovery:remove",
+    concurrency: {
+      mode: "serial",
+      key: (environmentId: RelayClientEnvironmentRecord["environmentId"]) => environmentId,
+    },
+    execute: (environmentId: RelayClientEnvironmentRecord["environmentId"]) =>
+      RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.pipe(
+        Effect.flatMap((discovery) => discovery.remove(environmentId)),
+      ),
+  });
+
   return {
     stateAtom,
     stateValueAtom,
     refresh,
+    remove,
   };
 }
