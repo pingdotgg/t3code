@@ -19,6 +19,10 @@
       "types": "./src/protocol.ts",
       "import": "./src/protocol.ts"
     },
+    "./lineFramer": {
+      "types": "./src/lineFramer.ts",
+      "import": "./src/lineFramer.ts"
+    },
     "./errors": {
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"

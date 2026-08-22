@@ -290,6 +290,69 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
+  it.effect("routes a CRLF-framed message split across arbitrary input chunks", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
+      const notification = yield* transport.incomingNotifications.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const encoded = encoder.encode(
+        `${encodeUnknownJsonString({ method: "thread/started", params: { threadId: "thread-1" } })}\r\n`,
+      );
+
+      yield* Queue.offer(input, encoded.slice(0, 7));
+      yield* Queue.offer(input, encoded.slice(7, -1));
+      yield* Queue.offer(input, encoded.slice(-1));
+
+      assert.deepEqual(yield* Fiber.join(notification), [
+        { method: "thread/started", params: { threadId: "thread-1" } },
+      ]);
+    }),
+  );
+
+  it.effect("routes a final unterminated message before handling input stream completion", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const lifecycle: Array<"notification" | "termination"> = [];
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onNotification: () =>
+          Effect.sync(() => {
+            lifecycle.push("notification");
+          }),
+        onTermination: (error) =>
+          Effect.sync(() => {
+            lifecycle.push("termination");
+          }).pipe(Effect.andThen(Deferred.succeed(termination, error)), Effect.asVoid),
+      });
+      const notification = yield* transport.incomingNotifications.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const encoded = encoder.encode(
+        encodeUnknownJsonString({ method: "thread/started", params: { threadId: "thread-1" } }),
+      );
+
+      yield* Queue.offer(input, encoded.slice(0, 11));
+      yield* Queue.offer(input, encoded.slice(11));
+      yield* Queue.end(input);
+
+      assert.deepEqual(yield* Fiber.join(notification), [
+        { method: "thread/started", params: { threadId: "thread-1" } },
+      ]);
+      assert.instanceOf(
+        yield* Deferred.await(termination),
+        CodexError.CodexAppServerInputStreamEndedError,
+      );
+      assert.deepEqual(lifecycle, ["notification", "termination"]);
+    }),
+  );
+
   it.effect("surfaces JSON encoding failures as protocol parse errors", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
