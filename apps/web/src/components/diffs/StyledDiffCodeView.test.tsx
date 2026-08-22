@@ -1,9 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { FileDiffMetadata } from "@pierre/diffs";
 
 const testState = vi.hoisted(() => ({
   codeViewClassName: null as string | null,
   codeViewOptions: null as Record<string, unknown> | null,
+  fileDiffClassName: null as string | null,
+  fileDiffOptions: null as Record<string, unknown> | null,
 }));
 
 vi.mock("@pierre/diffs/react", () => ({
@@ -12,14 +15,21 @@ vi.mock("@pierre/diffs/react", () => ({
     testState.codeViewOptions = props.options;
     return null;
   },
+  FileDiff: (props: { className: string; options: Record<string, unknown> }) => {
+    testState.fileDiffClassName = props.className;
+    testState.fileDiffOptions = props.options;
+    return null;
+  },
 }));
 
-import { StyledDiffCodeView } from "./StyledDiffCodeView";
+import { StyledDiffCodeView, StyledFileDiff } from "./StyledDiffCodeView";
 
 describe("StyledDiffCodeView", () => {
   beforeEach(() => {
     testState.codeViewClassName = null;
     testState.codeViewOptions = null;
+    testState.fileDiffClassName = null;
+    testState.fileDiffOptions = null;
   });
 
   it("always pairs the shared diff styling with its virtualized geometry", () => {
@@ -36,12 +46,15 @@ describe("StyledDiffCodeView", () => {
     );
 
     expect(testState.codeViewClassName).toBe(
-      "diff-render-surface [--code-background:var(--background)] outline-none min-h-0",
+      "diff-render-surface [--code-background:var(--background)] outline-none " +
+        "[--t3-diff-addition-color:var(--success)] " +
+        "[--t3-diff-deletion-color:var(--destructive)] min-h-0",
     );
     expect(testState.codeViewOptions).toMatchObject({
       theme: "pierre-dark",
       stickyHeaders: true,
       loadDiffFiles,
+      diffIndicators: "bars",
       itemMetrics: {
         diffHeaderHeight: 32,
         hunkSeparatorHeight: 24,
@@ -55,6 +68,31 @@ describe("StyledDiffCodeView", () => {
     );
     expect(testState.codeViewOptions?.unsafeCSS).toEqual(
       expect.stringContaining(")[data-expand-index]\n  [data-unmodified-lines]"),
+    );
+  });
+
+  it("applies the shared appearance to standalone file diffs", () => {
+    const fileDiff = { name: "src/app.ts", hunks: [] } as unknown as FileDiffMetadata;
+    renderToStaticMarkup(
+      <StyledFileDiff
+        className="rounded-md"
+        fileDiff={fileDiff}
+        options={{ collapsed: false, theme: "pierre-dark" }}
+      />,
+    );
+
+    expect(testState.fileDiffClassName).toBe(
+      "diff-render-surface [--code-background:var(--background)] outline-none " +
+        "[--t3-diff-addition-color:var(--success)] " +
+        "[--t3-diff-deletion-color:var(--destructive)] rounded-md",
+    );
+    expect(testState.fileDiffOptions).toMatchObject({
+      collapsed: false,
+      theme: "pierre-dark",
+      diffIndicators: "bars",
+    });
+    expect(testState.fileDiffOptions?.unsafeCSS).toEqual(
+      expect.stringContaining("--diffs-addition-base"),
     );
   });
 });

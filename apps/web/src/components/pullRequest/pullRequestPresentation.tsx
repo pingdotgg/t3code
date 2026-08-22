@@ -384,10 +384,12 @@ export function PullRequestDiffStat({
   }
   return (
     <span className={cn("inline-flex items-baseline gap-1 tabular-nums", className)}>
-      <span className="text-emerald-600 dark:text-emerald-300/90">
+      <span className="text-[var(--t3-diff-addition-color,var(--success))]">
         +{additions.toLocaleString()}
       </span>
-      <span className="text-destructive">-{deletions.toLocaleString()}</span>
+      <span className="text-[var(--t3-diff-deletion-color,var(--destructive))]">
+        -{deletions.toLocaleString()}
+      </span>
     </span>
   );
 }

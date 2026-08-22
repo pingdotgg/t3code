@@ -104,7 +104,7 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
-import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
+import { DiffPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import {
   NumberField,
@@ -499,6 +499,12 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
+      ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
+        ? ["Diff colors"]
+        : []),
+      ...(settings.diffIndicatorStyle !== DEFAULT_UNIFIED_SETTINGS.diffIndicatorStyle
+        ? ["Diff markers"]
+        : []),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
@@ -550,6 +556,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
+      settings.diffColorScheme,
+      settings.diffIndicatorStyle,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
       settings.fontFamilyCode,
@@ -640,6 +648,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
+      diffIndicatorStyle: DEFAULT_UNIFIED_SETTINGS.diffIndicatorStyle,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1218,7 +1228,7 @@ function CodeFontRow({
         defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
         onChange: (fontSizeCode) => updateSettings({ fontSizeCode }),
       }}
-      preview={preview ?? <CodeFontPreview />}
+      {...(preview !== undefined ? { preview } : {})}
     />
   );
 }
@@ -1319,12 +1329,103 @@ function WordWrapRow() {
   );
 }
 
+function DiffAppearanceRows() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("diff-colors")}
+        description="Choose the colors marking added and deleted lines in diffs."
+        resetAction={
+          settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme ? (
+            <SettingResetButton
+              label="diff colors"
+              onClick={() =>
+                updateSettings({ diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={settings.diffColorScheme}
+            onValueChange={(diffColorScheme) => {
+              if (diffColorScheme === "red-green" || diffColorScheme === "orange-blue") {
+                updateSettings({ diffColorScheme });
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-40" aria-label="Diff colors">
+              <SelectValue>
+                {settings.diffColorScheme === "red-green" ? "Red and green" : "Orange and blue"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="red-green">
+                Red and green
+              </SelectItem>
+              <SelectItem hideIndicator value="orange-blue">
+                Orange and blue
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+
+      <SettingsRow
+        {...searchableSetting("diff-markers")}
+        description="Show + and − markers on added and deleted diff lines."
+        resetAction={
+          settings.diffIndicatorStyle !== DEFAULT_UNIFIED_SETTINGS.diffIndicatorStyle ? (
+            <SettingResetButton
+              label="diff markers"
+              onClick={() =>
+                updateSettings({
+                  diffIndicatorStyle: DEFAULT_UNIFIED_SETTINGS.diffIndicatorStyle,
+                })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={settings.diffIndicatorStyle}
+            onValueChange={(diffIndicatorStyle) => {
+              if (diffIndicatorStyle === "bars" || diffIndicatorStyle === "classic") {
+                updateSettings({ diffIndicatorStyle });
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-40" aria-label="Diff markers">
+              <SelectValue>
+                {settings.diffIndicatorStyle === "bars" ? "Bars" : "Plus and minus"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="bars">
+                Bars
+              </SelectItem>
+              <SelectItem hideIndicator value="classic">
+                Plus and minus
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      >
+        <DiffPreview />
+      </SettingsRow>
+    </>
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
       <PromptFontRow />
       <CodeFontRow />
+      <DiffAppearanceRows />
       <TerminalFontRow />
       <FontSmoothingRow />
     </>
@@ -1345,23 +1446,21 @@ function SimpleFontRows() {
         title="Monospace font"
         description="Code blocks, diffs, file previews, and the terminal."
         preview={
-          <>
-            <CodeFontPreview />
-            <TerminalFontPreview
-              family={resolveTerminalFontPreference({
-                advanced: false,
-                code: settings.fontFamilyCode,
-                terminal: settings.fontFamilyTerminal,
-              })}
-              size={resolveTerminalFontSizePreference({
-                advanced: false,
-                code: settings.fontSizeCode,
-                terminal: settings.fontSizeTerminal,
-              })}
-            />
-          </>
+          <TerminalFontPreview
+            family={resolveTerminalFontPreference({
+              advanced: false,
+              code: settings.fontFamilyCode,
+              terminal: settings.fontFamilyTerminal,
+            })}
+            size={resolveTerminalFontSizePreference({
+              advanced: false,
+              code: settings.fontSizeCode,
+              terminal: settings.fontSizeTerminal,
+            })}
+          />
         }
       />
+      <DiffAppearanceRows />
     </>
   );
 }

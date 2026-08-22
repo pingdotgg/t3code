@@ -3,8 +3,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
 import { useTheme } from "../../hooks/useTheme";
+import { useClientSettings } from "../../hooks/useSettings";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
-import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
+import {
+  DIFF_SURFACE_THEME_UNSAFE_CSS,
+  getDiffColorSchemeClassName,
+  resolveDiffThemeName,
+  type DiffThemeName,
+} from "../../lib/diffRendering";
+import type { DiffIndicatorStyle } from "@t3tools/contracts/settings";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 // The font previews are the real surfaces, not lookalikes: the composer's
@@ -72,73 +79,64 @@ const DIFF_PREVIEW_PATCH = [
 // (toggling Advanced) and lock in an unhighlighted frame; a static preview
 // needs none of that lifecycle, so it uses the deterministic renderer and
 // injects the finished HTML into a shadow root, exactly as FileDiff would.
-const diffPreviewHtmlByTheme = new Map<DiffThemeName, Promise<readonly string[]>>();
+const diffPreviewHtml = new Map<string, Promise<readonly string[]>>();
 
-function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
-  let promise = diffPreviewHtmlByTheme.get(theme);
+function loadDiffPreviewHtml(
+  theme: DiffThemeName,
+  diffIndicators: DiffIndicatorStyle,
+): Promise<readonly string[]> {
+  const key = `${theme}:${diffIndicators}`;
+  let promise = diffPreviewHtml.get(key);
   if (promise === undefined) {
     promise = preloadPatchFile({
       patch: DIFF_PREVIEW_PATCH,
-      options: { diffStyle: "unified", theme },
+      options: {
+        diffIndicators,
+        diffStyle: "unified",
+        theme,
+        unsafeCSS: DIFF_SURFACE_THEME_UNSAFE_CSS,
+      },
     }).then((results) => results.map((result) => result.prerenderedHTML));
-    diffPreviewHtmlByTheme.set(theme, promise);
+    diffPreviewHtml.set(key, promise);
   }
   return promise;
 }
 
-// Pierre's prerendered stylesheet bakes its own light/dark surface colors
-// into the shadow root's @layer rules. These unlayered rules win the cascade
-// without !important and re-point the surfaces at the app's code tokens
-// (custom properties inherit across the shadow boundary), so the preview
-// follows the active theme exactly like the real diff panel does.
-const DIFF_PREVIEW_THEME_BRIDGE = `
-  :host {
-    color: var(--code-foreground);
-    background-color: var(--code-background);
-    --diffs-fg: var(--code-foreground);
-    --diffs-bg: var(--code-background);
-    --diffs-light-bg: var(--code-background);
-    --diffs-dark-bg: var(--code-background);
-  }
-  [data-diffs-header] {
-    background-color: var(--code-background);
-    color: var(--code-foreground);
-  }
-`;
-
-function StaticDiffHtml({ html }: { html: string }) {
+function StaticDiffHtml({ html, className }: { html: string; className: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const host = hostRef.current;
     if (host === null) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     shadow.innerHTML = html;
-    const bridge = document.createElement("style");
-    bridge.textContent = DIFF_PREVIEW_THEME_BRIDGE;
-    shadow.append(bridge);
   }, [html]);
-  return <div ref={hostRef} />;
+  return <div className={className} ref={hostRef} />;
 }
 
 /** The diff panel's file diff, statically rendered by its real pipeline. */
-export function CodeFontPreview() {
+export function DiffPreview() {
   const { resolvedTheme } = useTheme();
+  const { diffColorScheme, diffIndicatorStyle } = useClientSettings();
   const themeName = resolveDiffThemeName(resolvedTheme);
   const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void loadDiffPreviewHtml(themeName).then((html) => {
+    void loadDiffPreviewHtml(themeName, diffIndicatorStyle).then((html) => {
       if (!cancelled) setHtmlByFile(html);
     });
     return () => {
       cancelled = true;
     };
-  }, [themeName]);
+  }, [diffIndicatorStyle, themeName]);
   if (htmlByFile === null) return null;
   return (
     <div className="mt-1 mb-2 space-y-2">
       {htmlByFile.map((html) => (
-        <StaticDiffHtml key={html} html={html} />
+        <StaticDiffHtml
+          className={`[--code-background:var(--background)] ${getDiffColorSchemeClassName(diffColorScheme)}`}
+          key={html}
+          html={html}
+        />
       ))}
     </div>
   );

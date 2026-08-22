@@ -64,6 +64,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "diff-colors",
+    title: "Diff colors",
+    to: "/settings/appearance",
+  },
+  {
+    id: "diff-markers",
+    title: "Diff markers",
+    to: "/settings/appearance",
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

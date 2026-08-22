@@ -31,7 +31,6 @@ import {
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
   workEntryDisplayIndicatesToolFailure,
@@ -44,6 +43,7 @@ import {
   resolveFileDiffPath,
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
+import { StyledFileDiff } from "../diffs/StyledDiffCodeView";
 import {
   BotIcon,
   CheckIcon,
@@ -2071,7 +2071,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
       )}
       {renderablePatch?.kind === "files" &&
         renderablePatch.files.map((fileDiff) => (
-          <FileDiff
+          <StyledFileDiff
             key={resolveFileDiffPath(fileDiff)}
             fileDiff={fileDiff}
             options={{

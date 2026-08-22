@@ -30,6 +30,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { getDiffColorSchemeClassName } from "~/lib/diffRendering";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
@@ -133,6 +134,7 @@ function RootRouteView() {
         <DocumentTitleSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
+        <DiffAppearanceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
@@ -190,6 +192,18 @@ function FontAppearanceSync() {
     fontSizePrompt,
     fontSmoothing,
   ]);
+
+  return null;
+}
+
+function DiffAppearanceSync() {
+  const diffColorScheme = useClientSettings((settings) => settings.diffColorScheme);
+
+  useEffect(() => {
+    const classNames = getDiffColorSchemeClassName(diffColorScheme).split(" ");
+    document.documentElement.classList.add(...classNames);
+    return () => document.documentElement.classList.remove(...classNames);
+  }, [diffColorScheme]);
 
   return null;
 }

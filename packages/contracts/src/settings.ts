@@ -116,6 +116,12 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+export const DiffColorScheme = Schema.Literals(["red-green", "orange-blue"]);
+export type DiffColorScheme = typeof DiffColorScheme.Type;
+
+export const DiffIndicatorStyle = Schema.Literals(["bars", "classic"]);
+export type DiffIndicatorStyle = typeof DiffIndicatorStyle.Type;
+
 /**
  * A user-chosen font family (a single name or a comma-separated list). Empty
  * means "use the app default"; clients compose their own fallback stacks.
@@ -159,6 +165,8 @@ export const ClientSettingsSchema = Schema.Struct({
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  diffColorScheme: DiffColorScheme.pipe(Schema.withDecodingDefault(Effect.succeed("red-green"))),
+  diffIndicatorStyle: DiffIndicatorStyle.pipe(Schema.withDecodingDefault(Effect.succeed("bars"))),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
@@ -867,6 +875,8 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmQuit: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
+  diffColorScheme: Schema.optionalKey(DiffColorScheme),
+  diffIndicatorStyle: Schema.optionalKey(DiffIndicatorStyle),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
