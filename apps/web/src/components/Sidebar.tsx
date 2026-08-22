@@ -1718,6 +1718,7 @@ export default function Sidebar() {
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
+  const confirmThreadUnpin = useClientSettings((s) => s.confirmThreadUnpin);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -2647,6 +2648,21 @@ export default function Sidebar() {
   const attemptUnpin = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
+        if (confirmThreadUnpin) {
+          const api = readLocalApi();
+          const thread = threadByKeyRef.current.get(scopedThreadKey(threadRef));
+          if (api) {
+            const confirmed = await settlePromise(() =>
+              api.dialogs.confirm(
+                [
+                  `Unpin thread "${thread?.title ?? "this thread"}"?`,
+                  "This will move the thread out of your pinned section.",
+                ].join("\n"),
+              ),
+            );
+            if (confirmed._tag === "Failure" || !confirmed.value) return;
+          }
+        }
         const result = await unpinThread(threadRef);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
@@ -2660,7 +2676,7 @@ export default function Sidebar() {
         }
       })();
     },
-    [unpinThread],
+    [confirmThreadUnpin, unpinThread],
   );
 
   const handlePinnedDragEnd = useCallback(
