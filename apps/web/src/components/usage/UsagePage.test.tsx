@@ -54,19 +54,21 @@ vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }))
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
 vi.mock("./usageProviders", () => ({
-  PROVIDER_ORDER: ["codex", "claude"],
+  PROVIDER_ORDER: ["codex", "claude", "zcode"],
   PROVIDER_PRESENTATION: {
     codex: { color: "white", label: "Codex", mark: "span" },
     claude: { color: "orange", label: "Claude Code", mark: "span" },
+    zcode: { color: "indigo", label: "ZCode", mark: "span" },
   },
 }));
 
 import { UsagePage } from "./UsagePage";
 
-const providerTotals = (codex: number, claude: number) =>
+const providerTotals = (codex: number, claude: number, zcode: number) =>
   new Map([
     ["codex", { costUsd: codex, totalTokens: codex * 1_000 }],
     ["claude", { costUsd: claude, totalTokens: claude * 1_000 }],
+    ["zcode", { costUsd: zcode, totalTokens: zcode * 1_000 }],
   ] as const);
 
 beforeEach(() => {
@@ -79,14 +81,14 @@ beforeEach(() => {
           hourStart: "2026-08-10T13:37:00.000Z",
           costUsd: 13,
           totalTokens: 13_000,
-          byProvider: providerTotals(7, 6),
+          byProvider: providerTotals(7, 6, 0),
         },
         {
           day: "2026-08-11",
           hourStart: "2026-08-11T11:37:00.000Z",
           costUsd: 11,
           totalTokens: 11_000,
-          byProvider: providerTotals(6, 5),
+          byProvider: providerTotals(6, 4, 1),
         },
       ],
     },
@@ -103,8 +105,10 @@ describe("UsagePage hourly breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body.match(/<tr/g)).toHaveLength(2);
+    expect(markup).toContain("ZCode");
     expect(body).toContain("$11.00");
     expect(body).toContain("$13.00");
+    expect(body).toContain("$1.00");
     expect(body.indexOf("$11.00")).toBeLessThan(body.indexOf("$13.00"));
   });
 });
