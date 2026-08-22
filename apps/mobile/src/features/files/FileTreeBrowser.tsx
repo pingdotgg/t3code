@@ -107,6 +107,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
 });
 
 export function FileTreeBrowser(props: {
+  readonly bottomContentPadding?: number;
   readonly entries: ReadonlyArray<ProjectEntry>;
   readonly error: string | null;
   readonly isPending: boolean;
@@ -256,7 +257,10 @@ export function FileTreeBrowser(props: {
       maxToRenderPerBatch={FILE_TREE_RENDER_BATCH_SIZE}
       updateCellsBatchingPeriod={16}
       windowSize={5}
-      contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+      contentContainerStyle={{
+        paddingTop: 8,
+        paddingBottom: props.bottomContentPadding ?? 8,
+      }}
       refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={props.onRefresh} />}
       renderItem={renderItem}
       ListEmptyComponent={

@@ -449,6 +449,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         </>
       )}
       <FileTreeBrowser
+        bottomContentPadding={
+          // Matches the h-28 toolbar fade: 28 spacing units at 4 points each.
+          isAndroid ? undefined : 112
+        }
         entries={entriesData?.entries ?? []}
         error={entriesQuery.error}
         isPending={entriesQuery.isPending}
