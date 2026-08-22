@@ -81,9 +81,10 @@ import {
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
-import { cn } from "../lib/utils";
+import { cn, isMacPlatform, isWindowsPlatform } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
 import { useActiveEnvironmentId } from "../state/entities";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { assetEnvironment } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
@@ -106,6 +107,7 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
+import { revealInFileExplorerLabel } from "./preview/fileExplorerLabel";
 
 interface ChatMarkdownProps {
   text: string;
@@ -822,6 +824,7 @@ interface MarkdownFileLinkProps {
   onOpen: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
   onOpenInPanel: (workspaceRelativePath: string, line: number | undefined) => void;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  canRevealInFileManager: boolean;
   className?: string | undefined;
 }
 
@@ -1128,6 +1131,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpen,
   onOpenInPanel,
   onOpenInBrowser,
+  canRevealInFileManager,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
@@ -1250,6 +1254,22 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     [targetPath],
   );
 
+  const handleReveal = useCallback(() => {
+    const revealPath = readLocalApi()?.shell.revealPath;
+    if (!revealPath) return;
+
+    void revealPath(iconPath).catch((cause) => {
+      reportMarkdownActionFailure({ operation: "reveal-file", target: iconPath }, cause);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to reveal file",
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        }),
+      );
+    });
+  }, [iconPath]);
+
   const handleContextMenu = useCallback(
     async (event: ReactMouseEvent<HTMLAnchorElement>) => {
       event.preventDefault();
@@ -1265,6 +1285,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             ...(onOpenInBrowser
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
+            ...(canRevealInFileManager
+              ? ([
+                  {
+                    id: "reveal",
+                    label: revealInFileExplorerLabel(navigator.platform),
+                  },
+                ] as const)
+              : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
           ] as const,
@@ -1277,6 +1305,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         }
         if (clicked === "open-in-browser") {
           handleOpenInBrowser();
+          return;
+        }
+        if (clicked === "reveal") {
+          handleReveal();
           return;
         }
         if (clicked === "copy-relative") {
@@ -1293,7 +1325,16 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     },
-    [displayPath, handleCopy, handleOpenInBrowser, handleOpenInEditor, onOpenInBrowser, targetPath],
+    [
+      canRevealInFileManager,
+      displayPath,
+      handleCopy,
+      handleOpenInBrowser,
+      handleOpenInEditor,
+      handleReveal,
+      onOpenInBrowser,
+      targetPath,
+    ],
   );
 
   return (
@@ -1351,6 +1392,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
+    previous.canRevealInFileManager === next.canRevealInFileManager &&
     previous.className === next.className
   );
 }
@@ -1378,7 +1420,25 @@ function ChatMarkdown({
   });
   const preparedConnection = usePreparedConnection(threadRef?.environmentId ?? null);
   const environmentId = useActiveEnvironmentId();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const threadServerConfig = useAtomValue(
+    serverEnvironment.configValueAtom(threadRef?.environmentId ?? environmentId),
+  );
+  const localPlatformOs =
+    typeof navigator === "undefined"
+      ? null
+      : isMacPlatform(navigator.platform)
+        ? "darwin"
+        : isWindowsPlatform(navigator.platform)
+          ? "windows"
+          : "linux";
+  const canRevealInFileManager =
+    threadRef !== undefined &&
+    threadRef.environmentId === primaryEnvironmentId &&
+    threadServerConfig?.environment.platform.os === localPlatformOs &&
+    typeof window !== "undefined" &&
+    window.desktopBridge?.revealPath !== undefined;
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
@@ -1550,6 +1610,7 @@ function ChatMarkdown({
               ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
               : undefined
           }
+          canRevealInFileManager={canRevealInFileManager}
           className={className}
         />
       );
@@ -1767,6 +1828,7 @@ function ChatMarkdown({
       },
     };
   }, [
+    canRevealInFileManager,
     cwd,
     diffThemeName,
     fileLinkParentSuffixByPath,

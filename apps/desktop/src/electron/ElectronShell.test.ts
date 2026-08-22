@@ -2,14 +2,16 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { openExternalMock, writeTextMock } = vi.hoisted(() => ({
+const { openExternalMock, showItemInFolderMock, writeTextMock } = vi.hoisted(() => ({
   openExternalMock: vi.fn(),
+  showItemInFolderMock: vi.fn(),
   writeTextMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
   shell: {
     openExternal: openExternalMock,
+    showItemInFolder: showItemInFolderMock,
   },
   clipboard: {
     writeText: writeTextMock,
@@ -21,8 +23,18 @@ import * as ElectronShell from "./ElectronShell.ts";
 describe("ElectronShell", () => {
   beforeEach(() => {
     openExternalMock.mockReset();
+    showItemInFolderMock.mockReset();
     writeTextMock.mockReset();
   });
+
+  it.effect("reveals paths in the platform file manager", () =>
+    Effect.gen(function* () {
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.revealPath("/workspace/src/app.ts");
+
+      assert.deepEqual(showItemInFolderMock.mock.calls, [["/workspace/src/app.ts"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
 
   it.effect("opens safe external URLs", () =>
     Effect.gen(function* () {

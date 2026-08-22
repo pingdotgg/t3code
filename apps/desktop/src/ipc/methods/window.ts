@@ -298,6 +298,16 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const revealPath = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REVEAL_PATH_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.revealPath")(function* (path) {
+    const shell = yield* ElectronShell.ElectronShell;
+    yield* shell.revealPath(path);
+  }),
+});
+
 export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,
