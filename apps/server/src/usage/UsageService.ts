@@ -284,7 +284,11 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+    readSinceMs: number,
+  ): Effect.Effect<{
+    readonly records: readonly UsageRecord[];
+    readonly failed: boolean;
+  }> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -295,20 +299,22 @@ export const make = Effect.gen(function* () {
         cached.mtimeMs === mtimeMs &&
         cached.provider === provider
       ) {
-        return cached.records;
+        return { records: cached.records, failed: false };
       }
 
-      const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      const parsed = yield* Effect.promise(() =>
+        readTranscriptRecords(filePath, provider, readSinceMs),
+      );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null) return { records: [], failed: true };
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
 
       fileCache.set(filePath, { size, mtimeMs, provider, records });
       cacheDirty = true;
-      return records;
+      return { records, failed: false };
     });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
@@ -344,6 +350,11 @@ export const make = Effect.gen(function* () {
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    // A request may start just before the retained window and complete inside
+    // it. Reuse the file-mtime boundary slack so the indexed ZCode query keeps
+    // that request while remaining bounded.
+    const retainedReadStartMs = retentionCutoffMs - MTIME_SLACK_MS;
     yield* ensureRates();
     yield* ensureScanCacheLoaded;
 
@@ -402,13 +413,26 @@ export const make = Effect.gen(function* () {
       );
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let readFailures = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
       for (const file of files) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        const result = yield* readFileRecords(
+          file.path,
+          file.size,
+          file.mtimeMs,
+          provider,
+          retainedReadStartMs,
+        );
+        if (result.failed) {
+          readFailures += 1;
+          skippedFiles += 1;
+          continue;
+        }
+        const { records } = result;
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -423,14 +447,21 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const status =
+        readFailures === 0 ? "ok" : readFailures === files.length ? "failed" : "partial";
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status,
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message:
+          status === "ok"
+            ? null
+            : status === "failed"
+              ? "Usage files could not be read."
+              : "Some usage files could not be read.",
       });
     }
 
@@ -438,7 +469,7 @@ export const make = Effect.gen(function* () {
       livePaths,
       walkedRoots,
       windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      retentionCutoffMs,
     });
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();

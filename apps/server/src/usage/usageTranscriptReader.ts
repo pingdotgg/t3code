@@ -27,6 +27,9 @@ import {
   type UsageRecord,
 } from "./usageTranscripts.ts";
 
+/** Wait through brief writer locks without stalling the server indefinitely. */
+const ZCODE_BUSY_TIMEOUT_MS = 1_000;
+
 export interface TranscriptFile {
   readonly path: string;
   readonly size: number;
@@ -112,27 +115,34 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 }
 
 /**
- * Reads every usage row from ZCode's sqlite store.
+ * Reads retained usage rows from ZCode's sqlite store.
  *
- * The whole table is read rather than windowed in SQL because the scan cache
- * memoises per `(size, mtime)` independently of the requested window;
- * out-of-window rows are dropped by the aggregator. An older schema without
- * `model_usage` yields zero records; other read failures return `null` so the
- * caller does not cache a transient failure as an empty store.
+ * `sinceMs` is the service's maximum retention cutoff, not the requested view,
+ * so one cached result remains valid for the 24-hour through 90-day windows.
+ * The predicate uses ZCode's `model_usage_started_model_idx` instead of
+ * materialising lifetime history. An older schema without `model_usage` yields
+ * zero records; other read failures return `null` so the caller can mark the
+ * source incomplete and avoid caching a transient failure as an empty store.
  */
-async function readZcodeUsageRecords(filePath: string): Promise<readonly UsageRecord[] | null> {
+async function readZcodeUsageRecords(
+  filePath: string,
+  sinceMs: number,
+): Promise<readonly UsageRecord[] | null> {
   let db: NodeSqlite.DatabaseSync | undefined;
   try {
-    db = new NodeSqlite.DatabaseSync(filePath, { readOnly: true });
+    db = new NodeSqlite.DatabaseSync(filePath, {
+      readOnly: true,
+      timeout: ZCODE_BUSY_TIMEOUT_MS,
+    });
     const rows = db
       .prepare(
         `SELECT id, session_id, model_id, status, started_at, completed_at,
                 input_tokens, output_tokens, reasoning_tokens,
                 cache_creation_input_tokens, cache_read_input_tokens
          FROM model_usage
-         WHERE status = 'completed'`,
+         WHERE status = 'completed' AND started_at >= ?`,
       )
-      .all();
+      .iterate(sinceMs);
     const records: UsageRecord[] = [];
     for (const row of rows) {
       const record = parseZcodeUsageRow(row);
@@ -166,8 +176,9 @@ async function readZcodeUsageRecords(filePath: string): Promise<readonly UsageRe
 export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
+  sinceMs: number,
 ): Promise<readonly UsageRecord[] | null> {
-  if (provider === "zcode") return readZcodeUsageRecords(filePath);
+  if (provider === "zcode") return readZcodeUsageRecords(filePath, sinceMs);
 
   const records: UsageRecord[] = [];
   const codexState = initialCodexScanState();

@@ -92,7 +92,7 @@ describe("readTranscriptRecords for zcode", () => {
       },
     ]);
     try {
-      const records = await readTranscriptRecords(dbPath, "zcode");
+      const records = await readTranscriptRecords(dbPath, "zcode", 0);
 
       expect(records).toEqual([
         {
@@ -129,7 +129,7 @@ describe("readTranscriptRecords for zcode", () => {
       },
     ]);
     try {
-      const records = await readTranscriptRecords(dbPath, "zcode");
+      const records = await readTranscriptRecords(dbPath, "zcode", 0);
 
       expect(records).toHaveLength(1);
       expect(records?.[0]?.dedupeKey).toBe("row-done");
@@ -143,6 +143,7 @@ describe("readTranscriptRecords for zcode", () => {
     const missing = await readTranscriptRecords(
       NodePath.join(NodeOS.tmpdir(), "t3-zcode-usage-no-such-dir", "db.sqlite"),
       "zcode",
+      0,
     );
     expect(missing).toBeNull();
 
@@ -150,7 +151,7 @@ describe("readTranscriptRecords for zcode", () => {
     const corruptPath = NodePath.join(corruptDir, "db.sqlite");
     NodeFS.writeFileSync(corruptPath, "not a sqlite database");
     try {
-      expect(await readTranscriptRecords(corruptPath, "zcode")).toBeNull();
+      expect(await readTranscriptRecords(corruptPath, "zcode", 0)).toBeNull();
     } finally {
       NodeFS.rmSync(corruptDir, { recursive: true, force: true });
     }
@@ -163,9 +164,24 @@ describe("readTranscriptRecords for zcode", () => {
     const dbPath = NodePath.join(dir, "db.sqlite");
     new NodeSqlite.DatabaseSync(dbPath).close();
     try {
-      expect(await readTranscriptRecords(dbPath, "zcode")).toEqual([]);
+      expect(await readTranscriptRecords(dbPath, "zcode", 0)).toEqual([]);
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads only rows within the retained history", async () => {
+    const cutoffMs = 1_786_000_000_000;
+    const { dbPath, cleanup } = createZcodeDb([
+      { id: "row-before-cutoff", startedAt: cutoffMs - 1, completedAt: cutoffMs },
+      { id: "row-at-cutoff", startedAt: cutoffMs, completedAt: cutoffMs + 1 },
+    ]);
+    try {
+      const records = await readTranscriptRecords(dbPath, "zcode", cutoffMs);
+
+      expect(records?.map((record) => record.dedupeKey)).toEqual(["row-at-cutoff"]);
+    } finally {
+      cleanup();
     }
   });
 
