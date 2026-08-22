@@ -1475,6 +1475,11 @@ describe("ProviderCommandReactor", () => {
       generated: "My-Team/feature/gpt-5-6-luna",
       expected: "my-team/feature/gpt-5-6-luna",
     },
+    {
+      prefix: "t3code/my-team",
+      generated: "t3code/my-team/feature/gpt-5-6-luna",
+      expected: "t3code/my-team/feature/gpt-5-6-luna",
+    },
     { prefix: "", generated: "feature/gpt-5-6-luna", expected: "feature/gpt-5-6-luna" },
   ])(
     "generates a worktree branch name with prefix $prefix",
