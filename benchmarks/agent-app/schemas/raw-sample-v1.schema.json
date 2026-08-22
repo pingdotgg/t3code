@@ -1,0 +1,549 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:t3code:agent-app-benchmark:v1:raw-sample",
+  "title": "Agent-app benchmark raw metric sample v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "enum": [1]
+    },
+    "sampleId": {
+      "type": "string",
+      "allOf": [
+        {
+          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+          "description": "a string with no leading or trailing whitespace"
+        },
+        {
+          "minLength": 1,
+          "description": "a value with a length of at least 1"
+        },
+        {
+          "maxLength": 256,
+          "description": "a value with a length of at most 256"
+        }
+      ]
+    },
+    "attemptId": {
+      "type": "string",
+      "allOf": [
+        {
+          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+          "description": "a string with no leading or trailing whitespace"
+        },
+        {
+          "minLength": 1,
+          "description": "a value with a length of at least 1"
+        },
+        {
+          "maxLength": 256,
+          "description": "a value with a length of at most 256"
+        }
+      ]
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["workspace-core-v1", "resource-core-v1"]
+    },
+    "scenario": {
+      "type": "string",
+      "enum": [
+        "app-cold-ready-v1",
+        "work-item-cold-open-v1",
+        "work-item-warm-switch-v1",
+        "resource-sweep-v1",
+        "resource-quiescence-v1"
+      ]
+    },
+    "metric": {
+      "type": "string",
+      "enum": [
+        "app.cold_ready_ms",
+        "work_item.cold_open_ms",
+        "work_item.warm_switch_p95_ms",
+        "resource.peak_process_family_rss_mib",
+        "resource.quiescent_cpu_p95_pct"
+      ]
+    },
+    "observation": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": ["exact"]
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "allOf": [
+                    {
+                      "description": "a finite number"
+                    },
+                    {
+                      "minimum": 0,
+                      "description": "a value greater than or equal to 0"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": ["Infinity", "-Infinity", "NaN"]
+                }
+              ]
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["ms", "percent", "MiB/s", "MiB"]
+            }
+          },
+          "required": ["state", "value", "unit"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": ["bounded"]
+            },
+            "upperBound": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "allOf": [
+                    {
+                      "description": "a finite number"
+                    },
+                    {
+                      "minimum": 0,
+                      "description": "a value greater than or equal to 0"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": ["Infinity", "-Infinity", "NaN"]
+                }
+              ]
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["ms", "percent", "MiB/s", "MiB"]
+            },
+            "reason": {
+              "type": "string",
+              "allOf": [
+                {
+                  "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                  "description": "a string with no leading or trailing whitespace"
+                },
+                {
+                  "minLength": 1,
+                  "description": "a value with a length of at least 1"
+                },
+                {
+                  "maxLength": 256,
+                  "description": "a value with a length of at most 256"
+                }
+              ]
+            }
+          },
+          "required": ["state", "upperBound", "unit", "reason"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": ["unsupported"]
+            },
+            "reason": {
+              "type": "string",
+              "allOf": [
+                {
+                  "maxLength": 4096,
+                  "description": "a value with a length of at most 4096"
+                },
+                {
+                  "minLength": 1,
+                  "description": "a value with a length of at least 1"
+                }
+              ]
+            }
+          },
+          "required": ["state", "reason"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": ["invalid"]
+            },
+            "reason": {
+              "type": "string",
+              "allOf": [
+                {
+                  "maxLength": 4096,
+                  "description": "a value with a length of at most 4096"
+                },
+                {
+                  "minLength": 1,
+                  "description": "a value with a length of at least 1"
+                }
+              ]
+            }
+          },
+          "required": ["state", "reason"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "allOf": [
+              {
+                "description": "an integer"
+              },
+              {
+                "minimum": 0,
+                "description": "a value greater than or equal to 0"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                "description": "a string with no leading or trailing whitespace"
+              },
+              {
+                "minLength": 1,
+                "description": "a value with a length of at least 1"
+              },
+              {
+                "maxLength": 256,
+                "description": "a value with a length of at most 256"
+              }
+            ]
+          },
+          "clockOwner": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                "description": "a string with no leading or trailing whitespace"
+              },
+              {
+                "minLength": 1,
+                "description": "a value with a length of at least 1"
+              },
+              {
+                "maxLength": 256,
+                "description": "a value with a length of at most 256"
+              }
+            ]
+          },
+          "clockDomain": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                "description": "a string with no leading or trailing whitespace"
+              },
+              {
+                "minLength": 1,
+                "description": "a value with a length of at least 1"
+              },
+              {
+                "maxLength": 256,
+                "description": "a value with a length of at most 256"
+              }
+            ]
+          },
+          "resolutionMs": {
+            "anyOf": [
+              {
+                "type": "number",
+                "allOf": [
+                  {
+                    "description": "a finite number"
+                  },
+                  {
+                    "minimum": 0,
+                    "description": "a value greater than or equal to 0"
+                  }
+                ]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "observerMethod": {
+            "type": "string",
+            "allOf": [
+              {
+                "maxLength": 4096,
+                "description": "a value with a length of at most 4096"
+              },
+              {
+                "minLength": 1,
+                "description": "a value with a length of at least 1"
+              }
+            ]
+          },
+          "startTimestamp": {
+            "anyOf": [
+              {
+                "type": "number",
+                "allOf": [
+                  {
+                    "description": "a finite number"
+                  },
+                  {
+                    "minimum": 0,
+                    "description": "a value greater than or equal to 0"
+                  }
+                ]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "endTimestamp": {
+            "anyOf": [
+              {
+                "type": "number",
+                "allOf": [
+                  {
+                    "description": "a finite number"
+                  },
+                  {
+                    "minimum": 0,
+                    "description": "a value greater than or equal to 0"
+                  }
+                ]
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": [
+          "sequence",
+          "name",
+          "clockOwner",
+          "clockDomain",
+          "resolutionMs",
+          "observerMethod",
+          "startTimestamp",
+          "endTimestamp"
+        ],
+        "additionalProperties": false
+      },
+      "allOf": [
+        {
+          "minItems": 1,
+          "description": "a value with a length of at least 1"
+        }
+      ]
+    },
+    "validity": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["valid"]
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Objects_"
+              },
+              "allOf": [
+                {
+                  "minItems": 1,
+                  "description": "a value with a length of at least 1"
+                }
+              ]
+            }
+          },
+          "required": ["status", "evidence"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["invalid"]
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Objects_"
+              }
+            },
+            "failures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "allOf": [
+                      {
+                        "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                        "description": "a string with no leading or trailing whitespace"
+                      },
+                      {
+                        "minLength": 1,
+                        "description": "a value with a length of at least 1"
+                      },
+                      {
+                        "maxLength": 256,
+                        "description": "a value with a length of at most 256"
+                      }
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "allOf": [
+                      {
+                        "maxLength": 4096,
+                        "description": "a value with a length of at most 4096"
+                      },
+                      {
+                        "minLength": 1,
+                        "description": "a value with a length of at least 1"
+                      }
+                    ]
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/Objects_"
+                    }
+                  }
+                },
+                "required": ["code", "message", "evidence"],
+                "additionalProperties": false
+              },
+              "allOf": [
+                {
+                  "minItems": 1,
+                  "description": "a value with a length of at least 1"
+                }
+              ]
+            }
+          },
+          "required": ["status", "evidence", "failures"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "sampleId",
+    "attemptId",
+    "profile",
+    "scenario",
+    "metric",
+    "observation",
+    "evidence",
+    "validity"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Objects_": {
+      "type": "object",
+      "properties": {
+        "check": {
+          "type": "string",
+          "allOf": [
+            {
+              "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+              "description": "a string with no leading or trailing whitespace"
+            },
+            {
+              "minLength": 1,
+              "description": "a value with a length of at least 1"
+            },
+            {
+              "maxLength": 256,
+              "description": "a value with a length of at most 256"
+            }
+          ]
+        },
+        "expectedSha256": {
+          "type": "string",
+          "allOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "a string matching the RegExp ^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "actualSha256": {
+          "type": "string",
+          "allOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "a string matching the RegExp ^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "expectedCount": {
+          "type": "integer",
+          "allOf": [
+            {
+              "description": "an integer"
+            },
+            {
+              "minimum": 0,
+              "description": "a value greater than or equal to 0"
+            }
+          ]
+        },
+        "actualCount": {
+          "type": "integer",
+          "allOf": [
+            {
+              "description": "an integer"
+            },
+            {
+              "minimum": 0,
+              "description": "a value greater than or equal to 0"
+            }
+          ]
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      },
+      "required": ["check", "passed"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -32,6 +32,7 @@ dist-electron/
 apps/mobile/.showcase/
 artifacts/app-store/screenshots/
 .github/pr-assets/
+artifacts/agent-app-benchmark/
 native/**/target/
 node_modules/
 .alchemy/

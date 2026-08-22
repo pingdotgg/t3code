@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "agent-app-graded-v1",
+  "seed": "graded-v1-2026-08-21",
+  "scale": {
+    "sessionCount": 20,
+    "turnsPerSession": 12,
+    "gradedTurnsTo": 400,
+    "gradedPartWeightTo": 3,
+    "workspaceCount": 3,
+    "terminalChunkCount": 64,
+    "terminalChunkBytes": 2048
+  },
+  "expectedManifest": {
+    "counts": {
+      "sessions": 20,
+      "turns": 2314,
+      "messages": 4628,
+      "parts": 17422,
+      "textParts": 4628,
+      "markdownParts": 2314,
+      "codeParts": 1162,
+      "tableParts": 471,
+      "diffParts": 0,
+      "toolParts": 8038,
+      "reasoningParts": 471,
+      "attachments": 338,
+      "lifecycleEvents": 13755,
+      "terminalStreams": 20,
+      "terminalBytes": 2621440,
+      "renderableBytes": 48274376
+    },
+    "hashes": {
+      "corpusSha256": "6a020d15cf40e2497aadbfb699be0e9c7ef8940d4e41d5d441195f0a3da077df",
+      "semanticSha256": "9b783d4703aa32d263c4a1fd3367ea98c27dfabb6ab86c9d16ea46e8634e3ec0",
+      "terminalSha256": "6087c1f1204e5a3adf9766b39f22d4b249eb0b9f0722ecc18bd4d3eb612f70bc"
+    }
+  }
+}

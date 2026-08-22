@@ -1,0 +1,1385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:t3code:agent-app-benchmark:v1:corpus",
+  "title": "Agent-app benchmark corpus v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "enum": [1]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["agent-app-corpus"]
+    },
+    "corpusId": {
+      "type": "string",
+      "allOf": [
+        {
+          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+          "description": "a string with no leading or trailing whitespace"
+        },
+        {
+          "minLength": 1,
+          "description": "a value with a length of at least 1"
+        },
+        {
+          "maxLength": 256,
+          "description": "a value with a length of at most 256"
+        }
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": ["generated-public", "opencode-local"]
+    },
+    "seed": {
+      "type": "string",
+      "allOf": [
+        {
+          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+          "description": "a string with no leading or trailing whitespace"
+        },
+        {
+          "minLength": 1,
+          "description": "a value with a length of at least 1"
+        },
+        {
+          "maxLength": 256,
+          "description": "a value with a length of at most 256"
+        }
+      ]
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                "description": "a string with no leading or trailing whitespace"
+              },
+              {
+                "minLength": 1,
+                "description": "a value with a length of at least 1"
+              },
+              {
+                "maxLength": 256,
+                "description": "a value with a length of at most 256"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "order": {
+            "type": "integer",
+            "allOf": [
+              {
+                "description": "an integer"
+              },
+              {
+                "minimum": 0,
+                "description": "a value greater than or equal to 0"
+              }
+            ]
+          },
+          "workspaceId": {
+            "type": "string",
+            "allOf": [
+              {
+                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                "description": "a string with no leading or trailing whitespace"
+              },
+              {
+                "minLength": 1,
+                "description": "a value with a length of at least 1"
+              },
+              {
+                "maxLength": 256,
+                "description": "a value with a length of at most 256"
+              }
+            ]
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "allOf": [
+                    {
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "description": "a string with no leading or trailing whitespace"
+                    },
+                    {
+                      "minLength": 1,
+                      "description": "a value with a length of at least 1"
+                    },
+                    {
+                      "maxLength": 256,
+                      "description": "a value with a length of at most 256"
+                    }
+                  ]
+                },
+                "index": {
+                  "type": "integer",
+                  "allOf": [
+                    {
+                      "description": "an integer"
+                    },
+                    {
+                      "minimum": 0,
+                      "description": "a value greater than or equal to 0"
+                    }
+                  ]
+                },
+                "anchor": {
+                  "type": "string",
+                  "enum": ["first", "middle", "last"]
+                },
+                "messages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "allOf": [
+                          {
+                            "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                            "description": "a string with no leading or trailing whitespace"
+                          },
+                          {
+                            "minLength": 1,
+                            "description": "a value with a length of at least 1"
+                          },
+                          {
+                            "maxLength": 256,
+                            "description": "a value with a length of at most 256"
+                          }
+                        ]
+                      },
+                      "order": {
+                        "type": "integer",
+                        "allOf": [
+                          {
+                            "description": "an integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "description": "a value greater than or equal to 0"
+                          }
+                        ]
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": ["system", "user", "assistant"]
+                      },
+                      "parts": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["text"]
+                                },
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "order", "type", "text"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["markdown"]
+                                },
+                                "markdown": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "order", "type", "markdown"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["code"]
+                                },
+                                "language": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "order", "type", "language", "code"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["table"]
+                                },
+                                "headers": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "rows": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "required": ["id", "order", "type", "headers", "rows"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["diff"]
+                                },
+                                "path": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "oldText": {
+                                  "type": "string"
+                                },
+                                "newText": {
+                                  "type": "string"
+                                },
+                                "patch": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "order",
+                                "type",
+                                "path",
+                                "oldText",
+                                "newText",
+                                "patch"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["reasoning"]
+                                },
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "order", "type", "text"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["attachment"]
+                                },
+                                "name": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "mediaType": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "sizeBytes": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "sha256": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^[0-9a-f]{64}$",
+                                      "description": "a string matching the RegExp ^[0-9a-f]{64}$"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "order",
+                                "type",
+                                "name",
+                                "mediaType",
+                                "sizeBytes",
+                                "sha256"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "order": {
+                                  "type": "integer",
+                                  "allOf": [
+                                    {
+                                      "description": "an integer"
+                                    },
+                                    {
+                                      "minimum": 0,
+                                      "description": "a value greater than or equal to 0"
+                                    }
+                                  ]
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["tool"]
+                                },
+                                "callId": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "toolName": {
+                                  "type": "string",
+                                  "allOf": [
+                                    {
+                                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                      "description": "a string with no leading or trailing whitespace"
+                                    },
+                                    {
+                                      "minLength": 1,
+                                      "description": "a value with a length of at least 1"
+                                    },
+                                    {
+                                      "maxLength": 256,
+                                      "description": "a value with a length of at most 256"
+                                    }
+                                  ]
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": ["pending", "running", "completed", "error"]
+                                },
+                                "inputJson": {
+                                  "type": "string"
+                                },
+                                "outputText": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "order",
+                                "type",
+                                "callId",
+                                "toolName",
+                                "state",
+                                "inputJson",
+                                "outputText"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "required": ["id", "order", "role", "parts"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["id", "index", "messages"],
+              "additionalProperties": false
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "allOf": [
+                        {
+                          "description": "an integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "description": "a value greater than or equal to 0"
+                        }
+                      ]
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "allOf": [
+                        {
+                          "description": "an integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "description": "a value greater than or equal to 0"
+                        }
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": ["message-part-revision"]
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    },
+                    "partId": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "allOf": [
+                        {
+                          "description": "an integer"
+                        },
+                        {
+                          "exclusiveMinimum": 0,
+                          "description": "a value greater than 0"
+                        }
+                      ]
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "sequence",
+                    "atMs",
+                    "type",
+                    "messageId",
+                    "partId",
+                    "revision",
+                    "content"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "allOf": [
+                        {
+                          "description": "an integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "description": "a value greater than or equal to 0"
+                        }
+                      ]
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "allOf": [
+                        {
+                          "description": "an integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "description": "a value greater than or equal to 0"
+                        }
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": ["tool-lifecycle"]
+                    },
+                    "callId": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    },
+                    "toolName": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["pending", "running", "completed", "error"]
+                    },
+                    "inputJson": {
+                      "type": "string"
+                    },
+                    "outputText": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "sequence", "atMs", "type", "callId", "toolName", "state"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "allOf": [
+                        {
+                          "description": "an integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "description": "a value greater than or equal to 0"
+                        }
+                      ]
+                    },
+                    "atMs": {
+                      "type": "integer",
+                      "allOf": [
+                        {
+                          "description": "an integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "description": "a value greater than or equal to 0"
+                        }
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": ["stream-complete"]
+                    },
+                    "turnId": {
+                      "type": "string",
+                      "allOf": [
+                        {
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "description": "a string with no leading or trailing whitespace"
+                        },
+                        {
+                          "minLength": 1,
+                          "description": "a value with a length of at least 1"
+                        },
+                        {
+                          "maxLength": 256,
+                          "description": "a value with a length of at most 256"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["id", "sequence", "atMs", "type", "turnId"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "terminalStreams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "allOf": [
+                    {
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "description": "a string with no leading or trailing whitespace"
+                    },
+                    {
+                      "minLength": 1,
+                      "description": "a value with a length of at least 1"
+                    },
+                    {
+                      "maxLength": 256,
+                      "description": "a value with a length of at most 256"
+                    }
+                  ]
+                },
+                "columns": {
+                  "type": "integer",
+                  "allOf": [
+                    {
+                      "description": "an integer"
+                    },
+                    {
+                      "exclusiveMinimum": 0,
+                      "description": "a value greater than 0"
+                    }
+                  ]
+                },
+                "rows": {
+                  "type": "integer",
+                  "allOf": [
+                    {
+                      "description": "an integer"
+                    },
+                    {
+                      "exclusiveMinimum": 0,
+                      "description": "a value greater than 0"
+                    }
+                  ]
+                },
+                "chunks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sequence": {
+                        "type": "integer",
+                        "allOf": [
+                          {
+                            "description": "an integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "description": "a value greater than or equal to 0"
+                          }
+                        ]
+                      },
+                      "atMs": {
+                        "type": "integer",
+                        "allOf": [
+                          {
+                            "description": "an integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "description": "a value greater than or equal to 0"
+                          }
+                        ]
+                      },
+                      "bytesBase64": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["sequence", "atMs", "bytesBase64"],
+                    "additionalProperties": false
+                  }
+                },
+                "inputSentinels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expectedBytes": {
+                  "type": "integer",
+                  "allOf": [
+                    {
+                      "description": "an integer"
+                    },
+                    {
+                      "minimum": 0,
+                      "description": "a value greater than or equal to 0"
+                    }
+                  ]
+                },
+                "expectedSha256": {
+                  "type": "string",
+                  "allOf": [
+                    {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "a string matching the RegExp ^[0-9a-f]{64}$"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "columns",
+                "rows",
+                "chunks",
+                "inputSentinels",
+                "expectedBytes",
+                "expectedSha256"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["id", "title", "order", "turns", "events", "terminalStreams"],
+        "additionalProperties": false
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "counts": {
+          "type": "object",
+          "properties": {
+            "sessions": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "turns": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "messages": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "parts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "textParts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "markdownParts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "codeParts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "tableParts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "diffParts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "toolParts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "reasoningParts": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "attachments": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "lifecycleEvents": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "terminalStreams": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "terminalBytes": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            },
+            "renderableBytes": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "description": "an integer"
+                },
+                {
+                  "minimum": 0,
+                  "description": "a value greater than or equal to 0"
+                }
+              ]
+            }
+          },
+          "required": [
+            "sessions",
+            "turns",
+            "messages",
+            "parts",
+            "textParts",
+            "markdownParts",
+            "codeParts",
+            "tableParts",
+            "diffParts",
+            "toolParts",
+            "reasoningParts",
+            "attachments",
+            "lifecycleEvents",
+            "terminalStreams",
+            "terminalBytes",
+            "renderableBytes"
+          ],
+          "additionalProperties": false
+        },
+        "hashes": {
+          "type": "object",
+          "properties": {
+            "corpusSha256": {
+              "type": "string",
+              "allOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "a string matching the RegExp ^[0-9a-f]{64}$"
+                }
+              ]
+            },
+            "semanticSha256": {
+              "type": "string",
+              "allOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "a string matching the RegExp ^[0-9a-f]{64}$"
+                }
+              ]
+            },
+            "terminalSha256": {
+              "type": "string",
+              "allOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "a string matching the RegExp ^[0-9a-f]{64}$"
+                }
+              ]
+            }
+          },
+          "required": ["corpusSha256", "semanticSha256", "terminalSha256"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["counts", "hashes"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schemaVersion", "kind", "corpusId", "source", "seed", "sessions", "manifest"],
+  "additionalProperties": false,
+  "$defs": {}
+}

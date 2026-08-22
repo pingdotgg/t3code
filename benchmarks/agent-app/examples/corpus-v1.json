@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "kind": "agent-app-corpus",
+  "corpusId": "portable-example-v1",
+  "source": "generated-public",
+  "seed": "portable-example-seed",
+  "sessions": [
+    {
+      "id": "session-1",
+      "title": "Portable example",
+      "order": 0,
+      "turns": [
+        {
+          "id": "turn-1",
+          "index": 0,
+          "anchor": "first",
+          "messages": [
+            {
+              "id": "message-1",
+              "order": 0,
+              "role": "user",
+              "parts": [
+                {
+                  "id": "part-1",
+                  "order": 0,
+                  "type": "text",
+                  "text": "Render this deterministic message."
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "events": [],
+      "terminalStreams": []
+    }
+  ],
+  "manifest": {
+    "counts": {
+      "sessions": 1,
+      "turns": 1,
+      "messages": 1,
+      "parts": 1,
+      "textParts": 1,
+      "markdownParts": 0,
+      "codeParts": 0,
+      "tableParts": 0,
+      "diffParts": 0,
+      "toolParts": 0,
+      "reasoningParts": 0,
+      "attachments": 0,
+      "lifecycleEvents": 0,
+      "terminalStreams": 0,
+      "terminalBytes": 0,
+      "renderableBytes": 34
+    },
+    "hashes": {
+      "corpusSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "semanticSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "terminalSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+}

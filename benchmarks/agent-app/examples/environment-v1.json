@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-08-09T00:00:00.000Z",
+  "os": "macOS 26",
+  "architecture": "arm64",
+  "cpuModel": "Apple M4",
+  "logicalCoreCount": 10,
+  "physicalMemoryBytes": 16000000000,
+  "displayRefreshHz": 60,
+  "displayScale": 2,
+  "powerSource": "ac",
+  "thermalState": "nominal",
+  "window": {
+    "width": 1440,
+    "height": 900
+  },
+  "colorScheme": "dark",
+  "reducedMotion": true,
+  "launchFlags": []
+}

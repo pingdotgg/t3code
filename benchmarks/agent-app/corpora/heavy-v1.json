@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "agent-app-heavy-v1",
+  "seed": "t3-agent-app-heavy-v1-2026-08-21",
+  "scale": {
+    "sessionCount": 20,
+    "turnsPerSession": 40,
+    "heavySessionCount": 4,
+    "heavyTurnsPerSession": 400,
+    "heavyPartWeight": 3,
+    "terminalChunkCount": 64,
+    "terminalChunkBytes": 2048
+  },
+  "expectedManifest": {
+    "counts": {
+      "sessions": 20,
+      "turns": 2240,
+      "messages": 4480,
+      "parts": 15184,
+      "textParts": 4480,
+      "markdownParts": 2240,
+      "codeParts": 1120,
+      "tableParts": 448,
+      "diffParts": 0,
+      "toolParts": 6120,
+      "reasoningParts": 448,
+      "attachments": 328,
+      "lifecycleEvents": 12480,
+      "terminalStreams": 20,
+      "terminalBytes": 2621440,
+      "renderableBytes": 39978632
+    },
+    "hashes": {
+      "corpusSha256": "a91ccd0fc239bef88de70386498ca4353d4783700600a29262cb088dc4179e83",
+      "semanticSha256": "2e86cddb5e00614c738f4050a21f9b01dea3ec18a95adf050f7f2fb6e4caf309",
+      "terminalSha256": "6087c1f1204e5a3adf9766b39f22d4b249eb0b9f0722ecc18bd4d3eb612f70bc"
+    }
+  }
+}
