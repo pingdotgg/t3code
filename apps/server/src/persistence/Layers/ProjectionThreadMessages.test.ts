@@ -66,6 +66,45 @@ layer("ProjectionThreadMessageRepository", (it) => {
     }),
   );
 
+  it.effect("atomically appends streaming text and preserves the original creation time", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-streaming-append");
+      const messageId = MessageId.make("message-streaming-append");
+      const createdAt = "2026-02-28T19:05:00.000Z";
+
+      yield* repository.appendStreaming({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "hello",
+        isStreaming: true,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      yield* repository.appendStreaming({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: " world",
+        isStreaming: true,
+        createdAt: "2026-02-28T19:05:01.000Z",
+        updatedAt: "2026-02-28T19:05:01.000Z",
+      });
+
+      const row = yield* repository.getByMessageId({ messageId });
+      assert.equal(row._tag, "Some");
+      if (row._tag === "Some") {
+        assert.equal(row.value.text, "hello world");
+        assert.equal(row.value.createdAt, createdAt);
+        assert.equal(row.value.updatedAt, "2026-02-28T19:05:01.000Z");
+        assert.isTrue(row.value.isStreaming);
+      }
+    }),
+  );
+
   it.effect("allows explicit attachment clearing with an empty array", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;

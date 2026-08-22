@@ -850,7 +850,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        case "thread.message-sent":
+        case "thread.message-sent": {
+          // The thread websocket already carries the incremental message event.
+          // Keep activity ordering current without rebuilding the list-view shell.
+          if (event.payload.role === "assistant" && event.payload.streaming) {
+            yield* projectionThreadRepository.touchUpdatedAt({
+              threadId: event.payload.threadId,
+              updatedAt: event.occurredAt,
+            });
+            return;
+          }
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            updatedAt: event.occurredAt,
+          });
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended":
         case "thread.approval-response-requested":
@@ -950,22 +973,31 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
         case "thread.message-sent": {
+          if (event.payload.streaming) {
+            const attachments =
+              event.payload.attachments !== undefined
+                ? yield* materializeAttachmentsForProjection({
+                    attachments: event.payload.attachments,
+                  })
+                : undefined;
+            yield* projectionThreadMessageRepository.appendStreaming({
+              messageId: event.payload.messageId,
+              threadId: event.payload.threadId,
+              turnId: event.payload.turnId,
+              role: event.payload.role,
+              text: event.payload.text,
+              ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
+              isStreaming: true,
+              createdAt: event.payload.createdAt,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
           });
           const previousMessage = Option.getOrUndefined(existingMessage);
-          const nextText = Option.match(existingMessage, {
-            onNone: () => event.payload.text,
-            onSome: (message) => {
-              if (event.payload.streaming) {
-                return `${message.text}${event.payload.text}`;
-              }
-              if (event.payload.text.length === 0) {
-                return message.text;
-              }
-              return event.payload.text;
-            },
-          });
           const nextAttachments =
             event.payload.attachments !== undefined
               ? yield* materializeAttachmentsForProjection({
@@ -977,9 +1009,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
             role: event.payload.role,
-            text: nextText,
+            text:
+              event.payload.text.length === 0 ? (previousMessage?.text ?? "") : event.payload.text,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
-            isStreaming: event.payload.streaming,
+            isStreaming: false,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });
@@ -1301,8 +1334,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (event.payload.turnId === null || event.payload.role !== "assistant") {
             return;
           }
+          const existingTurn = yield* projectionTurnRepository.getByTurnId({
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+          });
+          // The first chunk attaches the assistant message to the turn. Later
+          // chunks do not change turn state, so avoid rewriting it per token.
+          if (
+            event.payload.streaming &&
+            Option.isSome(existingTurn) &&
+            existingTurn.value.assistantMessageId === event.payload.messageId
+          ) {
+            return;
+          }
           // A completed assistant message only settles the turn once the
-          // session is no longer running it — providers may emit several
+          // session is no longer running it. Providers may emit several
           // assistant messages per turn (commentary between tool calls), and
           // the turn must stay unsettled until the provider reports turn end
           // (projected as thread.session-set leaving the "running" status).
@@ -1314,10 +1360,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             session.value.status === "running" &&
             session.value.activeTurnId === event.payload.turnId;
           const settlesTurn = !event.payload.streaming && !turnStillRunning;
-          const existingTurn = yield* projectionTurnRepository.getByTurnId({
-            threadId: event.payload.threadId,
-            turnId: event.payload.turnId,
-          });
           if (Option.isSome(existingTurn)) {
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
@@ -1694,18 +1736,51 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           ),
         );
 
-    const projectEvent: OrchestrationProjectionPipelineShape["projectEvent"] = (event) =>
-      Effect.forEach(projectors, (projector) => runProjectorForEvent(projector, event), {
-        concurrency: 1,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(ServerConfig, serverConfig),
-        Effect.asVoid,
-        Effect.catchTag("SqlError", (sqlError) =>
-          Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
-        ),
-      );
+    const projectEvent: OrchestrationProjectionPipelineShape["projectEvent"] = (event) => {
+      const attachmentSideEffects: AttachmentSideEffects = {
+        deletedThreadIds: new Set<string>(),
+        prunedThreadRelativePaths: new Map<string, Set<string>>(),
+      };
+
+      return sql
+        .withTransaction(
+          Effect.forEach(
+            projectors,
+            (projector) =>
+              projector.apply(event, attachmentSideEffects).pipe(
+                Effect.flatMap(() =>
+                  projectionStateRepository.upsert({
+                    projector: projector.name,
+                    lastAppliedSequence: event.sequence,
+                    updatedAt: event.occurredAt,
+                  }),
+                ),
+              ),
+            { concurrency: 1 },
+          ),
+        )
+        .pipe(
+          Effect.flatMap(() =>
+            runAttachmentSideEffects(attachmentSideEffects).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to apply projected attachment side-effects", {
+                  sequence: event.sequence,
+                  eventType: event.type,
+                  cause,
+                }),
+              ),
+            ),
+          ),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(ServerConfig, serverConfig),
+          Effect.asVoid,
+          Effect.catchTags({
+            SqlError: (sqlError) =>
+              Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
+          }),
+        );
+    };
 
     const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.forEach(
       projectors,

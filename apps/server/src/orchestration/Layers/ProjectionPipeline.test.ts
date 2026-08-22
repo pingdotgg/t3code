@@ -1177,6 +1177,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       const eventStore = yield* OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
       const now = "2026-01-01T00:00:00.000Z";
+      const streamingAt = "2026-01-01T00:00:01.000Z";
 
       yield* eventStore.append({
         type: "project.created",
@@ -1254,7 +1255,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         eventId: EventId.make("evt-a4"),
         aggregateKind: "thread",
         aggregateId: ThreadId.make("thread-a"),
-        occurredAt: now,
+        occurredAt: streamingAt,
         commandId: CommandId.make("cmd-a4"),
         causationEventId: null,
         correlationId: CorrelationId.make("cmd-a4"),
@@ -1266,8 +1267,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           text: " world",
           turnId: null,
           streaming: true,
-          createdAt: now,
-          updatedAt: now,
+          createdAt: streamingAt,
+          updatedAt: streamingAt,
         },
       });
 
@@ -1278,6 +1279,13 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         SELECT text FROM projection_thread_messages WHERE message_id = 'message-a'
       `;
       assert.deepEqual(messageRows, [{ text: "hello world" }]);
+
+      const threadRows = yield* sql<{ readonly updatedAt: string }>`
+        SELECT updated_at AS "updatedAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-a'
+      `;
+      assert.deepEqual(threadRows, [{ updatedAt: streamingAt }]);
 
       const stateRows = yield* sql<{
         readonly projector: string;

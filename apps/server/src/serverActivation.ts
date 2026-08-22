@@ -16,6 +16,9 @@ export const forkParked = <A, E, R>(
     const activation = yield* ServerActivation;
     if (activation === undefined) {
       yield* Effect.forkScoped(effect);
+      // Let the child reach its first suspension point before startup continues.
+      // Hot-stream consumers use this turn to establish their subscription.
+      yield* Effect.yieldNow;
       return;
     }
     const parked = yield* Deferred.make<void>();

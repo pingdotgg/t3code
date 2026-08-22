@@ -12,6 +12,7 @@ import {
   ListProjectionThreadsByProjectInput,
   ProjectionThread,
   ProjectionThreadRepository,
+  TouchProjectionThreadInput,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
 import { ModelSelection } from "@t3tools/contracts";
@@ -149,6 +150,16 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
+  const touchProjectionThreadRow = SqlSchema.void({
+    Request: TouchProjectionThreadInput,
+    execute: ({ threadId, updatedAt }) =>
+      sql`
+        UPDATE projection_threads
+        SET updated_at = ${updatedAt}
+        WHERE thread_id = ${threadId}
+      `,
+  });
+
   const listProjectionThreadRows = SqlSchema.findAll({
     Request: ListProjectionThreadsByProjectInput,
     Result: ProjectionThreadDbRow,
@@ -205,6 +216,11 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
     );
 
+  const touchUpdatedAt: ProjectionThreadRepositoryShape["touchUpdatedAt"] = (input) =>
+    touchProjectionThreadRow(input).pipe(
+      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.touchUpdatedAt:query")),
+    );
+
   const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
     listProjectionThreadRows(input).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listByProjectId:query")),
@@ -218,6 +234,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
   return {
     upsert,
     getById,
+    touchUpdatedAt,
     listByProjectId,
     deleteById,
   } satisfies ProjectionThreadRepositoryShape;
