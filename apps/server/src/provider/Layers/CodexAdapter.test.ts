@@ -571,6 +571,49 @@ function assertOpenReasoningSealedAtTurnEnd(input: {
     NodeAssert.equal(completion.payload.detail, "partial tail");
     NodeAssert.deepStrictEqual(completion.payload.data, { toolCallId: "rs-open" });
     NodeAssert.equal(events[2]?.eventId, input.terminalEvent.id);
+
+    const lateEventsFiber = yield* adapter.streamEvents.pipe(
+      Stream.filter((event) => event.type === "item.completed" || event.type === "turn.started"),
+      Stream.takeUntil((event) => event.type === "turn.started"),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* runtime.emit({
+      id: asEventId("evt-late-native-reasoning-completion"),
+      kind: "notification",
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      method: "item/completed",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: asItemId("rs-open"),
+      payload: {
+        completedAtMs: 1_778_000_000_002,
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "reasoning",
+          id: "rs-open",
+          summary: ["partial tail"],
+          content: [],
+        },
+      },
+    } satisfies ProviderEvent);
+    yield* runtime.emit({
+      id: asEventId("evt-next-turn-started"),
+      kind: "notification",
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      method: "turn/started",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-2"),
+    } satisfies ProviderEvent);
+
+    const lateEvents = Array.from(yield* Fiber.join(lateEventsFiber));
+    NodeAssert.deepStrictEqual(
+      lateEvents.map((event) => event.type),
+      ["turn.started"],
+    );
   });
 }
 

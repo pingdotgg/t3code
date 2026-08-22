@@ -832,6 +832,8 @@ interface CodexReasoningStreamState {
   readonly partsByItemId: Map<string, CodexReasoningParts>;
   /** itemId → composed text length at the last emitted item.updated (throttles live updates). */
   readonly lastEmittedLengthByItemId: Map<string, number>;
+  /** Native completions matching the latest synthetic turn-end seal are dropped. */
+  readonly syntheticallyCompletedItemKeys: Set<string>;
 }
 
 const CODEX_REASONING_UPDATE_CHUNK = 512;
@@ -846,6 +848,10 @@ function composeReasoningStreamParts(parts: CodexReasoningParts): string {
     .join("\n\n");
 }
 
+function reasoningStreamIdentityKey(turnId: ProviderEvent["turnId"], itemId: string): string {
+  return `${turnId ?? "no-turn"}\u001f${itemId}`;
+}
+
 /**
  * Turn terminals can arrive without item/completed after an interruption.
  * Seal every live reasoning row before the terminal event so persisted work
@@ -857,8 +863,13 @@ function completeOpenReasoningStreams(
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   const base = runtimeEventBase(event, canonicalThreadId);
+  // Provider notifications are ordered. Retaining only the latest terminal's
+  // identities bounds this defensive dedup state while covering native
+  // completions delivered immediately after their turn terminal.
+  state.syntheticallyCompletedItemKeys.clear();
   const completed = Array.from(state.partsByItemId, ([itemId, parts]) => {
     const detail = composeReasoningStreamParts(parts);
+    state.syntheticallyCompletedItemKeys.add(reasoningStreamIdentityKey(event.turnId, itemId));
     return {
       ...base,
       eventId: EventId.make(`${event.id}:reasoning:${itemId}:completed`),
@@ -1288,6 +1299,20 @@ function mapToRuntimeEvents(
       return [];
     }
     const itemType = toCanonicalItemType(item.type);
+    const completedItemId =
+      event.itemId ?? ("id" in item && typeof item.id === "string" ? item.id : undefined);
+    if (
+      itemType === "reasoning" &&
+      completedItemId !== undefined &&
+      reasoningStreams?.syntheticallyCompletedItemKeys.has(
+        reasoningStreamIdentityKey(event.turnId, completedItemId),
+      )
+    ) {
+      // A terminal already sealed this row. Persisting the provider's late
+      // native completion would create a second completed row that clients
+      // deliberately refuse to fold into the first terminal row.
+      return [];
+    }
     if (itemType === "plan") {
       const detail = itemDetail(itemType, item);
       if (!detail) {
@@ -1308,12 +1333,12 @@ function mapToRuntimeEvents(
     // itemId can never inherit a previous item's text.
     if (
       reasoningStreams &&
-      event.itemId !== undefined &&
+      completedItemId !== undefined &&
       completed?.type === "item.completed" &&
       completed.payload.itemType === "reasoning"
     ) {
-      reasoningStreams.partsByItemId.delete(event.itemId);
-      reasoningStreams.lastEmittedLengthByItemId.delete(event.itemId);
+      reasoningStreams.partsByItemId.delete(completedItemId);
+      reasoningStreams.lastEmittedLengthByItemId.delete(completedItemId);
     }
     return completed ? [completed] : [];
   }
@@ -1917,6 +1942,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const reasoningStreams: CodexReasoningStreamState = {
           partsByItemId: new Map(),
           lastEmittedLengthByItemId: new Map(),
+          syntheticallyCompletedItemKeys: new Set(),
         };
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
