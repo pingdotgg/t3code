@@ -203,6 +203,8 @@ const multiTerminalHistoryLogPath = (
   );
 
 interface CreateManagerOptions {
+  historyTargetBytes?: number;
+  historyMaxBytes?: number;
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
@@ -242,6 +244,12 @@ const createManager = (
       const manager = yield* TerminalManager.makeWithOptions({
         logsDir,
         historyLineLimit,
+        ...(options.historyTargetBytes !== undefined
+          ? { historyTargetBytes: options.historyTargetBytes }
+          : {}),
+        ...(options.historyMaxBytes !== undefined
+          ? { historyMaxBytes: options.historyMaxBytes }
+          : {}),
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
@@ -443,6 +451,26 @@ it.layer(
     Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
       fs.writeFileString(filePath, contents),
     );
+
+  interface RecordedHistoryWrite {
+    readonly contents: string;
+    readonly flag: FileSystem.OpenFlag | undefined;
+  }
+
+  function recordHistoryWrites(
+    fileSystem: FileSystem.FileSystem,
+    writes: Array<RecordedHistoryWrite>,
+  ): FileSystem.FileSystem {
+    return FileSystem.FileSystem.of({
+      ...fileSystem,
+      writeFileString: (path, contents, options) =>
+        Effect.sync(() => {
+          if (path.endsWith(".log")) {
+            writes.push({ contents, flag: options?.flag });
+          }
+        }).pipe(Effect.andThen(fileSystem.writeFileString(path, contents, options))),
+    });
+  }
 
   it.effect("reports a missing cwd without an artificial cause", () =>
     Effect.gen(function* () {
@@ -1087,6 +1115,72 @@ it.layer(
       const reopened = yield* manager.open(openInput());
       const nonEmptyLines = reopened.history.split("\n").filter((line) => line.length > 0);
       expect(nonEmptyLines).toEqual(["line2", "line3", "line4"]);
+    }),
+  );
+
+  it.effect("appends normal terminal history writes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const writes: Array<RecordedHistoryWrite> = [];
+      const { manager, ptyAdapter } = yield* createManager(100).pipe(
+        Effect.provideService(FileSystem.FileSystem, recordHistoryWrites(fileSystem, writes)),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("first redraw\r");
+      process.emitData("second redraw\r");
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect(writes.length).toBeGreaterThan(0);
+      expect(writes.every((write) => write.flag === "a")).toBe(true);
+      expect(writes.map((write) => write.contents).join("")).toBe("first redraw\rsecond redraw\r");
+    }),
+  );
+
+  it.effect("compacts carriage-return redraw history at the byte limit", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const writes: Array<RecordedHistoryWrite> = [];
+      const { manager, ptyAdapter, logsDir } = yield* createManager(100, {
+        historyTargetBytes: 12,
+        historyMaxBytes: 24,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, recordHistoryWrites(fileSystem, writes)),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("old-one\r");
+      process.emitData("old-two\r");
+      process.emitData("new-one\rnew-two\r");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const historyPath = yield* historyLogPath(logsDir);
+      const persisted = yield* readFileString(historyPath);
+      expect(persisted).toBe("new-two\r");
+      expect(Buffer.byteLength(persisted)).toBeLessThanOrEqual(12);
+      expect(writes.some((write) => write.flag === "w")).toBe(true);
+    }),
+  );
+
+  it.effect("compacts oversized existing terminal history on open", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager(100, {
+        historyTargetBytes: 12,
+        historyMaxBytes: 24,
+      });
+      const historyPath = yield* historyLogPath(logsDir);
+      yield* writeFileString(historyPath, "old-one\rold-two\rnew-one\rnew-two\r");
+
+      const opened = yield* manager.open(openInput());
+
+      expect(opened.history).toBe("new-two\r");
+      expect(yield* readFileString(historyPath)).toBe("new-two\r");
     }),
   );
 

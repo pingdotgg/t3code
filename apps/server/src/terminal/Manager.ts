@@ -75,7 +75,10 @@ export {
 };
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
+const DEFAULT_HISTORY_TARGET_BYTES = 8 * 1024 * 1024;
+const DEFAULT_HISTORY_MAX_BYTES = 12 * 1024 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
+const DEFAULT_PERSIST_CHUNK_BYTES = 64 * 1024;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
@@ -246,6 +249,7 @@ export interface TerminalSessionState {
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
+  persistedHistoryBytes: number;
   pendingHistoryControlSequence: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
@@ -265,9 +269,12 @@ export interface TerminalSessionState {
   runtimeEnv: Record<string, string> | null;
 }
 
-interface PersistHistoryRequest {
+interface HistoryWrite {
   contents: string;
   mode: "append" | "truncate";
+}
+
+interface PersistHistoryRequest extends HistoryWrite {
   immediate: boolean;
 }
 
@@ -282,7 +289,7 @@ type DrainProcessEventAction =
       threadId: string;
       terminalId: string;
       sequence: number;
-      historyDelta: string;
+      historyWrite: HistoryWrite | null;
       data: string;
     }
   | {
@@ -797,6 +804,31 @@ function capHistory(history: string, maxLines: number): string {
   return hasTrailingNewline ? `${capped}\n` : capped;
 }
 
+function capHistoryByBytes(history: string, targetBytes: number): string {
+  const encoded = Buffer.from(history);
+  if (encoded.byteLength <= targetBytes) return history;
+
+  let start = encoded.byteLength - targetBytes;
+  while (start < encoded.byteLength && ((encoded[start] ?? 0) & 0xc0) === 0x80) {
+    start += 1;
+  }
+  const suffix = encoded.subarray(start).toString();
+
+  const newlineIndex = suffix.indexOf("\n");
+  const carriageReturnIndex = suffix.indexOf("\r");
+  const boundaryIndex =
+    newlineIndex === -1
+      ? carriageReturnIndex
+      : carriageReturnIndex === -1
+        ? newlineIndex
+        : Math.min(newlineIndex, carriageReturnIndex);
+  if (boundaryIndex === -1) return "";
+
+  const boundaryLength =
+    suffix[boundaryIndex] === "\r" && suffix[boundaryIndex + 1] === "\n" ? 2 : 1;
+  return suffix.slice(boundaryIndex + boundaryLength);
+}
+
 function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
@@ -1112,6 +1144,8 @@ function normalizedRuntimeEnv(
 interface TerminalManagerOptions {
   logsDir: string;
   historyLineLimit?: number;
+  historyTargetBytes?: number;
+  historyMaxBytes?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
@@ -1152,6 +1186,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const logsDir = options.logsDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
+  const historyTargetBytes = options.historyTargetBytes ?? DEFAULT_HISTORY_TARGET_BYTES;
+  const historyMaxBytes = options.historyMaxBytes ?? DEFAULT_HISTORY_MAX_BYTES;
   const platform = yield* HostProcessPlatform;
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
@@ -1359,14 +1395,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     never,
     never
   >({
-    merge: (current, next) =>
-      next.mode === "truncate"
-        ? next
-        : {
-            contents: `${current.contents}${next.contents}`,
-            mode: current.mode,
-            immediate: current.immediate || next.immediate,
-          },
+    merge: (current, next) => {
+      if (next.mode === "truncate") {
+        return {
+          ...next,
+          immediate: current.immediate || next.immediate,
+        };
+      }
+      const contents = `${current.contents}${next.contents}`;
+      return {
+        contents,
+        mode: current.mode,
+        immediate:
+          current.immediate ||
+          next.immediate ||
+          Buffer.byteLength(contents) >= DEFAULT_PERSIST_CHUNK_BYTES,
+      };
+    },
     process: Effect.fn("terminal.persistHistoryWorker")(function* (sessionKey, request) {
       if (!request.immediate) {
         yield* Effect.sleep(DEFAULT_PERSIST_DEBOUNCE_MS);
@@ -1396,12 +1441,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const queuePersist = Effect.fn("terminal.queuePersist")(function* (
     threadId: string,
     terminalId: string,
-    contents: string,
+    request: HistoryWrite,
   ) {
     yield* persistWorker.enqueue(toSessionKey(threadId, terminalId), {
-      contents,
-      mode: "append",
-      immediate: false,
+      ...request,
+      immediate: Buffer.byteLength(request.contents) >= DEFAULT_PERSIST_CHUNK_BYTES,
     });
   });
 
@@ -1458,7 +1502,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             (cause) => new TerminalHistoryError({ operation: "read", threadId, terminalId, cause }),
           ),
         );
-      const capped = capHistory(raw, historyLineLimit);
+      const lineCapped = capHistory(raw, historyLineLimit);
+      const capped =
+        Buffer.byteLength(lineCapped) > historyMaxBytes
+          ? capHistoryByBytes(lineCapped, historyTargetBytes)
+          : lineCapped;
       if (capped !== raw) {
         yield* fileSystem
           .writeFileString(nextPath, capped)
@@ -1498,7 +1546,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             new TerminalHistoryError({ operation: "migrate", threadId, terminalId, cause }),
         ),
       );
-    const capped = capHistory(raw, historyLineLimit);
+    const lineCapped = capHistory(raw, historyLineLimit);
+    const capped =
+      Buffer.byteLength(lineCapped) > historyMaxBytes
+        ? capHistoryByBytes(lineCapped, historyTargetBytes)
+        : lineCapped;
     yield* fileSystem
       .writeFileString(nextPath, capped)
       .pipe(
@@ -1683,11 +1735,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             nextEvent.data,
           );
           session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
+          let historyWrite: HistoryWrite | null = null;
           if (sanitized.visibleText.length > 0) {
             session.history = capHistory(
               `${session.history}${sanitized.visibleText}`,
               historyLineLimit,
             );
+            session.persistedHistoryBytes += Buffer.byteLength(sanitized.visibleText);
+            if (session.persistedHistoryBytes > historyMaxBytes) {
+              session.history = capHistoryByBytes(session.history, historyTargetBytes);
+              session.persistedHistoryBytes = Buffer.byteLength(session.history);
+              historyWrite = {
+                contents: session.history,
+                mode: "truncate",
+              };
+            } else {
+              historyWrite = {
+                contents: sanitized.visibleText,
+                mode: "append",
+              };
+            }
           }
           const eventStamp = advanceEventSequence(session);
 
@@ -1696,7 +1763,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: eventStamp.sequence,
-            historyDelta: sanitized.visibleText,
+            historyWrite,
             data: nextEvent.data,
           } as const;
         }
@@ -1736,8 +1803,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (action.type === "output") {
-        if (action.historyDelta.length > 0) {
-          yield* queuePersist(action.threadId, action.terminalId, action.historyDelta);
+        if (action.historyWrite !== null) {
+          yield* queuePersist(action.threadId, action.terminalId, action.historyWrite);
         }
 
         yield* publishEvent({
@@ -2186,6 +2253,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         status: "starting",
         pid: null,
         history,
+        persistedHistoryBytes: Buffer.byteLength(history),
         pendingHistoryControlSequence: "",
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
@@ -2247,6 +2315,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history = "";
+      liveSession.persistedHistoryBytes = 0;
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
@@ -2260,6 +2329,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history = "";
+      liveSession.persistedHistoryBytes = 0;
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
@@ -2569,6 +2639,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
         session.history = "";
+        session.persistedHistoryBytes = 0;
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
@@ -2606,6 +2677,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             status: "starting",
             pid: null,
             history: "",
+            persistedHistoryBytes: 0,
             pendingHistoryControlSequence: "",
             pendingProcessEvents: [],
             pendingProcessEventIndex: 0,
@@ -2642,6 +2714,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const rows = input.rows ?? session.rows;
 
         session.history = "";
+        session.persistedHistoryBytes = 0;
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
