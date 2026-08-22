@@ -8,6 +8,14 @@ import * as ProcessRunner from "../processRunner.ts";
 
 interface ResolveServerEnvironmentLabelInput {
   readonly cwdBaseName: string;
+  /**
+   * Operator-configured label (from `T3CODE_ENVIRONMENT_LABEL` or
+   * `--environment-label`). Takes precedence over every OS-derived probe
+   * below: the OS computer name is shared by every T3 Code instance running
+   * on the same machine, so it cannot distinguish them, but an explicit
+   * override can.
+   */
+  readonly overrideLabel?: string | undefined;
 }
 
 const ServerEnvironmentLabelCommandProbe = Schema.Literals([
@@ -182,6 +190,11 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  const overrideLabel = normalizeLabel(input.overrideLabel);
+  if (overrideLabel) {
+    return overrideLabel;
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;

@@ -128,7 +128,10 @@ export const make = Effect.gen(function* () {
 
   const environmentId = EnvironmentId.make(environmentIdRaw);
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const label = yield* resolveServerEnvironmentLabel({
+    cwdBaseName,
+    overrideLabel: serverConfig.environmentLabel,
+  });
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",

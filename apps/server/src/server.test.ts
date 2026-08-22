@@ -444,6 +444,7 @@ const buildAppUnderTest = (options?: {
       mode: "desktop",
       port: 0,
       host: "127.0.0.1",
+      environmentLabel: undefined,
       cwd: process.cwd(),
       baseDir,
       ...derivedPaths,

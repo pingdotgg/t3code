@@ -61,6 +61,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     tailscaleServePort: 443,
     port: 0,
     host: undefined,
+    environmentLabel: undefined,
     desktopBootstrapToken: undefined,
     staticDir: undefined,
     devUrl: undefined,
@@ -93,6 +94,33 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.pullRequests).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
+    }),
+  );
+
+  it.effect("uses the configured environment label instead of the OS-detected name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-label-test-",
+      });
+      const serverConfig = yield* makeServerConfig(baseDir);
+      yield* ServerConfig.ensureServerDirectories(serverConfig);
+
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(emptySecretStoreLayer),
+            Layer.provide(
+              ServerConfig.layer({ ...serverConfig, environmentLabel: "Mark's Mac mini (9773)" }),
+            ),
+          ),
+        ),
+      );
+
+      expect(descriptor.label).toBe("Mark's Mac mini (9773)");
     }),
   );
 

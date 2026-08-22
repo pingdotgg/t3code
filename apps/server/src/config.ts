@@ -68,6 +68,12 @@ export class ServerConfig extends Context.Service<
     readonly mode: RuntimeMode;
     readonly port: number;
     readonly host: string | undefined;
+    /**
+     * Friendly display label for this environment, shown to clients in place
+     * of the OS-detected computer name (`T3CODE_ENVIRONMENT_LABEL` /
+     * `--environment-label`). Undefined falls back to OS detection.
+     */
+    readonly environmentLabel: string | undefined;
     readonly cwd: string;
     readonly baseDir: string;
     readonly staticDir: string | undefined;
@@ -188,6 +194,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     tailscaleServePort: 443,
     port: 0,
     host: undefined,
+    environmentLabel: undefined,
     desktopBootstrapToken: undefined,
     desktopTelemetryFd: undefined,
     desktopTelemetryControlFd: undefined,
