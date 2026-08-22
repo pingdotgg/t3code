@@ -42,13 +42,35 @@ export function sanitizeBranchFragment(raw: string): string {
 }
 
 /**
+ * Namespace prefixes `sanitizeFeatureBranchName` keeps as-is instead of
+ * prepending `feature/`. Conventional Commit types, plus the `feature/` and
+ * `feat/` spellings of the feature-branch intent.
+ */
+const CONVENTIONAL_BRANCH_PREFIXES = new Set([
+  "build",
+  "chore",
+  "ci",
+  "docs",
+  "feat",
+  "feature",
+  "fix",
+  "perf",
+  "refactor",
+  "revert",
+  "style",
+  "test",
+]);
+
+/**
  * Sanitize a string into a `feature/…` refName name.
- * Preserves an existing `feature/` prefix or slash-separated namespace.
+ * Preserves an existing recognized namespace prefix (`feature/`, `feat/`,
+ * `fix/`, …) and otherwise prepends `feature/`.
  */
 export function sanitizeFeatureBranchName(raw: string): string {
   const sanitized = sanitizeBranchFragment(raw);
   if (sanitized.includes("/")) {
-    return sanitized.startsWith("feature/") ? sanitized : `feature/${sanitized}`;
+    const prefix = sanitized.slice(0, sanitized.indexOf("/"));
+    return CONVENTIONAL_BRANCH_PREFIXES.has(prefix) ? sanitized : `feature/${sanitized}`;
   }
   return `feature/${sanitized}`;
 }
