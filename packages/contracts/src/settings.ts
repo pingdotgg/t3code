@@ -519,6 +519,75 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const AntigravitySettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("agy").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Antigravity (agy) binary.",
+        providerSettingsForm: {
+          placeholder: "agy",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    dangerouslySkipPermissions: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Skip permissions",
+        description: "Auto-approve all tool permission requests without prompting.",
+      }),
+    ),
+    effort: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("high")),
+      Schema.annotateKey({
+        title: "Reasoning effort",
+        description: "Reasoning effort for CLI sessions (low, medium, high).",
+      }),
+    ),
+    accountEmail: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Account email",
+        description: "Account email displayed in status cards. Defaults to detected user account.",
+        providerSettingsForm: {
+          placeholder: "user@example.com",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    subscriptionLabel: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("Gemini Pro Subscription")),
+      Schema.annotateKey({
+        title: "Subscription label",
+        description: "Subscription tier label displayed in status cards.",
+        providerSettingsForm: {
+          placeholder: "Gemini Pro Subscription",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: [
+      "binaryPath",
+      "accountEmail",
+      "subscriptionLabel",
+      "effort",
+      "dangerouslySkipPermissions",
+    ],
+  },
+);
+export type AntigravitySettings = typeof AntigravitySettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -661,6 +730,7 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -808,6 +878,16 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const AntigravitySettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  dangerouslySkipPermissions: Schema.optionalKey(Schema.Boolean),
+  effort: Schema.optionalKey(TrimmedString),
+  accountEmail: Schema.optionalKey(TrimmedString),
+  subscriptionLabel: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
@@ -849,6 +929,7 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
