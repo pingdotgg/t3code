@@ -98,7 +98,7 @@ export interface ThreadDetailScreenProps {
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
-  /** Message sync status for the selected thread (drives the composer status pill). */
+  /** Message sync status for the selected thread (drives status UI and live streaming feedback). */
   readonly threadSyncStatus?: EnvironmentThreadStatus;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
@@ -159,7 +159,11 @@ function latestStreamingAssistantMessage(
   return null;
 }
 
-function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedEntry>) {
+function useStreamingHaptics(
+  threadId: ThreadId,
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  enabled: boolean,
+) {
   const lastStreamingAssistantRef = useRef<{
     readonly id: string;
     readonly textLength: number;
@@ -175,6 +179,14 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
     }
 
     const latestStreamingMessage = latestStreamingAssistantMessage(feed);
+
+    // Catch-up publications must still advance the baseline so reaching live
+    // does not emit one final haptic for replayed message growth.
+    if (!enabled) {
+      hydratedRef.current = true;
+      lastStreamingAssistantRef.current = latestStreamingMessage;
+      return;
+    }
 
     if (!hydratedRef.current) {
       hydratedRef.current = true;
@@ -206,7 +218,7 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
 
     lastStreamHapticAtRef.current = now;
     void Haptics.selectionAsync();
-  }, [threadId, feed]);
+  }, [threadId, feed, enabled]);
 }
 
 const USER_INPUT_TOGGLE_TIMING = {
@@ -446,7 +458,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
-  useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
+  useStreamingHaptics(
+    props.selectedThread.id,
+    props.selectedThreadFeed,
+    props.threadSyncStatus === "live",
+  );
   const selectedProviderSkills = useMemo(
     () =>
       props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
