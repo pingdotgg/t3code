@@ -977,11 +977,13 @@ function authoredImageSizeStyle(
   const parsedWidth = Number(width);
   const parsedHeight = Number(height);
   const style: CSSProperties = {};
-  if (!Number.isNaN(parsedWidth) && parsedWidth > 0) style.width = parsedWidth;
-  if (!Number.isNaN(parsedHeight) && parsedHeight > 0) style.height = parsedHeight;
+  if (Number.isFinite(parsedWidth) && parsedWidth > 0) style.width = parsedWidth;
+  if (Number.isFinite(parsedHeight) && parsedHeight > 0) style.height = parsedHeight;
   if (style.width !== undefined && style.height !== undefined) {
     style.aspectRatio = `${parsedWidth} / ${parsedHeight}`;
     style.height = "auto";
+    // Translate the height cap into the width axis so tall images shrink proportionally.
+    style.maxWidth = `min(100%, 30rem, ${(30 * parsedWidth) / parsedHeight}rem)`;
   }
   return style.width === undefined && style.height === undefined ? undefined : style;
 }

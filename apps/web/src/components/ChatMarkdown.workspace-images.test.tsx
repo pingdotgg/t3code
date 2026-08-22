@@ -99,7 +99,9 @@ describe("ChatMarkdown workspace images", () => {
   it("honors authored dimensions on raw workspace images", () => {
     const html = render('<img src=".t3/workspace-image.svg" alt="sized" width="128" height="96">');
 
-    expect(html).toContain('style="width:128px;height:auto;aspect-ratio:128 / 96"');
+    expect(html).toContain(
+      'style="width:128px;height:auto;aspect-ratio:128 / 96;max-width:min(100%, 30rem, 40rem)"',
+    );
   });
 
   it("uses a static placeholder while a signed asset URL loads", () => {
