@@ -68,7 +68,16 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  switch (provider) {
+    case "claude":
+      return line.includes('"usage"');
+    case "codex":
+      return line.includes('"token_count"');
+    case "opencodex":
+      // The OpenCodex ledger is parsed in a worker so its append-only JSONL file
+      // never blocks the server event loop.
+      return false;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -294,6 +303,81 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
     dedupeKey: null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* OpenCodex                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Mirrors OpenCodex's account-suffix normalization for usage presentation. */
+export function normalizeOpenCodexProvider(provider: string): string {
+  const canonical = (value: string) =>
+    value === "chatgpt" || value === "openai-multi" ? "openai" : value;
+  const direct = canonical(provider);
+  if (direct !== provider) return direct;
+
+  const cut = provider.lastIndexOf("-");
+  if (cut <= 0) return direct;
+
+  const suffix = provider.slice(cut + 1);
+  return suffix === "main" || /^p[0-9a-f]{6}$/i.test(suffix)
+    ? canonical(provider.slice(0, cut))
+    : direct;
+}
+
+/** Maps one canonical row from OpenCodex's append-only `usage.jsonl` ledger. */
+export function parseOpenCodexUsageEntry(row: Record<string, unknown>): UsageRecord | null {
+  const timestampMs = int(row["timestamp"]);
+  if (timestampMs === 0) return null;
+
+  const rawUsage = row["usage"];
+  if (typeof rawUsage !== "object" || rawUsage === null) return null;
+  const usage = rawUsage as Record<string, unknown>;
+
+  // OpenCodex stores total input inclusive of both cache categories. Cap the
+  // detail fields so malformed or legacy rows cannot make uncached input
+  // negative or inflate the total beyond `inputTokens`.
+  const inputTokens = int(usage["inputTokens"]);
+  const cacheCreationTokens = Math.min(inputTokens, int(usage["cacheCreationInputTokens"]));
+  const explicitCacheRead = usage["cacheReadInputTokens"];
+  const legacyCachedInput = int(usage["cachedInputTokens"]);
+  const cacheReadCandidate =
+    typeof explicitCacheRead === "number" && Number.isFinite(explicitCacheRead)
+      ? int(explicitCacheRead)
+      : typeof usage["cacheCreationInputTokens"] === "number"
+        ? Math.max(0, legacyCachedInput - cacheCreationTokens)
+        : legacyCachedInput;
+  const cachedInputTokens = Math.min(inputTokens - cacheCreationTokens, cacheReadCandidate);
+  const outputTokens = int(usage["outputTokens"]);
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: inputTokens - cachedInputTokens - cacheCreationTokens,
+    cachedInputTokens,
+    cacheCreationTokens,
+    outputTokens,
+    reasoningTokens: Math.min(outputTokens, int(usage["reasoningOutputTokens"])),
+  };
+  if (totalTokens(totals) === 0) return null;
+
+  const rawProvider = typeof row["provider"] === "string" ? row["provider"].trim() : "";
+  const provider = normalizeOpenCodexProvider(rawProvider) || "unknown";
+  const resolvedModel = typeof row["resolvedModel"] === "string" ? row["resolvedModel"].trim() : "";
+  const requestedModel = typeof row["model"] === "string" ? row["model"].trim() : "";
+  const rawModel = resolvedModel || requestedModel || "unknown";
+  const model =
+    provider === "unknown" || rawModel.includes("/") ? rawModel : `${provider}/${rawModel}`;
+  const requestId = typeof row["requestId"] === "string" ? row["requestId"].trim() : "";
+
+  return {
+    provider: "opencodex",
+    timestampMs,
+    model,
+    sessionId: typeof row["conversationId"] === "string" ? row["conversationId"] : "",
+    totals,
+    // The ledger persists usage, not billed cost. Price it with the shared
+    // LiteLLM table just like Codex transcripts.
+    reportedCostUsd: null,
+    dedupeKey: requestId.length > 0 ? `opencodex:${requestId}` : null,
   };
 }
 

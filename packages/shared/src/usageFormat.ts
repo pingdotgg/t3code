@@ -4,7 +4,12 @@
  *
  * @module usageFormat
  */
-import { UsageDay, type UsageResolution, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  USAGE_CONTRACT_VERSION,
+  UsageDay,
+  type UsageResolution,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -208,6 +213,7 @@ export function makeWindow(
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {
+      contractVersion: USAGE_CONTRACT_VERSION,
       sinceDay: UsageDay.make(format.format(sinceTime)),
       untilDay: UsageDay.make(format.format(untilTime)),
       timeZone,
@@ -224,6 +230,7 @@ export function makeWindow(
     .map((part) => Number.parseInt(part, 10));
   const start = new Date(Date.UTC(year, month - 1, dayOfMonth - (days - 1)));
   return {
+    contractVersion: USAGE_CONTRACT_VERSION,
     sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
     untilDay: UsageDay.make(untilDay),
     timeZone,

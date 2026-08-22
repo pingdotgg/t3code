@@ -484,6 +484,39 @@ export const Zed: Icon = (props) => {
   );
 };
 
+/** OpenCodex terminal mark, adapted from the project's official app icon. */
+export const OpenCodex: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    className={cn("text-[color:var(--usage-provider-opencodex)]", className)}
+    fill="none"
+  >
+    <path
+      d="M8.1 3.45A8.7 8.7 0 0 1 12 2.55a8.7 8.7 0 0 1 3.9.9M15.9 20.55a8.7 8.7 0 0 1-3.9.9 8.7 8.7 0 0 1-3.9-.9"
+      stroke="currentColor"
+      strokeWidth="1.35"
+      strokeLinecap="round"
+    />
+    <path
+      d="M5.55 6.15c-1.25 0-1.6.7-1.6 1.65v1.1c0 .95-.35 1.45-1.15 1.65.8.2 1.15.7 1.15 1.65v1.1c0 .95.35 1.65 1.6 1.65M18.45 6.15c1.25 0 1.6.7 1.6 1.65v1.1c0 .95.35 1.45 1.15 1.65-.8.2-1.15.7-1.15 1.65v1.1c0 .95-.35 1.65-1.6 1.65"
+      stroke="currentColor"
+      strokeWidth="1.45"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="m8.55 8.6 2.35 3.4-2.35 3.4M13.15 15.4h3.05"
+      stroke="currentColor"
+      strokeWidth="1.55"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="2.55" r="0.8" fill="currentColor" />
+    <circle cx="12" cy="21.45" r="0.8" fill="currentColor" />
+  </svg>
+);
+
 export const OpenAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}

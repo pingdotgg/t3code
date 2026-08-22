@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Raw filesystem readers and the worker watchdog run below the Effect service boundary.
 /**
  * Raw filesystem access for transcript scanning.
  *
@@ -13,7 +13,10 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
 import * as NodeReadline from "node:readline";
+import * as NodeTimers from "node:timers";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
@@ -22,13 +25,148 @@ import {
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
+  parseOpenCodexUsageEntry,
   type UsageRecord,
 } from "./usageTranscripts.ts";
+
+/** Bound a corrupt or unexpectedly expensive ledger scan. */
+const OPENCODEX_WORKER_WALL_TIMEOUT_MS = 30_000;
+
+interface OpenCodexWorkerRequest {
+  readonly filePath: string;
+  readonly sinceMs: number;
+}
+
+type OpenCodexWorkerMessage =
+  | { readonly kind: "chunk"; readonly rows: readonly Record<string, unknown>[] }
+  | { readonly kind: "done" }
+  | { readonly kind: "failed" };
+
+type OpenCodexWorkerResponse =
+  | { readonly kind: "rows"; readonly rows: readonly Record<string, unknown>[] }
+  | { readonly kind: "failed" };
+
+// OpenCodex's canonical ledger can grow to tens of megabytes. Stream and parse
+// it off the WebSocket server's event loop without adding a separate bundle
+// entry: this constant worker program is embedded in the server chunk.
+const OPENCODEX_WORKER_SOURCE = String.raw`
+const NodeFS = require("node:fs");
+const NodeReadline = require("node:readline");
+const { parentPort, workerData } = require("node:worker_threads");
+
+async function readRows() {
+  let rows = [];
+  try {
+    const lines = NodeReadline.createInterface({
+      input: NodeFS.createReadStream(workerData.filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of lines) {
+      if (!line.includes('"timestamp"') || !line.includes('"usage"')) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          typeof parsed.timestamp !== "number" ||
+          parsed.timestamp < workerData.sinceMs ||
+          typeof parsed.usage !== "object" ||
+          parsed.usage === null
+        ) {
+          continue;
+        }
+        rows.push({
+          requestId: parsed.requestId,
+          timestamp: parsed.timestamp,
+          provider: parsed.provider,
+          model: parsed.model,
+          resolvedModel: parsed.resolvedModel,
+          conversationId: parsed.conversationId,
+          usage: parsed.usage,
+        });
+        if (rows.length >= 1000) {
+          parentPort.postMessage({ kind: "chunk", rows });
+          rows = [];
+        }
+      } catch {
+        // The ledger is user-owned and append-only. Ignore an isolated corrupt
+        // line while preserving all valid usage around it.
+      }
+    }
+    if (rows.length > 0) parentPort.postMessage({ kind: "chunk", rows });
+  } catch {
+    throw new Error("OpenCodex usage ledger could not be read");
+  }
+}
+
+void readRows()
+  .then(() => parentPort.postMessage({ kind: "done" }))
+  .catch(() => parentPort.postMessage({ kind: "failed" }));
+`;
+
+function runOpenCodexWorker(
+  request: OpenCodexWorkerRequest,
+): Promise<OpenCodexWorkerResponse | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout: ReturnType<typeof NodeTimers.setTimeout> | undefined;
+    const rows: Record<string, unknown>[] = [];
+    const settle = (value: OpenCodexWorkerResponse | null) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) NodeTimers.clearTimeout(timeout);
+      resolve(value);
+    };
+
+    try {
+      const worker = new NodeWorkerThreads.Worker(OPENCODEX_WORKER_SOURCE, {
+        eval: true,
+        workerData: request,
+        // `--input-type` only describes eval/stdin in the parent process. If
+        // inherited it incorrectly turns this explicit CommonJS worker into an
+        // ES module where `require` is unavailable.
+        execArgv: NodeProcess.execArgv.filter((argument) => !argument.startsWith("--input-type")),
+      });
+      worker.on("message", (message: OpenCodexWorkerMessage) => {
+        if (message.kind === "chunk") {
+          rows.push(...message.rows);
+          return;
+        }
+        settle(message.kind === "done" ? { kind: "rows", rows } : { kind: "failed" });
+      });
+      worker.once("error", () => settle(null));
+      // A large structured-clone payload can still be queued when the worker's
+      // clean exit event arrives. Let the message win that race; the watchdog
+      // covers the impossible "exit 0 without a message" case.
+      worker.once("exit", (code) => {
+        if (code !== 0) settle(null);
+      });
+      timeout = NodeTimers.setTimeout(() => {
+        void worker.terminate();
+        settle(null);
+      }, OPENCODEX_WORKER_WALL_TIMEOUT_MS);
+      timeout.unref();
+    } catch {
+      settle(null);
+    }
+  });
+}
 
 export interface TranscriptFile {
   readonly path: string;
   readonly size: number;
   readonly mtimeMs: number;
+}
+
+export interface TranscriptListing {
+  readonly files: readonly TranscriptFile[];
+  readonly failedEntries: number;
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { readonly code?: unknown }).code)
+    : undefined;
 }
 
 /**
@@ -41,14 +179,19 @@ export interface TranscriptFile {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-): Promise<readonly TranscriptFile[]> {
+): Promise<TranscriptListing> {
   const found: TranscriptFile[] = [];
+  let failedEntries = 0;
 
-  const walk = async (dir: string): Promise<void> => {
+  const walk = async (dir: string, isRoot = false): Promise<void> => {
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      // A nested entry may rotate away between its parent readdir and this
+      // walk. The root disappearing after the caller's existence check is a
+      // real source failure, as is any permission or I/O error.
+      if (isRoot || errorCode(error) !== "ENOENT") failedEntries += 1;
       return;
     }
     for (const entry of entries) {
@@ -63,14 +206,33 @@ export async function listTranscriptFiles(
         if (stats.mtimeMs >= sinceMs) {
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
-      } catch {
-        // Vanished between readdir and stat.
+      } catch (error) {
+        // Vanishing between readdir and stat is benign rotation; other errors
+        // mean coverage is partial.
+        if (errorCode(error) !== "ENOENT") failedEntries += 1;
       }
     }
   };
 
-  await walk(root);
-  return found;
+  await walk(root, true);
+  return { files: found, failedEntries };
+}
+
+/**
+ * Stats a single append-only usage ledger for cache invalidation.
+ */
+export async function statUsageFile(
+  filePath: string,
+  sinceMs: number,
+): Promise<readonly TranscriptFile[] | null> {
+  try {
+    const stats = await NodeFSP.stat(filePath);
+    return stats.mtimeMs >= sinceMs
+      ? [{ path: filePath, size: stats.size, mtimeMs: stats.mtimeMs }]
+      : [];
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -89,6 +251,25 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
   }
 }
 
+/** Reads OpenCodex's canonical, per-request token accounting rows. */
+async function readOpenCodexUsageRecords(
+  filePath: string,
+  sinceMs: number,
+): Promise<readonly UsageRecord[] | null> {
+  const result = await runOpenCodexWorker({
+    filePath,
+    sinceMs,
+  });
+  if (result?.kind !== "rows") return null;
+
+  const records: UsageRecord[] = [];
+  for (const row of result.rows) {
+    const record = parseOpenCodexUsageEntry(row);
+    if (record !== null) records.push(record);
+  }
+  return records;
+}
+
 /**
  * Streams one transcript and returns the usage records it contains, or `null`
  * when the file could not be read.
@@ -105,7 +286,10 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
+  opencodexSinceMs = 0,
 ): Promise<readonly UsageRecord[] | null> {
+  if (provider === "opencodex") return readOpenCodexUsageRecords(filePath, opencodexSinceMs);
+
   const records: UsageRecord[] = [];
   const codexState = initialCodexScanState();
 

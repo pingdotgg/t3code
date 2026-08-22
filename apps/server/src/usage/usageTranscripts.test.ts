@@ -2,8 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   initialCodexScanState,
+  normalizeOpenCodexProvider,
   parseClaudeLine,
   parseCodexLine,
+  parseOpenCodexUsageEntry,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -233,6 +235,105 @@ describe("parseCodexLine", () => {
       );
       expect(record).not.toBeNull();
     });
+  });
+});
+
+describe("parseOpenCodexUsageEntry", () => {
+  it("splits inclusive input and normalizes account-scoped providers", () => {
+    expect(
+      parseOpenCodexUsageEntry({
+        requestId: "req-17",
+        conversationId: "session-a",
+        provider: "openai-p372059",
+        model: "gpt-5.4",
+        resolvedModel: "gpt-5.4-mini",
+        timestamp: 1_786_000_000_000,
+        usage: {
+          inputTokens: 1_050,
+          outputTokens: 45,
+          reasoningOutputTokens: 12,
+          // Historical rows may combine reads and writes here.
+          cachedInputTokens: 930,
+          cacheCreationInputTokens: 30,
+        },
+      }),
+    ).toEqual({
+      provider: "opencodex",
+      timestampMs: 1_786_000_000_000,
+      model: "openai/gpt-5.4-mini",
+      sessionId: "session-a",
+      totals: {
+        uncachedInputTokens: 120,
+        cachedInputTokens: 900,
+        cacheCreationTokens: 30,
+        outputTokens: 45,
+        reasoningTokens: 12,
+      },
+      reportedCostUsd: null,
+      dedupeKey: "opencodex:req-17",
+    });
+  });
+
+  it("prefers explicit cache reads and caps corrupt detail within inclusive input", () => {
+    const record = parseOpenCodexUsageEntry({
+      provider: "zhipu-bigmodel-coding",
+      model: "glm-4.7",
+      timestamp: 1_786_000_001_000,
+      usage: {
+        inputTokens: 100,
+        outputTokens: 5,
+        cachedInputTokens: 99,
+        cacheReadInputTokens: 80,
+        cacheCreationInputTokens: 80,
+        reasoningOutputTokens: 12,
+      },
+    });
+
+    expect(record?.model).toBe("zhipu-bigmodel-coding/glm-4.7");
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 0,
+      cachedInputTokens: 20,
+      cacheCreationTokens: 80,
+      outputTokens: 5,
+      reasoningTokens: 5,
+    });
+  });
+
+  it("uses the top-level final usage exactly once instead of summing attempts", () => {
+    const record = parseOpenCodexUsageEntry({
+      provider: "chatgpt",
+      model: "gpt-5.4",
+      timestamp: 1_786_000_002_000,
+      usage: { inputTokens: 10, outputTokens: 5 },
+      attempts: [{ usage: { inputTokens: 10_000, outputTokens: 5_000 } }],
+    });
+
+    expect(record?.model).toBe("openai/gpt-5.4");
+    expect(record?.totals.uncachedInputTokens).toBe(10);
+    expect(record?.totals.outputTokens).toBe(5);
+  });
+
+  it("drops rows without measurable top-level usage", () => {
+    expect(
+      parseOpenCodexUsageEntry({
+        requestId: "unreported",
+        provider: "openai",
+        model: "gpt-5.4",
+        timestamp: 1_786_000_003_000,
+        attempts: [{ usage: { inputTokens: 10, outputTokens: 5 } }],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("normalizeOpenCodexProvider", () => {
+  it("collapses canonical account suffixes without truncating ordinary provider ids", () => {
+    expect(normalizeOpenCodexProvider("openai-main")).toBe("openai");
+    expect(normalizeOpenCodexProvider("openai-p372059")).toBe("openai");
+    expect(normalizeOpenCodexProvider("chatgpt")).toBe("openai");
+    expect(normalizeOpenCodexProvider("chatgpt-main")).toBe("openai");
+    expect(normalizeOpenCodexProvider("openai-multi-pabcdef")).toBe("openai");
+    expect(normalizeOpenCodexProvider("zhipu-bigmodel-coding")).toBe("zhipu-bigmodel-coding");
   });
 });
 

@@ -18,18 +18,33 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
 
-// v2: Codex fork-copy suppression changed what a file parses to, so v1
-// entries would keep serving double-counted records forever.
-export const USAGE_SCAN_CACHE_VERSION = 2 as const;
+// v3: OpenCodex scans are window-bounded and carry a per-entry coverage bound;
+// v2 entries cannot prove which rows they include.
+export const USAGE_SCAN_CACHE_VERSION = 3 as const;
 
 export interface CachedFile {
   readonly size: number;
   readonly mtimeMs: number;
   readonly provider: UsageProviderKind;
+  /** Null for whole-file formats; earliest row included for windowed stores. */
+  readonly completeFromMs: number | null;
   readonly records: readonly UsageRecord[];
 }
 
 export type ScanCache = Map<string, CachedFile>;
+
+export function isReusableCachedFile(
+  entry: CachedFile,
+  fingerprint: Pick<CachedFile, "size" | "mtimeMs" | "provider">,
+  requestedFromMs: number,
+): boolean {
+  return (
+    entry.size === fingerprint.size &&
+    entry.mtimeMs === fingerprint.mtimeMs &&
+    entry.provider === fingerprint.provider &&
+    (entry.completeFromMs === null || entry.completeFromMs <= requestedFromMs)
+  );
+}
 
 /**
  * Row layout for the serialised form. Positional and interned rather than
@@ -53,6 +68,7 @@ interface SerializedFile {
   readonly s: number;
   readonly m: number;
   readonly p: UsageProviderKind;
+  readonly c?: number;
   readonly r: readonly SerializedRecord[];
 }
 
@@ -85,6 +101,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
       s: entry.size,
       m: entry.mtimeMs,
       p: entry.provider,
+      ...(entry.completeFromMs === null ? {} : { c: entry.completeFromMs }),
       r: entry.records.map((record) => [
         record.timestampMs,
         intern(models, modelIndex, record.model),
@@ -134,10 +151,12 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (typeof raw !== "object" || raw === null) continue;
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
-    if (entry.p !== "claude" && entry.p !== "codex") continue;
+    if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "opencodex") continue;
     if (!isRecordArray(entry.r)) continue;
 
     const provider: UsageProviderKind = entry.p;
+    const completeFromMs = typeof entry.c === "number" && Number.isFinite(entry.c) ? entry.c : null;
+    if (provider === "opencodex" && completeFromMs === null) continue;
     const records: UsageRecord[] = [];
     // Any corrupt row disqualifies the whole entry. Keeping the survivors
     // under the original (size, mtime) would read as a valid warm hit and the
@@ -194,7 +213,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     }
 
     if (corrupt) continue;
-    cache.set(path, { size: entry.s, mtimeMs: entry.m, provider, records });
+    cache.set(path, { size: entry.s, mtimeMs: entry.m, provider, completeFromMs, records });
   }
 
   return cache;

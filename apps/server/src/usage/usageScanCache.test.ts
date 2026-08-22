@@ -4,6 +4,7 @@ import {
   decodeScanCache,
   dedupeWithinFile,
   encodeScanCache,
+  isReusableCachedFile,
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -31,7 +32,13 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
 function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][]): ScanCache {
   const cache: ScanCache = new Map();
   for (const [path, mtimeMs, records] of entries) {
-    cache.set(path, { size: records.length * 10, mtimeMs, provider: "claude", records });
+    cache.set(path, {
+      size: records.length * 10,
+      mtimeMs,
+      provider: "claude",
+      completeFromMs: null,
+      records,
+    });
   }
   return cache;
 }
@@ -57,6 +64,31 @@ describe("scan cache round trip", () => {
 
     expect(encoded.models).toEqual(["claude-fable-5"]);
     expect(encoded.sessions).toEqual(["session-a"]);
+  });
+
+  it("round-trips an OpenCodex ledger entry with its coverage bound", () => {
+    const opencodexRecord = record({
+      provider: "opencodex",
+      model: "openai/gpt-5.4",
+      sessionId: "opencodex-session",
+      dedupeKey: "opencodex:1",
+    });
+    const original: ScanCache = new Map([
+      [
+        "/home/user/.opencodex/usage.jsonl",
+        {
+          size: 42,
+          mtimeMs: 200,
+          provider: "opencodex",
+          completeFromMs: 1_786_000_000_000,
+          records: [opencodexRecord],
+        },
+      ],
+    ]);
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))))).toEqual(
+      original,
+    );
   });
 
   it("treats a corrupt or foreign document as an empty cache", () => {
@@ -105,6 +137,28 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
     expect(restored.has("/a.jsonl")).toBe(false);
+  });
+});
+
+describe("isReusableCachedFile", () => {
+  const entry = {
+    size: 42,
+    mtimeMs: 100,
+    provider: "opencodex" as const,
+    completeFromMs: 1_000,
+    records: [record({ provider: "opencodex" })],
+  };
+
+  it("reuses a broad OpenCodex scan for a narrower request", () => {
+    expect(
+      isReusableCachedFile(entry, { size: 42, mtimeMs: 100, provider: "opencodex" }, 2_000),
+    ).toBe(true);
+  });
+
+  it("rejects a narrow OpenCodex scan for a broader request", () => {
+    expect(
+      isReusableCachedFile(entry, { size: 42, mtimeMs: 100, provider: "opencodex" }, 500),
+    ).toBe(false);
   });
 });
 
