@@ -303,7 +303,7 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
 // Editor discovery walks PATH for every known editor and runs for every
 // client connect (the server config embeds the available editors). Memoize
 // the discovered set for a bounded window so repeat connects skip even the
-// per-command cache lookups in @t3tools/shared/shell.
+// per-directory listing lookups in @t3tools/shared/shell.
 //
 // This deliberately does not use `Effect.cachedWithTTL`: that memoizes the
 // first caller's Exit whatever it is, including an interrupt. Callers run this

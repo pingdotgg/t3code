@@ -492,53 +492,81 @@ function resolveCommandCandidates(
   return Array.from(new Set(candidates));
 }
 
-// Session bootstrap resolves the same commands over and over, each PATH scan
-// costing hundreds of 'shell.isExecutableFile' filesystem probes (tens of
-// thousands per connect). Memoize the scan outcome per
-// (platform, PATH, PATHEXT, command) for a short window: repeat scans hit the
-// cache while any change to the search environment invalidates immediately.
-// Explicit-path resolution is never cached - callers probe paths they have
-// just written (e.g. managed binary installs). A "not-found" outcome is also
-// cached for the TTL, so a just-installed binary can stay invisible for up to
-// 30s unless resolved by explicit path.
+// A probe-every-combination PATH scan costs one filesystem probe per
+// (directory, command, extension). On Windows that is ~40 directories times 24
+// candidate names for a single command, and editor discovery alone resolves 22
+// commands - more than 20000 probes, which takes several seconds. Read each PATH
+// directory once instead and match candidate names against the listing: one read
+// per directory, shared by every command resolved in the same window.
+// Listings are cached per directory for a short window, so a just-installed
+// binary can stay invisible for up to 30s unless resolved by explicit path.
+// Explicit-path resolution never consults the cache - callers probe paths they
+// have just written (e.g. managed binary installs).
 // TTL expiry uses the monotonic clock (Clock.currentTimeNanos) so backward
 // wall-clock adjustments cannot keep expired entries alive.
-const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
-const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
-const COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
+const PATH_LISTING_CACHE_TTL_NANOS = 30_000_000_000n;
+const PATH_LISTING_CACHE_MAX_ENTRIES = 256;
 
-interface CommandResolutionCacheEntry {
-  readonly resolvedPath: string | null;
+interface PathListingCacheEntry {
+  /** `null` when the listing failed but the directory may still hold commands. */
+  readonly names: ReadonlySet<string> | null;
   readonly expiresAtNanos: bigint;
 }
+
+// Failure reasons that prove the PATH entry can never hold a command, so an
+// empty listing is the correct answer.
+const UNUSABLE_DIRECTORY_REASONS: ReadonlySet<string> = new Set([
+  "NotFound",
+  "BadResource",
+  "BadArgument",
+]);
 
 // The cache lives in the Effect environment (like HostProcessPlatform above)
 // so tests and embedders can provide an isolated instance; the default is a
 // single process-wide map shared by all consumers.
-export const CommandResolutionCache = Context.Reference<Map<string, CommandResolutionCacheEntry>>(
-  "@t3tools/shared/shell/CommandResolutionCache",
+export const PathListingCache = Context.Reference<Map<string, PathListingCacheEntry>>(
+  "@t3tools/shared/shell/PathListingCache",
   {
     defaultValue: () => new Map(),
   },
 );
 
-function cacheCommandResolution(
-  cache: Map<string, CommandResolutionCacheEntry>,
-  cacheKey: string,
-  resolvedPath: string | null,
-  nowNanos: bigint,
-): void {
-  if (cache.size >= COMMAND_RESOLUTION_CACHE_MAX_ENTRIES) {
+/**
+ * Lists the file names in a PATH directory, memoized for
+ * {@link PATH_LISTING_CACHE_TTL_NANOS}. A directory that can never hold a
+ * command lists as empty; see {@link UNUSABLE_DIRECTORY_REASONS}. Any other
+ * failure lists as `null`, which tells callers to probe candidate paths directly.
+ */
+const listPathDirectory = Effect.fn("shell.listPathDirectory")(function* (
+  directory: string,
+  platform: NodeJS.Platform,
+): Effect.fn.Return<ReadonlySet<string> | null, never, FileSystem.FileSystem> {
+  const cache = yield* PathListingCache;
+  const cacheKey = normalizePathEntryForComparison(directory, platform);
+  const nowNanos = yield* Clock.currentTimeNanos;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    return cached.names;
+  }
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entries = yield* fileSystem.readDirectory(directory).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
+        Effect.succeed(UNUSABLE_DIRECTORY_REASONS.has(error.reason._tag) ? [] : null),
+    }),
+  );
+  const names = entries === null ? null : new Set(entries.map((e) => e.toLowerCase()));
+
+  if (cache.size >= PATH_LISTING_CACHE_MAX_ENTRIES) {
     const oldestKey = cache.keys().next().value;
     if (oldestKey !== undefined) {
       cache.delete(oldestKey);
     }
   }
-  cache.set(cacheKey, {
-    resolvedPath,
-    expiresAtNanos: nowNanos + COMMAND_RESOLUTION_CACHE_TTL_NANOS,
-  });
-}
+  cache.set(cacheKey, { names, expiresAtNanos: nowNanos + PATH_LISTING_CACHE_TTL_NANOS });
+  return names;
+});
 
 const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
   filePath: string,
@@ -588,19 +616,6 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return yield* new CommandResolutionError({ command, reason: "not-found" });
   }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
-  );
-  const cache = yield* CommandResolutionCache;
-  const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = cache.get(cacheKey);
-  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
-    if (cached.resolvedPath === null) {
-      return yield* new CommandResolutionError({ command, reason: "not-found" });
-    }
-    return cached.resolvedPath;
-  }
-
   const pathEntries: string[] = [];
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const pathEntry = stripWrappingQuotes(entry.trim());
@@ -610,15 +625,21 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   }
 
   for (const pathEntry of pathEntries) {
+    const names = yield* listPathDirectory(pathEntry, platform);
+
     for (const candidate of commandCandidates) {
+      // A listed directory rules candidates out by name.
+      // An unlisted one falls back to probing every candidate.
+      if (names !== null && !names.has(candidate.toLowerCase())) continue;
+
+      // A listed name only proves the entry exists; the file type and the
+      // executable bit still need a stat.
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
         return candidatePath;
       }
     }
   }
-  cacheCommandResolution(cache, cacheKey, null, nowNanos);
   return yield* new CommandResolutionError({ command, reason: "not-found" });
 });
 

@@ -2,6 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -365,6 +368,72 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       expect(result._tag).toBe("Failure");
     }),
   );
+
+  it.effect("matches a Windows PATH entry regardless of file name case", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-shell-" });
+      yield* fileSystem.writeFileString(path.join(binDir, "code.cmd"), "@echo off\r\n");
+
+      const resolved = yield* resolveCommandPath("code", {
+        env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+      expect(resolved.toLowerCase()).toBe(path.join(binDir, "code.cmd").toLowerCase());
+    }).pipe(Effect.scoped),
+  );
+
+  const failingListingLayer = (reason: PlatformError.SystemErrorTag, onStat: () => void) =>
+    FileSystem.layerNoop({
+      readDirectory: () =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: reason,
+            module: "FileSystem",
+            method: "readDirectory",
+          }),
+        ),
+      stat: () =>
+        Effect.sync(() => {
+          onStat();
+          return { type: "File" } as FileSystem.File.Info;
+        }),
+    });
+
+  // A listing that did not happen proves nothing. Trusting it would hide an
+  // installed command for the whole cache window, so anything short of proof
+  // that the directory cannot hold a command falls back to probing.
+  for (const reason of ["PermissionDenied", "Busy", "Unknown"] as const) {
+    it.effect(`probes a PATH directory that fails to list with ${reason}`, () =>
+      Effect.gen(function* () {
+        // A distinct directory per case: the listing cache is keyed by
+        // directory and shared process-wide, so a reused path would answer
+        // from the previous case instead of exercising this one.
+        const resolved = yield* resolveCommandPath("code", {
+          env: { PATH: `C:\\unreadable-${reason}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
+
+        expect(resolved._tag).toBe("Success");
+      }).pipe(Effect.provide(failingListingLayer(reason, () => undefined))),
+    );
+  }
+
+  // A directory that is absent or is not a walkable directory at all can never
+  // hold a command, so it should be skipped.
+  for (const reason of ["NotFound", "BadResource"] as const) {
+    it.effect(`skips a PATH directory that fails to list with ${reason}`, () => {
+      let statCalls = 0;
+      return Effect.gen(function* () {
+        const resolved = yield* resolveCommandPath("code", {
+          env: { PATH: `C:\\unusable-${reason}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
+
+        expect(resolved._tag).toBe("Failure");
+        expect(statCalls).toBe(0);
+      }).pipe(Effect.provide(failingListingLayer(reason, () => (statCalls += 1))));
+    });
+  }
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {

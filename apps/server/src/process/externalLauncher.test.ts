@@ -158,17 +158,18 @@ it.effect("discovers editors through the service API", () =>
 );
 
 it.effect("memoizes editor discovery and refreshes after the cache window", () => {
-  let statCalls = 0;
+  let readDirCalls = 0;
   const fileInfo = { type: "File" } as FileSystem.File.Info;
   const launcherLayer = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
-          stat: () =>
+          readDirectory: () =>
             Effect.sync(() => {
-              statCalls += 1;
-              return fileInfo;
+              readDirCalls += 1;
+              return ["code.CMD"];
             }),
+          stat: () => Effect.succeed(fileInfo),
         }),
         Path.layer,
         Layer.succeed(
@@ -184,20 +185,19 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
 
     const first = yield* launcher.resolveAvailableEditors();
     assert.equal(first.includes("vscode"), true);
-    const statCallsAfterFirstScan = statCalls;
-    assert.isAbove(statCallsAfterFirstScan, 0);
+    assert.equal(readDirCalls, 1);
 
-    // Past the shared command-resolution cache TTL (30s) but within the
+    // Past the shared directory-listing cache TTL (30s) but within the
     // discovery cache window: the memoized set is reused without any scan.
     yield* TestClock.adjust("31 seconds");
     const second = yield* launcher.resolveAvailableEditors();
     assert.deepEqual([...second], [...first]);
-    assert.equal(statCalls, statCallsAfterFirstScan);
+    assert.equal(readDirCalls, 1);
 
     // Past the discovery cache window the next call rescans.
     yield* TestClock.adjust("30 seconds");
     yield* launcher.resolveAvailableEditors();
-    assert.isAbove(statCalls, statCallsAfterFirstScan);
+    assert.equal(readDirCalls, 2);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -224,17 +224,18 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
 it.effect("rescans after an interrupted discovery instead of caching the interrupt", () => {
   const fileInfo = { type: "File" } as FileSystem.File.Info;
   let blockFirstScan = true;
-  let scans = 0;
+  let statCalls = 0;
   const launcherLayer = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
+          readDirectory: () => Effect.succeed(["code.CMD"]),
           // The first scan parks inside `stat` so the interrupt lands while
           // discovery is in flight, which is what a client disconnecting
           // mid-connect does to the shared effect.
           stat: () =>
             Effect.gen(function* () {
-              scans += 1;
+              statCalls += 1;
               if (blockFirstScan) {
                 return yield* Effect.never;
               }
@@ -259,10 +260,10 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
 
     // The next connect must still get a real answer well inside the TTL.
     blockFirstScan = false;
-    scans = 0;
+    statCalls = 0;
     const editors = yield* launcher.resolveAvailableEditors();
     assert.equal(editors.includes("vscode"), true);
-    assert.isAbove(scans, 0);
+    assert.isAbove(statCalls, 0);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
