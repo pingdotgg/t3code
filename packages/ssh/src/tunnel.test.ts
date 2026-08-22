@@ -221,7 +221,9 @@ describe("ssh tunnel scripts", () => {
     ]) {
       assert.include(script, "acquire_state_lock()");
       assert.include(script, "release_state_lock()");
-      assert.include(script, "flock -w 120 9");
+      assert.include(script, "flock -w 45 9");
+      assert.include(script, 'kill -0 "$STATE_LOCK_OWNER_PID"');
+      assert.include(script, 'STATE_LOCK_WAIT_COUNT" -ge 450');
       assert.include(script, "acquire_state_lock");
     }
     assert.include(buildRemotePairingScript(target), 'line.startsWith("Token: ")');
@@ -231,6 +233,12 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteStopScript(target), 'if [ "$REMOTE_MANAGED" = "external" ]');
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
+    assert.include(buildRemoteLaunchScript(), "< /dev/null 9>&- &");
+    assert.include(buildRemoteLaunchScript(), 'if [ -n "$LAUNCHED_PID" ]; then');
+    assert.notInclude(
+      buildRemoteLaunchScript(),
+      'discover_running_runtime() {\n  rm -f "$BASE_DIR_FILE"',
+    );
     assert.include(
       buildRemoteLaunchScript(),
       'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',

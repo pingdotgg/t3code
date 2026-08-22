@@ -62,6 +62,18 @@ export class PlatformEnvironmentRemovalError extends Schema.TaggedErrorClass<Pla
   }
 }
 
+export class PlatformEnvironmentRouteSelectionError extends Schema.TaggedErrorClass<PlatformEnvironmentRouteSelectionError>()(
+  "PlatformEnvironmentRouteSelectionError",
+  {
+    environmentId: EnvironmentId,
+    routeId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Route ${this.routeId} cannot be selected for platform-managed environment ${this.environmentId}.`;
+  }
+}
+
 export class ConnectionRouteNotRegisteredError extends Schema.TaggedErrorClass<ConnectionRouteNotRegisteredError>()(
   "ConnectionRouteNotRegisteredError",
   {
@@ -97,7 +109,7 @@ export class EnvironmentRegistry extends Context.Service<
       | ConnectionAttemptError
       | EnvironmentNotRegisteredError
       | ConnectionRouteNotRegisteredError
-      | PlatformEnvironmentRemovalError
+      | PlatformEnvironmentRouteSelectionError
     >;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
@@ -474,7 +486,7 @@ export const make = Effect.gen(function* () {
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
-          return yield* new PlatformEnvironmentRemovalError({ environmentId });
+          return yield* new PlatformEnvironmentRouteSelectionError({ environmentId, routeId });
         }
         yield* getEntry(environmentId);
         const entry = (yield* SubscriptionRef.get(routes))
@@ -484,7 +496,7 @@ export const make = Effect.gen(function* () {
           return yield* new ConnectionRouteNotRegisteredError({ environmentId, routeId });
         }
         if (entry.target._tag === "PrimaryConnectionTarget") {
-          return yield* new PlatformEnvironmentRemovalError({ environmentId });
+          return yield* new PlatformEnvironmentRouteSelectionError({ environmentId, routeId });
         }
         const selected = (yield* SubscriptionRef.get(entries)).get(environmentId);
         if (selected !== undefined && Equal.equals(selected, entry)) {
@@ -739,7 +751,7 @@ export const make = Effect.gen(function* () {
         ({ environmentId, relay, fallback }) => {
           if (fallback === undefined) {
             return remove(environmentId).pipe(
-              Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+              Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
             );
           }
           return withLeaseLock(
@@ -766,7 +778,7 @@ export const make = Effect.gen(function* () {
               });
               yield* installEntryLocked(fallback);
             }),
-          ).pipe(Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void));
+          ).pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
         },
         {
           concurrency: "unbounded",

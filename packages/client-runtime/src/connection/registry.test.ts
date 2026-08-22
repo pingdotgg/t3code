@@ -1010,6 +1010,12 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);
 
+        const routeError = yield* Effect.flip(
+          registry.selectRoute(TARGET.environmentId, connectionRouteId(TARGET)),
+        );
+        expect(routeError._tag).toBe("PlatformEnvironmentRouteSelectionError");
+        expect(routeError.message).toContain("cannot be selected");
+
         const error = yield* Effect.flip(registry.remove(TARGET.environmentId));
         expect(error._tag).toBe("PlatformEnvironmentRemovalError");
         expect(

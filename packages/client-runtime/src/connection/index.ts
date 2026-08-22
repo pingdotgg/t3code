@@ -28,6 +28,7 @@ export {
   EnvironmentNotRegisteredError,
   EnvironmentRegistry,
   PlatformEnvironmentRemovalError,
+  PlatformEnvironmentRouteSelectionError,
 } from "./registry.ts";
 export { ConnectionResolver } from "./resolver.ts";
 export { EnvironmentSupervisor, type EnvironmentSupervisorOptions } from "./supervisor.ts";
