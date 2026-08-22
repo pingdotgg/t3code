@@ -7,6 +7,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageUpdatedEvent,
   makeAcpToolCallEvent,
 } from "./AcpCoreRuntimeEvents.ts";
 
@@ -189,6 +190,36 @@ describe("AcpCoreRuntimeEvents", () => {
       payload: {
         itemType: "assistant_message",
         status: "inProgress",
+      },
+    });
+
+    expect(
+      makeAcpTokenUsageUpdatedEvent({
+        stamp,
+        provider: ProviderDriverKind.make("grok"),
+        threadId: "thread-1" as never,
+        turnId,
+        usage: {
+          usedTokens: 12_345,
+          maxTokens: 200_000,
+        },
+        rawPayload: {
+          sessionId: "session-1",
+          update: { sessionUpdate: "usage_update", used: 12_345, size: 200_000 },
+        },
+      }),
+    ).toMatchObject({
+      type: "thread.token-usage.updated",
+      provider: "grok",
+      payload: {
+        usage: {
+          usedTokens: 12_345,
+          maxTokens: 200_000,
+        },
+      },
+      raw: {
+        source: "acp.jsonrpc",
+        method: "session/update",
       },
     });
   });

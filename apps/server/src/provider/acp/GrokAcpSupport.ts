@@ -1,4 +1,8 @@
-import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type GrokSettings,
+  ProviderDriverKind,
+  type ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -105,4 +109,151 @@ export function applyGrokAcpModelSelection<E>(input: {
   return input.runtime
     .setSessionModel(input.requestedModelId)
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finiteNonNegativeInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const truncated = Math.trunc(value);
+  return truncated >= 0 ? truncated : undefined;
+}
+
+function finitePositiveInt(value: unknown): number | undefined {
+  const valueInt = finiteNonNegativeInt(value);
+  return valueInt !== undefined && valueInt > 0 ? valueInt : undefined;
+}
+
+/** Model context window from Grok ACP `availableModels[]._meta.totalContextTokens`. */
+export function totalContextTokensFromModelMeta(meta: unknown): number | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  return finitePositiveInt(meta.totalContextTokens);
+}
+
+/** Build modelId → context-window map from a Grok session model state. */
+export function contextWindowsFromSessionModels(
+  models: EffectAcpSchema.SessionModelState | null | undefined,
+): ReadonlyMap<string, number> {
+  const windows = new Map<string, number>();
+  for (const model of models?.availableModels ?? []) {
+    const size = totalContextTokensFromModelMeta(model._meta);
+    if (size === undefined) {
+      continue;
+    }
+    windows.set(model.modelId, size);
+    // Index the normalized slug too so UI slugs and ACP ids both resolve.
+    const baseId = resolveGrokAcpBaseModelId(model.modelId);
+    if (baseId && baseId !== model.modelId) {
+      windows.set(baseId, size);
+    }
+  }
+  return windows;
+}
+
+export function contextWindowForModelId(
+  windows: ReadonlyMap<string, number> | undefined,
+  modelId: string | undefined,
+): number | undefined {
+  if (!windows || windows.size === 0) {
+    return undefined;
+  }
+  if (modelId) {
+    const direct = windows.get(modelId) ?? windows.get(resolveGrokAcpBaseModelId(modelId));
+    if (direct !== undefined) {
+      return direct;
+    }
+  }
+  // Prefer the sole known window when the active model id does not match.
+  if (windows.size === 1) {
+    return windows.values().next().value;
+  }
+  return undefined;
+}
+
+/** Best-effort window for a new session: bound model, then setup current, then sole entry. */
+export function resolveInitialGrokContextWindow(input: {
+  readonly windows: ReadonlyMap<string, number>;
+  readonly boundModelId: string | undefined;
+  readonly setupModelId: string | undefined;
+}): number | undefined {
+  return (
+    contextWindowForModelId(input.windows, input.boundModelId) ??
+    contextWindowForModelId(input.windows, input.setupModelId) ??
+    // Only fall back when a single window is known — never pick an arbitrary model.
+    (input.windows.size === 1 ? input.windows.values().next().value : undefined)
+  );
+}
+
+/**
+ * Enrich a token-usage snapshot with the current model context window and
+ * Grok's auto-compact behavior so the composer meter can show fill %.
+ */
+export function enrichGrokTokenUsage(
+  usage: ThreadTokenUsageSnapshot,
+  maxTokens: number | undefined,
+): ThreadTokenUsageSnapshot {
+  const resolvedMax = usage.maxTokens ?? maxTokens;
+  return {
+    ...usage,
+    ...(resolvedMax !== undefined ? { maxTokens: resolvedMax } : {}),
+    compactsAutomatically: usage.compactsAutomatically ?? true,
+  };
+}
+
+/**
+ * Grok does not yet emit ACP `usage_update`, but prompt responses carry
+ * `_meta.totalTokens` / `_meta.usage` for the session context fill.
+ */
+export function tokenUsageFromGrokPromptMeta(
+  meta: unknown,
+  maxTokens: number | undefined,
+): ThreadTokenUsageSnapshot | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+
+  const usageRecord = isRecord(meta.usage) ? meta.usage : undefined;
+  const usedTokens =
+    finitePositiveInt(meta.totalTokens) ?? finitePositiveInt(usageRecord?.totalTokens);
+  if (usedTokens === undefined) {
+    return undefined;
+  }
+
+  // Breakdown fields may legitimately be 0; usedTokens/window stay strictly positive.
+  const inputTokens =
+    finiteNonNegativeInt(meta.inputTokens) ?? finiteNonNegativeInt(usageRecord?.inputTokens);
+  const outputTokens =
+    finiteNonNegativeInt(meta.outputTokens) ?? finiteNonNegativeInt(usageRecord?.outputTokens);
+  const cachedInputTokens =
+    finiteNonNegativeInt(meta.cachedReadTokens) ??
+    finiteNonNegativeInt(usageRecord?.cachedReadTokens);
+  const reasoningOutputTokens =
+    finiteNonNegativeInt(meta.reasoningTokens) ??
+    finiteNonNegativeInt(usageRecord?.reasoningTokens);
+  const window =
+    maxTokens ??
+    finitePositiveInt(meta.totalContextTokens) ??
+    finitePositiveInt(usageRecord?.totalContextTokens);
+
+  return enrichGrokTokenUsage(
+    {
+      usedTokens,
+      ...(inputTokens !== undefined ? { inputTokens, lastInputTokens: inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens, lastOutputTokens: outputTokens } : {}),
+      ...(cachedInputTokens !== undefined
+        ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+        : {}),
+      ...(reasoningOutputTokens !== undefined
+        ? { reasoningOutputTokens, lastReasoningOutputTokens: reasoningOutputTokens }
+        : {}),
+      lastUsedTokens: usedTokens,
+    },
+    window,
+  );
 }
