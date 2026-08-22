@@ -15,6 +15,9 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  # Only used by @github/copilot-sdk's experimental in-process FFI transport,
+  # which we don't use (we drive the runtime over stdio). No native build needed.
+  koffi: false
   msgpackr-extract: true
   msw: false
   node-pty: true
@@ -147,6 +150,6 @@ peerDependencyRules:
     vite: "*"
 
 supportedArchitectures:
-  cpu: [current, x64]
-  libc: [current, glibc]
-  os: [current, linux]
+  cpu: [ current, x64 ]
+  libc: [ current, glibc ]
+  os: [ current, linux ]
