@@ -240,22 +240,53 @@ export function mergeUsage(
   }
 
   const { ownerByFingerprint, duplicates } = claimSources(current);
-  const incompleteSources: IncompleteUsageSource[] = [];
+  const providerCoverage = new Map<
+    string,
+    {
+      environmentId: EnvironmentId;
+      environmentLabel: string;
+      provider: UsageProviderKind;
+      sourcePath: string;
+      message: string | null;
+      hasReadableSource: boolean;
+      hasProblem: boolean;
+    }
+  >();
   for (const environment of current) {
     for (const source of environment.summary.sources) {
-      if (source.status !== "partial" && source.status !== "failed") continue;
       const owner = ownerByFingerprint.get(fingerprintKey(source.fingerprint));
       if (owner !== undefined && owner !== environment.environmentId) continue;
-      incompleteSources.push({
+      if (source.status === "missing") continue;
+
+      const key = `${environment.environmentId}\0${source.fingerprint.provider}`;
+      const coverage = providerCoverage.get(key) ?? {
         environmentId: environment.environmentId,
         environmentLabel: environment.label,
         provider: source.fingerprint.provider,
         sourcePath: source.fingerprint.resolvedHomePath,
-        status: source.status,
-        message: source.message,
-      });
+        message: null,
+        hasReadableSource: false,
+        hasProblem: false,
+      };
+      if (source.status === "ok" || source.status === "partial") {
+        coverage.hasReadableSource = true;
+      }
+      if (source.status === "partial" || source.status === "failed") {
+        if (!coverage.hasProblem) {
+          coverage.sourcePath = source.fingerprint.resolvedHomePath;
+          coverage.message = source.message;
+        }
+        coverage.hasProblem = true;
+      }
+      providerCoverage.set(key, coverage);
     }
   }
+  const incompleteSources: IncompleteUsageSource[] = [...providerCoverage.values()]
+    .filter((coverage) => coverage.hasProblem)
+    .map(({ hasReadableSource, hasProblem: _, ...coverage }) => ({
+      ...coverage,
+      status: hasReadableSource ? "partial" : "failed",
+    }));
 
   let costUsd = 0;
   let uncachedInputTokens = 0;

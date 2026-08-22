@@ -207,6 +207,71 @@ describe("mergeUsage", () => {
     expect(merged.incompleteSources.map((source) => source.provider)).toEqual(["kimi", "claude"]);
   });
 
+  it("rolls multiple Kimi stores into one provider-level coverage status", () => {
+    const mixed = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 4 })],
+            [
+              {
+                provider: "kimi",
+                hostId: "mac",
+                homePath: "/a/.kimi-code/sessions",
+                status: "ok",
+              },
+              {
+                provider: "kimi",
+                hostId: "mac",
+                homePath: "/a/kimi-desktop/sessions",
+                volumeId: "desktop-volume",
+                status: "failed",
+                message: "1 usage file could not be read.",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(mixed.incompleteSources).toEqual([
+      expect.objectContaining({ provider: "kimi", status: "partial" }),
+    ]);
+
+    const failed = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [],
+            [
+              {
+                provider: "kimi",
+                hostId: "mac",
+                homePath: "/a/.kimi-code/sessions",
+                status: "failed",
+              },
+              {
+                provider: "kimi",
+                hostId: "mac",
+                homePath: "/a/kimi-desktop/sessions",
+                volumeId: "desktop-volume",
+                status: "failed",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(failed.incompleteSources).toEqual([
+      expect.objectContaining({ provider: "kimi", status: "failed" }),
+    ]);
+  });
+
   it("prefers a complete Kimi Code duplicate without a false coverage gap", () => {
     const shared = {
       provider: "kimi" as const,
