@@ -15,11 +15,13 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  defaultInstanceIdForDriver,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -238,8 +240,26 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
+  const explicitFallback = Object.entries(settings.providerInstances).find(([, instance]) =>
+    resolveProviderInstanceEnabled(instance),
+  );
+  const legacyFallback = explicitFallback
+    ? undefined
+    : Object.entries(settings.providers).find(([driverId, provider]) => {
+        const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(driverId));
+        return settings.providerInstances[instanceId] === undefined && provider.enabled;
+      });
+  const fallback = explicitFallback
+    ? {
+        instanceId: ProviderInstanceId.make(explicitFallback[0]),
+        driver: explicitFallback[1].driver,
+      }
+    : legacyFallback
+      ? {
+          instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make(legacyFallback[0])),
+          driver: ProviderDriverKind.make(legacyFallback[0]),
+        }
+      : undefined;
   if (!fallback) {
     return settings;
   }
@@ -247,10 +267,10 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
   return {
     ...settings,
     textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
+      instanceId: fallback.instanceId,
       model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback.driver] ??
+        DEFAULT_MODEL_BY_PROVIDER[fallback.driver] ??
         DEFAULT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection,
   };

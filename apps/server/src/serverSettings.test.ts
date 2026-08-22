@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -322,6 +323,62 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           model: "openai/gpt-5.5",
         });
       }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("does not fall back to a disabled default provider instance", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const codexId = ProviderInstanceId.make("codex");
+      const claudeDriver = ProviderDriverKind.make("claudeAgent");
+      const claudeModel = DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[claudeDriver];
+      assert.isDefined(claudeModel);
+
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [codexId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+            config: {},
+          },
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: claudeModel,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("prefers an enabled provider instance when falling back", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const codexId = ProviderInstanceId.make("codex");
+      const claudeId = ProviderInstanceId.make("claude_openrouter");
+      const claudeDriver = ProviderDriverKind.make("claudeAgent");
+      const claudeModel = DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[claudeDriver];
+      assert.isDefined(claudeModel);
+
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [codexId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+            config: {},
+          },
+          [claudeId]: {
+            driver: claudeDriver,
+            enabled: true,
+            config: {},
+          },
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: claudeId,
+        model: claudeModel,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
   it.effect("preserves enabled text generation selections for non-built-in drivers", () =>
