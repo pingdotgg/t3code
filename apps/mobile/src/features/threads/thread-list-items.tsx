@@ -546,12 +546,17 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     if (thread.branch === null) return;
     copyTextWithHaptic(thread.branch, { target: "thread branch", feedback: "selection" });
   }, [thread.branch]);
-  const menuActions = useMemo<MenuAction[]>(
+  const handleCopyThreadId = useCallback(() => {
+    copyTextWithHaptic(thread.id, { target: "thread ID", feedback: "selection" });
+  }, [thread.id]);
+  const menuActions = useMemo(
     () =>
       buildThreadListMenuActions({
         thread,
-        lifecycleActions: [{ id: "archive", title: "Archive", image: "archivebox" }],
+        lifecycleActions: [{ id: "archive", title: "Archive thread", image: "archivebox" }],
         titleRegenerationSupported: props.titleRegenerationSupported,
+        // Archive is this row's lifecycle action already.
+        showArchiveAction: false,
       }),
     [props.titleRegenerationSupported, thread],
   );
@@ -573,12 +578,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       if (nativeEvent.event === "mark-unread") markThreadUnread();
       if (nativeEvent.event === "copy-path") handleCopyPath();
       if (nativeEvent.event === "copy-branch") handleCopyBranch();
+      if (nativeEvent.event === "copy-thread-id") handleCopyThreadId();
       if (nativeEvent.event === "delete") handleDelete();
     },
     [
       handleArchive,
       handleCopyBranch,
       handleCopyPath,
+      handleCopyThreadId,
       handleDelete,
       handleRegenerateTitle,
       handleRename,

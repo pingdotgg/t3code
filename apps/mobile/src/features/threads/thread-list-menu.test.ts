@@ -1,64 +1,68 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildThreadListMenuActions } from "./thread-list-menu";
 
 describe("buildThreadListMenuActions", () => {
-  it("adds the desktop thread actions around the existing lifecycle actions", () => {
+  it("mirrors web's grouping: lifecycle, title actions with mark-unread, Copy submenu, archive/delete tail", () => {
     const actions = buildThreadListMenuActions({
-      thread: { branch: "feature/mobile-menu", titleRegeneration: null },
-      lifecycleActions: [{ id: "settle", title: "Settle" }],
+      thread: {
+        branch: "feature/mobile-menu",
+        id: ThreadId.make("thread-1"),
+        titleRegeneration: null,
+      },
+      lifecycleActions: [{ id: "settle", title: "Settle thread" }],
       titleRegenerationSupported: true,
+      isRunning: false,
     });
 
     expect(actions.map((action) => action.id)).toEqual([
       "new-thread-on-branch",
       "settle",
       "thread-title-actions",
-      "thread-utility-actions",
+      "copy",
       "thread-delete-actions",
     ]);
     expect(actions[0]?.title).toBe("New thread on feature/mobile-menu");
     expect(actions[2]?.subactions?.map((action) => action.id)).toEqual([
       "rename",
       "regenerate-title",
+      "mark-unread",
     ]);
     expect(actions[3]?.subactions?.map((action) => action.id)).toEqual([
-      "mark-unread",
       "copy-path",
       "copy-branch",
+      "copy-thread-id",
     ]);
-    expect(actions[3]?.subactions?.map((action) => action.image)).toEqual([
-      "envelope.badge",
-      "doc.on.doc",
-      "arrow.triangle.branch",
-    ]);
+    expect(actions[4]?.subactions?.map((action) => action.id)).toEqual(["archive", "delete"]);
   });
 
-  it("gates title regeneration and the branch action", () => {
-    const actions = buildThreadListMenuActions({
-      thread: { branch: null, titleRegeneration: null },
-      lifecycleActions: [{ id: "archive", title: "Archive" }],
-      titleRegenerationSupported: false,
+  it("disables Archive while a turn runs and hides it when it is the lifecycle action", () => {
+    const running = buildThreadListMenuActions({
+      thread: { branch: null, id: ThreadId.make("thread-1"), titleRegeneration: null },
+      lifecycleActions: [],
+      titleRegenerationSupported: true,
+      isRunning: true,
     });
+    const deleteGroup = running.find((action) => action.id === "thread-delete-actions");
+    expect(
+      deleteGroup?.subactions?.find((action) => action.id === "archive")?.attributes?.disabled,
+    ).toBe(true);
 
-    expect(actions.map((action) => action.id)).toEqual([
-      "archive",
-      "thread-title-actions",
-      "thread-utility-actions",
-      "thread-delete-actions",
-    ]);
-    expect(actions[1]?.subactions?.map((action) => action.id)).toEqual(["rename"]);
-    expect(actions[2]?.subactions?.map((action) => action.id)).toEqual([
-      "mark-unread",
-      "copy-path",
-    ]);
+    const compact = buildThreadListMenuActions({
+      thread: { branch: null, id: ThreadId.make("thread-1"), titleRegeneration: null },
+      lifecycleActions: [{ id: "archive", title: "Archive thread" }],
+      titleRegenerationSupported: true,
+      showArchiveAction: false,
+    });
+    expect(compact.filter((action) => action.id === "archive")).toHaveLength(1);
   });
 
-  it("disables title regeneration while one is in flight", () => {
+  it("gates title regeneration, the branch action, and disables regeneration while in flight", () => {
     const actions = buildThreadListMenuActions({
       thread: {
         branch: "main",
+        id: ThreadId.make("thread-1"),
         titleRegeneration: {
           requestId: CommandId.make("request-1"),
           startedAt: "2026-08-08T00:00:00.000Z",
@@ -67,11 +71,18 @@ describe("buildThreadListMenuActions", () => {
       lifecycleActions: [],
       titleRegenerationSupported: true,
     });
-    const action = actions
-      .flatMap((candidate) => candidate.subactions ?? [])
+    const regenerate = actions
+      .flatMap((candidate) => candidate.subactions ?? [candidate])
       .find((candidate) => candidate.id === "regenerate-title");
 
-    expect(action?.title).toBe("Regenerating…");
-    expect(action?.attributes?.disabled).toBe(true);
+    expect(regenerate?.title).toBe("Regenerating…");
+    expect(regenerate?.attributes?.disabled).toBe(true);
+
+    const copySubactions = actions.find((action) => action.id === "copy")?.subactions ?? [];
+    expect(copySubactions.map((action) => action.id)).toEqual([
+      "copy-path",
+      "copy-branch",
+      "copy-thread-id",
+    ]);
   });
 });
