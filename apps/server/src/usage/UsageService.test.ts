@@ -24,13 +24,25 @@ describe("resolveMcodeDataDir", () => {
 
 describe("chooseMcodeUsageStore", () => {
   it("uses the alternate when the primary is only an empty compatibility stub", () => {
-    expect(chooseMcodeUsageStore("primary.sqlite", false, "alternate.sqlite", true)).toBe(
+    expect(chooseMcodeUsageStore("primary.sqlite", "absent", "alternate.sqlite", "ready")).toBe(
       "alternate.sqlite",
     );
   });
 
   it("keeps the canonical primary when both stores have accounting", () => {
-    expect(chooseMcodeUsageStore("primary.sqlite", true, "alternate.sqlite", true)).toBe(
+    expect(chooseMcodeUsageStore("primary.sqlite", "ready", "alternate.sqlite", "ready")).toBe(
+      "primary.sqlite",
+    );
+  });
+
+  it("keeps the primary fingerprint when its probe fails transiently", () => {
+    expect(chooseMcodeUsageStore("primary.sqlite", "failed", "alternate.sqlite", "ready")).toBe(
+      "primary.sqlite",
+    );
+  });
+
+  it("keeps the canonical path when neither store is definitively readable", () => {
+    expect(chooseMcodeUsageStore("primary.sqlite", "absent", "alternate.sqlite", "failed")).toBe(
       "primary.sqlite",
     );
   });

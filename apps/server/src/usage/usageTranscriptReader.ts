@@ -115,21 +115,28 @@ export async function statSqliteUsageStore(
   }
 }
 
-/** Whether a candidate MCode database contains the canonical accounting table. */
-export async function hasMcodeUsageTable(filePath: string): Promise<boolean> {
+export type McodeUsageStoreProbe = "ready" | "absent" | "failed";
+
+/** Whether a candidate MCode database contains readable canonical accounting. */
+export async function probeMcodeUsageStore(filePath: string): Promise<McodeUsageStoreProbe> {
   let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    await NodeFSP.stat(filePath);
+  } catch (error) {
+    return errorCode(error) === "ENOENT" ? "absent" : "failed";
+  }
   try {
     db = new NodeSqlite.DatabaseSync(filePath, {
       readOnly: true,
       timeout: MCODE_BUSY_TIMEOUT_MS,
     });
-    return (
-      db
-        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
-        .get("local_runtime_token_usage") !== undefined
-    );
+    return db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+      .get("local_runtime_token_usage") !== undefined
+      ? "ready"
+      : "absent";
   } catch {
-    return false;
+    return "failed";
   } finally {
     db?.close();
   }

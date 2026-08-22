@@ -40,8 +40,9 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
-  hasMcodeUsageTable,
   listTranscriptFiles,
+  type McodeUsageStoreProbe,
+  probeMcodeUsageStore,
   readDirectoryVolumeId,
   readTranscriptRecords,
   statSqliteUsageStore,
@@ -118,11 +119,12 @@ export function resolveMcodeDataDir(
 
 export function chooseMcodeUsageStore(
   primaryPath: string,
-  primaryHasUsage: boolean,
+  primaryProbe: McodeUsageStoreProbe,
   alternatePath: string,
-  alternateHasUsage: boolean,
+  alternateProbe: McodeUsageStoreProbe,
 ): string {
-  return primaryHasUsage || !alternateHasUsage ? primaryPath : alternatePath;
+  if (primaryProbe !== "absent") return primaryPath;
+  return alternateProbe === "ready" ? alternatePath : primaryPath;
 }
 
 export function negotiateUsageContractVersion(
@@ -273,14 +275,14 @@ export const make = Effect.gen(function* () {
     const mcodeDataDir = resolveMcodeDataDir(process.env, path.join(NodeOS.homedir(), ".minimax"));
     const primaryMcodeDb = path.join(mcodeDataDir, "v2", "sqlite", "runtime-state.sqlite");
     const alternateMcodeDb = path.join(mcodeDataDir, "v2", "chats", "local-runtime.sqlite");
-    const [primaryHasUsage, alternateHasUsage] = yield* Effect.promise(() =>
-      Promise.all([hasMcodeUsageTable(primaryMcodeDb), hasMcodeUsageTable(alternateMcodeDb)]),
+    const [primaryProbe, alternateProbe] = yield* Effect.promise(() =>
+      Promise.all([probeMcodeUsageStore(primaryMcodeDb), probeMcodeUsageStore(alternateMcodeDb)]),
     );
     const mcodeDb = chooseMcodeUsageStore(
       primaryMcodeDb,
-      primaryHasUsage,
+      primaryProbe,
       alternateMcodeDb,
-      alternateHasUsage,
+      alternateProbe,
     );
 
     const sources: readonly TranscriptSource[] = [

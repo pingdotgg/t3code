@@ -7,8 +7,8 @@ import * as NodeSqlite from "node:sqlite";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
-  hasMcodeUsageTable,
   listTranscriptFiles,
+  probeMcodeUsageStore,
   readTranscriptRecords,
   statSqliteUsageStore,
 } from "./usageTranscriptReader.ts";
@@ -124,10 +124,15 @@ describe("readTranscriptRecords for mcode", () => {
   it("detects which compatibility database has canonical usage accounting", async () => {
     const { dbPath, cleanup } = createMcodeDb([]);
     const emptyPath = NodePath.join(NodePath.dirname(dbPath), "empty.sqlite");
+    const corruptPath = NodePath.join(NodePath.dirname(dbPath), "corrupt.sqlite");
+    const missingPath = NodePath.join(NodePath.dirname(dbPath), "missing.sqlite");
     new NodeSqlite.DatabaseSync(emptyPath).close();
+    NodeFS.writeFileSync(corruptPath, "not a sqlite database");
     try {
-      expect(await hasMcodeUsageTable(dbPath)).toBe(true);
-      expect(await hasMcodeUsageTable(emptyPath)).toBe(false);
+      expect(await probeMcodeUsageStore(dbPath)).toBe("ready");
+      expect(await probeMcodeUsageStore(emptyPath)).toBe("absent");
+      expect(await probeMcodeUsageStore(corruptPath)).toBe("failed");
+      expect(await probeMcodeUsageStore(missingPath)).toBe("absent");
     } finally {
       cleanup();
     }
