@@ -117,12 +117,11 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 /**
  * Reads retained usage rows from ZCode's sqlite store.
  *
- * `sinceMs` is the service's maximum retention cutoff, not the requested view,
- * so one cached result remains valid for the 24-hour through 90-day windows.
- * The predicate uses ZCode's `model_usage_started_model_idx` instead of
- * materialising lifetime history. An older schema without `model_usage` yields
- * zero records; other read failures return `null` so the caller can mark the
- * source incomplete and avoid caching a transient failure as an empty store.
+ * `sinceMs` is a conservative indexed prefilter. The caller includes mtime
+ * slack, and the aggregator applies the exact requested boundary after parsing.
+ * An older schema without `model_usage` yields zero records; other read
+ * failures return `null` so the caller does not cache a transient failure as an
+ * empty store.
  */
 async function readZcodeUsageRecords(
   filePath: string,
@@ -176,9 +175,9 @@ async function readZcodeUsageRecords(
 export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
-  sinceMs: number,
+  zcodeSinceMs = 0,
 ): Promise<readonly UsageRecord[] | null> {
-  if (provider === "zcode") return readZcodeUsageRecords(filePath, sinceMs);
+  if (provider === "zcode") return readZcodeUsageRecords(filePath, zcodeSinceMs);
 
   const records: UsageRecord[] = [];
   const codexState = initialCodexScanState();

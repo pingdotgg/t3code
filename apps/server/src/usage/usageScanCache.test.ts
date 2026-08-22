@@ -4,6 +4,7 @@ import {
   decodeScanCache,
   dedupeWithinFile,
   encodeScanCache,
+  isReusableCachedFile,
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -31,7 +32,13 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
 function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][]): ScanCache {
   const cache: ScanCache = new Map();
   for (const [path, mtimeMs, records] of entries) {
-    cache.set(path, { size: records.length * 10, mtimeMs, provider: "claude", records });
+    cache.set(path, {
+      size: records.length * 10,
+      mtimeMs,
+      provider: "claude",
+      completeFromMs: null,
+      records,
+    });
   }
   return cache;
 }
@@ -60,7 +67,13 @@ describe("scan cache round trip", () => {
     const original: ScanCache = new Map([
       [
         "/home/user/.zcode/cli/db/db.sqlite",
-        { size: 42, mtimeMs: 200, provider: "zcode", records: [zcodeRecord] },
+        {
+          size: 42,
+          mtimeMs: 200,
+          provider: "zcode",
+          completeFromMs: 1_786_000_000_000,
+          records: [zcodeRecord],
+        },
       ],
     ]);
 
@@ -68,6 +81,32 @@ describe("scan cache round trip", () => {
 
     expect(restored.get("/home/user/.zcode/cli/db/db.sqlite")).toEqual(
       original.get("/home/user/.zcode/cli/db/db.sqlite"),
+    );
+  });
+
+  it("drops a ZCode entry whose coverage bound is missing", () => {
+    const zcodeRecord = record({ provider: "zcode", dedupeKey: "usage-row-1" });
+    const encoded = encodeScanCache(
+      new Map([
+        [
+          "/db.sqlite",
+          {
+            size: 42,
+            mtimeMs: 200,
+            provider: "zcode" as const,
+            completeFromMs: 1_786_000_000_000,
+            records: [zcodeRecord],
+          },
+        ],
+      ]),
+    );
+    const withoutCoverage = {
+      ...encoded,
+      files: { "/db.sqlite": { ...encoded.files["/db.sqlite"]!, c: undefined } },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(withoutCoverage))).has("/db.sqlite")).toBe(
+      false,
     );
   });
 
@@ -126,6 +165,35 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
     expect(restored.has("/a.jsonl")).toBe(false);
+  });
+});
+
+describe("isReusableCachedFile", () => {
+  const zcodeEntry = {
+    size: 42,
+    mtimeMs: 200,
+    provider: "zcode" as const,
+    completeFromMs: 1_000,
+    records: [record({ provider: "zcode" })],
+  };
+  const fingerprint = { size: 42, mtimeMs: 200, provider: "zcode" as const };
+
+  it("reuses a broad ZCode read for a narrower window", () => {
+    expect(isReusableCachedFile(zcodeEntry, fingerprint, 2_000)).toBe(true);
+  });
+
+  it("re-reads ZCode when the requested window starts before cached coverage", () => {
+    expect(isReusableCachedFile(zcodeEntry, fingerprint, 500)).toBe(false);
+  });
+
+  it("always reuses a matching whole-file transcript", () => {
+    expect(
+      isReusableCachedFile(
+        { ...zcodeEntry, provider: "claude", completeFromMs: null },
+        { ...fingerprint, provider: "claude" },
+        0,
+      ),
+    ).toBe(true);
   });
 });
 

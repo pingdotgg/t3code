@@ -97,7 +97,7 @@ describe("readTranscriptRecords for zcode", () => {
       expect(records).toEqual([
         {
           provider: "zcode",
-          timestampMs: 1_786_000_002_500,
+          timestampMs: 1_786_000_000_000,
           model: "kimi-k3",
           sessionId: "session-a",
           totals: {
@@ -116,7 +116,7 @@ describe("readTranscriptRecords for zcode", () => {
     }
   });
 
-  it("counts only completed attempts and falls back to started_at", async () => {
+  it("counts only completed attempts and timestamps them by started_at", async () => {
     const { dbPath, cleanup } = createZcodeDb([
       { id: "row-failed", status: "failed", outputTokens: 10 },
       { id: "row-running", status: "running", outputTokens: 10 },
@@ -134,6 +134,41 @@ describe("readTranscriptRecords for zcode", () => {
       expect(records).toHaveLength(1);
       expect(records?.[0]?.dedupeKey).toBe("row-done");
       expect(records?.[0]?.timestampMs).toBe(1_786_000_004_000);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("reads only rows inside the requested prefilter window", async () => {
+    const { dbPath, cleanup } = createZcodeDb([
+      {
+        id: "row-before-cutoff",
+        startedAt: 1_785_999_999_000,
+        completedAt: 1_785_999_999_500,
+        outputTokens: 10,
+      },
+      { id: "row-at-cutoff", startedAt: 1_786_000_000_000, outputTokens: 20 },
+    ]);
+    try {
+      const records = await readTranscriptRecords(dbPath, "zcode", 1_786_000_000_000);
+
+      expect(records?.map((record) => record.dedupeKey)).toEqual(["row-at-cutoff"]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("uses started_at as the cutoff even when completion crosses it", async () => {
+    const { dbPath, cleanup } = createZcodeDb([
+      {
+        id: "row-crossing-cutoff",
+        startedAt: 1_785_999_999_999,
+        completedAt: 1_786_000_000_001,
+        outputTokens: 10,
+      },
+    ]);
+    try {
+      expect(await readTranscriptRecords(dbPath, "zcode", 1_786_000_000_000)).toEqual([]);
     } finally {
       cleanup();
     }

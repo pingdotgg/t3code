@@ -49,6 +49,7 @@ import {
   decodeScanCache,
   dedupeWithinFile,
   encodeScanCache,
+  isReusableCachedFile,
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -106,6 +107,17 @@ export class UsageService extends Context.Service<
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
+
+export function summarizeSourceReadFailures(
+  totalFiles: number,
+  failedFiles: number,
+): Pick<UsageSource, "status" | "message"> {
+  if (failedFiles === 0) return { status: "ok", message: null };
+  return {
+    status: failedFiles === totalFiles ? "failed" : "partial",
+    message: `${failedFiles} usage file${failedFiles === 1 ? "" : "s"} could not be read.`,
+  };
+}
 
 /** Empty summary, for suites that only need the RPC surface to resolve. */
 export const layerTest = Layer.succeed(
@@ -284,37 +296,35 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-    readSinceMs: number,
-  ): Effect.Effect<{
-    readonly records: readonly UsageRecord[];
-    readonly failed: boolean;
-  }> =>
+    zcodeSinceMs: number,
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
       // at one directory, a hit parsed by the other parser must not be reused.
-      if (
-        cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
-        cached.provider === provider
-      ) {
-        return { records: cached.records, failed: false };
+      if (cached && isReusableCachedFile(cached, { size, mtimeMs, provider }, zcodeSinceMs)) {
+        return cached.records;
       }
 
       const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, provider, readSinceMs),
+        readTranscriptRecords(filePath, provider, zcodeSinceMs),
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return { records: [], failed: true };
+      if (parsed === null) return null;
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
+      fileCache.set(filePath, {
+        size,
+        mtimeMs,
+        provider,
+        completeFromMs: provider === "zcode" ? zcodeSinceMs : null,
+        records,
+      });
       cacheDirty = true;
-      return { records, failed: false };
+      return records;
     });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
@@ -351,10 +361,6 @@ export const make = Effect.gen(function* () {
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    // A request may start just before the retained window and complete inside
-    // it. Reuse the file-mtime boundary slack so the indexed ZCode query keeps
-    // that request while remaining bounded.
-    const retainedReadStartMs = retentionCutoffMs - MTIME_SLACK_MS;
     yield* ensureRates();
     yield* ensureScanCacheLoaded;
 
@@ -416,26 +422,24 @@ export const make = Effect.gen(function* () {
       );
       let scannedFiles = 0;
       let skippedFiles = 0;
-      let readFailures = 0;
+      let failedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
       for (const file of files) {
         livePaths.add(file.path);
-        const result = yield* readFileRecords(
+        const records = yield* readFileRecords(
           file.path,
           file.size,
           file.mtimeMs,
           provider,
-          retainedReadStartMs,
+          windowStartMs,
         );
-        if (result.failed) {
-          readFailures += 1;
-          skippedFiles += 1;
+        if (records === null) {
+          failedFiles += 1;
           continue;
         }
-        const { records } = result;
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -450,21 +454,15 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      const status =
-        readFailures === 0 ? "ok" : readFailures === files.length ? "failed" : "partial";
+      const readHealth = summarizeSourceReadFailures(files.length, failedFiles);
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status,
+        status: readHealth.status,
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message:
-          status === "ok"
-            ? null
-            : status === "failed"
-              ? "Usage files could not be read."
-              : "Some usage files could not be read.",
+        message: readHealth.message,
       });
     }
 

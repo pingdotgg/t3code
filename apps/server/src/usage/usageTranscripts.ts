@@ -314,13 +314,14 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
  * Maps one row of ZCode's `model_usage` sqlite table to a usage record.
  *
  * Each row is one model request attempt; only `completed` attempts carried
- * real traffic. `completed_at` stamps the record, falling back to
- * `started_at`. ZCode stores no cost, so pricing falls to the rate table.
+ * real traffic. `started_at` stamps the record so the indexed SQLite window
+ * prefilter and the aggregator use the same boundary. ZCode stores no cost, so
+ * pricing falls to the rate table.
  */
 export function parseZcodeUsageRow(row: Record<string, unknown>): UsageRecord | null {
   if (row["status"] !== "completed") return null;
 
-  const timestampMs = int(row["completed_at"]) || int(row["started_at"]);
+  const timestampMs = int(row["started_at"]);
   if (timestampMs === 0) return null;
 
   const model = typeof row["model_id"] === "string" ? row["model_id"] : "";
