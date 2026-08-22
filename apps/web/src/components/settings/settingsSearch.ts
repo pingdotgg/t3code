@@ -163,6 +163,25 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "thread-completion-notifications",
+    title: "Completion notifications",
+    to: "/settings/general",
+  },
+  {
+    id: "thread-completion-notification-sound",
+    title: "Notification sound",
+    to: "/settings/general",
+    // Its row only exists once notifications are on; the toggle that turns
+    // them on is the stable destination.
+    targetId: "thread-completion-notifications",
+  },
+  {
+    id: "thread-completion-notification-volume",
+    title: "Notification volume",
+    to: "/settings/general",
+    targetId: "thread-completion-notifications",
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/general",

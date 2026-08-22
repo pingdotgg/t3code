@@ -23,15 +23,18 @@ import {
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
+  MAX_NOTIFICATION_VOLUME,
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
+  MIN_NOTIFICATION_VOLUME,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_TERMINAL_FONT_SIZE,
+  type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -64,6 +67,12 @@ import {
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import {
+  type NotificationPermissionState,
+  showNotification,
+  useNotificationPermission,
+} from "../../notificationPermission";
+import { playNotificationChime, primeNotificationChime } from "../../notificationChime";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -1786,6 +1795,199 @@ function LegacyFeaturesSection() {
   );
 }
 
+const NOTIFICATION_PERMISSION_STATUS: Partial<Record<NotificationPermissionState, string>> = {
+  default: "Notification permission was reset. Use Test to ask for it again.",
+  denied:
+    "Notifications are blocked for this site. Allow them in your browser's site settings to turn this on.",
+  unsupported: "This browser cannot show system notifications.",
+};
+
+function ThreadCompletionNotificationVolumeRow({
+  volume,
+  updateSettings,
+}: {
+  volume: number;
+  updateSettings: ReturnType<typeof useUpdatePrimarySettings>;
+}) {
+  const previewTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
+    },
+    [],
+  );
+
+  const volumeRatio =
+    (volume - MIN_NOTIFICATION_VOLUME) / (MAX_NOTIFICATION_VOLUME - MIN_NOTIFICATION_VOLUME);
+  const volumeSliderStyle = {
+    "--settings-slider-progress": `${volumeRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - volumeRatio}rem`,
+  } as CSSProperties;
+
+  return (
+    <SettingsRow
+      {...searchableSetting("thread-completion-notification-volume")}
+      description="Set the volume of the completion notification chime."
+      control={
+        <div className="flex w-full items-center gap-3 sm:w-52">
+          <output
+            className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+            htmlFor="thread-completion-notification-volume-slider"
+          >
+            {volume}%
+          </output>
+          <input
+            aria-label="Notification volume"
+            className="settings-slider min-w-0 flex-1"
+            id="thread-completion-notification-volume-slider"
+            max={MAX_NOTIFICATION_VOLUME}
+            min={MIN_NOTIFICATION_VOLUME}
+            onChange={(event) => {
+              const nextVolume = Number(event.currentTarget.value);
+              if (
+                !Number.isInteger(nextVolume) ||
+                nextVolume < MIN_NOTIFICATION_VOLUME ||
+                nextVolume > MAX_NOTIFICATION_VOLUME
+              ) {
+                return;
+              }
+
+              primeNotificationChime();
+              updateSettings({ threadCompletionNotificationVolume: nextVolume });
+              if (previewTimerRef.current !== null) {
+                window.clearTimeout(previewTimerRef.current);
+              }
+              previewTimerRef.current = window.setTimeout(() => {
+                previewTimerRef.current = null;
+                playNotificationChime(nextVolume);
+              }, 400);
+            }}
+            step={10}
+            style={volumeSliderStyle}
+            type="range"
+            value={volume}
+          />
+        </div>
+      }
+    />
+  );
+}
+
+function ThreadCompletionNotificationRows({
+  settings,
+  updateSettings,
+}: {
+  settings: UnifiedSettings;
+  updateSettings: ReturnType<typeof useUpdatePrimarySettings>;
+}) {
+  const { permission, request } = useNotificationPermission();
+  const enabled = settings.threadCompletionNotifications;
+
+  // The stored preference is what the switch reflects, so a permission the
+  // user revokes later still leaves them a switch they can turn off.
+  const enable = useCallback(() => {
+    if (permission === "denied" || permission === "unsupported") return;
+    // Synchronously, while the click is still the current task: an audio
+    // context created after awaiting the permission prompt starts suspended
+    // and stays that way.
+    if (settings.threadCompletionNotificationSound) {
+      primeNotificationChime();
+    }
+    void request().then((next) => {
+      if (next === "granted") {
+        updateSettings({ threadCompletionNotifications: true });
+      }
+    });
+  }, [permission, request, settings.threadCompletionNotificationSound, updateSettings]);
+
+  const testNotification = useCallback(() => {
+    const soundEnabled = settings.threadCompletionNotificationSound;
+    if (soundEnabled) {
+      primeNotificationChime();
+    }
+
+    void (async () => {
+      const nextPermission = permission === "granted" ? permission : await request();
+      if (nextPermission !== "granted") return;
+
+      const delivered = showNotification({
+        title: "Test notification",
+        body: "Notifications are working.",
+        tag: "t3code-thread-complete:test",
+      });
+      if (delivered && soundEnabled) {
+        playNotificationChime(settings.threadCompletionNotificationVolume);
+      }
+    })();
+  }, [
+    permission,
+    request,
+    settings.threadCompletionNotificationSound,
+    settings.threadCompletionNotificationVolume,
+  ]);
+
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("thread-completion-notifications")}
+        description="Show a system notification when a thread finishes its turn. Only fires while T3 Code is open in a tab."
+        status={
+          enabled || permission === "denied" || permission === "unsupported"
+            ? NOTIFICATION_PERMISSION_STATUS[permission]
+            : null
+        }
+        control={
+          <div className="flex items-center gap-2">
+            {enabled ? (
+              <Button type="button" size="xs" variant="outline" onClick={testNotification}>
+                Test
+              </Button>
+            ) : null}
+            <Switch
+              checked={enabled}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  enable();
+                  return;
+                }
+                updateSettings({ threadCompletionNotifications: false });
+              }}
+              aria-label="Thread completion notifications"
+            />
+          </div>
+        }
+      />
+
+      {enabled ? (
+        <SettingsRow
+          {...searchableSetting("thread-completion-notification-sound")}
+          description="Play a short chime with each completion notification."
+          control={
+            <Switch
+              checked={settings.threadCompletionNotificationSound}
+              onCheckedChange={(checked) => {
+                const next = Boolean(checked);
+                if (next) {
+                  primeNotificationChime();
+                }
+                updateSettings({ threadCompletionNotificationSound: next });
+              }}
+              aria-label="Thread completion notification sound"
+            />
+          }
+        />
+      ) : null}
+
+      {enabled && settings.threadCompletionNotificationSound ? (
+        <ThreadCompletionNotificationVolumeRow
+          volume={settings.threadCompletionNotificationVolume}
+          updateSettings={updateSettings}
+        />
+      ) : null}
+    </>
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -2278,6 +2480,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <ThreadCompletionNotificationRows settings={settings} updateSettings={updateSettings} />
 
         {isElectron ? (
           <SettingsRow
