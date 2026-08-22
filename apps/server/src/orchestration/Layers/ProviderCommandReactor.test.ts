@@ -30,7 +30,7 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { it as effectIt } from "@effect/vitest";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -99,6 +99,20 @@ describe("ProviderCommandReactor", () => {
   let scope: Scope.Closeable | null = null;
   const createdStateDirs = new Set<string>();
   const createdBaseDirs = new Set<string>();
+  // Per-run workspace dirs so concurrent test runs don't race on the same path.
+  // The reactor's existence guard checks these before starting a provider session.
+  let workspaceRoot = "";
+  let workspaceWorktree = "";
+
+  beforeAll(() => {
+    workspaceRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-ws-"));
+    workspaceWorktree = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-wt-"));
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(workspaceRoot, { recursive: true, force: true });
+    NodeFS.rmSync(workspaceWorktree, { recursive: true, force: true });
+  });
 
   afterEach(async () => {
     if (scope) {
@@ -145,6 +159,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly workspaceRoot?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -429,7 +444,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
+        workspaceRoot: input?.workspaceRoot ?? workspaceRoot,
         defaultModelSelection: modelSelection,
         createdAt: now,
       }),
@@ -537,7 +552,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      cwd: "/tmp/provider-project",
+      cwd: workspaceRoot,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
@@ -662,6 +677,44 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("rejects a turn when the workspace directory no longer exists", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ workspaceRoot: "/tmp/t3code-definitely-missing-" + process.pid }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-missing-workspace"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-workspace"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+              ?.status === "error"
+          );
+        }),
+      );
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session?.lastError).toContain("no longer exists");
+      expect(harness.startSession).not.toHaveBeenCalled();
+    }),
+  );
+
   it("generates a thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -775,7 +828,7 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
     expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
-      cwd: "/tmp/provider-project",
+      cwd: workspaceRoot,
       previousTitle: "Investigate reconnect regressions",
       message: [
         "USER:",
@@ -1466,7 +1519,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
         branch: "t3code/1234abcd",
-        worktreePath: "/tmp/provider-project-worktree",
+        worktreePath: workspaceWorktree,
       }),
     );
 
@@ -1507,7 +1560,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
       message: "Add a safer reconnect backoff.",
     });
-    expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+    expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe(workspaceWorktree);
   });
 
   it("forwards codex model options through session start and turn send", async () => {
@@ -2000,7 +2053,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      cwd: "/tmp/provider-project",
+      cwd: workspaceRoot,
     });
 
     await Effect.runPromise(
@@ -2008,7 +2061,7 @@ describe("ProviderCommandReactor", () => {
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-worktree-change"),
         threadId: ThreadId.make("thread-1"),
-        worktreePath: "/tmp/provider-project-worktree",
+        worktreePath: workspaceWorktree,
       }),
     );
 
@@ -2034,7 +2087,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession.mock.calls.length).toBe(0);
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
-      cwd: "/tmp/provider-project-worktree",
+      cwd: workspaceWorktree,
       resumeCursor: { opaque: "resume-1" },
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -2567,7 +2620,7 @@ describe("ProviderCommandReactor", () => {
       status: "ready",
       runtimeMode: "approval-required",
       threadId: ThreadId.make("thread-1"),
-      cwd: "/tmp/provider-project",
+      cwd: workspaceRoot,
       resumeCursor: { opaque: "resume-without-instance" },
       createdAt: now,
       updatedAt: now,
