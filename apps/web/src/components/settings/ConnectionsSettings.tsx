@@ -1520,7 +1520,11 @@ function SavedBackendListRow({
                   switchingRouteEnvironmentId !== null || removingEnvironmentId === environmentId
                 }
               >
-                <SelectValue>{connectionRouteLabel(environment.entry)}</SelectValue>
+                <SelectValue>
+                  {switchingRouteEnvironmentId === environmentId
+                    ? "Switching…"
+                    : connectionRouteLabel(environment.entry)}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {routes.map((route) => (
