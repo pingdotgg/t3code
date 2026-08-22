@@ -1002,9 +1002,23 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
+  const composerDraft = useComposerDraftStore((store) => {
+    if (draftId) {
+      return store.getComposerDraft(draftId);
+    }
+    if (activeThreadRef) {
+      return store.getComposerDraft(activeThreadRef);
+    }
+    return null;
+  });
   const activeServerThread = useThread(activeThreadRef, {
     waitForShell: activeDraftThread !== null,
   });
+  const threadModelSelection =
+    activeServerThread?.modelSelection ??
+    (composerDraft?.activeProvider
+      ? composerDraft.modelSelectionByProvider[composerDraft.activeProvider]
+      : undefined);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1410,6 +1424,7 @@ export default function GitActionsControl({
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(threadModelSelection ? { modelSelection: threadModelSelection } : {}),
         onProgress: applyProgressEvent,
       });
 
