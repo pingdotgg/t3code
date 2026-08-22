@@ -12,6 +12,7 @@ import type {
 import { cn } from "../../lib/utils";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "./providerDriverMeta";
@@ -24,6 +25,8 @@ export interface ProviderSettingsFieldModel {
   readonly placeholder?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   readonly defaultBooleanValue?: boolean | undefined;
+  readonly defaultValue?: string | undefined;
+  readonly options?: ReadonlyArray<{ readonly value: string; readonly label: string }> | undefined;
 }
 
 function titleizeFieldKey(key: string): string {
@@ -69,6 +72,14 @@ function readFieldBooleanDefault(
   return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
 }
 
+function readFieldStringDefault(
+  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
+): string | undefined {
+  const decodeDefault = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
+  const decoded = decodeDefault(undefined);
+  return Option.isSome(decoded) && typeof decoded.value === "string" ? decoded.value : undefined;
+}
+
 export function deriveProviderSettingsFields(
   definition: ProviderClientDefinition,
 ): ReadonlyArray<ProviderSettingsFieldModel> {
@@ -105,7 +116,10 @@ export function deriveProviderSettingsFields(
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
-            : {}),
+            : formAnnotation.control === "select"
+              ? { defaultValue: readFieldStringDefault(fieldSchema) }
+              : {}),
+          ...(formAnnotation.options !== undefined ? { options: formAnnotation.options } : {}),
         } satisfies ProviderSettingsFieldModel,
       ];
     });
@@ -146,7 +160,11 @@ export function nextProviderConfigWithFieldValue(
   }
 
   const trimmed = value.trim();
-  if (field.clearWhenEmpty === "omit" && trimmed.length === 0) {
+  const isDefault =
+    field.clearWhenEmpty === "omit" &&
+    field.defaultValue !== undefined &&
+    trimmed === field.defaultValue;
+  if (field.clearWhenEmpty === "omit" && (trimmed.length === 0 || isDefault)) {
     delete base[field.key];
   } else {
     base[field.key] = value;
@@ -180,7 +198,7 @@ interface ProviderSettingsFieldRowProps {
   readonly onChange: ProviderSettingsFormProps["onChange"];
 }
 
-function ProviderSettingsFieldRow({
+export function ProviderSettingsFieldRow({
   field,
   value,
   idPrefix,
@@ -234,6 +252,43 @@ function ProviderSettingsFieldRow({
           />
           {description}
         </label>
+      </FieldFrame>
+    );
+  }
+
+  if (field.control === "select") {
+    const currentValue = readProviderConfigString(value, field.key) || (field.defaultValue ?? "");
+    const selectedOption = field.options?.find((option) => option.value === currentValue);
+    return (
+      <FieldFrame variant={variant}>
+        <div className={cn(variant === "card" && "block")}>
+          {label}
+          <Select
+            value={currentValue}
+            onValueChange={(next) => {
+              if (next === null) return;
+              onChange(nextProviderConfigWithFieldValue(value, field, next));
+            }}
+          >
+            <SelectTrigger
+              id={inputId}
+              className={cn(variant === "card" && "mt-1.5")}
+              aria-label={field.label}
+            >
+              <SelectValue placeholder={field.placeholder ?? field.label}>
+                {selectedOption?.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              {field.options?.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+          {description}
+        </div>
       </FieldFrame>
     );
   }

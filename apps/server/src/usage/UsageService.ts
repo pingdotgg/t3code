@@ -15,6 +15,8 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
+  type DevinSettings,
+  type ServerSettings as ContractServerSettings,
   type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
@@ -37,6 +39,7 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { resolveDevinUsageTranscriptDirectory } from "../provider/Drivers/DevinHome.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -85,6 +88,39 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+
+type DevinHomeConfig = Pick<DevinSettings, "homePath">;
+type DevinTranscriptSettings = Pick<ContractServerSettings, "providers" | "providerInstances">;
+
+const toDevinHomeConfig = (config: unknown): DevinHomeConfig => {
+  if (
+    typeof config === "object" &&
+    config !== null &&
+    "homePath" in config &&
+    typeof config.homePath === "string"
+  ) {
+    return { homePath: config.homePath };
+  }
+  return { homePath: "" };
+};
+
+export const resolveDevinTranscriptDirs = Effect.fn("UsageService.resolveDevinTranscriptDirs")(
+  function* (settings: DevinTranscriptSettings) {
+    const devinHome = yield* resolveDevinUsageTranscriptDirectory(settings.providers.devin);
+    const dirs = [devinHome];
+    const seen = new Set(dirs);
+
+    for (const instance of Object.values(settings.providerInstances)) {
+      if (instance.driver !== "devin") continue;
+      const dir = yield* resolveDevinUsageTranscriptDirectory(toDevinHomeConfig(instance.config));
+      if (seen.has(dir)) continue;
+      seen.add(dir);
+      dirs.push(dir);
+    }
+
+    return dirs;
+  },
+);
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -218,10 +254,17 @@ export const make = Effect.gen(function* () {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const devinDirs = yield* resolveDevinTranscriptDirs(settings).pipe(
+      Effect.provideService(Path.Path, path),
+    );
 
     return [
       { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      {
+        provider: "codex" as const,
+        dir: path.join(codexLayout.sharedHomePath, "sessions"),
+      },
+      ...devinDirs.map((dir) => ({ provider: "devin" as const, dir })),
     ];
   });
 

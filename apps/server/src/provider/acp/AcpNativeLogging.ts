@@ -16,7 +16,10 @@ function structuralMethod(value: string): string {
 function summarizePayload(payload: unknown): Readonly<Record<string, unknown>> {
   if (payload === null) return { valueType: "null" };
   if (typeof payload === "string") {
-    return { valueType: "string", byteLength: new TextEncoder().encode(payload).byteLength };
+    return {
+      valueType: "string",
+      byteLength: new TextEncoder().encode(payload).byteLength,
+    };
   }
   if (payload instanceof Uint8Array) {
     return { valueType: "bytes", byteLength: payload.byteLength };

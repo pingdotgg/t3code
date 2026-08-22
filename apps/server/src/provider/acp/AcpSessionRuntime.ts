@@ -69,6 +69,14 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId: string;
+  /**
+   * Controls whether T3 invokes the ACP `authenticate` method during startup.
+   * Agents backed by a persistent CLI profile can defer it until the first
+   * provider-classified authentication failure.
+   */
+  readonly authenticationMode?: "when-advertised" | "on-demand";
+  /** Identifies the provider-specific error that should trigger one on-demand auth retry. */
+  readonly isAuthenticationFailure?: (error: EffectAcpErrors.AcpError) => boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -266,6 +274,15 @@ interface EnsureActiveAssistantSegmentResult {
   readonly startedEvent?: Extract<AcpParsedSessionEvent, { readonly _tag: "AssistantItemStarted" }>;
 }
 
+function isRetainableSessionStartupState(
+  notification: EffectAcpSchema.SessionNotification,
+): boolean {
+  return (
+    notification.update.sessionUpdate === "available_commands_update" ||
+    notification.update.sessionUpdate === "config_option_update"
+  );
+}
+
 export const make = (
   options: AcpSessionRuntimeOptions,
 ): Effect.Effect<
@@ -289,9 +306,17 @@ export const make = (
           }),
       ),
     );
-    const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
+    const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({
+      nextSegmentIndex: 0,
+    });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
-    const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const startStateRef = yield* Ref.make<AcpStartState>({
+      _tag: "NotStarted",
+    });
+    const pendingStartupUpdatesRef = yield* Ref.make<
+      ReadonlyArray<EffectAcpSchema.SessionNotification>
+    >([]);
+    const startupUpdateSemaphore = yield* Semaphore.make(1);
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
@@ -367,41 +392,53 @@ export const make = (
 
     const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
 
+    const projectSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
+      handleSessionUpdate({
+        queue: eventQueue,
+        modeStateRef,
+        toolCallsRef,
+        assistantSegmentRef,
+        assistantItemRuntimeId,
+        params: notification,
+      });
+
     yield* acp.handleSessionUpdate((notification) =>
-      Effect.gen(function* () {
-        const gate = yield* Ref.get(sessionLoadGateRef);
-        if (Option.isSome(gate) && gate.value.active) {
-          const lastActivityAtMillis = yield* Clock.currentTimeMillis;
-          yield* Ref.set(
-            sessionLoadGateRef,
-            Option.some({
-              ...gate.value,
-              lastActivityAtMillis,
-            }),
-          );
-          return;
-        }
-        if (sessionUpdateIsReplay(notification)) {
-          return;
-        }
-        const startState = yield* Ref.get(startStateRef);
-        // One runtime projects one root ACP session. Child-session updates need
-        // explicit lineage routing and must never be flattened into this stream.
-        if (
-          startState._tag !== "Started" ||
-          notification.sessionId !== startState.result.sessionId
-        ) {
-          return;
-        }
-        yield* handleSessionUpdate({
-          queue: eventQueue,
-          modeStateRef,
-          toolCallsRef,
-          assistantSegmentRef,
-          assistantItemRuntimeId,
-          params: notification,
-        });
-      }),
+      startupUpdateSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const gate = yield* Ref.get(sessionLoadGateRef);
+          const retainStartupState = isRetainableSessionStartupState(notification);
+          if (Option.isSome(gate) && gate.value.active) {
+            const lastActivityAtMillis = yield* Clock.currentTimeMillis;
+            yield* Ref.set(
+              sessionLoadGateRef,
+              Option.some({
+                ...gate.value,
+                lastActivityAtMillis,
+              }),
+            );
+            if (!retainStartupState) {
+              return;
+            }
+          }
+          if (sessionUpdateIsReplay(notification) && !retainStartupState) {
+            return;
+          }
+          const startState = yield* Ref.get(startStateRef);
+          if (startState._tag === "Starting") {
+            yield* Ref.update(pendingStartupUpdatesRef, (updates) => [...updates, notification]);
+            return;
+          }
+          // One runtime projects one root ACP session. Child-session updates need
+          // explicit lineage routing and must never be flattened into this stream.
+          if (
+            startState._tag !== "Started" ||
+            notification.sessionId !== startState.result.sessionId
+          ) {
+            return;
+          }
+          yield* projectSessionUpdate(notification);
+        }),
+      ),
     );
     const initializeClientCapabilities = {
       fs: {
@@ -528,6 +565,35 @@ export const make = (
         ),
       );
 
+    const authenticateWithAdvertisedMethod = (
+      initializeResult: EffectAcpSchema.InitializeResponse,
+    ): Effect.Effect<void, EffectAcpErrors.AcpError> =>
+      Effect.gen(function* () {
+        const authMethods = initializeResult.authMethods ?? [];
+        const requestedAuthMethodId = options.authMethodId;
+        const authMethod = authMethods.find((method) => method.id === requestedAuthMethodId);
+        if (authMethod === undefined) {
+          return yield* new EffectAcpErrors.AcpRequestError({
+            code: -32602,
+            errorMessage: `Authentication method '${requestedAuthMethodId}' is not advertised by the agent. Available methods: ${authMethods.map((method) => method.id).join(", ")}`,
+            data: {
+              requestedAuthMethodId,
+              availableAuthMethodIds: authMethods.map((method) => method.id),
+            },
+          });
+        }
+
+        const authenticatePayload = {
+          methodId: authMethod.id,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
+
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      });
+
     const startOnce = Effect.gen(function* () {
       const initializePayload = {
         protocolVersion: 1,
@@ -541,15 +607,10 @@ export const make = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
-
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+      const authMethods = initializeResult.authMethods ?? [];
+      if (authMethods.length > 0 && options.authenticationMode !== "on-demand") {
+        yield* authenticateWithAdvertisedMethod(initializeResult);
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -671,13 +732,25 @@ export const make = (
             return [
               startOnce.pipe(
                 Effect.tap((result) =>
-                  Ref.set(startStateRef, { _tag: "Started", result }).pipe(
-                    Effect.andThen(Deferred.succeed(deferred, result)),
+                  startupUpdateSemaphore.withPermits(1)(
+                    Effect.gen(function* () {
+                      const pendingUpdates = yield* Ref.getAndSet(pendingStartupUpdatesRef, []);
+                      yield* Ref.set(startStateRef, { _tag: "Started", result });
+                      for (const notification of pendingUpdates) {
+                        if (notification.sessionId === result.sessionId) {
+                          yield* projectSessionUpdate(notification);
+                        }
+                      }
+                      yield* Deferred.succeed(deferred, result);
+                    }),
                   ),
                 ),
                 Effect.onError((cause) =>
-                  Deferred.failCause(deferred, cause).pipe(
-                    Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+                  startupUpdateSemaphore.withPermits(1)(
+                    Ref.set(pendingStartupUpdatesRef, []).pipe(
+                      Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+                      Effect.andThen(Deferred.failCause(deferred, cause)),
+                    ),
                   ),
                 ),
               ),
@@ -731,11 +804,20 @@ export const make = (
             const cancelledResponse = {
               stopReason: "cancelled",
             } satisfies EffectAcpSchema.PromptResponse;
-            const promptRpcFiber = yield* runLoggedRequest(
-              "session/prompt",
-              requestPayload,
-              acp.agent.prompt(requestPayload),
-            ).pipe(Effect.forkIn(runtimeScope));
+            const runPrompt = () =>
+              runLoggedRequest("session/prompt", requestPayload, acp.agent.prompt(requestPayload));
+            const promptRpcFiber = yield* runPrompt().pipe(
+              Effect.catchIf(
+                (error) =>
+                  options.authenticationMode === "on-demand" &&
+                  options.isAuthenticationFailure?.(error) === true,
+                () =>
+                  authenticateWithAdvertisedMethod(started.initializeResult).pipe(
+                    Effect.andThen(runPrompt),
+                  ),
+              ),
+              Effect.forkIn(runtimeScope),
+            );
             yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
             return yield* Fiber.join(promptRpcFiber).pipe(
               Effect.catchCause((cause) =>

@@ -5,10 +5,16 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import type { ServerProviderSlashCommand, ToolLifecycleItemType } from "@t3tools/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finiteNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const int = Math.floor(value);
+  return int >= 0 ? int : undefined;
 }
 
 function isSessionModelState(value: unknown): value is EffectAcpSchema.SessionModelState {
@@ -86,6 +92,22 @@ export type AcpParsedSessionEvent =
       readonly modeId: string;
     }
   | {
+      readonly _tag: "AvailableCommandsChanged";
+      readonly commands: ReadonlyArray<ServerProviderSlashCommand>;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "ConfigOptionsChanged";
+      readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "SessionInfoChanged";
+      readonly title: string | undefined;
+      readonly updatedAt: string | undefined;
+      readonly rawPayload: unknown;
+    }
+  | {
       readonly _tag: "AssistantItemStarted";
       readonly itemId: string;
     }
@@ -108,6 +130,16 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly used: number;
+      readonly size: number;
+      readonly cost: number | null;
+      readonly inputTokens: number | undefined;
+      readonly outputTokens: number | undefined;
+      readonly cachedReadTokens: number | undefined;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -120,11 +152,22 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
+export const MODEL_CONFIG_OPTION_IDS = new Set(["model", "models", "modelid", "modelids"]);
+
+export function isModelConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
+  if (option.category === "model") return true;
+  const id = option.id
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  return MODEL_CONFIG_OPTION_IDS.has(id);
+}
+
 export function extractModelConfigId(sessionResponse: AcpSessionSetupResponse): string | undefined {
   const configOptions = sessionResponse.configOptions;
   if (!configOptions) return undefined;
   for (const opt of configOptions) {
-    if (opt.category === "model" && opt.id.trim().length > 0) {
+    if (isModelConfigOption(opt) && opt.id.trim().length > 0) {
       return opt.id.trim();
     }
   }
@@ -514,6 +557,39 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
   let modeId: string | undefined;
 
   switch (upd.sessionUpdate) {
+    case "available_commands_update": {
+      const commands: Array<ServerProviderSlashCommand> = [];
+      const seenNames = new Set<string>();
+      for (const availableCommand of upd.availableCommands) {
+        const name = availableCommand.name.trim().replace(/^\/+/, "");
+        const normalizedName = name.toLowerCase();
+        if (!name || seenNames.has(normalizedName)) {
+          continue;
+        }
+        seenNames.add(normalizedName);
+        const description = availableCommand.description.trim() || undefined;
+        const inputHint = availableCommand.input?.hint.trim() || undefined;
+        commands.push({
+          name,
+          ...(description ? { description } : {}),
+          ...(inputHint ? { input: { hint: inputHint } } : {}),
+        });
+      }
+      events.push({
+        _tag: "AvailableCommandsChanged",
+        commands,
+        rawPayload: params,
+      });
+      break;
+    }
+    case "config_option_update": {
+      events.push({
+        _tag: "ConfigOptionsChanged",
+        configOptions: upd.configOptions,
+        rawPayload: params,
+      });
+      break;
+    }
     case "current_mode_update": {
       modeId = upd.currentModeId.trim();
       if (modeId) {
@@ -522,6 +598,15 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           modeId,
         });
       }
+      break;
+    }
+    case "session_info_update": {
+      events.push({
+        _tag: "SessionInfoChanged",
+        title: upd.title?.trim() || undefined,
+        updatedAt: upd.updatedAt?.trim() || undefined,
+        rawPayload: params,
+      });
       break;
     }
     case "plan": {
@@ -572,6 +657,20 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           rawPayload: params,
         });
       }
+      break;
+    }
+    case "usage_update": {
+      const meta = isRecord(upd._meta) ? upd._meta : {};
+      events.push({
+        _tag: "UsageUpdated",
+        used: finiteNonNegativeInteger(upd.used) ?? 0,
+        size: finiteNonNegativeInteger(upd.size) ?? 0,
+        cost: upd.cost && typeof upd.cost.amount === "number" ? upd.cost.amount : null,
+        inputTokens: finiteNonNegativeInteger(meta["cognition.ai/inputTokens"]),
+        outputTokens: finiteNonNegativeInteger(meta["cognition.ai/outputTokens"]),
+        cachedReadTokens: finiteNonNegativeInteger(meta["cognition.ai/cachedReadTokens"]),
+        rawPayload: params,
+      });
       break;
     }
     default:

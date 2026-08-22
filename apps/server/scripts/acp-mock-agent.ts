@@ -21,9 +21,14 @@ const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
+const emitStartupCommands = process.env.T3_ACP_EMIT_STARTUP_COMMANDS === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
+const emitDelayedCompactCompletion = process.env.T3_ACP_EMIT_DELAYED_COMPACT_COMPLETION === "1";
+const delayedCompactCompletionMs = Number(
+  process.env.T3_ACP_DELAYED_COMPACT_COMPLETION_MS ?? "1500",
+);
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
@@ -36,10 +41,22 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const requireAuthenticationForPrompt = process.env.T3_ACP_REQUIRE_AUTHENTICATION_FOR_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const advertisedAuthMethods = (() => {
+  const raw = process.env.T3_ACP_AUTH_METHODS;
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw) as ReadonlyArray<AcpSchema.AuthMethod>;
+  } catch {
+    return undefined;
+  }
+})();
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -54,6 +71,7 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let authenticated = false;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
 
@@ -77,6 +95,19 @@ function logExit(reason: string): void {
 
 function writeJsonRpcNotification(method: string, params: unknown): void {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+}
+
+function availableCommandsUpdate(targetSessionId: string): AcpSchema.SessionNotification {
+  return {
+    sessionId: targetSessionId,
+    update: {
+      sessionUpdate: "available_commands_update",
+      availableCommands: [
+        { name: "compact", description: "Compact the conversation" },
+        { name: "context", description: "Show context usage" },
+      ],
+    },
+  };
 }
 
 process.once("SIGTERM", () => {
@@ -218,7 +249,10 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         { value: "default", name: "Auto" },
         { value: "composer-2", name: "Composer 2" },
         { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
-        { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
+        {
+          value: "gpt-5.3-codex[reasoning=medium,fast=false]",
+          name: "Codex 5.3",
+        },
       ],
     },
   ];
@@ -303,18 +337,29 @@ const program = Effect.gen(function* () {
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
+        ...(advertisedAuthMethods !== undefined ? { authMethods: advertisedAuthMethods } : {}),
       };
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  yield* agent.handleAuthenticate(() =>
+    Effect.sync(() => {
+      authenticated = true;
+      return {};
+    }),
+  );
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (emitStartupCommands) {
+        yield* agent.client.sessionUpdate(availableCommandsUpdate(sessionId));
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
@@ -345,6 +390,9 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
+      }
+      if (emitStartupCommands) {
+        yield* agent.client.sessionUpdate(availableCommandsUpdate(requestedSessionId));
       }
       if (hangLoadSessionAfterReplay || delayLoadSessionAfterReplay) {
         emitLoadReplayNotifications(requestedSessionId);
@@ -463,6 +511,44 @@ const program = Effect.gen(function* () {
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (requireAuthenticationForPrompt && !authenticated) {
+        return yield* AcpError.AcpRequestError.internalError(
+          "Authentication failed: Please authenticate to continue. Run `/login` to log in.",
+        );
+      }
+
+      if (emitDelayedCompactCompletion) {
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Compacting context…" },
+          },
+        });
+        yield* Effect.gen(function* () {
+          yield* Effect.sleep(
+            `${Number.isFinite(delayedCompactCompletionMs) ? delayedCompactCompletionMs : 1500} millis`,
+          );
+          yield* Effect.sync(() => {
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Context comp" },
+              },
+            });
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "acted" },
+              },
+            });
+          });
+        }).pipe(Effect.forkDetach);
+        return { stopReason: "end_turn" };
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
@@ -674,13 +760,21 @@ const program = Effect.gen(function* () {
             ],
           },
           options: [
-            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+            {
+              optionId: permissionOptionIds.allowOnce,
+              name: "Allow once",
+              kind: "allow_once",
+            },
             {
               optionId: permissionOptionIds.allowAlways,
               name: "Allow always",
               kind: "allow_always",
             },
-            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+            {
+              optionId: permissionOptionIds.rejectOnce,
+              name: "Reject",
+              kind: "reject_once",
+            },
           ],
         });
 
@@ -784,7 +878,10 @@ const program = Effect.gen(function* () {
                 question: "Which scope should Grok use?",
                 multiSelect: null,
                 options: [
-                  { label: "Workspace", description: "Use the current workspace" },
+                  {
+                    label: "Workspace",
+                    description: "Use the current workspace",
+                  },
                   { label: "Session", description: "Only use this session" },
                 ],
               },
@@ -869,7 +966,10 @@ const program = Effect.gen(function* () {
         sessionId: requestedSessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: promptResponseText ?? "hello from mock" },
+          content: {
+            type: "text",
+            text: promptResponseText ?? "hello from mock",
+          },
         },
       });
 

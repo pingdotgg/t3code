@@ -85,6 +85,40 @@ export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<Provide
   }
 }
 
+export const ProviderProbeStage = Schema.Literals(["models-list"]);
+export type ProviderProbeStage = typeof ProviderProbeStage.Type;
+
+export const ProviderProbeFailureKind = Schema.Literals([
+  "exit-code-failure",
+  "unparseable-output",
+]);
+export type ProviderProbeFailureKind = typeof ProviderProbeFailureKind.Type;
+
+/**
+ * ProviderProbeError - A provider probe or discovery command failed.
+ */
+export class ProviderProbeError extends Schema.TaggedErrorClass<ProviderProbeError>()(
+  "ProviderProbeError",
+  {
+    provider: Schema.String,
+    stage: ProviderProbeStage,
+    failureKind: ProviderProbeFailureKind,
+    exitCode: Schema.optional(Schema.Number),
+    detail: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    const detail =
+      this.failureKind === "exit-code-failure"
+        ? `command failed with exit code ${this.exitCode ?? "unknown"}`
+        : this.failureKind === "unparseable-output"
+          ? "command output could not be parsed into models"
+          : "probe failed";
+    return `Provider probe error (${this.provider}) in ${this.stage}: ${detail}`;
+  }
+}
+
 /**
  * ProviderValidationError - Invalid provider API input.
  */

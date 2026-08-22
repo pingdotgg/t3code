@@ -98,6 +98,7 @@ export function ProviderModelsSection({
   onModelOrderChange,
 }: ProviderModelsSectionProps) {
   const [input, setInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
@@ -109,6 +110,17 @@ export function ProviderModelsSection({
       modelOrder,
     });
   }, [favoriteModelSet, modelOrder, models]);
+
+  const filteredModels = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return orderedModels;
+    return orderedModels.filter(
+      (model) =>
+        model.slug.toLowerCase().includes(query) || model.name.toLowerCase().includes(query),
+    );
+  }, [orderedModels, searchQuery]);
+
+  const isFiltering = searchQuery.trim().length > 0;
 
   const handleAdd = () => {
     const normalized = normalizeCustomModelSlug(input);
@@ -190,18 +202,34 @@ export function ProviderModelsSection({
       <div className="mt-1 text-xs text-muted-foreground">
         {models.length} model{models.length === 1 ? "" : "s"} available.
       </div>
+      <Input
+        value={searchQuery}
+        onChange={(event) => setSearchQuery(event.target.value)}
+        placeholder="Search models..."
+        aria-label="Search models"
+        className="mt-2"
+        spellCheck={false}
+      />
       <div ref={listRef} className="mt-2 max-h-40 overflow-y-auto pb-1">
-        {orderedModels.map((model, index) => {
+        {isFiltering && filteredModels.length === 0 ? (
+          <div className="py-1 text-xs text-muted-foreground">No models match your search.</div>
+        ) : null}
+        {filteredModels.map((model) => {
           const caps = model.capabilities;
           const capLabels: string[] = [];
           const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
           const isFavorite = favoriteModelSet.has(model.slug);
-          const previousModel = orderedModels[index - 1];
-          const nextModel = orderedModels[index + 1];
+          const orderedIndex = orderedModels.findIndex((ordered) => ordered.slug === model.slug);
+          const previousModel = orderedModels[orderedIndex - 1];
+          const nextModel = orderedModels[orderedIndex + 1];
           const canMoveUp =
-            previousModel !== undefined && favoriteModelSet.has(previousModel.slug) === isFavorite;
+            !isFiltering &&
+            previousModel !== undefined &&
+            favoriteModelSet.has(previousModel.slug) === isFavorite;
           const canMoveDown =
-            nextModel !== undefined && favoriteModelSet.has(nextModel.slug) === isFavorite;
+            !isFiltering &&
+            nextModel !== undefined &&
+            favoriteModelSet.has(nextModel.slug) === isFavorite;
           const descriptors = caps?.optionDescriptors ?? [];
           if (descriptors.some((descriptor) => descriptor.id === "fastMode")) {
             capLabels.push("Fast mode");
@@ -221,7 +249,10 @@ export function ProviderModelsSection({
           ) {
             capLabels.push("Reasoning");
           }
-          const hasDetails = capLabels.length > 0 || model.name !== model.slug;
+          const hasDetails =
+            capLabels.length > 0 ||
+            model.name !== model.slug ||
+            (model.description != null && model.description.length > 0);
 
           return (
             <div
@@ -257,6 +288,9 @@ export function ProviderModelsSection({
                     <TooltipPopup side="top" className="max-w-56">
                       <div className="space-y-1">
                         <code className="block text-[11px] text-foreground">{model.slug}</code>
+                        {model.description ? (
+                          <p className="text-[11px] text-muted-foreground">{model.description}</p>
+                        ) : null}
                         {capLabels.length > 0 ? (
                           <div className="flex flex-wrap gap-x-2 gap-y-0.5">
                             {capLabels.map((label) => (

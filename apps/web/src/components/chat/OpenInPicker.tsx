@@ -21,6 +21,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu
 import {
   AntigravityIcon,
   CursorIcon,
+  DevinIcon,
   Icon,
   KiroIcon,
   TraeIcon,
@@ -60,6 +61,12 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       label: "Cursor",
       Icon: CursorIcon,
       value: "cursor",
+      kind: "brand",
+    },
+    {
+      label: "Devin Desktop",
+      Icon: DevinIcon,
+      value: "devin",
       kind: "brand",
     },
     {

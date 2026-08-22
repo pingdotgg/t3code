@@ -1,5 +1,5 @@
 import {
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
   ServerProvider as ServerProviderSchema,
@@ -57,9 +57,11 @@ export const hydrateCachedProvider = (input: {
   }
 
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
+
+  const merged = mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models);
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
-    models: mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models),
+    models: merged,
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,

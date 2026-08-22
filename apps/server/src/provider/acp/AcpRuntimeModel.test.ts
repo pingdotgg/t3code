@@ -273,6 +273,95 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("projects and normalizes ACP available commands", () => {
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update" as const,
+        availableCommands: [
+          {
+            name: " /compact ",
+            description: " Compact the active context ",
+          },
+          {
+            name: "review",
+            description: " Review a target ",
+            input: { hint: " [path] " },
+          },
+          {
+            name: "COMPACT",
+            description: "duplicate",
+          },
+          {
+            name: "  ",
+            description: "invalid",
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(notification).events).toEqual([
+      {
+        _tag: "AvailableCommandsChanged",
+        commands: [
+          {
+            name: "compact",
+            description: "Compact the active context",
+          },
+          {
+            name: "review",
+            description: "Review a target",
+            input: { hint: "[path]" },
+          },
+        ],
+        rawPayload: notification,
+      },
+    ]);
+  });
+
+  it("projects ACP config and session-info updates", () => {
+    const configNotification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "config_option_update" as const,
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model" as const,
+            type: "select" as const,
+            currentValue: "gpt-5-6-sol-medium",
+            options: [{ value: "gpt-5-6-sol-medium", name: "GPT-5.6 Sol Medium" }],
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    const infoNotification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "session_info_update" as const,
+        title: " Hardened session ",
+        updatedAt: " 2026-08-19T02:00:00Z ",
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(configNotification).events).toEqual([
+      {
+        _tag: "ConfigOptionsChanged",
+        configOptions: configNotification.update.configOptions,
+        rawPayload: configNotification,
+      },
+    ]);
+    expect(parseSessionUpdateEvent(infoNotification).events).toEqual([
+      {
+        _tag: "SessionInfoChanged",
+        title: "Hardened session",
+        updatedAt: "2026-08-19T02:00:00Z",
+        rawPayload: infoNotification,
+      },
+    ]);
+  });
+
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",
@@ -299,7 +388,11 @@ describe("AcpRuntimeModel", () => {
           update: {
             sessionUpdate: "plan",
             entries: [
-              { content: " Inspect state ", priority: "high", status: "completed" },
+              {
+                content: " Inspect state ",
+                priority: "high",
+                status: "completed",
+              },
               { content: "", priority: "medium", status: "in_progress" },
             ],
           },
@@ -373,5 +466,46 @@ describe("AcpRuntimeModel", () => {
         command: "cat package.json",
       },
     });
+  });
+
+  it("projects ACP usage_update notifications into runtime events", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 21776,
+        size: 262000,
+        _meta: {
+          "cognition.ai/inputTokens": 21687,
+          "cognition.ai/outputTokens": 89,
+          "cognition.ai/cachedReadTokens": 448,
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        used: 21776,
+        size: 262000,
+        cost: null,
+        inputTokens: 21687,
+        outputTokens: 89,
+        cachedReadTokens: 448,
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 21776,
+            size: 262000,
+            _meta: {
+              "cognition.ai/inputTokens": 21687,
+              "cognition.ai/outputTokens": 89,
+              "cognition.ai/cachedReadTokens": 448,
+            },
+          },
+        },
+      },
+    ]);
   });
 });
