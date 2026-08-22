@@ -115,9 +115,11 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import { isHostWindows } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import * as BoundedChildProcessSpawner from "./cli/boundedChildProcessSpawner.ts";
 import { forkParked, ServerActivation } from "./serverActivation.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
@@ -229,13 +231,17 @@ const HttpServerLive = Layer.unwrap(
 
 const PlatformServicesLive = Layer.unwrap(
   Effect.gen(function* () {
-    if (typeof Bun !== "undefined") {
-      const { layer } = yield* Effect.promise(() => import("@effect/platform-bun/BunServices"));
-      return layer;
-    } else {
-      const { layer } = yield* Effect.promise(() => import("@effect/platform-node/NodeServices"));
-      return layer;
+    const isWindows = yield* isHostWindows;
+    const platformServices =
+      typeof Bun !== "undefined"
+        ? yield* Effect.promise(() => import("@effect/platform-bun/BunServices"))
+        : yield* Effect.promise(() => import("@effect/platform-node/NodeServices"));
+
+    if (isWindows) {
+      return BoundedChildProcessSpawner.layer().pipe(Layer.provideMerge(platformServices.layer));
     }
+
+    return platformServices.layer;
   }),
 );
 
