@@ -34,7 +34,9 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
@@ -42,6 +44,7 @@ import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
+  readOpenCodeRecords,
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
@@ -197,6 +200,38 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
+  /**
+   * OpenCode keeps its transcripts in a SQLite database under its XDG data
+   * home — `XDG_DATA_HOME/opencode` or `~/.local/share/opencode` on every
+   * platform, macOS included (the CLI resolves through `xdg-basedir`, which
+   * never uses `~/Library/Application Support`).
+   *
+   * Overrides mirror the CLI: an absolute `OPENCODE_DB` is the database file
+   * itself, and a relative `OPENCODE_DB` names a database inside the data
+   * home. Channel builds other than latest/beta/prod write
+   * `opencode-<channel>.db`; we cannot observe the channel from here, so a dev
+   * install's database is only found through `OPENCODE_DB`.
+   */
+  const resolveOpenCodeDatabasePath = Effect.fn("UsageService.resolveOpenCodeDatabasePath")(
+    function* () {
+      const env = yield* HostProcessEnvironment;
+      const dataHome = path.join(
+        env["XDG_DATA_HOME"]?.trim() || path.join(NodeOS.homedir(), ".local", "share"),
+        "opencode",
+      );
+      const dbOverride = env["OPENCODE_DB"]?.trim();
+      if (dbOverride !== undefined && dbOverride.length > 0) {
+        // The CLI treats the value verbatim, but spawned processes get no
+        // shell expansion, so `OPENCODE_DB=~/...` would be read as relative;
+        // expand a leading `~` before the absolute check.
+        const expanded = expandHomePath(dbOverride);
+        if (expanded === ":memory:" || path.isAbsolute(expanded)) return expanded;
+        return path.join(dataHome, expanded);
+      }
+      return path.join(dataHome, "opencode.db");
+    },
+  );
+
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
@@ -218,10 +253,12 @@ export const make = Effect.gen(function* () {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const openCodeDbPath = yield* resolveOpenCodeDatabasePath();
 
     return [
       { provider: "claude" as const, dir: claudeDir },
       { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "opencode" as const, dir: openCodeDbPath },
     ];
   });
 
@@ -257,18 +294,35 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** Parses one transcript, reusing the cached result when it is unchanged. */
+  /**
+   * Parses one transcript, reusing the cached result when it is unchanged.
+   *
+   * The `(size, mtime)` identity assumes a file's contents are
+   * window-independent, which holds for the per-session JSONL transcripts.
+   * OpenCode's source is one SQLite database queried with a window filter, so a
+   * cached entry only ever covers the window it was scanned for and a wider
+   * window would silently reuse it. The scalar-only windowed query is fast
+   * enough that the cache buys nothing, so OpenCode always scans fresh.
+   */
   const readFileRecords = (
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+    windowStartMs?: number,
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
+      if (provider === "opencode") {
+        // A read failure is not an empty transcript: returning null lets the
+        // caller report the source as failed instead of zero usage.
+        return yield* Effect.promise(() => readOpenCodeRecords(filePath, windowStartMs ?? 0));
+      }
+
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
       // at one directory, a hit parsed by the other parser must not be reused.
       if (
+        mtimeMs !== 0 &&
         cached &&
         cached.size === size &&
         cached.mtimeMs === mtimeMs &&
@@ -285,8 +339,10 @@ export const make = Effect.gen(function* () {
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
-      cacheDirty = true;
+      if (mtimeMs !== 0) {
+        fileCache.set(filePath, { size, mtimeMs, provider, records });
+        cacheDirty = true;
+      }
       return records;
     });
 
@@ -372,6 +428,55 @@ export const make = Effect.gen(function* () {
         continue;
       }
 
+      if (provider === "opencode") {
+        // The whole source is one database. Registering the file as live and
+        // its parent as a walked root lets the prune pass evict any entry an
+        // earlier version cached under a narrower window (a stale hit would
+        // silently cap the visible history at that first window).
+        livePaths.add(dir);
+        walkedRoots.push(path.dirname(dir));
+        const stats = yield* fileSystem.stat(dir).pipe(
+          Effect.map((info) => ({
+            size: Number(info.size),
+            mtimeMs: Option.match(info.mtime, {
+              onNone: () => 0,
+              onSome: (mtime) => mtime.getTime(),
+            }),
+          })),
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+
+        const records = yield* readFileRecords(
+          dir,
+          stats?.size ?? 0,
+          stats?.mtimeMs ?? 0,
+          provider,
+          windowStartMs,
+        );
+        const failed = stats === null || records === null;
+        const scanned = records ?? [];
+        // Distinct per database. Buckets carry per-cell session counts, but a
+        // session spans days and models, so clients total this figure instead.
+        const sessionIds = new Set<string>();
+        for (const record of scanned) {
+          // Only sessions that contributed in-window count: the query slack
+          // admits boundary rows whose timestamps fall outside the range.
+          if (aggregator.add(record) && record.sessionId.length > 0) {
+            sessionIds.add(record.sessionId);
+          }
+        }
+        sources.push({
+          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+          status: failed ? "failed" : "ok",
+          scannedFiles: scanned.length > 0 ? 1 : 0,
+          skippedFiles: scanned.length > 0 ? 0 : 1,
+          malformedRecords: 0,
+          distinctSessions: sessionIds.size,
+          message: failed ? "Transcript database could not be read." : null,
+        });
+        continue;
+      }
+
       walkedRoots.push(dir);
       const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
       let scannedFiles = 0;
@@ -383,7 +488,8 @@ export const make = Effect.gen(function* () {
       for (const file of files) {
         livePaths.add(file.path);
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        if (records.length === 0) {
+        // A failed read is not an empty file: it is neither scanned nor cached.
+        if (records === null || records.length === 0) {
           skippedFiles += 1;
           continue;
         }

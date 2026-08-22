@@ -4,6 +4,7 @@ import {
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseOpenCodeUsageRow,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -233,6 +234,90 @@ describe("parseCodexLine", () => {
       );
       expect(record).not.toBeNull();
     });
+  });
+});
+
+describe("parseOpenCodeUsageRow", () => {
+  /** Shaped after the scalar row the reader's SQL projects out of `data`. */
+  function openCodeRow(overrides: {
+    messageId?: string | null;
+    sessionId?: string;
+    /** The assistant turn's completed timestamp, not its creation time. */
+    timestampMs?: number | null;
+    modelId?: string | null;
+    inputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    costUsd?: number;
+  }): Record<string, unknown> {
+    return {
+      messageId: overrides.messageId === null ? undefined : (overrides.messageId ?? "msg_1"),
+      sessionId: overrides.sessionId ?? "ses_3a6c0a5d3ffeg7BPjptjftbHYs",
+      timestampMs:
+        overrides.timestampMs === null ? undefined : (overrides.timestampMs ?? 1771023853436),
+      modelId: overrides.modelId === null ? undefined : (overrides.modelId ?? "gpt-5.2-codex"),
+      inputTokens: overrides.inputTokens ?? 486,
+      outputTokens: overrides.outputTokens ?? 220,
+      reasoningTokens: overrides.reasoningTokens ?? 0,
+      cacheReadTokens: overrides.cacheReadTokens ?? 8448,
+      cacheWriteTokens: overrides.cacheWriteTokens ?? 0,
+      costUsd: overrides.costUsd ?? 0,
+    };
+  }
+
+  it("extracts token totals from an assistant usage row", () => {
+    const record = parseOpenCodeUsageRow(openCodeRow({ messageId: "msg_1", reasoningTokens: 40 }));
+
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("opencode");
+    expect(record?.model).toBe("gpt-5.2-codex");
+    expect(record?.sessionId).toBe("ses_3a6c0a5d3ffeg7BPjptjftbHYs");
+    expect(record?.timestampMs).toBe(1771023853436);
+    // OpenCode's input is exclusive of the cached portions.
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 486,
+      cachedInputTokens: 8448,
+      cacheCreationTokens: 0,
+      outputTokens: 220,
+      reasoningTokens: 40,
+    });
+    expect(record?.dedupeKey).toBe("msg_1");
+  });
+
+  it("trusts a positive reported cost, and reprices a zero one", () => {
+    // OpenCode prices tokens against its own rate table, which covers curated
+    // and subscription-served models LiteLLM does not know; the figure is
+    // API-equivalent arithmetic, not plan billing.
+    const priced = parseOpenCodeUsageRow(openCodeRow({ costUsd: 0.023 }));
+    expect(priced?.reportedCostUsd).toBe(0.023);
+
+    // Subscription-backed providers leave cost at 0; those fall back to the
+    // LiteLLM rate table like Codex.
+    const subscription = parseOpenCodeUsageRow(openCodeRow({ costUsd: 0 }));
+    expect(subscription?.reportedCostUsd).toBeNull();
+  });
+
+  it("caps reasoning at output", () => {
+    const record = parseOpenCodeUsageRow(openCodeRow({ outputTokens: 10, reasoningTokens: 99 }));
+    expect(record?.totals.reasoningTokens).toBe(10);
+  });
+
+  it("ignores rows without a timestamp, model, or tokens", () => {
+    expect(parseOpenCodeUsageRow(openCodeRow({ timestampMs: null }))).toBeNull();
+    expect(parseOpenCodeUsageRow(openCodeRow({ modelId: null }))).toBeNull();
+    expect(
+      parseOpenCodeUsageRow(
+        openCodeRow({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("survives a missing message id with a null dedupe key", () => {
+    const record = parseOpenCodeUsageRow(openCodeRow({ messageId: null }));
+    expect(record).not.toBeNull();
+    expect(record?.dedupeKey).toBeNull();
   });
 });
 

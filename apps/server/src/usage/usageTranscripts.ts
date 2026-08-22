@@ -68,7 +68,8 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  if (provider === "claude") return line.includes('"usage"');
+  return line.includes('"token_count"');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -294,6 +295,78 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
     dedupeKey: null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* OpenCode                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One usage row out of OpenCode's SQLite transcript store.
+ *
+ * The reader selects only these scalars via `json_extract`; message content
+ * never leaves the database.
+ */
+export interface OpenCodeUsageRow {
+  readonly messageId?: unknown;
+  readonly sessionId?: unknown;
+  readonly timestampMs?: unknown;
+  readonly modelId?: unknown;
+  readonly inputTokens?: unknown;
+  readonly outputTokens?: unknown;
+  readonly reasoningTokens?: unknown;
+  readonly cacheReadTokens?: unknown;
+  readonly cacheWriteTokens?: unknown;
+  readonly costUsd?: unknown;
+}
+
+/**
+ * Projects one OpenCode usage row into a usage record.
+ *
+ * OpenCode moved its transcripts into `~/.local/share/opencode/opencode.db`,
+ * with one row per message. The timestamp is the assistant turn's completion
+ * time, so usage is attributed to when the work finished. `input` is exclusive
+ * of the cached portions and `reasoning` is a subset of `output`, matching the
+ * shared token convention.
+ * The message `id` is the dedupe key.
+ *
+ * A positive `cost` is trusted: OpenCode prices tokens against its own rate
+ * table, which covers the curated and subscription-served models LiteLLM does
+ * not know, and the figure is API-equivalent arithmetic, not plan billing. A
+ * zero cost (subscription-backed providers leave it at 0) falls back to the
+ * LiteLLM rate table like Codex.
+ */
+export function parseOpenCodeUsageRow(row: OpenCodeUsageRow): UsageRecord | null {
+  const timestampMs =
+    typeof row.timestampMs === "number" && Number.isFinite(row.timestampMs)
+      ? Math.trunc(row.timestampMs)
+      : null;
+  if (timestampMs === null) return null;
+
+  const model = typeof row.modelId === "string" ? row.modelId : "";
+  if (model.length === 0) return null;
+
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: int(row.inputTokens),
+    cachedInputTokens: int(row.cacheReadTokens),
+    cacheCreationTokens: int(row.cacheWriteTokens),
+    outputTokens: int(row.outputTokens),
+    reasoningTokens: Math.min(int(row.outputTokens), int(row.reasoningTokens)),
+  };
+
+  if (totalTokens(totals) === 0) return null;
+
+  const cost = row.costUsd;
+
+  return {
+    provider: "opencode",
+    timestampMs,
+    model,
+    sessionId: typeof row.sessionId === "string" ? row.sessionId : "",
+    totals,
+    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+    dedupeKey: typeof row.messageId === "string" ? row.messageId : null,
   };
 }
 
