@@ -146,6 +146,10 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   // an entry already encodes "no selection for this instance".
   modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
+  // True only when a human picked this selection in the composer. Seeded
+  // selections (project default / sticky) leave it unset so later seeds can
+  // replace them; legacy entries predate the flag and read as seeded too.
+  modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
 });
@@ -274,6 +278,12 @@ export interface ComposerThreadDraftState {
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   /** Routing key of the last picked instance (see `modelSelectionByProvider`). */
   activeProvider: ProviderInstanceId | null;
+  /**
+   * True only when a human picked the active selection in the composer.
+   * Absent/false means seeded (project default / sticky), so later seeds
+   * may replace it. Legacy entries predate the flag and read as seeded.
+   */
+  modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
 }
@@ -434,6 +444,7 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     modelSelection: ModelSelection | null | undefined,
     opts?: {
+      explicit?: boolean;
       /**
        * Replace the stored entry outright instead of preserving its
        * existing options when the incoming selection has none. Used when
@@ -1724,6 +1735,7 @@ function normalizePersistedDraftsByThreadId(
     const legacyDraftCandidate = draftValue as LegacyPersistedComposerThreadDraftState;
     let modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
     let activeProvider: ProviderInstanceId | null = null;
+    let modelSelectionExplicit: true | undefined = undefined;
 
     if (
       draftCandidate.modelSelectionByProvider &&
@@ -1734,6 +1746,7 @@ function normalizePersistedDraftsByThreadId(
         Record<ProviderInstanceId, ModelSelection>
       >;
       activeProvider = normalizeProviderInstanceId(draftCandidate.activeProvider);
+      modelSelectionExplicit = draftCandidate.modelSelectionExplicit === true ? true : undefined;
     } else {
       // v2 or legacy format: migrate
       const normalizedModelOptions =
@@ -1802,6 +1815,7 @@ function normalizePersistedDraftsByThreadId(
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
             activeProvider,
+            ...(modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
           }
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
@@ -1963,6 +1977,7 @@ function partializeComposerDraftStoreState(
               draft.modelSelectionByProvider,
             ),
             activeProvider: draft.activeProvider,
+            ...(draft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
           }
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
@@ -2211,6 +2226,7 @@ function toHydratedThreadDraft(
     reviewComments: persistedDraft.reviewComments?.map((comment) => ({ ...comment })) ?? [],
     modelSelectionByProvider,
     activeProvider,
+    ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
   };
@@ -2745,14 +2761,20 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextActiveProvider = normalized?.instanceId ?? base.activeProvider;
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              base.activeProvider === nextActiveProvider
+              base.activeProvider === nextActiveProvider &&
+              (base.modelSelectionExplicit ?? false) === (opts?.explicit === true)
             ) {
               return state;
             }
+            // Last writer defines intent: picker writes mark the selection
+            // explicit; seeding writes leave it unset so future seeds can
+            // replace it.
+            const { modelSelectionExplicit: _previousExplicit, ...restBase } = base;
             const nextDraft: ComposerThreadDraftState = {
-              ...base,
+              ...restBase,
               modelSelectionByProvider: nextMap,
               activeProvider: nextActiveProvider,
+              ...(opts?.explicit === true ? { modelSelectionExplicit: true as const } : {}),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -2875,10 +2897,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
 
+            // Trait edits are user-driven intent: mark the selection explicit
+            // so later seeds cannot silently replace the chosen options.
+            const { modelSelectionExplicit: _previousExplicit, ...restBase } = base;
             const nextDraft: ComposerThreadDraftState = {
-              ...base,
+              ...restBase,
               ...(options?.instanceId ? { activeProvider: instanceKey } : {}),
               modelSelectionByProvider: nextMap,
+              modelSelectionExplicit: true,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
