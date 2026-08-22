@@ -28,6 +28,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
   Suspense,
+  type CSSProperties,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   isValidElement,
@@ -961,6 +962,23 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
 const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME =
   "h-auto w-auto max-h-[30rem] max-w-[min(100%,30rem)] object-contain";
 
+/**
+ * Applies authored image dimensions as inline pixel sizes on rendered images and
+ * workspace placeholders. Inline styles beat the default auto-sizing utilities,
+ * while their max-width and max-height caps still clamp oversized images.
+ */
+function authoredImageSizeStyle(
+  width: string | number | undefined,
+  height: string | number | undefined,
+): CSSProperties | undefined {
+  const parsedWidth = Number(width);
+  const parsedHeight = Number(height);
+  const style: CSSProperties = {};
+  if (!Number.isNaN(parsedWidth) && parsedWidth > 0) style.width = parsedWidth;
+  if (!Number.isNaN(parsedHeight) && parsedHeight > 0) style.height = parsedHeight;
+  return style.width === undefined && style.height === undefined ? undefined : style;
+}
+
 // block! outranks the unlayered `.chat-markdown img { display: inline-block }`
 // rule, keeping workspace images on the same block layout as their placeholder.
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
@@ -991,6 +1009,7 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   /** The DOM src is signed or absent while loading, so copying uses the authored source. */
   readonly copyMarkdown: string;
   readonly srcFragment: string;
+  readonly style?: CSSProperties | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
     _tag: "workspace-file",
@@ -1009,6 +1028,7 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
         role="status"
         aria-label="Loading image"
         className="my-1 block aspect-video w-full max-w-[30rem] rounded-lg bg-muted/60"
+        style={props.style}
       />
     );
   }
@@ -1021,6 +1041,7 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
       loading="lazy"
       draggable={false}
       className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
+      style={props.style}
       onError={() => setFailedUrl(assetUrl.url)}
     />
   );
@@ -1823,6 +1844,7 @@ function ChatMarkdown({
         const classifiedSrc =
           typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
         const altText = alt ?? "";
+        const authoredSizeStyle = authoredImageSizeStyle(props.width, props.height);
         const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
         if (imageSource._tag === "Direct") {
           return (
@@ -1832,6 +1854,7 @@ function ChatMarkdown({
               alt={altText}
               loading="lazy"
               className={cn(props.className, CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME)}
+              style={authoredSizeStyle}
             />
           );
         }
@@ -1843,6 +1866,7 @@ function ChatMarkdown({
               alt={altText}
               copyMarkdown={`![${altText}](${srcString})`}
               srcFragment={markdownImageSourceFragment(classifiedSrc)}
+              style={authoredSizeStyle}
             />
           );
         }

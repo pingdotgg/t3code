@@ -96,6 +96,12 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("https://signed.test/workspace-image.svg");
   });
 
+  it("honors authored dimensions on raw workspace images", () => {
+    const html = render('<img src=".t3/workspace-image.svg" alt="sized" width="128" height="96">');
+
+    expect(html).toContain('style="width:128px;height:96px"');
+  });
+
   it("uses a static placeholder while a signed asset URL loads", () => {
     testState.assetState = "loading";
 
