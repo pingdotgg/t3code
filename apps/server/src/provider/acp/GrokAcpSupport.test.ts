@@ -5,6 +5,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   applyGrokAcpModelSelection,
+  applyGrokAcpSessionMode,
   buildGrokAcpSpawnInput,
   GROK_REASONING_EFFORT_OPTION_ID,
   grokReasoningEffortCapabilities,
@@ -14,6 +15,7 @@ import {
   advertisedGrokReasoningEffortsForModel,
   requestedGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
+  resolveGrokSessionModeId,
   resolveGrokSessionModelId,
 } from "./GrokAcpSupport.ts";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -376,6 +378,89 @@ describe("applyGrokAcpModelSelection", () => {
         }),
       );
       expect(error).toBe(failure.message);
+    }),
+  );
+});
+
+const grokModes = {
+  currentModeId: "ask",
+  availableModes: [
+    { id: "ask", name: "Ask" },
+    { id: "architect", name: "Architect" },
+    { id: "code", name: "Code" },
+  ],
+};
+
+describe("resolveGrokSessionModeId", () => {
+  it("maps plan onto architect when that is the advertised plan mode", () => {
+    expect(
+      resolveGrokSessionModeId({
+        interactionMode: "plan",
+        runtimeMode: "full-access",
+        modeState: grokModes,
+      }),
+    ).toBe("architect");
+  });
+
+  it("maps default onto code", () => {
+    expect(
+      resolveGrokSessionModeId({
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        modeState: grokModes,
+      }),
+    ).toBe("code");
+  });
+
+  it("leaves the mode alone when the user did not pick one", () => {
+    expect(
+      resolveGrokSessionModeId({
+        interactionMode: undefined,
+        runtimeMode: "full-access",
+        modeState: grokModes,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("applyGrokAcpSessionMode", () => {
+  it.effect("calls setMode when plan is requested", () =>
+    Effect.gen(function* () {
+      const modeCalls: string[] = [];
+      yield* applyGrokAcpSessionMode({
+        runtime: {
+          getModeState: Effect.succeed(grokModes),
+          setMode: (modeId) =>
+            Effect.sync(() => {
+              modeCalls.push(modeId);
+              return {};
+            }),
+        },
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        mapError: (cause) => cause.message,
+      });
+      expect(modeCalls).toEqual(["architect"]);
+    }),
+  );
+
+  it.effect("skips setMode when the session has no matching mode", () =>
+    Effect.gen(function* () {
+      const modeCalls: string[] = [];
+      yield* applyGrokAcpSessionMode({
+        runtime: {
+          getModeState: Effect.succeed(undefined),
+          setMode: (modeId) =>
+            Effect.sync(() => {
+              modeCalls.push(modeId);
+              return {};
+            }),
+        },
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        mapError: (cause) => cause.message,
+      });
+      expect(modeCalls).toEqual([]);
     }),
   );
 });

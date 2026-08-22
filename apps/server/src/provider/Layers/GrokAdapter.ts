@@ -60,6 +60,7 @@ import {
   advertisedGrokReasoningEffortsForModel,
   advertisedGrokReasoningEffortsFromSessionSetup,
   applyGrokAcpModelSelection,
+  applyGrokAcpSessionMode,
   currentGrokMaxTokensFromSessionSetup,
   currentGrokModelIdFromSessionSetup,
   currentGrokReasoningEffortFromSessionSetup,
@@ -1353,6 +1354,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               if (currentModelId) {
                 ctx.maxTokens = ctx.maxTokensByModel.get(currentModelId);
               }
+
+              yield* applyGrokAcpSessionMode({
+                runtime: ctx.acp,
+                runtimeMode: ctx.session.runtimeMode,
+                interactionMode: input.interactionMode,
+                mapError: (cause) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
+              });
 
               const text = input.input?.trim();
               const imagePromptParts = yield* Effect.forEach(

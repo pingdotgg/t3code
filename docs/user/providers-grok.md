@@ -33,6 +33,13 @@ differ by model.
 T3 Code sends the selected effort on the live session. You do not need a new thread to change
 model or effort.
 
+## Plan mode
+
+The composer Plan / Default control is on for Grok. T3 sends `session/set_mode` for the
+matching advertised ACP mode (`plan` / `architect` for Plan, `code` / `agent` for Default).
+ACP `plan` entries already update the turn plan list. `/plan` and `/default` in the composer
+are the same control.
+
 ## Workflows
 
 Grok Build workflows are Rhai scripts that orchestrate child agents as one background run. The
@@ -81,7 +88,6 @@ Settings when ACP login fails.
 
 ## What T3 still does not surface
 
-Grok Build's ACP session channel also carries plan mode, goals, queued prompts, plugins,
-and marketplace updates. Those notifications are accepted and ignored until a later change
-maps them. The Grok CLI TUI remains the source of truth for `/workflows`, `/plan`, and
-`/usage`.
+Grok Build's ACP session channel also carries queued prompts, plugins, and marketplace
+updates. Those notifications are accepted and ignored until a later change maps them. The
+Grok CLI TUI remains the source of truth for `/workflows` and `/usage`.

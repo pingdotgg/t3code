@@ -2,7 +2,9 @@ import {
   type GrokSettings,
   type ModelCapabilities,
   type ModelSelection,
+  type ProviderInteractionMode,
   ProviderDriverKind,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -19,6 +21,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 
+import type { AcpSessionMode, AcpSessionModeState } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
@@ -502,4 +505,103 @@ export function applyGrokAcpModelSelection<E>(input: {
         reasoningEffort: nextEffort,
       }),
     );
+}
+
+const GROK_PLAN_MODE_ALIASES = ["plan", "architect"];
+const GROK_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
+const GROK_APPROVAL_MODE_ALIASES = ["ask"];
+
+function normalizeModeSearchText(mode: AcpSessionMode): string {
+  return `${mode.id} ${mode.name}`.trim().toLowerCase();
+}
+
+function findModeByAliases(
+  modes: ReadonlyArray<AcpSessionMode>,
+  aliases: ReadonlyArray<string>,
+): AcpSessionMode | undefined {
+  const normalizedAliases = aliases.map((alias) => alias.toLowerCase());
+  for (const alias of normalizedAliases) {
+    const exact = modes.find((mode) => {
+      const haystack = normalizeModeSearchText(mode);
+      return haystack === alias || mode.id.toLowerCase() === alias;
+    });
+    if (exact) {
+      return exact;
+    }
+  }
+  for (const alias of normalizedAliases) {
+    const partial = modes.find((mode) => normalizeModeSearchText(mode).includes(alias));
+    if (partial) {
+      return partial;
+    }
+  }
+  return undefined;
+}
+
+function isPlanMode(mode: AcpSessionMode): boolean {
+  return findModeByAliases([mode], GROK_PLAN_MODE_ALIASES) !== undefined;
+}
+
+export function grokSessionAdvertisesPlanMode(modeState: AcpSessionModeState | undefined): boolean {
+  return (
+    modeState !== undefined &&
+    findModeByAliases(modeState.availableModes, GROK_PLAN_MODE_ALIASES) !== undefined
+  );
+}
+
+export function resolveGrokSessionModeId(input: {
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly modeState: AcpSessionModeState | undefined;
+}): string | undefined {
+  const modeState = input.modeState;
+  if (!modeState) {
+    return undefined;
+  }
+
+  if (input.interactionMode === "plan") {
+    return findModeByAliases(modeState.availableModes, GROK_PLAN_MODE_ALIASES)?.id;
+  }
+
+  if (input.runtimeMode === "approval-required") {
+    return (
+      findModeByAliases(modeState.availableModes, GROK_APPROVAL_MODE_ALIASES)?.id ??
+      findModeByAliases(modeState.availableModes, GROK_IMPLEMENT_MODE_ALIASES)?.id ??
+      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+      modeState.currentModeId
+    );
+  }
+
+  if (input.interactionMode !== "default") {
+    return undefined;
+  }
+
+  return (
+    findModeByAliases(modeState.availableModes, GROK_IMPLEMENT_MODE_ALIASES)?.id ??
+    findModeByAliases(modeState.availableModes, GROK_APPROVAL_MODE_ALIASES)?.id ??
+    modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+    modeState.currentModeId
+  );
+}
+
+export function applyGrokAcpSessionMode<E>(input: {
+  readonly runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getModeState" | "setMode"
+  >;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
+}): Effect.Effect<void, E> {
+  return Effect.gen(function* () {
+    const requestedModeId = resolveGrokSessionModeId({
+      interactionMode: input.interactionMode,
+      runtimeMode: input.runtimeMode,
+      modeState: yield* input.runtime.getModeState,
+    });
+    if (!requestedModeId) {
+      return;
+    }
+    yield* input.runtime.setMode(requestedModeId).pipe(Effect.mapError(input.mapError));
+  });
 }

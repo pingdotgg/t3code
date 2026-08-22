@@ -1644,6 +1644,55 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("sends session/set_mode when the turn is in plan mode", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-plan-mode");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-plan-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "plan this change",
+        attachments: [],
+        interactionMode: "plan",
+      });
+
+      yield* waitForFileContent(requestLogPath, 80, "session/prompt");
+      const lines = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const modeRequest = lines
+        .toReversed()
+        .find(
+          (entry) =>
+            entry.method === "session/set_mode" ||
+            (entry.method === "session/set_config_option" &&
+              (entry.params as Record<string, unknown> | undefined)?.configId === "mode"),
+        );
+      assert.isDefined(modeRequest);
+      assert.include(
+        ["architect", "plan"],
+        String(
+          (modeRequest?.params as Record<string, unknown> | undefined)?.modeId ??
+            (modeRequest?.params as Record<string, unknown> | undefined)?.value,
+        ),
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("projects live _x.ai/session/update extras onto existing runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-session-extras");

@@ -40,7 +40,7 @@ import {
 const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
-  showInteractionModeToggle: false,
+  showInteractionModeToggle: true,
   requiresNewThreadForModelChange: false,
 } as const;
 const FALLBACK_CAPABILITIES: ModelCapabilities = fallbackGrokReasoningEffortCapabilities();
