@@ -6,6 +6,7 @@ import type {
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  stripLeadingModelQualifier,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -36,6 +37,15 @@ function providerDisplayLabel(provider: {
   if (provider.driver === "codex") return "Codex";
   if (provider.driver === "claudeAgent") return "Claude";
   return provider.instanceId;
+}
+
+function modelDisplayLabel(model: {
+  readonly name: string;
+  readonly subProvider?: string | undefined;
+}): string {
+  const subProvider = model.subProvider?.trim();
+  const modelName = stripLeadingModelQualifier(model.name, subProvider);
+  return subProvider ? `${modelName} · ${subProvider}` : modelName;
 }
 
 function normalizeSelectionOptions(
@@ -120,7 +130,7 @@ export function buildModelOptions(
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
-        label: model.name,
+        label: modelDisplayLabel(model),
         subtitle: providerLabel,
         providerKey: provider.instanceId,
         providerLabel,

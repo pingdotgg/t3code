@@ -823,7 +823,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             }
             control={
               resolvedSelection && activeEntry ? (
-                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5 sm:max-w-[26rem]">
                   <ProviderModelPicker
                     activeInstanceId={resolvedSelection.instanceId}
                     model={resolvedSelection.model}
@@ -831,7 +831,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     instanceEntries={instanceEntries}
                     modelOptionsByInstance={modelOptionsByInstance}
                     triggerVariant="outline"
-                    triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                    triggerClassName="min-w-0 max-w-full shrink-0 text-foreground/90 hover:text-foreground"
                     onInstanceModelChange={(instanceId, model) => {
                       setDefaultModel(createModelSelection(instanceId, model));
                     }}

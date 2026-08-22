@@ -104,7 +104,7 @@ function ModelRow(props: {
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
       )}
     >
-      <Text className="min-w-0 shrink text-base font-t3-medium text-foreground" numberOfLines={1}>
+      <Text className="min-w-0 shrink text-base font-t3-medium text-foreground">
         {props.option.label}
       </Text>
       {props.option.isDefault ? (
