@@ -188,6 +188,109 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not carry reasoning effort across a start-session model switch", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-start-model-effort-reset");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-start-model-effort-reset-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_INITIAL_GROK_REASONING_EFFORT: "high",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-mock-alt",
+        },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "select the new model effort",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const setModelRequests = requests.filter((entry) => entry.method === "session/set_model");
+      assert.lengthOf(setModelRequests, 2);
+      const [startSelection, turnSelection] = setModelRequests;
+      assert.nestedPropertyVal(startSelection, "params.modelId", "grok-mock-alt");
+      assert.notNestedProperty(startSelection, "params._meta.reasoningEffort");
+      assert.nestedPropertyVal(turnSelection, "params.modelId", "grok-mock-alt");
+      assert.nestedPropertyVal(turnSelection, "params._meta.reasoningEffort", "high");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("clears and reapplies reasoning effort on the same model", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-same-model-effort-clear");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-same-model-effort-clear-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const selection = (effort?: string) => ({
+        instanceId: ProviderInstanceId.make("grok"),
+        model: "grok-build",
+        ...(effort ? { options: [{ id: "reasoningEffort", value: effort }] } : {}),
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: selection(),
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use high effort",
+        attachments: [],
+        modelSelection: selection("high"),
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use the model default",
+        attachments: [],
+        modelSelection: selection(),
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use high effort again",
+        attachments: [],
+        modelSelection: selection("high"),
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const setModelRequests = requests.filter((entry) => entry.method === "session/set_model");
+      assert.lengthOf(setModelRequests, 3);
+      assert.nestedPropertyVal(setModelRequests[0], "params._meta.reasoningEffort", "high");
+      assert.notNestedProperty(setModelRequests[1], "params._meta");
+      assert.nestedPropertyVal(setModelRequests[2], "params._meta.reasoningEffort", "high");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
@@ -273,7 +376,13 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("restores ready without completing an unstarted turn when preparation fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-preparation-failure-while-connecting");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-preparation-failure-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -295,6 +404,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         adapter.sendTurn({
           threadId,
           input: "prepare invalid attachment",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "grok-build",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
           attachments: [
             {
               type: "image",
@@ -321,6 +435,8 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.isUndefined(turnCompletedEvent);
       assert.equal(readySession?.status, "ready");
       assert.isUndefined(readySession?.activeTurnId);
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isFalse(requests.some((entry) => entry.method === "session/set_model"));
 
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
@@ -1018,8 +1134,13 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("rejects sendTurn with empty input and no attachments", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-empty-turn");
-
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-empty-turn-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       yield* adapter.startSession({
@@ -1035,10 +1156,17 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           threadId,
           input: "   ",
           attachments: [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "grok-build",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
         }),
       );
 
       assert.equal(error._tag, "ProviderAdapterValidationError");
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isFalse(requests.some((entry) => entry.method === "session/set_model"));
 
       yield* adapter.stopSession(threadId);
     }),
