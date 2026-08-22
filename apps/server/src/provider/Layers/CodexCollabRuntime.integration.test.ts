@@ -25,6 +25,7 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
+const MEMORY_CHILD = "memory-consolidation-child";
 
 /**
  * The captured sequence, extended with the shapes the live capture didn't
@@ -143,6 +144,473 @@ describe("CodexSessionRuntime collab integration", () => {
         [],
         "child thread/* lifecycle must not appear as parent events",
       );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("suppresses memory-consolidation collab agents", () =>
+    Effect.gen(function* () {
+      const rootThreadStarted = wireFixture.notifications.find(
+        (entry) => entry.method === "thread/started",
+      );
+      assert.isDefined(rootThreadStarted);
+      const memoryThreadStarted = {
+        ...rootThreadStarted,
+        params: {
+          thread: {
+            ...rootThreadStarted.params.thread,
+            id: MEMORY,
+            sessionId: MEMORY,
+            source: "unknown",
+            threadSource: "memory_consolidation",
+          },
+        },
+      };
+      const memorySpawn = {
+        method: "item/completed",
+        params: {
+          threadId: MEMORY,
+          turnId: "memory-consolidation-turn",
+          completedAtMs: 1785898349265,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_memory_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: MEMORY,
+            receiverThreadIds: [MEMORY_CHILD],
+            agentsStates: {
+              [MEMORY_CHILD]: { message: null, status: "running" },
+            },
+            prompt: "Consolidate this memory in the background",
+          },
+        },
+      };
+
+      NodeFS.writeFileSync(
+        scriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          rootThreadId: ROOT,
+          notifications: [memoryThreadStarted, memorySpawn],
+        }),
+        "utf8",
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-memory"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "process memory consolidation" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.deepEqual(
+        events.filter((event) => event.method?.startsWith("collabAgent/")),
+        [],
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("registers spawnAgent receiver threads without v2 metadata", () =>
+    Effect.gen(function* () {
+      const childTraffic = wireFixture.notifications.filter((entry) => {
+        const params = entry.params as {
+          readonly threadId?: unknown;
+          readonly thread?: { readonly id?: unknown };
+        };
+        const threadId =
+          typeof params.threadId === "string"
+            ? params.threadId
+            : typeof params.thread?.id === "string"
+              ? params.thread.id
+              : undefined;
+        return threadId === CHILD_A || threadId === CHILD_B;
+      });
+      const childTrafficWithoutRegistration = childTraffic.filter((entry) => {
+        const item = (entry.params as { readonly item?: { readonly type?: unknown } }).item;
+        return item?.type !== "subAgentActivity";
+      });
+      const rootThreadStarted = wireFixture.notifications.find(
+        (entry) => entry.method === "thread/started",
+      );
+      assert.isDefined(rootThreadStarted);
+      const childThreadStarted = {
+        ...rootThreadStarted,
+        params: {
+          thread: {
+            ...rootThreadStarted.params.thread,
+            id: CHILD_A,
+            sessionId: CHILD_A,
+            parentThreadId: ROOT,
+            source: {},
+            agentNickname: "alpha",
+            agentRole: "reviewer",
+          },
+        },
+      };
+      const spawn = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: "root-spawn-turn",
+          completedAtMs: 1785898349265,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_live_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A, CHILD_B],
+            agentsStates: {
+              [CHILD_A]: { message: null, status: "running" },
+              [CHILD_B]: { message: null, status: "running" },
+            },
+            model: "gpt-5.6-luna",
+            reasoningEffort: "max",
+            prompt: "Audit this work in parallel",
+          },
+        },
+      };
+
+      const childBCompleted = {
+        method: "turn/completed",
+        params: {
+          threadId: CHILD_B,
+          turn: {
+            id: "019fcfd6-2f29-79e3-aa6a-c5836a519d3f",
+            items: [],
+            itemsView: "notLoaded",
+            status: "completed",
+            error: null,
+            startedAt: 1785898348,
+            completedAt: 1785898350,
+            durationMs: 3792,
+          },
+        },
+      };
+
+      // The child traffic is real captured lifecycle data, but this script
+      // deliberately omits thread_spawn and subAgentActivity registration.
+      // The spawnAgent item is the only identity signal.
+      NodeFS.writeFileSync(
+        scriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          rootThreadId: ROOT,
+          notifications: [
+            spawn,
+            childThreadStarted,
+            ...childTrafficWithoutRegistration,
+            childBCompleted,
+          ],
+        }),
+        "utf8",
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-spawn-item"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "fan out from a spawn item" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const startedChildIds = new Set(
+        events
+          .filter((event) => event.method === "collabAgent/started")
+          .map((event) => (event.payload as { agentThreadId?: string }).agentThreadId)
+          .filter((agentThreadId): agentThreadId is string => agentThreadId !== undefined),
+      );
+      assert.deepEqual(startedChildIds, new Set([CHILD_A, CHILD_B]));
+      assert.equal(events.filter((event) => event.method === "collabAgent/started").length, 2);
+      assert.isAtLeast(
+        events.filter((event) => event.method === "collabAgent/turnStarted").length,
+        2,
+      );
+      assert.isAtLeast(
+        events.filter((event) => event.method === "collabAgent/turnCompleted").length,
+        2,
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not register failed spawnAgent attempts", () =>
+    Effect.gen(function* () {
+      const childTraffic = wireFixture.notifications.filter((entry) => {
+        const params = entry.params as { readonly threadId?: unknown };
+        return params.threadId === CHILD_B;
+      });
+      const childTrafficWithoutRegistration = childTraffic.filter((entry) => {
+        const item = (entry.params as { readonly item?: { readonly type?: unknown } }).item;
+        return item?.type !== "subAgentActivity";
+      });
+      const childARegistration = wireFixture.notifications.find((entry) => {
+        const item = (
+          entry.params as {
+            readonly item?: { readonly agentThreadId?: unknown; readonly type?: unknown };
+          }
+        ).item;
+        return item?.type === "subAgentActivity" && item.agentThreadId === CHILD_A;
+      });
+      assert.isDefined(childARegistration);
+      const failedSpawnStarted = {
+        method: "item/started",
+        params: {
+          threadId: ROOT,
+          turnId: "root-failed-spawn-turn",
+          startedAtMs: 1785898349264,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_failed_spawn",
+            tool: "spawnAgent",
+            status: "inProgress",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            agentsStates: {
+              [CHILD_A]: { message: null, status: "pendingInit" },
+            },
+            prompt: "Audit this work",
+          },
+        },
+      };
+      const failedSpawn = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: "root-failed-spawn-turn",
+          completedAtMs: 1785898349265,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_failed_spawn",
+            tool: "spawnAgent",
+            status: "failed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            agentsStates: {
+              [CHILD_A]: { message: "spawn failed", status: "errored" },
+            },
+            prompt: "Audit this work",
+          },
+        },
+      };
+      const partiallyFailedSpawn = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: "root-partial-spawn-turn",
+          completedAtMs: 1785898349266,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_partial_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A, CHILD_B],
+            agentsStates: {
+              [CHILD_A]: { message: "agent failed", status: "errored" },
+              [CHILD_B]: { message: null, status: "running" },
+            },
+            prompt: "Audit this work in parallel",
+          },
+        },
+      };
+      const childBCompleted = {
+        method: "turn/completed",
+        params: {
+          threadId: CHILD_B,
+          turn: {
+            id: "019fcfd6-2f29-79e3-aa6a-c5836a519d3f",
+            items: [],
+            itemsView: "notLoaded",
+            status: "completed",
+            error: null,
+            startedAt: 1785898348,
+            completedAt: 1785898350,
+            durationMs: 3792,
+          },
+        },
+      };
+
+      NodeFS.writeFileSync(
+        scriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          rootThreadId: ROOT,
+          notifications: [
+            childARegistration,
+            failedSpawnStarted,
+            failedSpawn,
+            partiallyFailedSpawn,
+            ...childTrafficWithoutRegistration,
+            childBCompleted,
+          ],
+        }),
+        "utf8",
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-failed-spawn"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "handle failed spawns" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const startedChildIds = events
+        .filter((event) => event.method === "collabAgent/started")
+        .map((event) => (event.payload as { agentThreadId?: string }).agentThreadId)
+        .filter((agentThreadId): agentThreadId is string => agentThreadId !== undefined);
+      assert.deepEqual(startedChildIds, [CHILD_B]);
+      const failedChildStatuses = events.filter(
+        (event) =>
+          event.method === "collabAgent/statusChanged" &&
+          (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+      );
+      assert.equal(failedChildStatuses.length, 1);
+      const failedChildStatus = failedChildStatuses[0];
+      assert.isDefined(failedChildStatus);
+      assert.deepEqual((failedChildStatus.payload as { status?: unknown }).status, {
+        type: "systemError",
+      });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stamps nested spawns with the current parent turn", () =>
+    Effect.gen(function* () {
+      const firstTurnId = "root-parent-turn-1";
+      const secondTurnId = "root-parent-turn-2";
+      const receiverBookkeeping = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: firstTurnId,
+          completedAtMs: 1785898349265,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_receiver_bookkeeping",
+            tool: "wait",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A],
+            agentsStates: {},
+          },
+        },
+      };
+      const nestedSpawn = {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: secondTurnId,
+          completedAtMs: 1785898349266,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_nested_spawn",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: CHILD_A,
+            receiverThreadIds: [CHILD_B],
+            agentsStates: {
+              [CHILD_B]: { message: null, status: "running" },
+            },
+            prompt: "Inspect this nested task",
+          },
+        },
+      };
+
+      NodeFS.writeFileSync(
+        scriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          rootThreadId: ROOT,
+          turnIds: [firstTurnId, secondTurnId],
+          notificationsByTurn: [[receiverBookkeeping], [nestedSpawn]],
+        }),
+        "utf8",
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-nested-spawn"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const firstEventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.method === "turn/completed" && event.turnId === firstTurnId,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "record the first parent turn" });
+      yield* Fiber.join(firstEventsFiber);
+
+      const secondEventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.method === "turn/completed" && event.turnId === secondTurnId,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.sendTurn({ input: "spawn from the nested agent" });
+
+      const secondEvents = Array.from(yield* Fiber.join(secondEventsFiber));
+      const started = secondEvents.find(
+        (event) =>
+          event.method === "collabAgent/started" &&
+          (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
+      );
+      assert.isDefined(started);
+      assert.equal(started.turnId, secondTurnId);
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
