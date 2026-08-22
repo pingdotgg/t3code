@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodePerfHooks from "node:perf_hooks";
-import * as NodeProcess from "node:process";
+import NodeProcess from "node:process";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeURL from "node:url";
 
