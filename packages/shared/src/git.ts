@@ -92,6 +92,42 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
   return branchName.slice(firstSeparatorIndex + 1);
 }
 
+/**
+ * Match a selected ref to the checkout that should back a thread draft.
+ *
+ * Refs already checked out in another worktree are reused. Otherwise the
+ * current checkout is switched in place, except when leaving a secondary
+ * worktree for the default ref, which returns to the main repository.
+ */
+export function resolveBranchSelectionTarget(input: {
+  readonly activeProjectCwd: string;
+  readonly activeWorktreePath: string | null;
+  readonly refName: Pick<VcsRef, "isDefault" | "worktreePath">;
+}): {
+  readonly checkoutCwd: string;
+  readonly nextWorktreePath: string | null;
+  readonly reuseExistingWorktree: boolean;
+} {
+  const { activeProjectCwd, activeWorktreePath, refName } = input;
+
+  if (refName.worktreePath) {
+    return {
+      checkoutCwd: refName.worktreePath,
+      nextWorktreePath: refName.worktreePath === activeProjectCwd ? null : refName.worktreePath,
+      reuseExistingWorktree: true,
+    };
+  }
+
+  const nextWorktreePath =
+    activeWorktreePath !== null && refName.isDefault ? null : activeWorktreePath;
+
+  return {
+    checkoutCwd: nextWorktreePath ?? activeProjectCwd,
+    nextWorktreePath,
+    reuseExistingWorktree: false,
+  };
+}
+
 export function buildTemporaryWorktreeBranchName(
   randomHex: (byteLength: number) => string,
 ): string {

@@ -29,6 +29,15 @@ export const TerminalThreadInput = Schema.Struct({
 });
 export type TerminalThreadInput = typeof TerminalThreadInput.Type;
 
+/**
+ * All terminal identities retained for a thread. This includes live sessions
+ * and persisted terminal histories that have not been attached since restart.
+ */
+export const TerminalListResult = Schema.Struct({
+  terminalIds: Schema.Array(TerminalIdSchema),
+});
+export type TerminalListResult = typeof TerminalListResult.Type;
+
 /** Terminal ids are ALWAYS chosen by the client and sent explicitly — no server-side allocation. */
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,

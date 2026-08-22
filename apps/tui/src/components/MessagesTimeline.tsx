@@ -1,0 +1,983 @@
+import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
+import type { ImagePreview } from "@t3tools/opentui-image";
+import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@t3tools/contracts";
+import { shouldCollapseUserMessage } from "@t3tools/shared/chatMessages";
+import * as React from "react";
+import { useRenderer } from "@opentui/react";
+
+import type { PendingApproval } from "../approvals.ts";
+import {
+  type ContextWindowSnapshot,
+  deriveContextWindow,
+  formatContextWindow,
+} from "../contextWindow.ts";
+import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
+import { clip } from "../format.ts";
+import { fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
+import { deferMouseAction } from "../mouse.ts";
+import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
+import { linkifyTimelineUrls } from "../timelineLinks.ts";
+import { WorkingIndicator } from "./WorkingIndicator.tsx";
+import type { ExpandedImagePreview } from "./ImageLightbox.tsx";
+import { CHAT_CONTENT_MAX_WIDTH } from "./ChatView.layout.ts";
+import {
+  changedFilesByMessage,
+  deriveTimelineEntries,
+  diffStat,
+  type FoldableRow,
+  isWorking,
+  MAX_VISIBLE_WORK_LOG_ENTRIES,
+} from "../timeline.ts";
+import { ansi, type Palette, relativeTime, sessionStatusColor, usePalette } from "../theme.ts";
+import {
+  workLogIcon,
+  workLogLabel,
+  workLogPreview,
+  workLogStatusKind,
+  type WorkLogEntry,
+} from "../worklog.ts";
+
+// The conversation pane (mirrors apps/web/src/components/chat/MessagesTimeline.tsx).
+// A sticky-to-bottom scrollbox interleaving streaming <markdown> messages with the
+// derived work log (tool calls / thinking), each message's changed-files summary,
+// and a live "Working…" indicator while a turn runs.
+
+export const TIMELINE_WINDOW_SIZE = 80;
+
+export function resolveTimelineWindow(
+  rowCount: number,
+  requestedEnd: number | null,
+): { readonly start: number; readonly end: number } {
+  const end = Math.min(rowCount, Math.max(0, requestedEnd ?? rowCount));
+  return { start: Math.max(0, end - TIMELINE_WINDOW_SIZE), end };
+}
+
+function statusLabel(thread: { session: OrchestrationThread["session"] }): string {
+  return thread.session?.status ?? "idle";
+}
+
+/** A compact tool-call / thinking row: icon · label · muted preview · status glyph. */
+function ToolRow({
+  entry,
+  palette,
+  width,
+}: {
+  readonly entry: WorkLogEntry;
+  readonly palette: Palette;
+  readonly width: number;
+}): React.ReactNode {
+  const icon = workLogIcon(entry);
+  const label = workLogLabel(entry);
+  const preview = workLogPreview(entry);
+  const status = workLogStatusKind(entry);
+  const iconColor = entry.tone === "error" ? palette.error : palette.accent;
+  const statusGlyph =
+    status === "success" || status === "failure" || status === "progress"
+      ? STATUS_ICONS[status].glyph
+      : null;
+  const statusColor =
+    status === "success" ? palette.success : status === "failure" ? palette.error : palette.faint;
+  const previewRoom = Math.max(8, width - label.length - 8);
+  return (
+    <text>
+      <span fg={iconColor}>{`${icon} `}</span>
+      <span fg={palette.text}>{label}</span>
+      {statusGlyph ? <span fg={statusColor}>{` ${statusGlyph}`}</span> : null}
+      {preview ? <span fg={palette.dim}>{`  ${clip(preview, previewRoom)}`}</span> : null}
+    </text>
+  );
+}
+
+/**
+ * A group of consecutive tool calls (mirrors the web's WorkGroupSection): only the
+ * most recent MAX_VISIBLE_WORK_LOG_ENTRIES are shown, with a clickable
+ * "+N previous tool calls" expander; clicking reveals the rest ("Show fewer tool
+ * calls"). Each group keeps its own collapse state.
+ */
+function WorkGroupSection({
+  groupedEntries,
+  palette,
+  width,
+}: {
+  readonly groupedEntries: ReadonlyArray<WorkLogEntry>;
+  readonly palette: Palette;
+  readonly width: number;
+}): React.ReactNode {
+  const [expanded, setExpanded] = React.useState(false);
+  if (groupedEntries.length === 0) return null;
+  const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const visibleEntries =
+    hasOverflow && !expanded ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : groupedEntries;
+  const hiddenCount = groupedEntries.length - visibleEntries.length;
+  return (
+    <box flexDirection="column" width={width} marginBottom={1} overflow="hidden">
+      {visibleEntries.map((entry) => (
+        <ToolRow key={entry.id} entry={entry} palette={palette} width={width} />
+      ))}
+      {hasOverflow ? (
+        <box onMouseDown={() => setExpanded((value) => !value)}>
+          <text fg={palette.dim}>
+            {expanded
+              ? "  ⌃ Show fewer tool calls"
+              : `  ⌄ +${hiddenCount} previous tool call${hiddenCount === 1 ? "" : "s"}`}
+          </text>
+        </box>
+      ) : null}
+    </box>
+  );
+}
+
+/** Everything a foldable row needs to paint, threaded through from the timeline. */
+interface RowRenderContext {
+  readonly palette: Palette;
+  readonly width: number;
+  readonly syntaxStyle: SyntaxStyle;
+  readonly mdClient: Record<string, never>;
+  readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
+  readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
+  /** Resolve a message image attachment to a signed URL. */
+  readonly getAttachmentUrl?: (attachmentId: string) => Promise<string | null>;
+  /** Download and decode an attachment after its signed URL resolves. */
+  readonly getAttachmentImage?: (
+    attachmentId: string,
+    resolvedUrl: string,
+  ) => Promise<ImagePreview | null>;
+  readonly inlineImagesSupported: boolean;
+  readonly imageCellWidth: number;
+  readonly imageCellHeight: number;
+  /** Surface a resolved attachment URL (e.g. in the status line) when clicked. */
+  readonly onOpenUrl?: (url: string) => void;
+  /** Open an already-decoded image in the conversation lightbox. */
+  readonly onOpenImage?: (preview: ExpandedImagePreview) => void;
+}
+
+const COLLAPSED_USER_MESSAGE_ROWS = 8;
+
+function CollapsibleUserMessage({
+  rawBody,
+  body,
+  streaming,
+  syntaxStyle,
+  mdClient,
+}: {
+  readonly rawBody: string;
+  readonly body: string;
+  readonly streaming: boolean;
+  readonly syntaxStyle: SyntaxStyle;
+  readonly mdClient: Record<string, never>;
+}): React.ReactNode {
+  const palette = usePalette();
+  const [expanded, setExpanded] = React.useState(false);
+  const canCollapse = shouldCollapseUserMessage(rawBody);
+  const collapsed = canCollapse && !expanded;
+  return (
+    <box flexDirection="column" width="100%">
+      <box
+        width="100%"
+        height={collapsed ? COLLAPSED_USER_MESSAGE_ROWS : "auto"}
+        overflow={collapsed ? "hidden" : "visible"}
+      >
+        <markdown content={body} syntaxStyle={syntaxStyle} streaming={streaming} {...mdClient} />
+      </box>
+      {canCollapse ? (
+        <box onMouseDown={() => setExpanded((value) => !value)}>
+          <text fg={palette.dim}>{expanded ? "⌃ Show less" : "⌄ Show full message"}</text>
+        </box>
+      ) : null}
+    </box>
+  );
+}
+
+// The web bounds conversation previews to a ~206x220px grid cell; terminal
+// cells are chunky, so give the TUI twice that pixel box — still a thumbnail,
+// but readable — and scale down into it (never up).
+const PREVIEW_MAX_WIDTH_PX = 420;
+const PREVIEW_MAX_HEIGHT_PX = 440;
+/** Room the metadata line reserves for its link/state tail. */
+const ATTACHMENT_TAIL_WIDTH = 28;
+
+function attachmentLabel(attachment: {
+  readonly name: string;
+  readonly sizeBytes: number;
+}): string {
+  const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
+  return `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
+}
+
+/**
+ * An image attachment with a Kitty preview when supported. The metadata link
+ * remains visible as a reliable fallback and copy target.
+ */
+function AttachmentPreview({
+  attachment,
+  ctx,
+  maxWidth,
+}: {
+  readonly attachment: { readonly id: string; readonly name: string; readonly sizeBytes: number };
+  readonly ctx: RowRenderContext;
+  /** Clip label and preview to this width instead of the full pane. */
+  readonly maxWidth?: number;
+}): React.ReactNode {
+  const {
+    palette,
+    getAttachmentUrl,
+    getAttachmentImage,
+    inlineImagesSupported,
+    imageCellWidth,
+    imageCellHeight,
+    onOpenUrl,
+    onOpenImage,
+  } = ctx;
+  const width = maxWidth ?? ctx.width;
+  const [link, setLink] = React.useState<"pending" | "failed" | string>(
+    getAttachmentUrl ? "pending" : "failed",
+  );
+  const [image, setImage] = React.useState<ImagePreview | null>(null);
+  React.useEffect(() => {
+    setImage(null);
+    if (!getAttachmentUrl) {
+      setLink("failed");
+      return;
+    }
+    let cancelled = false;
+    setLink("pending");
+    void (async () => {
+      const resolved = await getAttachmentUrl(attachment.id);
+      if (cancelled) return;
+      setLink(resolved ?? "failed");
+      if (!resolved || !inlineImagesSupported || !getAttachmentImage) return;
+      const decoded = await getAttachmentImage(attachment.id, resolved);
+      if (!cancelled) setImage(decoded);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.id, getAttachmentImage, getAttachmentUrl, inlineImagesSupported]);
+
+  const url = link !== "pending" && link !== "failed" ? link : null;
+  const label = attachmentLabel(attachment);
+  const linkText = url ?? (link === "pending" ? "resolving link…" : "link unavailable");
+  const tail = image && onOpenImage ? `click image to expand · ${linkText}` : linkText;
+  const openUrl = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
+  const openImage =
+    image && onOpenImage
+      ? deferMouseAction(() =>
+          onOpenImage({
+            name: attachment.name,
+            sizeBytes: attachment.sizeBytes,
+            image,
+          }),
+        )
+      : undefined;
+  // Never upscale; fit within the web's preview box, then within the pane.
+  const scale = image
+    ? Math.min(
+        1,
+        PREVIEW_MAX_WIDTH_PX / image.imageWidth,
+        PREVIEW_MAX_HEIGHT_PX / image.imageHeight,
+      )
+    : 1;
+  const naturalColumns = image
+    ? Math.max(1, Math.round((image.imageWidth * scale) / imageCellWidth))
+    : 1;
+  const columns = Math.min(naturalColumns, Math.max(1, width - 2));
+  const rows = image
+    ? Math.max(
+        1,
+        Math.round(
+          (image.imageHeight / image.imageWidth) * columns * (imageCellWidth / imageCellHeight),
+        ),
+      )
+    : 1;
+  return (
+    <box flexDirection="column">
+      <box {...(openUrl ? { onMouseDown: openUrl } : {})}>
+        <text>
+          <span fg={palette.accent}>{label}</span>
+          <span fg={palette.dim}>
+            {`  ${clip(tail, Math.max(8, width - Bun.stringWidth(label) - 2))}`}
+          </span>
+        </text>
+      </box>
+      {image ? (
+        <box {...(openImage ? { onMouseDown: openImage } : {})}>
+          <image
+            id={`attachment-image-${attachment.id}`}
+            source={image.source}
+            width={columns}
+            height={rows}
+            fit="fill"
+          />
+        </box>
+      ) : null}
+    </box>
+  );
+}
+
+/**
+ * Render one foldable row (a message or a work group). User text sits in an
+ * accent-bordered rounded box on the right; the assistant (and any other role)
+ * renders plain on the left — mirroring the web chat layout. The bubble needs a
+ * DEFINITE width for <markdown> to render (it reports no intrinsic width), so it
+ * is sized to its longest line + chrome, capped at ~72% of the pane.
+ */
+function FoldableRowView({
+  row,
+  ctx,
+}: {
+  readonly row: FoldableRow;
+  readonly ctx: RowRenderContext;
+}): React.ReactNode {
+  const { palette, width, syntaxStyle, mdClient, checkpointByMessage, onOpenDiff } = ctx;
+  if (row.kind === "work") {
+    return <WorkGroupSection groupedEntries={row.groupedEntries} palette={palette} width={width} />;
+  }
+  const message = row.message;
+  const rawBody = message.text.trim().length > 0 ? message.text : "…";
+  const body = linkifyTimelineUrls(rawBody);
+  const checkpoint = checkpointByMessage.get(message.id);
+  const images = (message.attachments ?? []).filter((a) => a.type === "image");
+  const attachmentsNode =
+    images.length > 0 ? (
+      <box flexDirection="column" marginTop={1}>
+        {images.map((attachment) => (
+          <AttachmentPreview key={attachment.id} attachment={attachment} ctx={ctx} />
+        ))}
+      </box>
+    ) : null;
+  if (message.role === "user") {
+    const maxBubble = Math.max(8, Math.floor(width * 0.8));
+    const longestLine = rawBody
+      .split("\n")
+      .reduce((max, line) => Math.max(max, Bun.stringWidth(line)), 1);
+    // Attachments live inside the bubble like the web — leave room for the
+    // web-parity preview (~206px) and one unwrapped metadata line, plus the
+    // bubble border and padding.
+    const attachmentMinWidth =
+      images.length > 0
+        ? Math.min(
+            maxBubble,
+            Math.max(
+              images.reduce(
+                (max, attachment) => Math.max(max, Bun.stringWidth(attachmentLabel(attachment))),
+                0,
+              ) +
+                2 +
+                ATTACHMENT_TAIL_WIDTH,
+              Math.round(PREVIEW_MAX_WIDTH_PX / ctx.imageCellWidth),
+            ) + 4,
+          )
+        : 1;
+    const bubbleWidth = Math.max(attachmentMinWidth, Math.min(width, maxBubble, longestLine + 4));
+    // Right-align by putting the bubble in a row whose width is the DEFINITE
+    // scrollbox content width (= the `width` prop). Inside a scrollbox the
+    // cross-size is auto, so "100%"/alignSelf/marginLeft:auto all collapse —
+    // only a concrete width gives flex-end a reference to push against.
+    return (
+      <box
+        id={`timeline-row-${row.id}`}
+        flexDirection="column"
+        width={width}
+        flexShrink={0}
+        marginTop={1}
+        marginBottom={1}
+        overflow="hidden"
+      >
+        <box flexDirection="row" width={width} justifyContent="flex-end">
+          <box
+            flexDirection="column"
+            width={bubbleWidth}
+            flexShrink={0}
+            border
+            borderStyle="rounded"
+            borderColor={palette.accent}
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            {images.length > 0 ? (
+              <box flexDirection="column" marginBottom={1}>
+                {images.map((attachment) => (
+                  <AttachmentPreview
+                    key={attachment.id}
+                    attachment={attachment}
+                    ctx={ctx}
+                    maxWidth={Math.max(8, bubbleWidth - 4)}
+                  />
+                ))}
+              </box>
+            ) : null}
+            <CollapsibleUserMessage
+              rawBody={rawBody}
+              body={body}
+              streaming={message.streaming}
+              syntaxStyle={syntaxStyle}
+              mdClient={mdClient}
+            />
+          </box>
+        </box>
+      </box>
+    );
+  }
+  return (
+    <box
+      id={`timeline-row-${row.id}`}
+      flexDirection="column"
+      width={width}
+      flexShrink={0}
+      marginTop={1}
+      marginBottom={1}
+      overflow="hidden"
+    >
+      <markdown
+        content={body}
+        syntaxStyle={syntaxStyle}
+        streaming={message.streaming}
+        {...mdClient}
+      />
+      {attachmentsNode}
+      {checkpoint ? (
+        <ChangedFilesTree
+          checkpoint={checkpoint}
+          palette={palette}
+          width={width}
+          {...(onOpenDiff ? { onOpenDiff } : {})}
+        />
+      ) : null}
+    </box>
+  );
+}
+
+/**
+ * A settled turn's commentary + tool work, folded behind a clickable
+ * "Worked for <duration>" row (mirrors the web turn fold). Clicking reveals the
+ * hidden rows in place; the turn's final assistant message stays visible below.
+ */
+function TurnFoldSection({
+  label,
+  hiddenRows,
+  ctx,
+}: {
+  readonly label: string;
+  readonly hiddenRows: ReadonlyArray<FoldableRow>;
+  readonly ctx: RowRenderContext;
+}): React.ReactNode {
+  const [expanded, setExpanded] = React.useState(false);
+  return (
+    <box flexDirection="column" width={ctx.width} marginTop={1} overflow="hidden">
+      <box onMouseDown={() => setExpanded((value) => !value)}>
+        <text fg={ctx.palette.dim}>{`${expanded ? "▾" : "▸"} ${label}`}</text>
+      </box>
+      {expanded
+        ? hiddenRows.map((row) => <FoldableRowView key={row.id} row={row} ctx={ctx} />)
+        : null}
+    </box>
+  );
+}
+
+const CHANGED_FILES_ROW_CAP = 40;
+
+/**
+ * The per-message changed-files summary, rendered as a collapsible directory tree
+ * (mirrors the web ChangedFilesTree). The header opens the turn diff; "collapse
+ * all / expand all" folds every directory; each directory row toggles on click.
+ */
+function ChangedFilesTree({
+  checkpoint,
+  palette,
+  width,
+  onOpenDiff,
+}: {
+  readonly checkpoint: OrchestrationCheckpointSummary;
+  readonly palette: Palette;
+  readonly width: number;
+  /** Open the diff viewer scoped to this turn (clicking the header). */
+  readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
+}): React.ReactNode {
+  const files = checkpoint.files;
+  const tree = React.useMemo(() => buildFileTree(files), [files]);
+  const allDirs = React.useMemo(() => collectDirPaths(tree), [tree]);
+  const [collapsedDirs, setCollapsedDirs] = React.useState<ReadonlySet<string>>(() => new Set());
+  const rows = React.useMemo(() => flattenFileTree(tree, collapsedDirs), [tree, collapsedDirs]);
+  const { additions, deletions } = diffStat(files);
+  const hasDirs = allDirs.length > 0;
+  const allCollapsed = hasDirs && allDirs.every((path) => collapsedDirs.has(path));
+  const nameRoom = Math.max(8, width - 20);
+
+  const toggleDir = (path: string) =>
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  const toggleAll = () => setCollapsedDirs(allCollapsed ? new Set() : new Set(allDirs));
+
+  return (
+    <box flexDirection="column" width={width} marginTop={1} overflow="hidden">
+      <box flexDirection="row" justifyContent="space-between">
+        <box
+          {...(onOpenDiff ? { onMouseDown: () => onOpenDiff(checkpoint.checkpointTurnCount) } : {})}
+        >
+          <text>
+            <span fg={palette.dim}>{`changed files (${files.length})  `}</span>
+            <span fg={palette.success}>{`+${additions}`}</span>
+            <span fg={palette.dim}> </span>
+            <span fg={palette.error}>{`-${deletions}`}</span>
+            {onOpenDiff ? <span fg={palette.dim}>{"   ▸ diff"}</span> : null}
+          </text>
+        </box>
+        {hasDirs ? (
+          <box onMouseDown={toggleAll}>
+            <text fg={palette.dim}>{allCollapsed ? "expand all" : "collapse all"}</text>
+          </box>
+        ) : null}
+      </box>
+      {rows.slice(0, CHANGED_FILES_ROW_CAP).map((row) => {
+        const indent = "  ".repeat(row.depth + 1);
+        if (row.kind === "dir") {
+          return (
+            <box key={`d:${row.path}`} onMouseDown={() => toggleDir(row.path)}>
+              <text>
+                <span fg={palette.dim}>{`${indent}${row.collapsed ? "▸" : "▾"} `}</span>
+                <span fg={palette.text}>{clip(`${row.name}/`, nameRoom)}</span>
+                <span fg={palette.success}>{`  +${row.additions}`}</span>
+                <span fg={palette.error}>{` -${row.deletions}`}</span>
+              </text>
+            </box>
+          );
+        }
+        // A file row: a type-coloured glyph + name, clickable to open the diff
+        // scoped to just this file (the per-file "View diff").
+        const typeColor = fileTypeColor(row.path);
+        const openThisFile = onOpenDiff
+          ? () => onOpenDiff(checkpoint.checkpointTurnCount, row.path)
+          : undefined;
+        return (
+          <box key={`f:${row.path}`} {...(openThisFile ? { onMouseDown: openThisFile } : {})}>
+            <text>
+              <span fg={typeColor ? ansi(typeColor) : palette.faint}>{`${indent}◦ `}</span>
+              <span fg={palette.text}>{clip(row.name, nameRoom)}</span>
+              <span fg={palette.success}>{`  +${row.additions}`}</span>
+              <span fg={palette.error}>{` -${row.deletions}`}</span>
+            </text>
+          </box>
+        );
+      })}
+      {rows.length > CHANGED_FILES_ROW_CAP ? (
+        <text fg={palette.dim}>{`  +${rows.length - CHANGED_FILES_ROW_CAP} more`}</text>
+      ) : null}
+    </box>
+  );
+}
+
+/** A one-line context-window usage meter under the header. */
+function ContextMeter({
+  snapshot,
+  palette,
+}: {
+  readonly snapshot: ContextWindowSnapshot;
+  readonly palette: Palette;
+}): React.ReactNode {
+  const pct = snapshot.usedPercentage;
+  const color =
+    pct === null
+      ? palette.dim
+      : pct >= 90
+        ? palette.error
+        : pct >= 70
+          ? palette.warning
+          : palette.success;
+  return (
+    <text>
+      <span fg={palette.dim}>{"context  "}</span>
+      <span fg={color}>{formatContextWindow(snapshot)}</span>
+    </text>
+  );
+}
+
+/** The proposed-plan card shown after a plan-mode turn (mirrors ProposedPlanCard). */
+function ProposedPlanCard({
+  plan,
+  palette,
+  syntaxStyle,
+}: {
+  readonly plan: ActionableProposedPlan;
+  readonly palette: Palette;
+  readonly syntaxStyle: SyntaxStyle;
+}): React.ReactNode {
+  return (
+    <box
+      flexDirection="column"
+      border
+      borderStyle="rounded"
+      borderColor={palette.accent}
+      paddingLeft={1}
+      paddingRight={1}
+      marginBottom={1}
+    >
+      <text>
+        <span fg={palette.accent}>{"◆ "}</span>
+        <strong>{plan.title}</strong>
+      </text>
+      <markdown content={linkifyTimelineUrls(plan.body)} syntaxStyle={syntaxStyle} />
+      <text fg={palette.dim}>proposed plan · ^Y implement · ^B build mode to refine</text>
+    </box>
+  );
+}
+
+export const MessagesTimeline = React.memo(function MessagesTimeline({
+  detail,
+  approvals,
+  approvalIndex,
+  projectHint,
+  emptyHint,
+  width,
+  height,
+  syntaxStyle,
+  scrollRef,
+  onOpenDiff,
+  getAttachmentUrl,
+  getAttachmentImage,
+  hasOlderTurns = false,
+  loadingOlderTurns = false,
+  onLoadOlderTurns,
+  onOpenUrl,
+  onOpenImage,
+  treeSitterClient,
+}: {
+  readonly detail: OrchestrationThread | null;
+  readonly approvals: ReadonlyArray<PendingApproval>;
+  readonly approvalIndex: number;
+  readonly projectHint: string | null;
+  /** Overrides the no-thread guidance for local surfaces such as a new draft. */
+  readonly emptyHint?: string;
+  readonly width: number;
+  readonly height: number;
+  readonly syntaxStyle: SyntaxStyle;
+  readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
+  /** Open the diff viewer scoped to a turn (clicking its changed-files summary). */
+  readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
+  /** Resolve a message image attachment to a signed URL. */
+  readonly getAttachmentUrl?: (attachmentId: string) => Promise<string | null>;
+  /** Download and decode a bounded image preview. */
+  readonly getAttachmentImage?: (
+    attachmentId: string,
+    resolvedUrl: string,
+  ) => Promise<ImagePreview | null>;
+  /** Whether the server has an older bounded page outside the loaded thread. */
+  readonly hasOlderTurns?: boolean;
+  /** Whether that older page is currently being fetched. */
+  readonly loadingOlderTurns?: boolean;
+  /** Fetch the next older server page. */
+  readonly onLoadOlderTurns?: () => void;
+  /** Surface a resolved attachment URL when clicked (e.g. in the status line). */
+  readonly onOpenUrl?: (url: string) => void;
+  /** Open an already-decoded attachment in a larger conversation preview. */
+  readonly onOpenImage?: (preview: ExpandedImagePreview) => void;
+  /** Test seam: inject a tree-sitter client so <markdown> can paint in tests. */
+  readonly treeSitterClient?: unknown;
+}): React.ReactNode {
+  const renderer = useRenderer();
+  const inlineImagesSupported = true;
+  const handleTimelineScroll = React.useCallback(() => {
+    // A conversation is vertical-only. OpenTUI still processes horizontal mouse
+    // wheel events when a descendant briefly measures wider than the viewport;
+    // reset after its internal event handler so the whole timeline cannot drift.
+    queueMicrotask(() => {
+      const box = scrollRef.current;
+      if (box && box.scrollLeft !== 0) box.scrollLeft = 0;
+    });
+  }, [scrollRef]);
+  const imageCellWidth = renderer.resolution ? renderer.resolution.width / renderer.width : 18;
+  const imageCellHeight = renderer.resolution ? renderer.resolution.height / renderer.height : 35;
+  const mdClient = treeSitterClient ? { treeSitterClient: treeSitterClient as never } : {};
+  const palette = usePalette();
+  // The outer border and horizontal padding consume four cells. Concrete child
+  // widths must use the inner width or right-aligned rows paint out of bounds.
+  const contentWidth = Math.max(1, width - 4);
+  // Match the web timeline and composer: both share a centered max-w-3xl
+  // content column instead of stretching prose across an ultrawide workspace.
+  const timelineWidth = Math.min(CHAT_CONTENT_MAX_WIDTH, contentWidth);
+  // Depend on the exact slices each derivation reads, not the whole `detail`
+  // object (replaced per streamed delta), so unrelated deltas skip the work.
+  const activities = detail?.activities;
+  const messages = detail?.messages;
+  const latestTurn = detail?.latestTurn;
+  const checkpoints = detail?.checkpoints;
+  const contextWindow = React.useMemo(
+    () => (activities ? deriveContextWindow(activities) : null),
+    [activities],
+  );
+  const headerHeight = 1;
+  const metaHeight = contextWindow ? 1 : 0;
+  const approvalHeight = approvals.length > 0 ? approvals.length + 2 : 0;
+  const bodyHeight = Math.max(1, height - headerHeight - metaHeight - approvalHeight - 2);
+
+  const working = detail ? isWorking(detail) : false;
+  const timeline = React.useMemo(
+    () =>
+      messages && activities ? deriveTimelineEntries(messages, activities, latestTurn ?? null) : [],
+    [messages, activities, latestTurn],
+  );
+  const detailId = detail?.id ?? null;
+  const [windowState, setWindowState] = React.useState<{
+    readonly detailId: string | null;
+    readonly end: number | null;
+  }>(() => ({ detailId, end: null }));
+  const requestedWindowEnd = windowState.detailId === detailId ? windowState.end : null;
+  const timelineWindow = resolveTimelineWindow(timeline.length, requestedWindowEnd);
+  const visibleTimeline = timeline.slice(timelineWindow.start, timelineWindow.end);
+  const showingLatest = timelineWindow.end === timeline.length;
+  const pendingOlderPageRef = React.useRef<{
+    readonly detailId: string | null;
+    readonly rowCount: number;
+  } | null>(null);
+  const showOlder = () => {
+    if (timelineWindow.start > 0) {
+      setWindowState({ detailId, end: timelineWindow.start });
+    } else if (hasOlderTurns && !loadingOlderTurns && onLoadOlderTurns) {
+      pendingOlderPageRef.current = { detailId, rowCount: timeline.length };
+      onLoadOlderTurns();
+    }
+    queueMicrotask(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    });
+  };
+  const showNewer = () => {
+    const nextEnd = Math.min(timeline.length, timelineWindow.end + TIMELINE_WINDOW_SIZE);
+    setWindowState({ detailId, end: nextEnd === timeline.length ? null : nextEnd });
+    queueMicrotask(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    });
+  };
+  React.useLayoutEffect(() => {
+    const box = scrollRef.current;
+    if (box && box.scrollLeft !== 0) box.scrollLeft = 0;
+  }, [detail?.id, scrollRef, timeline, width]);
+  React.useEffect(() => {
+    const pending = pendingOlderPageRef.current;
+    if (pending === null) return;
+    if (pending.detailId !== detailId) {
+      pendingOlderPageRef.current = null;
+      return;
+    }
+    if (timeline.length > pending.rowCount) {
+      pendingOlderPageRef.current = null;
+      setWindowState({ detailId, end: timeline.length - pending.rowCount });
+      queueMicrotask(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = 0;
+      });
+      return;
+    }
+    if (!loadingOlderTurns) pendingOlderPageRef.current = null;
+  }, [detailId, loadingOlderTurns, scrollRef, timeline.length]);
+  const checkpointByMessage = React.useMemo(
+    () =>
+      checkpoints
+        ? changedFilesByMessage(checkpoints)
+        : new Map<string, OrchestrationCheckpointSummary>(),
+    [checkpoints],
+  );
+  const proposedPlan = React.useMemo(
+    () => (detail ? latestActionableProposedPlan(detail) : null),
+    [detail],
+  );
+
+  const rowCtx: RowRenderContext = {
+    palette,
+    width: timelineWidth,
+    syntaxStyle,
+    mdClient,
+    checkpointByMessage,
+    inlineImagesSupported,
+    imageCellWidth,
+    imageCellHeight,
+    ...(onOpenDiff ? { onOpenDiff } : {}),
+    ...(getAttachmentUrl ? { getAttachmentUrl } : {}),
+    ...(getAttachmentImage ? { getAttachmentImage } : {}),
+    ...(onOpenUrl ? { onOpenUrl } : {}),
+    ...(onOpenImage ? { onOpenImage } : {}),
+  };
+
+  if (!detail) {
+    return (
+      <box
+        flexGrow={1}
+        height={height}
+        border
+        borderStyle="rounded"
+        borderColor={palette.faint}
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        <text fg={palette.dim}>
+          {emptyHint ??
+            (projectHint
+              ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
+              : "Select a thread to view its conversation.")}
+        </text>
+      </box>
+    );
+  }
+
+  return (
+    <box
+      flexDirection="column"
+      flexGrow={1}
+      height={height}
+      border
+      borderStyle="rounded"
+      borderColor={palette.faint}
+      paddingLeft={1}
+      paddingRight={1}
+      overflow="hidden"
+    >
+      <box flexDirection="row" width={contentWidth} overflow="hidden">
+        <box flexGrow={1}>
+          <text fg={palette.text}>
+            <strong>
+              {clip(
+                detail.title,
+                Math.max(
+                  1,
+                  contentWidth -
+                    (contentWidth >= 64
+                      ? 32
+                      : contentWidth >= 40
+                        ? statusLabel(detail).length + 10
+                        : statusLabel(detail).length + 2),
+                ),
+              )}
+            </strong>
+          </text>
+        </box>
+        <text>
+          <span
+            fg={
+              approvals.length > 0
+                ? palette.error
+                : ansi(sessionStatusColor(detail.session?.status))
+            }
+          >
+            {approvals.length > 0 ? "pending approval" : statusLabel(detail)}
+          </span>
+          {contentWidth >= 40 ? (
+            <span fg={detail.interactionMode === "plan" ? palette.accent : palette.dim}>
+              {` · ${detail.interactionMode === "plan" ? "plan" : "build"}`}
+            </span>
+          ) : null}
+          {contentWidth >= 64 ? (
+            <span
+              fg={palette.dim}
+            >{` · ${detail.runtimeMode} · ${relativeTime(detail.updatedAt)}`}</span>
+          ) : null}
+        </text>
+      </box>
+
+      {contextWindow ? <ContextMeter snapshot={contextWindow} palette={palette} /> : null}
+
+      <scrollbox
+        ref={scrollRef}
+        width={contentWidth}
+        height={bodyHeight}
+        scrollX={false}
+        stickyScroll={showingLatest}
+        stickyStart="bottom"
+        onMouseScroll={handleTimelineScroll}
+        style={{
+          rootOptions: { backgroundColor: "transparent" },
+          contentOptions: { width: "100%", maxWidth: "100%", overflow: "hidden" },
+        }}
+      >
+        <box
+          id="timeline-column-shell"
+          flexDirection="row"
+          width={contentWidth}
+          justifyContent="center"
+          flexShrink={0}
+          overflow="hidden"
+        >
+          <box
+            id="timeline-column"
+            flexDirection="column"
+            width={timelineWidth}
+            flexShrink={0}
+            overflow="hidden"
+          >
+            {timelineWindow.start > 0 || hasOlderTurns ? (
+              <box onMouseDown={showOlder} marginBottom={1}>
+                <text fg={palette.dim}>
+                  {timelineWindow.start > 0
+                    ? `▴ ${timelineWindow.start} earlier entries`
+                    : loadingOlderTurns
+                      ? "▴ Loading earlier turns…"
+                      : "▴ Load earlier turns"}
+                </text>
+              </box>
+            ) : null}
+            {visibleTimeline.map((row) => {
+              if (row.kind === "turn-fold") {
+                return (
+                  <TurnFoldSection
+                    key={row.id}
+                    label={row.label}
+                    hiddenRows={row.hiddenRows}
+                    ctx={rowCtx}
+                  />
+                );
+              }
+              return <FoldableRowView key={row.id} row={row} ctx={rowCtx} />;
+            })}
+            {!showingLatest ? (
+              <box onMouseDown={showNewer} marginTop={1} marginBottom={1}>
+                <text
+                  fg={palette.dim}
+                >{`▾ ${timeline.length - timelineWindow.end} newer entries`}</text>
+              </box>
+            ) : null}
+            {showingLatest && proposedPlan ? (
+              <ProposedPlanCard plan={proposedPlan} palette={palette} syntaxStyle={syntaxStyle} />
+            ) : null}
+            {showingLatest && working ? <WorkingIndicator /> : null}
+          </box>
+        </box>
+      </scrollbox>
+
+      {approvals.length > 0 ? (
+        <box
+          flexDirection="column"
+          border
+          borderStyle="rounded"
+          borderColor={palette.error}
+          width={timelineWidth}
+          alignSelf="center"
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          <text>
+            <span fg={palette.error}>Approval required</span>
+            {approvals.length > 1 ? (
+              <span
+                fg={palette.dim}
+              >{`  (${Math.min(approvalIndex, approvals.length - 1) + 1} of ${approvals.length})`}</span>
+            ) : null}
+          </text>
+          {approvals.map((approval, index) => {
+            const active = index === Math.min(approvalIndex, approvals.length - 1);
+            return (
+              <text key={approval.requestId}>
+                <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
+                <span fg={active ? palette.text : palette.dim}>
+                  {`${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`}
+                </span>
+              </text>
+            );
+          })}
+          <text fg={palette.dim}>
+            {approvals.length > 1 ? "↑/↓ select · ^A approve · ^R deny" : "^A approve   ^R deny"}
+          </text>
+        </box>
+      ) : null}
+    </box>
+  );
+});

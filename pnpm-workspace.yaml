@@ -53,6 +53,16 @@ catalog:
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
+  - "@opentui/core-darwin-arm64@0.5.4"
+  - "@opentui/core-darwin-x64@0.5.4"
+  - "@opentui/core-linux-arm64-musl@0.5.4"
+  - "@opentui/core-linux-arm64@0.5.4"
+  - "@opentui/core-linux-x64-musl@0.5.4"
+  - "@opentui/core-linux-x64@0.5.4"
+  - "@opentui/core-win32-arm64@0.5.4"
+  - "@opentui/core-win32-x64@0.5.4"
+  - "@opentui/core@0.5.4"
+  - "@opentui/react@0.5.4"
   - "@clerk/backend@3.14.0"
   - "@clerk/clerk-js@6.29.2"
   - "@clerk/electron@0.0.34"

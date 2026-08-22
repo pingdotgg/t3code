@@ -4758,6 +4758,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         path.join(workspaceDir, "src", "index.ts"),
         "export const answer = 42;\n",
       );
+      yield* fs.writeFile(path.join(workspaceDir, "diagram.png"), Uint8Array.from([0, 1, 2, 255]));
 
       yield* buildAppUnderTest();
 
@@ -4770,6 +4771,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               cwd: workspaceDir,
               relativePath: "src/index.ts",
             }),
+            binary: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "diagram.png",
+              encoding: "base64",
+            }),
           }),
         ),
       );
@@ -4779,6 +4785,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         relativePath: "src/index.ts",
         contents: "export const answer = 42;\n",
         byteLength: 26,
+        truncated: false,
+      });
+      assert.deepEqual(response.binary, {
+        relativePath: "diagram.png",
+        contents: "AAEC/w==",
+        byteLength: 4,
         truncated: false,
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),

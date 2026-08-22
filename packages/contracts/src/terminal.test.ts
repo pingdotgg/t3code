@@ -7,6 +7,7 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalListResult,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalSessionSnapshot,
@@ -26,6 +27,12 @@ function decodes<S extends Schema.Top>(schema: S, input: unknown): boolean {
     return false;
   }
 }
+
+describe("TerminalListResult", () => {
+  it("accepts the ordered terminal identities retained for a thread", () => {
+    expect(decodes(TerminalListResult, { terminalIds: ["term-1", "term-2"] })).toBe(true);
+  });
+});
 
 describe("TerminalOpenInput", () => {
   it("accepts valid open input", () => {

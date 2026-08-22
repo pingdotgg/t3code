@@ -1,0 +1,181 @@
+import { describe, expect, it } from "bun:test";
+
+import type { OrchestrationShellSnapshot, OrchestrationThread } from "@t3tools/contracts";
+import type { EnvironmentThreadPageState } from "@t3tools/client-runtime/state/threads";
+
+import type { TuiClient } from "./connection.ts";
+import { createStore } from "./store.ts";
+
+/** A fake TuiClient that captures the shell/thread callbacks so the test can drive them. */
+function fakeClient() {
+  let onShell: ((s: OrchestrationShellSnapshot) => void) | null = null;
+  let onThread:
+    | ((thread: OrchestrationThread, page: EnvironmentThreadPageState | null) => void)
+    | null = null;
+  const threadSubs: string[] = [];
+  const client = {
+    subscribeShell: (cb: (s: OrchestrationShellSnapshot) => void) => {
+      onShell = cb;
+      return () => {};
+    },
+    subscribeThread: (threadId: string, callback: typeof onThread) => {
+      threadSubs.push(threadId);
+      onThread = callback;
+      return () => {
+        onThread = null;
+      };
+    },
+    peekThread: () => null as OrchestrationThread | null,
+    subscribeVcsStatus: () => () => {},
+    runGitStackedAction: () => Promise.resolve(),
+    runGitPull: () => Promise.resolve(),
+  } as unknown as TuiClient;
+  return {
+    client,
+    pushShell: (s: OrchestrationShellSnapshot) => onShell?.(s),
+    pushThread: (thread: OrchestrationThread, page: EnvironmentThreadPageState | null) =>
+      onThread?.(thread, page),
+    threadSubs,
+  };
+}
+
+const shell = (
+  projects: ReadonlyArray<{ id: string; title: string }>,
+  threads: ReadonlyArray<{ id: string; projectId: string; updatedAt: string; title?: string }>,
+): OrchestrationShellSnapshot => ({ projects, threads }) as unknown as OrchestrationShellSnapshot;
+
+const oneProjectTwoThreads = shell(
+  [{ id: "p1", title: "P1" }],
+  [
+    { id: "t1", projectId: "p1", updatedAt: "2020-01-02T00:00:00.000Z" },
+    { id: "t2", projectId: "p1", updatedAt: "2020-01-01T00:00:00.000Z" },
+  ],
+);
+
+describe("createStore", () => {
+  it("Given a shell snapshot, when pushed, then it populates state and a project-count status", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    const state = store.getState();
+    expect(state.shell).not.toBeNull();
+    expect(state.status).toBe("1 project(s) · 2 thread(s)");
+  });
+
+  it("Given a shell snapshot, when it arrives, then the flat list selects the first thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
+  });
+
+  it("tracks older-page availability from the selected thread subscription", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    f.pushThread({ id: "t1" } as unknown as OrchestrationThread, {
+      beforeCursor: "older",
+      hasMore: true,
+      loadingOlder: false,
+    });
+
+    expect(store.getState().threadPage).toEqual({
+      beforeCursor: "older",
+      hasMore: true,
+      loadingOlder: false,
+    });
+  });
+
+  it("Given a project filter, when selected, then it scopes the flat list", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.toggleProject("p1");
+    expect(store.getState().projectScopeId).toBe("p1");
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
+  });
+
+  it("Given a flat list, when moving the selection down, then it selects the next thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.toggleProject("p1");
+    store.moveSelection(1);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t2" });
+    expect(f.threadSubs).toContain("t2");
+  });
+
+  it("Given an expanded project, when jumping to thread index 2, then it selects the second visible thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.toggleProject("p1");
+    store.selectThreadByIndex(2);
+    // threads sorted by updatedAt desc → [t1, t2]; index 2 is t2.
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t2" });
+  });
+
+  it("Given a selected thread, when moving the thread selection, then it skips to the adjacent thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.toggleProject("p1");
+    store.selectThreadByIndex(1);
+    store.moveThreadSelection(1);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t2" });
+    store.moveThreadSelection(-1);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
+  });
+
+  it("Given no thread is selected, when moving thread selection forward, then it steps into the first thread", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(oneProjectTwoThreads);
+    store.select({ kind: "project", id: "p1" });
+    store.moveThreadSelection(1);
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
+  });
+
+  it("Given setStatus, then the status text updates", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.setStatus("Reply sent.");
+    expect(store.getState().status).toBe("Reply sent.");
+  });
+
+  it("Given setStatus with a kind, then the status tone is recorded", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.setStatus("send failed", "error");
+    expect(store.getState().statusKind).toBe("error");
+  });
+
+  it("Given a thread is selected, when a filter hides it, then the selection re-validates onto a remaining match", () => {
+    const f = fakeClient();
+    const store = createStore(f.client);
+    store.start();
+    f.pushShell(
+      shell(
+        [{ id: "p1", title: "P1" }],
+        [
+          { id: "t1", projectId: "p1", updatedAt: "2020-01-02T00:00:00.000Z", title: "login" },
+          { id: "t2", projectId: "p1", updatedAt: "2020-01-01T00:00:00.000Z", title: "theme" },
+        ],
+      ),
+    );
+    store.toggleProject("p1");
+    store.select({ kind: "thread", id: "t1" });
+    store.setFilter("theme");
+    expect(store.getState().filter).toBe("theme");
+    // t1 ("login") is filtered out, so the selection lands on the remaining match t2.
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t2" });
+  });
+});

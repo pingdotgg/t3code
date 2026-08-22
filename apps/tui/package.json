@@ -1,0 +1,41 @@
+{
+  "name": "@t3tools/tui",
+  "version": "0.0.27",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/index.tsx --target bun --external @opentui/core --external sharp --outfile dist/index.js",
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@opentui/core": "^0.5.4",
+    "@opentui/react": "^0.5.4",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/opentui-image": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@xterm/headless": "^5.5.0",
+    "effect": "catalog:",
+    "react": "19.2.6",
+    "sharp": "0.34.5"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "@types/node": "catalog:",
+    "@types/react": "~19.2.14",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}

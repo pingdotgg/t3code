@@ -160,6 +160,26 @@ export function isProviderSendTurnSupportedImageMimeType(mimeType: string): bool
   return PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET.has(mimeType.toLowerCase());
 }
 const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+
+/** Image formats accepted as chat attachments, keyed by file extension. */
+export const CHAT_IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  avif: "image/avif",
+  bmp: "image/bmp",
+  gif: "image/gif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+  svg: "image/svg+xml",
+  tif: "image/tiff",
+  tiff: "image/tiff",
+  webp: "image/webp",
+};
+
+/** Mime type for a chat-image path by extension, or null when unsupported. */
+export function chatImageMimeTypeForPath(path: string): string | null {
+  const extension = path.split(".").at(-1)?.toLowerCase();
+  return extension ? (CHAT_IMAGE_MIME_BY_EXTENSION[extension] ?? null) : null;
+}
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;

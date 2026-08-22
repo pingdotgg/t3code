@@ -194,6 +194,7 @@ export class ProjectListEntriesError extends Schema.TaggedErrorClass<ProjectList
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  encoding: Schema.optional(Schema.Literals(["utf8", "base64"])),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 

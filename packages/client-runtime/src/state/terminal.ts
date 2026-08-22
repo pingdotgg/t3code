@@ -1,4 +1,8 @@
-import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
+import {
+  type TerminalMetadataStreamEvent,
+  type TerminalSummary,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -44,9 +48,18 @@ export function createTerminalEnvironmentAtoms<R, E>(
           Stream.scan(EMPTY_TERMINAL_BUFFER_STATE, applyTerminalAttachStreamEvent),
         ),
     }),
-    events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:terminal:events",
-      tag: WS_METHODS.subscribeTerminalEvents,
+    removals: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:terminal:removals",
+      tag: WS_METHODS.subscribeTerminalMetadata,
+      // Metadata excludes PTY output. Accumulate remove events so React cannot
+      // lose one when several terminals close before the next commit.
+      transform: (stream) =>
+        stream.pipe(
+          Stream.scan(
+            [] as ReadonlyArray<Extract<TerminalMetadataStreamEvent, { type: "remove" }>>,
+            (removals, event) => (event.type === "remove" ? [...removals, event] : removals),
+          ),
+        ),
     }),
     metadata: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:metadata",

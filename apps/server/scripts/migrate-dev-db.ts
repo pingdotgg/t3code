@@ -188,7 +188,9 @@ const isProcessAlive = (pid: number): boolean => {
  * wal_checkpoint(TRUNCATE) reports busy while another connection holds the
  * WAL. A leftover -shm alone is not a signal — read-only connections cannot
  * clean it up on close. */
-const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath: string) {
+export const ensureDevDbNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (
+  databasePath: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -403,7 +405,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   }
 
   yield* fs.makeDirectory(stateDir, { recursive: true });
-  yield* ensureNotInUse(databasePath);
+  yield* ensureDevDbNotInUse(databasePath);
 
   const wrapPhase =
     (phase: MigrateDevDbPhaseError["phase"], phaseDatabasePath: string) =>
@@ -466,7 +468,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     yield* Console.log(`Compacting into ${databasePath}...`);
     // Re-check right before the swap: a dev server started while the
     // snapshot was migrating and pruning must not lose its database.
-    yield* ensureNotInUse(databasePath);
+    yield* ensureDevDbNotInUse(databasePath);
     yield* removeDatabaseFiles(databasePath);
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

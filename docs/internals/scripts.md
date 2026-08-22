@@ -63,6 +63,21 @@ authenticated.
 - `vp run lint:mobile`: Mobile native static analysis (`scripts/mobile-native-static-check.ts`).
 - `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...`: Inspects or seeds
   an isolated T3 SQLite database; writes create a private backup first.
+- `vp run thread:list --source <project-dir>`: Lists thread ids, orchestration versions, workspace
+  roots, and titles. It accepts the same direct state directory and `--state dev` forms as the
+  transfer commands. Pass `--json` for structured output.
+- `vp run thread:export --source <project-dir> --thread-id <id> --output <archive.json>`: Exports
+  one v1 or Orchestrator v2 thread, including its image attachments. The source can be a workspace
+  containing `.t3`, the T3 base directory, or a direct state directory containing `state.sqlite`.
+  State defaults to `userdata`; pass `--state dev` for a main-checkout dev database. Pass
+  `--include-terminal-logs` to also export persisted terminal history. Terminal logs may contain
+  credentials or other sensitive output, so they are excluded by default.
+- `vp run thread:import --archive <archive.json> --destination <project-dir>`: Imports the thread
+  into an isolated T3 project directory, remaps it to the destination project, and backs up the
+  destination database first. The destination accepts the same directory forms and `--state dev`
+  selection as export. Stop the destination server before importing. Pass `--target-project-id
+<id>` when the destination contains more than one project and its workspace path does not identify
+  the target.
 
 ## Desktop artifacts
 

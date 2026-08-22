@@ -1,0 +1,439 @@
+import { describe, expect, it } from "bun:test";
+import * as React from "react";
+import { testRender } from "@opentui/react/test-utils";
+
+import { ChatComposer } from "./ChatComposer.tsx";
+
+// Component specs for the composer, exercised through OpenTUI's real (headless)
+// renderer under bun:test. They lock in the double-input fix (no <input> while the
+// terminal holds focus) and the auxiliary rename/filter/commit surfaces.
+
+const noop = () => {};
+const PNG_SOURCE = Uint8Array.from(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  ),
+);
+
+const base = {
+  reply: "",
+  auxValue: "",
+  placeholder: "Type a reply, Enter to send",
+  editorRows: 3,
+  composerEpoch: 0,
+  controls: {
+    interactionMode: "default",
+    runtimeMode: "full-access",
+    model: "gpt-5",
+    reasoning: "high",
+  },
+  working: false,
+  attachments: [],
+  inlineImagesSupported: false,
+  width: 56,
+  pendingUserInput: null,
+  uiQuestionIndex: 0,
+  uiOptionIndex: 0,
+  uiSelectedLabels: [],
+  answerDraft: "",
+  onAnswerInput: noop,
+  onFocusInput: noop,
+  onReplyInput: noop,
+  onReplySubmit: noop,
+  onAuxInput: noop,
+  onTogglePlan: noop,
+  onOpenAccess: noop,
+  onOpenModel: noop,
+  onOpenReasoning: noop,
+  onStop: noop,
+  onSend: noop,
+  onSubmitAnswer: noop,
+  onRemoveAttachment: noop,
+  onPasteImage: noop,
+  onPasteImagePath: () => null,
+} as const;
+
+async function frameOf(node: React.ReactNode): Promise<string> {
+  const t = await testRender(node, { width: 60, height: 12 });
+  await t.renderOnce();
+  const frame = t.captureCharFrame();
+  t.renderer.destroy();
+  return frame;
+}
+
+describe("ChatComposer", () => {
+  it("Given compose mode without focus, when rendered, then it shows the static prompt shortcut (no input)", async () => {
+    const frame = await frameOf(<ChatComposer {...base} mode="compose" inputFocused={false} />);
+    expect(frame).toContain("^P prompt · Type a reply");
+  });
+
+  it("Given compose mode with focus, when rendered, then the ^P hint is gone (input is mounted)", async () => {
+    const frame = await frameOf(<ChatComposer {...base} mode="compose" inputFocused />);
+    expect(frame).not.toContain("^P prompt");
+  });
+
+  it("Given a pending question, then the composer stays put with the question panel + Submit answer", async () => {
+    const pending = {
+      requestId: "r1",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      questions: [
+        {
+          id: "q1",
+          header: "Scope",
+          question: "Which scope should the plan target?",
+          options: [
+            { label: "Both", description: "" },
+            { label: "Data only", description: "" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    } as never;
+    const t = await testRender(
+      <ChatComposer {...base} mode="compose" inputFocused pendingUserInput={pending} />,
+      { width: 80, height: 12 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    const frame = t.captureCharFrame();
+    // Question panel + custom-answer field + the Submit-answer primary action,
+    // all inside the still-present composer (with its model footer).
+    expect(frame).toContain("Which scope should the plan target?");
+    expect(frame).toContain("Type your own answer");
+    expect(frame).toContain("Submit answer");
+    expect(frame).toContain("model gpt-5");
+    t.renderer.destroy();
+  });
+
+  it("Given compose mode, then the controls render inside the composer box, model first", async () => {
+    const t = await testRender(<ChatComposer {...base} mode="compose" inputFocused width={72} />, {
+      width: 72,
+      height: 8,
+    });
+    await t.renderOnce();
+    const lines = t.captureCharFrame().split("\n");
+    // The controls sit on a row framed by the composer's left/right border cells.
+    const controlsRow = lines.find((line) => line.includes("model gpt-5")) ?? "";
+    expect(controlsRow).toContain("model gpt-5");
+    expect(controlsRow).toContain("effort high");
+    expect(controlsRow.indexOf("Full access")).toBeLessThan(controlsRow.indexOf("^B"));
+    expect(controlsRow.trimStart().startsWith("│") || controlsRow.includes("│")).toBe(true);
+    // model precedes the plan/build (^B) chip — matches the web footer order.
+    expect(controlsRow.indexOf("model")).toBeLessThan(controlsRow.indexOf("^B"));
+    t.renderer.destroy();
+  });
+
+  it("Given a staged image, when the composer renders, then it shows a removal affordance", async () => {
+    const attachment = {
+      relativePath: "docs/diagram.png",
+      upload: {
+        type: "image" as const,
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        dataUrl: "data:image/png;base64,/wAA/w==",
+      },
+      preview: {
+        source: PNG_SOURCE,
+        imageWidth: 1,
+        imageHeight: 1,
+      },
+    };
+    const t = await testRender(
+      <ChatComposer {...base} mode="compose" inputFocused attachments={[attachment]} />,
+      { width: 90, height: 10 },
+    );
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("× diagram.png");
+    expect(frame).toContain("▸ Send");
+    t.renderer.destroy();
+  });
+
+  it("Given rename mode, when rendered, then it shows the rename label and hint", async () => {
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="rename" auxValue="old title" inputFocused />,
+    );
+    expect(frame).toContain("rename");
+    expect(frame).toContain("Enter rename");
+  });
+
+  it("Given filter mode, when rendered, then it shows the find label and hint", async () => {
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="filter" auxValue="log" inputFocused />,
+    );
+    expect(frame).toContain("find");
+    expect(frame).toContain("Enter keep");
+  });
+
+  it("Given commit mode, when rendered, then it shows the commit label, message, and hint", async () => {
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="commit" auxValue="fix the bug" inputFocused />,
+    );
+    expect(frame).toContain("commit");
+    expect(frame).toContain("fix the bug");
+    expect(frame).toContain("Enter commit");
+  });
+
+  it("Given a focused multiline reply editor, when text is typed, then it renders the content", async () => {
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer {...base} mode="compose" reply={reply} inputFocused onReplyInput={setReply} />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.typeText("hello");
+    const frame = await t.waitForFrame((f) => f.includes("hello"));
+    expect(frame).toContain("hello");
+    t.renderer.destroy();
+  });
+
+  it("Given multiline clipboard text, when pasted, then every line is inserted (no single-line cap) without sending", async () => {
+    let sent = 0;
+    let captured = "";
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={(value) => {
+            captured = value;
+            setReply(value);
+          }}
+          onReplySubmit={() => {
+            sent += 1;
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 12 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText("line one\nline two\nline three");
+    const frame = await t.waitForFrame((f) => f.includes("line three"));
+    expect(frame).toContain("line one");
+    expect(frame).toContain("line three");
+    expect(captured).toBe("line one\nline two\nline three");
+    expect(sent).toBe(0);
+    t.renderer.destroy();
+  });
+
+  it("Given image clipboard bytes, when pasted in a non-empty prompt, then it stages the image without changing the draft", async () => {
+    let captured = "";
+    let pasted:
+      | {
+          readonly bytes: Uint8Array;
+          readonly mimeType: string;
+        }
+      | undefined;
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={(value) => {
+            captured = value;
+            setReply(value);
+          }}
+          onPasteImage={(value) => {
+            pasted = value;
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 10 });
+    await t.renderOnce();
+    await t.mockInput.typeText("keep this draft");
+    t.renderer.keyInput.processPaste(new Uint8Array([137, 80, 78, 71]), {
+      kind: "binary",
+      mimeType: "image/png",
+    });
+    await t.waitFor(() => pasted !== undefined);
+
+    expect(pasted?.mimeType).toBe("image/png");
+    expect(pasted?.bytes).toEqual(new Uint8Array([137, 80, 78, 71]));
+    expect(captured).toBe("keep this draft");
+    expect(t.captureCharFrame()).toContain("keep this draft");
+    t.renderer.destroy();
+  });
+
+  it("Given a complete image path is pasted, when it is attached, then the path is not inserted into the prompt", async () => {
+    let captured = "";
+    let pastedPath = "";
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={(value) => {
+            captured = value;
+            setReply(value);
+          }}
+          onPasteImagePath={(value) => {
+            pastedPath = value;
+            return Promise.resolve({ attached: true, textToInsert: "" });
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText("./screenshots/error.png");
+    await t.waitFor(() => pastedPath.length > 0);
+
+    expect(pastedPath).toBe("./screenshots/error.png");
+    expect(captured).toBe("");
+    expect(t.captureCharFrame()).not.toContain("./screenshots/error.png");
+    t.renderer.destroy();
+  });
+
+  it("Given a pasted image path cannot be attached, when loading fails, then it remains ordinary prompt text", async () => {
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={setReply}
+          onPasteImagePath={(value) => Promise.resolve({ attached: false, textToInsert: value })}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText("./screenshots/missing.png");
+    await t.waitForFrame((frame) => frame.includes("./screenshots/missing.png"));
+    t.renderer.destroy();
+  });
+
+  it("Given prose and an image path are pasted together, when attached, then only the prose remains in the prompt", async () => {
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={setReply}
+          onPasteImagePath={() =>
+            Promise.resolve({ attached: true, textToInsert: "Explain this screenshot " })
+          }
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText(
+      "Explain this screenshot ~/Downloads/Screenshot\\ 2026.png",
+    );
+    const frame = await t.waitForFrame((value) => value.includes("Explain this screenshot"));
+    expect(frame).not.toContain("~/Downloads");
+    t.renderer.destroy();
+  });
+
+  it("does not insert a late image-path result into a remounted editor", async () => {
+    let resolvePaste!: (value: { attached: boolean; textToInsert: string }) => void;
+    const paste = new Promise<{ attached: boolean; textToInsert: string }>((resolve) => {
+      resolvePaste = resolve;
+    });
+    let remount!: () => void;
+    function Harness(): React.ReactNode {
+      const [epoch, setEpoch] = React.useState(0);
+      const [reply, setReply] = React.useState("");
+      remount = () => {
+        setReply("");
+        setEpoch((value) => value + 1);
+      };
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          composerEpoch={epoch}
+          inputFocused
+          onReplyInput={setReply}
+          onPasteImagePath={() => paste}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText("./screenshots/missing.png");
+    await React.act(async () => {
+      remount();
+      await t.renderOnce();
+    });
+    await React.act(async () => {
+      resolvePaste({ attached: false, textToInsert: "./screenshots/missing.png" });
+      await paste;
+      await t.renderOnce();
+    });
+    expect(t.captureCharFrame()).not.toContain("./screenshots/missing.png");
+    t.renderer.destroy();
+  });
+
+  it("Given a non-empty reply, when the editor mounts, then it seeds the draft (survives remount)", async () => {
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="compose" reply="restored draft" inputFocused />,
+    );
+    expect(frame).toContain("restored draft");
+  });
+
+  it("Given a draft, when a global Ctrl-shortcut key is pressed, then the editor keeps the draft", async () => {
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer {...base} mode="compose" reply={reply} inputFocused onReplyInput={setReply} />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.typeText("keep this draft");
+    // ^U / ^K would delete-to-line-start / -end if the editor still owned them.
+    t.mockInput.pressKey("u", { ctrl: true });
+    t.mockInput.pressKey("k", { ctrl: true });
+    const frame = await t.waitForFrame((f) => f.includes("keep this draft"));
+    expect(frame).toContain("keep this draft");
+    t.renderer.destroy();
+  });
+
+  it("Given a reply, when plain Enter is pressed, then it submits (like the web composer)", async () => {
+    let sent = 0;
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={setReply}
+          onReplySubmit={() => {
+            sent += 1;
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.typeText("ship it");
+    t.mockInput.pressEnter();
+    await t.waitFor(() => sent > 0);
+    expect(sent).toBe(1);
+    t.renderer.destroy();
+  });
+});

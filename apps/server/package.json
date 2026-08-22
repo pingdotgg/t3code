@@ -29,10 +29,12 @@
     "@effect/sql-sqlite-bun": "catalog:",
     "@ff-labs/fff-node": "0.9.4",
     "@opencode-ai/sdk": "^1.3.15",
+    "@opentui/core": "^0.5.4",
     "@pierre/diffs": "catalog:",
     "effect": "catalog:",
     "msgpackr-extract": "3.0.4",
     "node-pty": "^1.1.0",
+    "sharp": "^0.34.5",
     "yaml": "catalog:"
   },
   "devDependencies": {

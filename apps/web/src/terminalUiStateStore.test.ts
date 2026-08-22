@@ -285,6 +285,27 @@ describe("terminalUiStateStore actions", () => {
     ).toEqual(["term-2", "term-1"]);
   });
 
+  it("removes a remotely closed terminal without suppressing a later server reopen", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.reconcileTerminalIds(THREAD_REF, ["term-1", "term-2"]);
+
+    store.removeTerminalFromServer(THREAD_REF, "term-1");
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual(["term-2"]);
+
+    store.reconcileTerminalIds(THREAD_REF, ["term-1", "term-2"]);
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds,
+    ).toEqual(["term-1", "term-2"]);
+  });
+
   it("is a no-op when clearing terminal UI state for a thread with no state", () => {
     const store = useTerminalUiStateStore.getState();
     const before = useTerminalUiStateStore.getState();

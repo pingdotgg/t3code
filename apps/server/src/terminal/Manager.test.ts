@@ -656,6 +656,23 @@ it.layer(
     }),
   );
 
+  it.effect("lists persisted terminal histories that have not been attached since restart", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager();
+      const primaryHistory = yield* historyLogPath(logsDir);
+      const secondHistory = yield* multiTerminalHistoryLogPath(logsDir, "thread-1", "term-2");
+      const otherThreadHistory = yield* historyLogPath(logsDir, "thread-2");
+      yield* writeFileString(primaryHistory, "old primary history\n");
+      yield* writeFileString(secondHistory, "old second history\n");
+      yield* writeFileString(otherThreadHistory, "other thread\n");
+      yield* manager.open(openInput({ terminalId: "term-3" }));
+
+      const result = yield* manager.list({ threadId: "thread-1" });
+
+      expect(result.terminalIds).toEqual(["term-1", "term-2", "term-3"]);
+    }),
+  );
+
   it.effect("clears transcript and emits cleared event", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir, getEvents } = yield* createManager();
@@ -1705,6 +1722,42 @@ it.layer(
             (event) =>
               event.type === "remove" &&
               event.threadId === "new-thread" &&
+              event.terminalId === DEFAULT_TERMINAL_ID,
+          ),
+        ),
+        "1200 millis",
+      );
+    }),
+  );
+
+  it.effect("publishes removal when closing a persisted terminal without a live session", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager();
+      yield* manager.open(openInput({ threadId: "persisted-thread" }));
+      yield* manager.close({
+        threadId: "persisted-thread",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+
+      const metadataEvents = yield* Ref.make<ReadonlyArray<TerminalMetadataStreamEvent>>([]);
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Ref.update(metadataEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* Ref.set(metadataEvents, []);
+
+      yield* manager.close({
+        threadId: "persisted-thread",
+        terminalId: DEFAULT_TERMINAL_ID,
+        deleteHistory: true,
+      });
+
+      yield* waitFor(
+        Effect.map(Ref.get(metadataEvents), (events) =>
+          events.some(
+            (event) =>
+              event.type === "remove" &&
+              event.threadId === "persisted-thread" &&
               event.terminalId === DEFAULT_TERMINAL_ID,
           ),
         ),

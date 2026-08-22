@@ -832,6 +832,9 @@ export const WINDOWS_SERVER_EXTRA_RESOURCES = [
     filter: [WINDOWS_SERVER_ASAR_RESOURCE, `${WINDOWS_SERVER_ASAR_RESOURCE}.unpacked/**/*`],
   },
 ] as const;
+// Bun cannot read Electron's virtual asar filesystem. Keep the staged TUI and
+// its runtime dependencies on disk while the rest of app.asar stays packed.
+export const TUI_ASAR_UNPACK = ["apps/server/dist/tui/**", "**/node_modules/**"] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
@@ -2042,10 +2045,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
-    // All platforms keep app.asar fully packed; electron-builder's default
-    // smart unpack extracts native libraries, which loaders find in
-    // app.asar.unpacked. Windows additionally ships the server tree as the
-    // hand-packed server.asar sidecar (see WINDOWS_SERVER_ASAR_RESOURCE).
+    // Bun launches the TUI from app.asar.unpacked. Windows additionally ships
+    // the server tree as the hand-packed server.asar sidecar.
+    asarUnpack: [...TUI_ASAR_UNPACK],
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),

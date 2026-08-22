@@ -48,6 +48,7 @@ import {
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   STAGE_INSTALL_ARGS,
+  TUI_ASAR_UNPACK,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
   validateWindowsPackagedPayload,
@@ -438,12 +439,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      // All platforms keep app.asar fully packed; Windows ships the server
-      // tree as the hand-packed server.asar sidecar in extraResources instead
-      // of unpacking thousands of loose files at install time.
-      assert.notProperty(mac, "asarUnpack");
-      assert.notProperty(linux, "asarUnpack");
-      assert.notProperty(win, "asarUnpack");
+      assert.deepStrictEqual(mac.asarUnpack, TUI_ASAR_UNPACK);
+      assert.deepStrictEqual(linux.asarUnpack, TUI_ASAR_UNPACK);
+      assert.deepStrictEqual(win.asarUnpack, TUI_ASAR_UNPACK);
+      // Windows ships the server tree as the hand-packed server.asar sidecar
+      // instead of unpacking the complete server into thousands of loose files.
       assert.deepStrictEqual(win.extraResources, [
         {
           from: "apps/desktop/prod-resources/resource-monitor",
