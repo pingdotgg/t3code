@@ -1132,7 +1132,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
       );
       const query = composerTrigger.query.trim().toLowerCase();
-      const skillItems = (selectedProviderStatus?.skills ?? [])
+      const skillItems = composerSkills
         .filter((skill) => skill.enabled)
         .map((skill) => ({
           id: `skill:${selectedProvider}:${skill.name}`,
