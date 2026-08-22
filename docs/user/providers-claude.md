@@ -41,6 +41,27 @@ T3 Code looks for Claude skills in the Claude config directory's `skills` folder
 
 If the same skill name exists in more than one folder, the later folder wins.
 
+## Claude Subagent Limits
+
+T3 Code limits Claude Code to five concurrent subagents and one level of subagent spawning by
+default. The main Claude session can still delegate work, but a delegated subagent cannot create
+another generation of subagents. These defaults keep one turn from unexpectedly expanding into a
+large tree of subscription usage.
+
+Stopping or replacing a Claude session also asks Claude Code to stop any background tasks that the
+session started before T3 Code closes it.
+
+To use different limits, add either variable to that Claude provider's **Environment variables**
+section:
+
+```text
+CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS    5
+CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH   1
+```
+
+Values set on the provider override T3 Code's defaults. Raising them can substantially increase
+usage when Claude delegates work.
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.

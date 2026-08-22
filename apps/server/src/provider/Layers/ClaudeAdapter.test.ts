@@ -160,6 +160,7 @@ function makeHarness(config?: {
   readonly cwd?: string;
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly instanceId?: ProviderInstanceId;
 }) {
   const query = new FakeClaudeQuery();
@@ -172,6 +173,7 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.environment ? { environment: config.environment } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -461,6 +463,50 @@ describe("ClaudeAdapterLive", () => {
         createInput?.options.env?.CLAUDE_CONFIG_DIR,
         NodePath.join(NodeOS.homedir(), ".claude-work"),
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("bounds native Claude subagent fan-out by default", () => {
+    const harness = makeHarness({ environment: { PATH: "/bin" } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const environment = harness.getLastCreateQueryInput()?.options.env;
+      assert.equal(environment?.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "1");
+      assert.equal(environment?.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, "5");
+      assert.equal(environment?.PATH, "/bin");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("honors explicit Claude subagent guardrail overrides", () => {
+    const harness = makeHarness({
+      environment: {
+        CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: "2",
+        CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "9",
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const environment = harness.getLastCreateQueryInput()?.options.env;
+      assert.equal(environment?.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, "2");
+      assert.equal(environment?.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, "9");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1665,6 +1711,48 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("stopSession stops live background tasks before closing the query", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const taskStartedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-live-on-close",
+        description: "Background agent",
+        task_type: "local_agent",
+        uuid: "task-live-on-close-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(taskStartedFiber);
+
+      yield* adapter.stopSession(session.threadId);
+
+      assert.deepEqual(harness.query.stopTaskCalls, ["task-live-on-close"]);
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("workflow member coalescing: identical snapshots suppress, changes emit", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2142,7 +2230,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("consumes undeclared and UX-internal system subtypes without warning rows", () => {
+  it.effect("consumes lifecycle and UX-internal system subtypes without warning rows", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2157,9 +2245,8 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      // Undeclared wire-only roster snapshot + every typed UX-internal
-      // subtype and top-level type consumed silently: none may surface as
-      // unknown-subtype warnings.
+      // Lifecycle roster snapshot + UX-internal subtype and top-level type
+      // consumed silently: none may surface as unknown-subtype warnings.
       for (const message of [
         {
           type: "system",
@@ -2280,6 +2367,8 @@ describe("ClaudeAdapterLive", () => {
           event.payload.reason.startsWith("api_retry:"),
       );
       assert.equal(heartbeat?.type, "session.state.changed");
+      yield* adapter.stopSession(THREAD_ID);
+      assert.deepEqual(harness.query.stopTaskCalls, ["t1"]);
       runtimeEventsFiber.interruptUnsafe();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -3310,6 +3399,7 @@ describe("ClaudeAdapterLive", () => {
             },
           ],
           toolUseID: "tool-use-1",
+          requestId: "request-tool-use-1",
         },
       );
 
@@ -3415,6 +3505,7 @@ describe("ClaudeAdapterLive", () => {
           signal: new AbortController().signal,
           suggestions: [],
           toolUseID: "tool-use-mcp-1",
+          requestId: "request-tool-use-mcp-1",
         },
       );
       yield* respondToNextRequest;
@@ -3448,6 +3539,7 @@ describe("ClaudeAdapterLive", () => {
             },
           ],
           toolUseID: "tool-use-bash-1",
+          requestId: "request-tool-use-bash-1",
         },
       );
       yield* respondToNextRequest;
@@ -3498,6 +3590,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "tool-agent-1",
+          requestId: "request-tool-agent-1",
         },
       );
 
@@ -3522,6 +3615,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "tool-grep-approval-1",
+          requestId: "request-tool-grep-approval-1",
         },
       );
 
@@ -4059,6 +4153,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "tool-exit-1",
+          requestId: "request-tool-exit-1",
         },
       );
 
@@ -4225,6 +4320,7 @@ describe("ClaudeAdapterLive", () => {
       const permissionPromise = canUseTool("AskUserQuestion", askInput, {
         signal: new AbortController().signal,
         toolUseID: "tool-ask-1",
+        requestId: "request-tool-ask-1",
       });
 
       // The adapter should emit a user-input.requested event.
@@ -4351,6 +4447,7 @@ describe("ClaudeAdapterLive", () => {
       const permissionPromise = canUseTool("AskUserQuestion", askInput, {
         signal: new AbortController().signal,
         toolUseID: "tool-ask-2",
+        requestId: "request-tool-ask-2",
       });
 
       // Should still get user-input.requested even in full-access mode.
@@ -4416,6 +4513,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: controller.signal,
           toolUseID: "tool-ask-abort",
+          requestId: "request-tool-ask-abort",
         },
       );
 
@@ -4479,7 +4577,11 @@ describe("ClaudeAdapterLive", () => {
             },
           ],
         },
-        { signal: new AbortController().signal, toolUseID: "tool-ask-stop" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-ask-stop",
+          requestId: "request-tool-ask-stop",
+        },
       );
 
       const requestedEvent = yield* Stream.runHead(adapter.streamEvents);

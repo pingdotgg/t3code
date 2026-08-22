@@ -1207,6 +1207,28 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+const CLAUDE_SUBAGENT_GUARDRAILS = {
+  CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: "1",
+  CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "5",
+} as const;
+
+/**
+ * Keep one Claude turn from growing into an unbounded tree of agent sessions.
+ * Provider-instance environment values remain authoritative so advanced users
+ * can deliberately raise or lower either limit.
+ */
+function withClaudeSubagentGuardrails(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...environment,
+    CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH:
+      environment.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH?.trim() ||
+      CLAUDE_SUBAGENT_GUARDRAILS.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH,
+    CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS:
+      environment.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS?.trim() ||
+      CLAUDE_SUBAGENT_GUARDRAILS.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS,
+  };
+}
+
 function buildPromptText(
   input: ProviderSendTurnInput,
   boundInstanceId: ProviderInstanceId,
@@ -1660,8 +1682,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
-    Effect.provideService(Path.Path, path),
+  const claudeEnvironment = withClaudeSubagentGuardrails(
+    yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
+      Effect.provideService(Path.Path, path),
+    ),
   );
   const claudeSdkExecutablePath = yield* resolveClaudeSdkExecutablePath(
     claudeSettings.binaryPath,
@@ -3087,15 +3111,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // Undeclared-but-real subtypes (absent from the SDK's union, so they can't
     // be switch cases): consumed intentionally without emitting, otherwise
     // they fall through to the unknown-subtype warning and surface as spurious
-    // error rows in client work logs. `background_tasks_changed` is a roster
-    // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
-    // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source. `vcs_state_changed`
+    // error rows in client work logs. `vcs_state_changed`
     // ({kind: commit|push|rebase}) and `code_change_published`
     // ({provider, url, repo}) are informational CLI notices; the work log
     // already shows the underlying git/gh tool calls.
     switch (message.subtype as string) {
-      case "background_tasks_changed":
       case "vcs_state_changed":
       case "code_change_published":
         return;
@@ -3331,6 +3351,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       }
+      case "background_tasks_changed":
+        // This level-triggered snapshot is more reliable than pairing the
+        // task_started/task_notification edges. Keep the cleanup set aligned
+        // even if an edge was missed or a foreground task was backgrounded.
+        context.liveTaskIds.clear();
+        for (const task of message.tasks) {
+          context.liveTaskIds.add(task.task_id);
+        }
+        return;
       case "files_persisted":
         yield* offerRuntimeEvent({
           ...base,
@@ -3392,8 +3421,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           yield* emitRuntimeWarning(context, message.text, message);
         }
         return;
+      case "informational":
+        if (message.level === "warning" || message.prevent_continuation === true) {
+          yield* emitRuntimeWarning(context, message.content, message);
+        }
+        return;
+      case "model_refusal_no_fallback":
+        yield* emitRuntimeWarning(context, message.content, message);
+        return;
       // Inner protocol/UX details with no T3 surface today — consumed
       // deliberately so they don't masquerade as unknown-subtype warnings.
+      case "control_request_progress":
+      case "worker_shutting_down":
       case "model_refusal_fallback":
       case "local_command_output":
       case "plugin_install":
@@ -3552,6 +3591,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       // Composer prompt suggestions have no T3 surface; consumed deliberately.
       case "prompt_suggestion":
+      case "conversation_reset":
         return;
       default: {
         // Exhaustiveness guard (see handleSystemMessage): new SDK top-level
@@ -3630,6 +3670,50 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  const stopLiveTasks = Effect.fn("stopLiveTasks")(function* (context: ClaudeSessionContext) {
+    if (!context.query.stopTask || context.liveTaskIds.size === 0) {
+      return;
+    }
+
+    const liveIds = Array.from(context.liveTaskIds);
+    yield* Effect.forEach(
+      liveIds,
+      (taskId) =>
+        Effect.gen(function* () {
+          const stopAcknowledged = yield* Effect.tryPromise({
+            // Invoke through the query object: SDK methods rely on `this`.
+            try: () => context.query.stopTask!(taskId),
+            catch: () => undefined,
+          }).pipe(
+            Effect.timeoutOption("3 seconds"),
+            Effect.orElseSucceed(() => Option.none()),
+          );
+          if (Option.isNone(stopAcknowledged) || !context.liveTaskIds.delete(taskId)) {
+            return;
+          }
+
+          // stopTask acknowledges the control request separately from the
+          // task notification, which can lose a race with query shutdown.
+          const stamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "task.completed",
+            eventId: stamp.eventId,
+            provider: PROVIDER,
+            createdAt: stamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+            payload: {
+              taskId: RuntimeTaskId.make(taskId),
+              status: "stopped",
+              ...taskLinkageFor(context.taskAgents, taskId),
+            },
+            providerRefs: nativeProviderRefs(context),
+          });
+        }).pipe(Effect.ignore),
+      { concurrency: 8, discard: true },
+    ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
+  });
+
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     context: ClaudeSessionContext,
     options?: { readonly emitExitEvent?: boolean },
@@ -3637,6 +3721,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.stopped) return;
 
     context.stopped = true;
+
+    // Closing a query is not a reliable task boundary: background agents and
+    // shells may outlive their parent turn. Explicitly stop every task before
+    // shutting down the SDK transport, including replacement and server-exit
+    // paths that do not pass through interruptTurn.
+    yield* stopLiveTasks(context);
 
     for (const [requestId, pending] of context.pendingApprovals) {
       yield* Deferred.succeed(pending.decision, "cancel");
@@ -4471,53 +4561,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // background subagents/shells keep running and keep burning tokens.
       // Stop every live task first (best-effort per task: one refusal must
       // not strand the rest or block the turn interrupt), then interrupt.
-      if (context.query.stopTask && context.liveTaskIds.size > 0) {
-        const liveIds = Array.from(context.liveTaskIds);
-        // Bounded: a wedged child's stopTask promise may never settle
-        // (Effect.ignore handles rejection, not non-resolution), and the
-        // parent interrupt below MUST still run — Stop matters most during
-        // runaway fleets (review finding). Per-task timeout keeps one hung
-        // child from consuming the whole budget.
-        yield* Effect.forEach(
-          liveIds,
-          (taskId) =>
-            Effect.gen(function* () {
-              const stopAcknowledged = yield* Effect.tryPromise({
-                // Invoke through the query object: SDK methods rely on `this`.
-                try: () => context.query.stopTask!(taskId),
-                catch: () => undefined,
-              }).pipe(
-                Effect.timeoutOption("3 seconds"),
-                Effect.orElseSucceed(() => Option.none()),
-              );
-              if (Option.isNone(stopAcknowledged) || !context.liveTaskIds.delete(taskId)) {
-                return;
-              }
-
-              // stopTask only acknowledges the control request. Its separate
-              // task_notification can lose the race with interrupt(), so make
-              // the acknowledged stop authoritative for the durable UI state.
-              const stamp = yield* makeEventStamp();
-              yield* offerRuntimeEvent({
-                type: "task.completed",
-                eventId: stamp.eventId,
-                provider: PROVIDER,
-                createdAt: stamp.createdAt,
-                threadId: context.session.threadId,
-                ...(context.turnState
-                  ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
-                  : {}),
-                payload: {
-                  taskId: RuntimeTaskId.make(taskId),
-                  status: "stopped",
-                  ...taskLinkageFor(context.taskAgents, taskId),
-                },
-                providerRefs: nativeProviderRefs(context),
-              });
-            }).pipe(Effect.ignore),
-          { concurrency: 8, discard: true },
-        ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
-      }
+      yield* stopLiveTasks(context);
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
         catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
