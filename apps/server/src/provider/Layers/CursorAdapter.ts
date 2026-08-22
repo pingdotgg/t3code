@@ -44,6 +44,11 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
+  discoverCursorSkills,
+  mayContainSkillToken,
+  renderCursorSkillInvocations,
+} from "../Drivers/CursorSkills.ts";
+import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
@@ -133,6 +138,10 @@ interface CursorSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
+  /** Known skill names at session start, refreshed lazily by sendTurn when a
+   * `$token` shows up so skills created after the session (or discovered from
+   * a different root by the provider snapshot) still translate. */
+  skillNames: ReadonlySet<string>;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -336,6 +345,12 @@ export function makeCursorAdapter(
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
+    const discoverSkills = (cwd?: string) =>
+      discoverCursorSkills(cwd, options?.environment).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -530,6 +545,7 @@ export function makeCursorAdapter(
           const effectiveCursorSettings = options?.resolveSettings
             ? yield* options.resolveSettings
             : cursorSettings;
+          const skills = yield* discoverSkills(cwd);
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
@@ -778,6 +794,7 @@ export function makeCursorAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
+            skillNames: new Set(skills.map((skill) => skill.name)),
             promptsInFlight: 0,
             stopped: false,
           };
@@ -968,7 +985,21 @@ export function makeCursorAdapter(
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
+            const promptText = input.input.trim();
+            if (mayContainSkillToken(promptText)) {
+              // Rediscover against the session's own cwd (the picker snapshot
+              // scans the server root, and skills can also appear on disk
+              // mid-session) so the token set matches what this workspace
+              // actually offers before translating.
+              const discovered = yield* discoverSkills(ctx.session.cwd);
+              if (discovered.length > 0) {
+                ctx.skillNames = new Set([...ctx.skillNames, ...discovered.map((s) => s.name)]);
+              }
+            }
+            promptParts.push({
+              type: "text",
+              text: renderCursorSkillInvocations(promptText, ctx.skillNames),
+            });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {

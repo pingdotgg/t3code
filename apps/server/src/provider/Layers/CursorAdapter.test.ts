@@ -168,6 +168,53 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  it.effect("sends selected Cursor skills as slash commands", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-skill-invocation");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-skill-")),
+      );
+      const workspace = NodePath.join(tempDir, "workspace");
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const skillPath = NodePath.join(workspace, ".cursor", "skills", "deploy", "SKILL.md");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(skillPath), { recursive: true });
+        await NodeFSP.writeFile(
+          skillPath,
+          ["---", "name: deploy", "description: Deploy the service.", "---"].join("\n"),
+          "utf8",
+        );
+        await NodeFSP.writeFile(requestLogPath, "", "utf8");
+      });
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, NodePath.join(tempDir, "argv.txt")),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: workspace,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "$deploy ship the release", attachments: [] });
+
+      const requests = yield* waitForJsonLogMatch(
+        requestLogPath,
+        (entry) => entry.method === "session/prompt",
+      );
+      const promptRequest = requests.find((entry) => entry.method === "session/prompt");
+      const prompt = (promptRequest?.params as { prompt?: Array<{ text?: string }> } | undefined)
+        ?.prompt?.[0]?.text;
+      assert.equal(prompt, "/deploy ship the release");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -822,6 +869,59 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
         yield* adapter.stopSession(threadId);
       }),
+  );
+
+  it.effect("rediscovers skills that appear after the session started", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-skill-late-discovery");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-skill-late-")),
+      );
+      const workspace = NodePath.join(tempDir, "workspace");
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const skillPath = NodePath.join(workspace, ".cursor", "skills", "deploy", "SKILL.md");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(workspace, { recursive: true });
+        await NodeFSP.writeFile(requestLogPath, "", "utf8");
+      });
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, NodePath.join(tempDir, "argv.txt")),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: workspace,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      // The skill lands on disk after the session captured its skill set.
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(skillPath), { recursive: true });
+        await NodeFSP.writeFile(
+          skillPath,
+          ["---", "name: deploy", "description: Deploy the service.", "---"].join("\n"),
+          "utf8",
+        );
+      });
+
+      yield* adapter.sendTurn({ threadId, input: "$deploy ship the release", attachments: [] });
+
+      const requests = yield* waitForJsonLogMatch(
+        requestLogPath,
+        (entry) => entry.method === "session/prompt",
+      );
+      const promptRequest = requests.find((entry) => entry.method === "session/prompt");
+      const prompt = (promptRequest?.params as { prompt?: Array<{ text?: string }> } | undefined)
+        ?.prompt?.[0]?.text;
+      assert.equal(prompt, "/deploy ship the release");
+
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
   it.effect("segments assistant messages around ACP tool activity in full-access mode", () =>

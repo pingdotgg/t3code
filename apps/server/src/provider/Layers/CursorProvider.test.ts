@@ -87,7 +87,9 @@ exec ${mockAgentCommand} "$@"
   return wrapperPath;
 });
 
-const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")(function* () {
+const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")(function* (
+  version = "2026.04.09-f2b0fcd",
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const mockAgentPath = yield* resolveMockAgentPath();
@@ -99,7 +101,7 @@ const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")
   const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
   const script = `#!/bin/sh
 if [ "$1" = "about" ]; then
-  printf 'CLI Version         2026.04.09-f2b0fcd\\n'
+  printf 'CLI Version         ${version}\\n'
   printf 'User Email          cursor@example.com\\n'
   exit 0
 fi
@@ -323,6 +325,37 @@ describe("getCursorFallbackModels", () => {
 });
 
 describe("buildCursorProviderSnapshot", () => {
+  it("publishes discovered skills for the shared composer picker", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated" },
+        },
+        skills: [
+          {
+            name: "deploy",
+            description: "Deploy the service.",
+            path: "/workspace/.cursor/skills/deploy/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+        ],
+      }).skills,
+    ).toEqual([
+      {
+        name: "deploy",
+        description: "Deploy the service.",
+        path: "/workspace/.cursor/skills/deploy/SKILL.md",
+        enabled: true,
+        scope: "project",
+      },
+    ]);
+  });
+
   it("downgrades ready status to warning when ACP model discovery times out", () => {
     expect(
       buildCursorProviderSnapshot({
@@ -471,6 +504,43 @@ describe("checkCursorProviderStatus", () => {
       "claude-opus-4-6",
     ]);
     await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
+  });
+
+  it("keeps discovered skills when the parameterized model picker is unavailable", async () => {
+    const fixture = await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-provider-skills-",
+        });
+        const workspace = path.join(tempDir, "workspace");
+        const skillPath = path.join(workspace, ".cursor", "skills", "deploy", "SKILL.md");
+        yield* fileSystem.makeDirectory(path.dirname(skillPath), { recursive: true });
+        yield* fileSystem.writeFileString(
+          skillPath,
+          ["---", "name: deploy", "description: Deploy the service.", "---"].join("\n"),
+        );
+        return { workspace, home: path.join(tempDir, "home") };
+      }),
+    );
+    const wrapperPath = await runNode(makeMockAgentWithAboutWrapper("2026.04.07-f2b0fcd"));
+
+    const provider = await runNode(
+      checkCursorProviderStatus(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        { HOME: fixture.home },
+        fixture.workspace,
+      ),
+    );
+
+    expect(provider.skills.map((skill) => skill.name)).toEqual(["deploy"]);
   });
 });
 
