@@ -310,6 +310,102 @@ describe("mergeUsage", () => {
     expect(merged.providers.find((provider) => provider.provider === "kimi")?.sessions).toBe(2);
   });
 
+  it("does not connect missing Kimi homes across same-named machines", () => {
+    const missing = {
+      provider: "kimi" as const,
+      hostId: "same-hostname",
+      homePath: "/home/user/.kimi-code/sessions",
+      volumeId: "",
+      status: "missing" as const,
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 3 })],
+            [
+              missing,
+              {
+                provider: "kimi",
+                hostId: "same-hostname",
+                homePath: "/machine-a/kimi-desktop",
+                volumeId: "machine-a-volume",
+              },
+            ],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 7 })],
+            [
+              missing,
+              {
+                provider: "kimi",
+                hostId: "same-hostname",
+                homePath: "/machine-b/kimi-desktop",
+                volumeId: "machine-b-volume",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.contributingEnvironments).toEqual(["env-a", "env-b"]);
+    expect(merged.duplicateSources).toEqual([]);
+  });
+
+  it("reports only fingerprints the winning environment actually shares", () => {
+    const sharedTui = {
+      provider: "kimi" as const,
+      hostId: "mac",
+      homePath: "/shared/.kimi-code/sessions",
+      volumeId: "shared-tui",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 3 })],
+            [
+              sharedTui,
+              {
+                provider: "kimi",
+                hostId: "mac",
+                homePath: "/machine-a/kimi-desktop",
+                volumeId: "desktop-a",
+              },
+            ],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 7 })],
+            [
+              { ...sharedTui, status: "partial" },
+              {
+                provider: "kimi",
+                hostId: "mac",
+                homePath: "/machine-b/kimi-desktop",
+                volumeId: "desktop-b",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(3);
+    expect(merged.duplicateSources).toEqual(["env-b: /shared/.kimi-code/sessions"]);
+  });
+
   it("prefers a complete Kimi Code duplicate without a false coverage gap", () => {
     const shared = {
       provider: "kimi" as const,

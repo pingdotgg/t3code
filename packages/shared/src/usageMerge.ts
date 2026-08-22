@@ -151,6 +151,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     const environmentsByFingerprint = new Map<string, EnvironmentId[]>();
     for (const candidate of candidates) {
       for (const source of candidate.sources) {
+        if (source.status === "missing" || source.fingerprint.volumeId.length === 0) continue;
         const key = fingerprintKey(source.fingerprint);
         const owners = environmentsByFingerprint.get(key) ?? [];
         owners.push(candidate.environment.environmentId);
@@ -202,9 +203,19 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       ownedEnvironmentProviders.add(
         environmentProviderKey(winner.environment.environmentId, provider),
       );
+      const winnerFingerprints = new Set(
+        winner.sources
+          .filter((source) => source.status !== "missing" && source.fingerprint.volumeId.length > 0)
+          .map((source) => fingerprintKey(source.fingerprint)),
+      );
       for (const candidate of ranked) {
         for (const source of candidate.sources) {
-          if (candidate.environment.environmentId !== winner.environment.environmentId) {
+          if (
+            candidate.environment.environmentId !== winner.environment.environmentId &&
+            source.status !== "missing" &&
+            source.fingerprint.volumeId.length > 0 &&
+            winnerFingerprints.has(fingerprintKey(source.fingerprint))
+          ) {
             duplicates.push(
               `${candidate.environment.label}: ${source.fingerprint.resolvedHomePath}`,
             );
