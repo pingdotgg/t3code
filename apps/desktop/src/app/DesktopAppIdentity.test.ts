@@ -1,4 +1,4 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -87,7 +87,7 @@ const makeEnvironmentLayer = (overrides: TestEnvironmentInput = {}) => {
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        NodeServices.layer,
+        NodePath.layerPosix,
         DesktopConfig.layerTest({
           ...env,
         }),
@@ -144,6 +144,31 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
+  it.effect("uses an explicit desktop user-data directory without probing legacy state", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, "/tmp/t3-desktop-profile");
+      }),
+      {
+        environment: {
+          env: {
+            T3CODE_DESKTOP_USER_DATA_DIR: " /tmp/t3-desktop-profile ",
+          },
+        },
+        legacyPathProbeError: PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "exists",
+          description: "legacy path must not be probed",
+          pathOrDescriptor: "/Users/alice/Library/Application Support/T3 Code (Alpha)",
+        }),
+      },
+    ),
+  );
+
   it.effect("keeps using the legacy userData path when it already exists", () =>
     withIdentity(
       Effect.gen(function* () {

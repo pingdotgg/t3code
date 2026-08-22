@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { randomUUID } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 
@@ -59,6 +60,7 @@ export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<Brow
       "wait-first-frame",
       "wait-startup",
       "stop-media-recorder",
+      "stop-deadline",
       "save-artifact",
       "cleanup",
     ]),
@@ -94,6 +96,8 @@ interface ActiveRecording {
   readonly startupSettled: Promise<void>;
   readonly firstFrameSize: Promise<"frame" | "cancelled">;
   readonly settleFirstFrameSize: (outcome: "frame" | "cancelled") => void;
+  readonly artifactSaveKey: string;
+  artifactSave: Promise<DesktopPreviewRecordingArtifact> | null;
   recorder: MediaRecorder | null;
   mimeType: string | null;
   frameSizeEstablished: boolean;
@@ -236,10 +240,38 @@ const clearActiveRecording = (recording: ActiveRecording): void => {
 const cleanupFailedRecordingStart = async (
   bridge: NonNullable<typeof previewBridge>,
   recording: ActiveRecording,
+  deadline: number | null,
 ): Promise<unknown | undefined> => {
   const errors: unknown[] = [];
   try {
-    await bridge.recording.stopScreencast(recording.tabId);
+    const remainingMs = deadline === null ? undefined : Math.max(0, deadline - Date.now());
+    const stop =
+      remainingMs === undefined
+        ? bridge.recording.stopScreencast(recording.tabId)
+        : bridge.recording.stopScreencast(recording.tabId, Math.max(1, remainingMs));
+    if (remainingMs === undefined) {
+      await stop;
+    } else {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      try {
+        await Promise.race([
+          stop,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `Browser recording startup cleanup exceeded its deadline for tab ${recording.tabId}.`,
+                  ),
+                ),
+              remainingMs,
+            );
+          }),
+        ]);
+      } finally {
+        if (timeout !== null) clearTimeout(timeout);
+      }
+    }
   } catch (error) {
     errors.push(error);
   }
@@ -272,13 +304,19 @@ const recordingStartupCancelledError = (
 const isRecordingStarting = (recording: ActiveRecording): boolean =>
   activeRecordings.get(recording.tabId) === recording && recording.lifecycle.phase === "starting";
 
-const waitForFirstFrameSize = async (recording: ActiveRecording): Promise<boolean> => {
+const waitForFirstFrameSize = async (
+  recording: ActiveRecording,
+  timeoutMs = BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS,
+): Promise<boolean> => {
   if (recording.frameSizeEstablished) return true;
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const outcome = await Promise.race([
     recording.firstFrameSize,
     new Promise<"timeout">((resolve) => {
-      timeout = setTimeout(() => resolve("timeout"), BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS);
+      timeout = setTimeout(
+        () => resolve("timeout"),
+        Math.min(BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS, Math.max(0, timeoutMs)),
+      );
     }),
   ]);
   if (timeout !== null) clearTimeout(timeout);
@@ -310,13 +348,80 @@ const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Prom
 const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperationError =>
   isBrowserRecordingOperationError(error) && error.operation === "wait-startup";
 
+const recordingStopDeadlineError = (
+  tabId: string,
+  cause: unknown = new Error(`Browser recording stop exceeded its deadline for tab ${tabId}.`),
+): BrowserRecordingOperationError =>
+  new BrowserRecordingOperationError({
+    operation: "stop-deadline",
+    tabId,
+    cause,
+  });
+
+export const isBrowserRecordingStopDeadlineError = (
+  error: unknown,
+): error is BrowserRecordingOperationError =>
+  isBrowserRecordingOperationError(error) && error.operation === "stop-deadline";
+
+const isDesktopRecordingTimeout = (error: unknown): boolean => {
+  const seen = new Set<object>();
+  let current = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (
+      ("_tag" in current &&
+        (current as { readonly _tag?: unknown })._tag === "PreviewAutomationTimeoutError") ||
+      ("name" in current &&
+        (current as { readonly name?: unknown }).name === "PreviewAutomationTimeoutError")
+    ) {
+      return true;
+    }
+    current = "cause" in current ? (current as { readonly cause?: unknown }).cause : undefined;
+  }
+  return false;
+};
+
+const remainingRecordingStopBudget = (
+  deadline: number | null,
+  tabId: string,
+): number | undefined => {
+  if (deadline === null) return undefined;
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw recordingStopDeadlineError(tabId);
+  return remainingMs;
+};
+
+const awaitWithinRecordingStopDeadline = async <A>(
+  promise: Promise<A>,
+  deadline: number | null,
+  tabId: string,
+): Promise<A> => {
+  const remainingMs = remainingRecordingStopBudget(deadline, tabId);
+  if (remainingMs === undefined) return await promise;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(recordingStopDeadlineError(tabId)), remainingMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== null) clearTimeout(timeout);
+  }
+};
+
 export async function startBrowserRecording(
   tabId: string,
   threadRef: ScopedThreadRef | null = null,
   serverTabId = tabId,
+  timeoutMs?: number,
 ): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
+  const deadline = timeoutMs === undefined ? null : Date.now() + timeoutMs;
+  const remainingStartupBudget = (): number | undefined =>
+    deadline === null ? undefined : Math.max(0, deadline - Date.now());
   const activeRecording = activeRecordings.get(tabId);
   if (activeRecording) {
     if (activeRecording.lifecycle.phase === "recording") {
@@ -369,6 +474,8 @@ export async function startBrowserRecording(
     startupSettled,
     firstFrameSize,
     settleFirstFrameSize: (outcome) => settleFirstFrameSize?.(outcome),
+    artifactSaveKey: randomUUID(),
+    artifactSave: null,
     recorder: null,
     mimeType: null,
     frameSizeEstablished: false,
@@ -389,7 +496,9 @@ export async function startBrowserRecording(
       });
     }
     try {
-      await bridge.recording.startScreencast(tabId);
+      const startBudget = remainingStartupBudget();
+      if (startBudget === undefined) await bridge.recording.startScreencast(tabId);
+      else await bridge.recording.startScreencast(tabId, startBudget);
     } catch (cause) {
       if (!isRecordingStarting(recording)) {
         throw recordingStartupCancelledError(recording, cause);
@@ -420,11 +529,18 @@ export async function startBrowserRecording(
       throw recordingStartupCancelledError(recording);
     };
     await throwIfStartupCancelled();
-    const hasFirstFrame = await waitForFirstFrameSize(recording);
+    const hasFirstFrame = await waitForFirstFrameSize(
+      recording,
+      remainingStartupBudget() ?? BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS,
+    );
     await throwIfStartupCancelled();
-    if (!hasFirstFrame) {
-      const cause = new Error(`No valid recording frame arrived for tab ${tabId}.`);
-      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+    if (!hasFirstFrame || remainingStartupBudget() === 0) {
+      const cause = new Error(
+        hasFirstFrame
+          ? `Browser recording startup exceeded its deadline for tab ${tabId}.`
+          : `No valid recording frame arrived for tab ${tabId}.`,
+      );
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording, deadline);
       throw new BrowserRecordingOperationError({
         operation: "wait-first-frame",
         tabId,
@@ -453,7 +569,7 @@ export async function startBrowserRecording(
         if (event.data.size > 0) chunks.push(event.data);
       });
     } catch (cause) {
-      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording, deadline);
       throw new BrowserRecordingOperationError({
         operation: "initialize-media-recorder",
         tabId,
@@ -470,7 +586,7 @@ export async function startBrowserRecording(
     try {
       recorder.start(1_000);
     } catch (cause) {
-      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording, deadline);
       throw new BrowserRecordingOperationError({
         operation: "start-media-recorder",
         tabId,
@@ -499,6 +615,7 @@ export async function startBrowserRecording(
 const finalizeBrowserRecording = async (
   bridge: NonNullable<typeof previewBridge>,
   recording: ActiveRecording,
+  deadline: number | null,
 ): Promise<DesktopPreviewRecordingArtifact | null> => {
   const { tabId } = recording;
   let result:
@@ -508,10 +625,23 @@ const finalizeBrowserRecording = async (
       }
     | { readonly _tag: "Failure"; readonly error: unknown };
   try {
-    await waitForRecordingStartupToSettle(recording);
+    await awaitWithinRecordingStopDeadline(
+      waitForRecordingStartupToSettle(recording),
+      deadline,
+      tabId,
+    );
     try {
-      await bridge.recording.stopScreencast(tabId);
+      const stopBudget = remainingRecordingStopBudget(deadline, tabId);
+      await awaitWithinRecordingStopDeadline(
+        stopBudget === undefined
+          ? bridge.recording.stopScreencast(tabId)
+          : bridge.recording.stopScreencast(tabId, stopBudget),
+        deadline,
+        tabId,
+      );
     } catch (cause) {
+      if (isBrowserRecordingStopDeadlineError(cause)) throw cause;
+      if (isDesktopRecordingTimeout(cause)) throw recordingStopDeadlineError(tabId, cause);
       throw new BrowserRecordingOperationError({
         operation: "stop-screencast",
         tabId,
@@ -522,8 +652,13 @@ const finalizeBrowserRecording = async (
       result = { _tag: "Success", artifact: null };
     } else {
       try {
-        await stopMediaRecorder(recording.recorder);
+        await awaitWithinRecordingStopDeadline(
+          stopMediaRecorder(recording.recorder),
+          deadline,
+          tabId,
+        );
       } catch (cause) {
+        if (isBrowserRecordingStopDeadlineError(cause)) throw cause;
         throw new BrowserRecordingOperationError({
           operation: "stop-media-recorder",
           tabId,
@@ -532,13 +667,34 @@ const finalizeBrowserRecording = async (
       }
       try {
         const blob = new Blob(recording.chunks, { type: recording.mimeType });
-        const artifact = await bridge.recording.save(
-          tabId,
-          recording.mimeType,
-          new Uint8Array(await blob.arrayBuffer()),
-        );
+        let artifactSave = recording.artifactSave;
+        if (!artifactSave) {
+          const data = new Uint8Array(
+            await awaitWithinRecordingStopDeadline(blob.arrayBuffer(), deadline, tabId),
+          );
+          const saveBudget = remainingRecordingStopBudget(deadline, tabId);
+          const saveOperation =
+            saveBudget === undefined
+              ? bridge.recording.save(tabId, recording.mimeType, data, recording.artifactSaveKey)
+              : bridge.recording.save(
+                  tabId,
+                  recording.mimeType,
+                  data,
+                  recording.artifactSaveKey,
+                  saveBudget,
+                );
+          const trackedSave = saveOperation.catch((cause) => {
+            if (recording.artifactSave === trackedSave) recording.artifactSave = null;
+            throw cause;
+          });
+          recording.artifactSave = trackedSave;
+          artifactSave = trackedSave;
+        }
+        const artifact = await awaitWithinRecordingStopDeadline(artifactSave, deadline, tabId);
         result = { _tag: "Success", artifact };
       } catch (cause) {
+        if (isBrowserRecordingStopDeadlineError(cause)) throw cause;
+        if (isDesktopRecordingTimeout(cause)) throw recordingStopDeadlineError(tabId, cause);
         throw new BrowserRecordingOperationError({
           operation: "save-artifact",
           tabId,
@@ -550,11 +706,13 @@ const finalizeBrowserRecording = async (
     result = { _tag: "Failure", error };
   }
 
-  if (result._tag === "Failure" && isStartupWaitTimeout(result.error)) {
-    // Do not clear `active` yet. The renderer-side start promise can still
-    // resolve later, and its cancellation path will call `stopScreencast`.
-    // Keeping the slot reserved prevents a newer recording for this tab from
-    // being started and then accidentally stopped by the older late cleanup.
+  if (
+    result._tag === "Failure" &&
+    (isStartupWaitTimeout(result.error) || isBrowserRecordingStopDeadlineError(result.error))
+  ) {
+    // Keep the slot and captured chunks available. Startup may still need its
+    // cancellation cleanup, while a deadline failure can be retried to finish
+    // saving an already-stopped MediaRecorder without losing its artifact.
     throw result.error;
   }
 
@@ -604,15 +762,27 @@ const discardBrowserRecording = async (
 
 export function stopBrowserRecording(
   tabId: string,
+  timeoutMs?: number,
 ): Promise<DesktopPreviewRecordingArtifact | null> {
   const bridge = previewBridge;
   const recording = activeRecordings.get(tabId);
   if (!bridge || !recording) return Promise.resolve(null);
-  if (recording.lifecycle.phase === "stopping") return recording.lifecycle.stopPromise;
+  const deadline = timeoutMs === undefined ? null : Date.now() + timeoutMs;
+  if (recording.lifecycle.phase === "stopping") {
+    return awaitWithinRecordingStopDeadline(recording.lifecycle.stopPromise, deadline, tabId);
+  }
 
   const stopPromise = Promise.resolve()
-    .then(() => finalizeBrowserRecording(bridge, recording))
+    .then(() => finalizeBrowserRecording(bridge, recording, deadline))
     .catch((error) => {
+      if (
+        isBrowserRecordingStopDeadlineError(error) &&
+        activeRecordings.get(recording.tabId) === recording &&
+        recording.lifecycle.phase === "stopping" &&
+        recording.lifecycle.stopPromise === stopPromise
+      ) {
+        recording.lifecycle = { phase: "recording" };
+      }
       if (isStartupWaitTimeout(error) && activeRecordings.get(recording.tabId) === recording) {
         const cleanupAfterStartup = recording.startupSettled.then(() =>
           discardBrowserRecording(bridge, recording),

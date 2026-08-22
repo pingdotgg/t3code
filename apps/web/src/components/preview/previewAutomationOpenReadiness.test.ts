@@ -5,6 +5,7 @@ import {
   DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  resolvePreviewAutomationOpenWaitPolicy,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 
@@ -39,26 +40,131 @@ describe("preview automation open readiness", () => {
     ).toBe(false);
   });
 
-  it("waits when an empty tab is immediately given a URL", () => {
+  it("acknowledges a newly created shown tab without cold renderer readiness", () => {
     expect(
-      previewAutomationOpenNeedsOverlay(
+      resolvePreviewAutomationOpenWaitPolicy(
         { url: "https://example.com" } as PreviewAutomationOpenInput,
-        snapshot({ _tag: "Idle" }),
+        snapshot({
+          _tag: "Loading",
+          url: "https://example.com/",
+          title: "",
+        }),
+        false,
+        true,
       ),
-    ).toBe(true);
+    ).toEqual({
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
   });
 
-  it("waits for existing tabs that already have rendered content", () => {
+  it("acknowledges a newly created background tab without renderer readiness", () => {
     expect(
-      previewAutomationOpenNeedsOverlay(
+      resolvePreviewAutomationOpenWaitPolicy(
+        { url: "https://example.com", show: false } as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "Loading",
+          url: "https://example.com/",
+          title: "",
+        }),
+        false,
+        false,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
+  });
+
+  it("waits for the overlay and visibility when navigating a reused tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        { url: "https://example.com" } as PreviewAutomationOpenInput,
+        snapshot({ _tag: "Idle" }),
+        true,
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: true,
+    });
+  });
+
+  it("waits for an existing rendered overlay without requiring visibility when show is false", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        { show: false } as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "Success",
+          url: "https://example.com/",
+          title: "Example",
+        }),
+        true,
+        false,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
+  });
+
+  it("does not require visibility for a reused empty tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        {} as PreviewAutomationOpenInput,
+        snapshot({ _tag: "Idle" }),
+        true,
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
+  });
+
+  it("does not require visibility for a reused failed tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        {} as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "LoadFailed",
+          url: "https://example.com/",
+          title: "Example",
+          code: -2,
+          description: "Failed",
+        }),
+        true,
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
+  });
+
+  it("does not require visibility when browser defaults keep a reused tab in the background", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
         {} as PreviewAutomationOpenInput,
         snapshot({
           _tag: "Success",
           url: "https://example.com/",
           title: "Example",
         }),
+        true,
+        shouldOpenPreviewMiniPlayer({}, false),
       ),
-    ).toBe(true);
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
   });
 
   it("gives newly-created automation tabs a stable desktop viewport", () => {
@@ -90,5 +196,33 @@ describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () 
     expect(shouldOpenPreviewMiniPlayer({ open: true }, false)).toBe(true);
     expect(shouldOpenPreviewMiniPlayer({ open: false }, true)).toBe(false);
     expect(shouldOpenPreviewMiniPlayer({ show: true }, false)).toBe(true);
+  });
+
+  it("shares the resolved explicit-over-default policy with reused-tab readiness", () => {
+    const renderedSnapshot = snapshot({
+      _tag: "Success",
+      url: "https://example.com/",
+      title: "Example",
+    });
+
+    const explicitShow = { open: true } as PreviewAutomationOpenInput;
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        explicitShow,
+        renderedSnapshot,
+        true,
+        shouldOpenPreviewMiniPlayer(explicitShow, false),
+      ).waitForVisibility,
+    ).toBe(true);
+
+    const explicitBackground = { open: false } as PreviewAutomationOpenInput;
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        explicitBackground,
+        renderedSnapshot,
+        true,
+        shouldOpenPreviewMiniPlayer(explicitBackground, true),
+      ).waitForVisibility,
+    ).toBe(false);
   });
 });

@@ -110,7 +110,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
+      "Opens the collaborative browser for the current thread. Newly created tabs acknowledge server creation immediately while any requested presentation and initial page load continue; reopening an existing shown tab waits for stable panel presentation. Wait on the returned tab before interacting while its initial page loads.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
@@ -267,6 +267,7 @@ export const PreviewAutomationSetColorSchemeInput = Schema.Struct({
     description:
       "Emulated prefers-color-scheme for the page: light, dark, or system to follow the OS appearance.",
   }),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({
   description:
     "Emulates prefers-color-scheme in the active browser tab without changing the OS or app theme.",
@@ -377,6 +378,7 @@ export const PreviewAutomationPressInput = Schema.Struct({
       description: "Modifier keys held while pressing key.",
     }),
   ),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({ description: "Presses one keyboard key in the active browser tab." });
 export type PreviewAutomationPressInput = typeof PreviewAutomationPressInput.Type;
 
@@ -398,6 +400,7 @@ export const PreviewAutomationScrollInput = Schema.Struct({
   locator: Schema.optional(Locator).annotate({
     description: "Playwright selector for a scrollable container. Omit to scroll the viewport.",
   }),
+  timeoutMs: OptionalTimeoutMs,
 })
   .check(
     Schema.makeFilter((input) => {
@@ -414,6 +417,12 @@ export const PreviewAutomationScrollInput = Schema.Struct({
       "Scrolls the viewport, or a locator/selector container. Provide deltaX, deltaY, or both.",
   });
 export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.Type;
+
+export const PreviewAutomationRecordingStartInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  timeoutMs: OptionalTimeoutMs,
+}).annotate({ description: "Starts recording the active browser tab." });
+export type PreviewAutomationRecordingStartInput = typeof PreviewAutomationRecordingStartInput.Type;
 
 export const PreviewAutomationEvaluateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
@@ -438,6 +447,7 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
         "Serialize and return the value instead of a remote object reference. Defaults to true.",
     }),
   ),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({
   description:
     "Evaluates JavaScript in the page. Prefer snapshot and semantic actions; use evaluate for inspection or unsupported interactions.",
@@ -537,12 +547,14 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
   actionTimeline: Schema.Array(PreviewAutomationActionEvent),
-  screenshot: Schema.Struct({
-    mimeType: Schema.Literal("image/png"),
-    data: Schema.String,
-    width: Schema.Int,
-    height: Schema.Int,
-  }),
+  screenshot: Schema.NullOr(
+    Schema.Struct({
+      mimeType: Schema.Literal("image/png"),
+      data: Schema.String,
+      width: Schema.Int,
+      height: Schema.Int,
+    }),
+  ),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 

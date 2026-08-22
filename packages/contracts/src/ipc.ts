@@ -48,6 +48,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -975,6 +976,14 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
 
+export const DesktopPreviewAutomationSnapshotInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  background: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0))
+    .check(Schema.isLessThanOrEqualTo(60_000))
+    .pipe(Schema.withDecodingDefault(Effect.succeed(15_000))),
+});
+
 /**
  * Tab creation carries the client's configured browser defaults so the guest
  * is born already zoomed and color-scheme-emulated. Applying them after
@@ -1010,7 +1019,19 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
 export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   colorScheme: DesktopPreviewColorSchemeSchema,
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(60_000)),
+  ),
 });
+
+export const DesktopPreviewRecordingStartInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(60_000)),
+  ),
+});
+
+export const DesktopPreviewRecordingStopInputSchema = DesktopPreviewRecordingStartInputSchema;
 
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
@@ -1029,6 +1050,15 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   mimeType: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
   data: Schema.Uint8Array,
+  idempotencyKey: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(128),
+    Schema.isPattern(/^[a-z0-9-]+$/i),
+  ),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(60_000)),
+  ),
 });
 
 export const DesktopPreviewAutomationClickInputSchema = Schema.Struct({
@@ -1169,7 +1199,11 @@ export interface DesktopPreviewBridge {
    * Emulate `prefers-color-scheme` on the guest page ("system" clears the
    * override). Persists per tab and is re-applied across webview swaps.
    */
-  setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  setColorScheme: (
+    tabId: string,
+    colorScheme: DesktopPreviewColorScheme,
+    timeoutMs?: number,
+  ) => Promise<void>;
   /**
    * Silence the tab's audio output. Persists per tab and is re-applied across
    * webview swaps, but is dropped when the tab closes. Muting a silent tab is
@@ -1207,18 +1241,24 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
   };
   recording: {
-    startScreencast: (tabId: string) => Promise<void>;
-    stopScreencast: (tabId: string) => Promise<void>;
+    startScreencast: (tabId: string, timeoutMs?: number) => Promise<void>;
+    stopScreencast: (tabId: string, timeoutMs?: number) => Promise<void>;
     save: (
       tabId: string,
       mimeType: string,
       data: Uint8Array,
+      idempotencyKey: string,
+      timeoutMs?: number,
     ) => Promise<DesktopPreviewRecordingArtifact>;
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
   };
   automation: {
     status: (tabId: string) => Promise<PreviewAutomationStatus>;
-    snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
+    snapshot: (
+      tabId: string,
+      background: boolean,
+      timeoutMs?: number,
+    ) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
     press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;

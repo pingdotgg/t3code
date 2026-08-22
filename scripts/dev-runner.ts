@@ -6,6 +6,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+import { DEV_LOOPBACK_HOST } from "@t3tools/shared/devProxy";
 import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
@@ -28,7 +29,6 @@ const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
-const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
 // HTTP(S) requests to these ports are blocked by the Fetch standard before a
 // browser reaches the network. Keep the complete list here so explicit or
 // future wider offsets cannot produce a URL that curl accepts but browsers
@@ -48,10 +48,10 @@ const FETCH_BAD_PORTS = new Set([
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "::1"] as const;
 
 /**
- * Bind hosts on which a backend still answers `http://localhost:<port>`, which
- * is where single-origin browser dev proxies to. Loopback and the wildcards
- * qualify; a specific interface (e.g. a LAN IP) does not — the OS binds only
- * that address and the proxy target goes dark.
+ * Bind hosts on which a backend still answers through a local loopback address,
+ * which is where single-origin browser dev proxies to. Loopback and the
+ * wildcards qualify; a specific interface (e.g. a LAN IP) does not — the OS
+ * binds only that address and the proxy target goes dark.
  */
 export function isProxiableBindHost(host: string): boolean {
   const normalized = host.trim();
@@ -318,6 +318,7 @@ export function createDevRunnerEnv({
   devUrl,
 }: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
   return Effect.gen(function* () {
+    const path = yield* Path.Path;
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     // Precedence (--home-dir > worktree .t3 > ambient T3CODE_HOME) is resolved
@@ -329,15 +330,19 @@ export function createDevRunnerEnv({
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
       PORT: String(webPort),
-      VITE_DEV_SERVER_URL:
-        devUrl?.toString() ??
-        `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
+      VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://${DEV_LOOPBACK_HOST}:${webPort}`,
     };
 
     if (configuredBaseDir !== undefined) {
       output.T3CODE_HOME = resolvedBaseDir;
     } else {
       delete output.T3CODE_HOME;
+    }
+
+    if (isDesktopMode && configuredBaseDir !== undefined) {
+      output.T3CODE_DESKTOP_USER_DATA_DIR = path.join(resolvedBaseDir, "userdata", "electron");
+    } else {
+      delete output.T3CODE_DESKTOP_USER_DATA_DIR;
     }
 
     // A dev-runner server is never launcher-managed. When the shell that runs
@@ -374,14 +379,14 @@ export function createDevRunnerEnv({
         // ignore those values rather than infer from their absence.
         output.T3CODE_SINGLE_ORIGIN_DEV = "1";
       } else {
-        output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
-        output.VITE_WS_URL = `ws://localhost:${serverPort}`;
+        output.VITE_HTTP_URL = `http://${DEV_LOOPBACK_HOST}:${serverPort}`;
+        output.VITE_WS_URL = `ws://${DEV_LOOPBACK_HOST}:${serverPort}`;
         delete output.T3CODE_SINGLE_ORIGIN_DEV;
       }
     } else {
       output.T3CODE_PORT = String(serverPort);
-      output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
-      output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
+      output.VITE_HTTP_URL = `http://${DEV_LOOPBACK_HOST}:${serverPort}`;
+      output.VITE_WS_URL = `ws://${DEV_LOOPBACK_HOST}:${serverPort}`;
       // Desktop pins the renderer to loopback on purpose; an ambient marker
       // must not make Vite drop those URLs.
       delete output.T3CODE_SINGLE_ORIGIN_DEV;
@@ -421,7 +426,7 @@ export function createDevRunnerEnv({
     }
 
     if (isDesktopMode) {
-      output.HOST = DESKTOP_DEV_LOOPBACK_HOST;
+      output.HOST = DEV_LOOPBACK_HOST;
       delete output.T3CODE_DESKTOP_WS_URL;
     }
 

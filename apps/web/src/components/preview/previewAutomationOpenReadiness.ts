@@ -17,6 +17,12 @@ export const DEFAULT_PREVIEW_AUTOMATION_VIEWPORT = {
   height: 800,
 } as const satisfies PreviewViewportSetting;
 
+export interface PreviewAutomationOpenWaitPolicy {
+  readonly acknowledgeAfterCreation: boolean;
+  readonly waitForOverlay: boolean;
+  readonly waitForVisibility: boolean;
+}
+
 /**
  * An explicit `open`/`show` is the agent deliberately surfacing or suppressing
  * its work, so it outranks the preference; the setting only decides what
@@ -34,6 +40,30 @@ export function previewAutomationOpenNeedsOverlay(
   snapshot: PreviewSessionSnapshot,
 ): boolean {
   return input.url !== undefined || snapshot.navStatus._tag !== "Idle";
+}
+
+export function resolvePreviewAutomationOpenWaitPolicy(
+  input: PreviewAutomationOpenInput,
+  snapshot: PreviewSessionSnapshot,
+  reusedExistingTab: boolean,
+  shouldPresentPreview: boolean,
+): PreviewAutomationOpenWaitPolicy {
+  if (!reusedExistingTab) {
+    return {
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    };
+  }
+  const canPresentBrowserSurface =
+    input.url !== undefined ||
+    snapshot.navStatus._tag === "Loading" ||
+    snapshot.navStatus._tag === "Success";
+  return {
+    acknowledgeAfterCreation: false,
+    waitForOverlay: previewAutomationOpenNeedsOverlay(input, snapshot),
+    waitForVisibility: shouldPresentPreview && canPresentBrowserSurface,
+  };
 }
 
 /**

@@ -16,6 +16,7 @@ const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
 const tabId = PreviewTabId.make("tab-mcp-test");
 const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
+const noScreenshotTabId = PreviewTabId.make("tab-mcp-no-screenshot");
 const invocation = {
   environmentId,
   threadId,
@@ -159,6 +160,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const routedRequests: Array<{
         readonly operation: string;
         readonly tabId?: string | undefined;
+        readonly timeoutMs?: number | undefined;
       }> = [];
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
@@ -184,12 +186,15 @@ it.effect("registers annotated tools and preserves authenticated request context
                   consoleEntries: [],
                   networkEntries: [],
                   actionTimeline: [],
-                  screenshot: {
-                    mimeType: "image/png",
-                    data: Buffer.from("png").toString("base64"),
-                    width: 10,
-                    height: 5,
-                  },
+                  screenshot:
+                    event.request.tabId === noScreenshotTabId
+                      ? null
+                      : {
+                          mimeType: "image/png",
+                          data: Buffer.from("png").toString("base64"),
+                          width: 10,
+                          height: 5,
+                        },
                 }
               : event.request.operation === "press"
                 ? undefined
@@ -265,11 +270,21 @@ it.effect("registers annotated tools and preserves authenticated request context
         alternateTabId,
       );
 
+      const snapshotWithoutImage = yield* server
+        .callTool({ name: "preview_snapshot", arguments: { tabId: noScreenshotTabId } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(snapshotWithoutImage.isError).toBe(false);
+      expect(snapshotWithoutImage.content.some((content) => content.type === "image")).toBe(false);
+      expect(snapshotWithoutImage.structuredContent).toMatchObject({ screenshot: null });
+
       const actionRequests = [
         { name: "preview_click", arguments: { x: 10, y: 10 } },
         { name: "preview_type", arguments: { text: "Hello" } },
-        { name: "preview_press", arguments: { key: "Enter" } },
-        { name: "preview_scroll", arguments: { deltaY: 100 } },
+        { name: "preview_press", arguments: { key: "Enter", timeoutMs: 1_234 } },
+        { name: "preview_scroll", arguments: { deltaY: 100, timeoutMs: 1_234 } },
         { name: "preview_wait_for", arguments: { text: "Example" } },
       ];
       for (const request of actionRequests) {
@@ -283,6 +298,22 @@ it.effect("registers annotated tools and preserves authenticated request context
         expect(result.structuredContent).toEqual({});
         expect(result.content).toEqual([{ type: "text", text: "{}" }]);
       }
+      expect(routedRequests.find(({ operation }) => operation === "press")?.timeoutMs).toBe(1_234);
+      expect(routedRequests.find(({ operation }) => operation === "scroll")?.timeoutMs).toBe(1_234);
+
+      const evaluation = yield* server
+        .callTool({
+          name: "preview_evaluate",
+          arguments: { expression: "document.title", timeoutMs: 1_234 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(evaluation.isError).toBe(false);
+      expect(routedRequests.find(({ operation }) => operation === "evaluate")?.timeoutMs).toBe(
+        1_234,
+      );
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

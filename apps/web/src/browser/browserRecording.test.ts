@@ -39,14 +39,22 @@ const {
         value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
       );
     }),
-    save: vi.fn(async (tabId: string) => ({
-      id: "recording-test",
-      tabId,
-      path: "/tmp/recording-test.webm",
-      mimeType: "video/webm" as const,
-      sizeBytes: 0,
-      createdAt: "2026-06-26T00:00:00.000Z",
-    })),
+    save: vi.fn(
+      async (
+        tabId: string,
+        _mimeType?: string,
+        _data?: Uint8Array,
+        _idempotencyKey?: string,
+        _timeoutMs?: number,
+      ) => ({
+        id: "recording-test",
+        tabId,
+        path: "/tmp/recording-test.webm",
+        mimeType: "video/webm" as const,
+        sizeBytes: 0,
+        createdAt: "2026-06-26T00:00:00.000Z",
+      }),
+    ),
     startScreencast: vi.fn(async (tabId: string) => {
       events.push("start-screencast");
       const surface = surfaceState.byTabId[tabId] as
@@ -219,6 +227,49 @@ describe("browser recording", () => {
     await rejection;
     expect(stopScreencast).toHaveBeenCalledWith("recording-tab");
     expect(events.at(-1)).toBe("clear");
+  });
+
+  it("bounds screencast and first-frame startup with the caller's remaining deadline", async () => {
+    vi.useFakeTimers();
+    startScreencast.mockImplementationOnce(async () => {
+      events.push("start-screencast");
+    });
+
+    const startPromise = startBrowserRecording("recording-tab", null, "recording-tab", 40);
+    const rejection = expect(startPromise).rejects.toMatchObject({
+      operation: "wait-first-frame",
+      tabId: "recording-tab",
+    });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(40);
+
+    await rejection;
+    expect(startScreencast).toHaveBeenCalledWith("recording-tab", 40);
+    expect(stopScreencast).toHaveBeenCalledWith("recording-tab", 1);
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
+  it("clears a timed-out startup even when screencast cleanup stalls", async () => {
+    vi.useFakeTimers();
+    startScreencast.mockImplementationOnce(async () => {
+      events.push("start-screencast");
+    });
+    stopScreencast.mockImplementationOnce(
+      async () => await new Promise<undefined>(() => undefined),
+    );
+
+    const startPromise = startBrowserRecording("recording-tab", null, "recording-tab", 40);
+    const rejection = expect(startPromise).rejects.toMatchObject({
+      operation: "wait-first-frame",
+      tabId: "recording-tab",
+    });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(40);
+    await vi.runOnlyPendingTimersAsync();
+
+    await rejection;
+    expect(stopScreencast).toHaveBeenCalledWith("recording-tab", 1);
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
   });
 
   it("fixes hidden recording dimensions before MediaRecorder starts", async () => {
@@ -475,6 +526,110 @@ describe("browser recording", () => {
     expect(duplicateArtifact).toEqual(firstArtifact);
     expect(stopScreencast).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("retains captured chunks when a bounded stop expires so finalization can be retried", async () => {
+    vi.useFakeTimers();
+    let finishStoppingScreencast: (() => void) | undefined;
+    stopScreencast.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        finishStoppingScreencast = resolve;
+      });
+    });
+    await startBrowserRecording("recording-tab");
+
+    const stopPromise = stopBrowserRecording("recording-tab", 40);
+    const rejection = expect(stopPromise).rejects.toMatchObject({
+      operation: "stop-deadline",
+      tabId: "recording-tab",
+    });
+    await vi.advanceTimersByTimeAsync(40);
+
+    await rejection;
+    expect(stopScreencast).toHaveBeenCalledWith("recording-tab", 40);
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab"]));
+
+    finishStoppingScreencast?.();
+    await Promise.resolve();
+    await expect(stopBrowserRecording("recording-tab")).resolves.toMatchObject({
+      tabId: "recording-tab",
+    });
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
+  it("shares an in-flight artifact save with a retry after the renderer deadline", async () => {
+    vi.useFakeTimers();
+    let finishSaving: ((artifact: Awaited<ReturnType<typeof save>>) => void) | undefined;
+    save.mockImplementationOnce(
+      async () =>
+        await new Promise<Awaited<ReturnType<typeof save>>>((resolve) => {
+          finishSaving = resolve;
+        }),
+    );
+    await startBrowserRecording("recording-tab");
+
+    const firstStop = stopBrowserRecording("recording-tab", 40);
+    const rejection = expect(firstStop).rejects.toMatchObject({ operation: "stop-deadline" });
+    await vi.advanceTimersByTimeAsync(40);
+    await rejection;
+
+    const retry = stopBrowserRecording("recording-tab");
+    expect(save).toHaveBeenCalledOnce();
+    finishSaving?.({
+      id: "recording-test",
+      tabId: "recording-tab",
+      path: "/tmp/recording-test.webm",
+      mimeType: "video/webm",
+      sizeBytes: 0,
+      createdAt: "2026-06-26T00:00:00.000Z",
+    });
+
+    await expect(retry).resolves.toMatchObject({ id: "recording-test" });
+    expect(save).toHaveBeenCalledOnce();
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
+  it("keeps recording state retryable when the desktop stop deadline rejects first", async () => {
+    stopScreencast.mockRejectedValueOnce({
+      _tag: "PreviewAutomationTimeoutError",
+      tabId: "recording-tab",
+      timeoutMs: 40,
+    });
+    await startBrowserRecording("recording-tab");
+
+    await expect(stopBrowserRecording("recording-tab", 40)).rejects.toMatchObject({
+      operation: "stop-deadline",
+      tabId: "recording-tab",
+    });
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab"]));
+
+    await expect(stopBrowserRecording("recording-tab")).resolves.toMatchObject({
+      tabId: "recording-tab",
+    });
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+  });
+
+  it("reuses the artifact idempotency key after a desktop save timeout", async () => {
+    save.mockRejectedValueOnce({
+      _tag: "PreviewAutomationTimeoutError",
+      tabId: "recording-tab",
+      timeoutMs: 40,
+    });
+    await startBrowserRecording("recording-tab");
+
+    await expect(stopBrowserRecording("recording-tab", 40)).rejects.toMatchObject({
+      operation: "stop-deadline",
+      tabId: "recording-tab",
+    });
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab"]));
+
+    await expect(stopBrowserRecording("recording-tab")).resolves.toMatchObject({
+      tabId: "recording-tab",
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[0]?.[3]).toEqual(expect.any(String));
+    expect(save.mock.calls[1]?.[3]).toBe(save.mock.calls[0]?.[3]);
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
   });
 
   it("finishes startup before stopping so an active recording yields an artifact", async () => {
