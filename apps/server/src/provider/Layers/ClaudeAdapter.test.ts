@@ -1897,6 +1897,65 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "treats an externally signal-killed subprocess as interrupted, not a runtime error",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+
+        const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.sync(() => {
+            runtimeEvents.push(event);
+          }),
+        ).pipe(Effect.forkChild);
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+
+        // Model the desktop app's quit sequence delivering SIGTERM directly
+        // to the Claude CLI subprocess (e.g. via OS-level process-tree
+        // teardown), independently of and *before* our own graceful
+        // stopSession() flow ever runs. The real
+        // `@anthropic-ai/claude-agent-sdk` produces exactly this message
+        // (ProcessTransport#getProcessExitError) when its child process
+        // exits via a signal instead of a clean stopSession()-driven close.
+        harness.query.fail(new Error("Claude Code process terminated by signal SIGTERM"));
+
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        runtimeEventsFiber.interruptUnsafe();
+
+        const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+        assert.equal(
+          runtimeError,
+          undefined,
+          "a SIGTERM/SIGINT-terminated subprocess should never surface as a runtime.error",
+        );
+
+        const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
+        assert.equal(turnCompleted?.type, "turn.completed");
+        if (turnCompleted?.type === "turn.completed") {
+          assert.equal(turnCompleted.payload.state, "interrupted");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("keeps Claude stream failure events structural", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

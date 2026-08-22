@@ -361,7 +361,15 @@ function isClaudeInterruptedMessage(message: string): boolean {
   return (
     normalized.includes("all fibers interrupted without error") ||
     normalized.includes("request was aborted") ||
-    normalized.includes("interrupted by user")
+    normalized.includes("interrupted by user") ||
+    // The Claude Agent SDK's ProcessTransport reports its child exiting this
+    // way whenever the subprocess is killed by SIGTERM/SIGINT — the signals
+    // used to request a graceful shutdown (e.g. desktop app quit). The OS can
+    // deliver that signal to the subprocess directly, ahead of our own
+    // stopSession()-driven close, so this case has to be recognized here too
+    // instead of relying solely on stopSession() winning the race.
+    normalized.includes("terminated by signal sigterm") ||
+    normalized.includes("terminated by signal sigint")
   );
 }
 
