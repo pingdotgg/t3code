@@ -1379,6 +1379,15 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const hooksDirectory = pathService.join(cwd, ".git", "hooks");
+        const postCheckoutHook = pathService.join(hooksDirectory, "post-checkout");
+        yield* fileSystem.makeDirectory(hooksDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(
+          postCheckoutHook,
+          "#!/bin/sh\necho worktree-hook-stdout\necho worktree-hook-stderr >&2\n",
+        );
+        yield* fileSystem.chmod(postCheckoutHook, 0o755);
         const worktreePath = pathService.join(
           yield* makeTmpDir("git-worktrees-"),
           "feature-worktree",
@@ -1394,11 +1403,44 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         assert.equal(created.worktree.path, worktreePath);
         assert.equal(created.worktree.refName, "feature/worktree");
+        const worktreeOutput = `${created.output?.stdout ?? ""}\n${created.output?.stderr ?? ""}`;
+        assert.include(worktreeOutput, "worktree-hook-stdout");
+        assert.include(worktreeOutput, "worktree-hook-stderr");
         assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/worktree");
 
         yield* driver.removeWorktree({ cwd, path: worktreePath });
-        const fileSystem = yield* FileSystem.FileSystem;
         assert.equal(yield* fileSystem.exists(worktreePath), false);
+      }),
+    );
+
+    it.effect("keeps failed post-checkout output out of error details", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const postCheckoutHook = pathService.join(cwd, ".git", "hooks", "post-checkout");
+        yield* fileSystem.writeFileString(
+          postCheckoutHook,
+          "#!/bin/sh\necho hook-failure-stdout\necho hook-failure-stderr >&2\nexit 1\n",
+        );
+        yield* fileSystem.chmod(postCheckoutHook, 0o755);
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "failed-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/failed-worktree",
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.detail, "git worktree add failed");
       }),
     );
   });

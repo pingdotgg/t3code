@@ -63,6 +63,12 @@ The **Source Control settings** page shows you exactly what's connected:
 
 Run a quick **Rescan** after setting up a new machine or changing credentials.
 
+### Follow New Worktree Setup
+
+When a new thread creates a worktree, its work log shows when creation starts and when the worktree
+is ready. Expand the ready entry to inspect output from `git worktree add`, including output written
+by a `post-checkout` hook. The first agent turn starts after the worktree is ready.
+
 ## Getting Started
 
 ### For GitHub (Recommended for most users)

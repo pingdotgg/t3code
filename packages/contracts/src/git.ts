@@ -272,6 +272,14 @@ export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
 export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,
+  output: Schema.optional(
+    Schema.Struct({
+      stdout: Schema.String,
+      stderr: Schema.String,
+      stdoutTruncated: Schema.Boolean,
+      stderrTruncated: Schema.Boolean,
+    }),
+  ),
 });
 export type VcsCreateWorktreeResult = typeof VcsCreateWorktreeResult.Type;
 

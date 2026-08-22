@@ -57,6 +57,7 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  type VcsCreateWorktreeResult,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -272,6 +273,22 @@ function projectSetupScriptCompatibilityDetail(
     default:
       return unexpectedCompatibilityError(error);
   }
+}
+
+function formatWorktreeCreationOutput(output: VcsCreateWorktreeResult["output"]): string | null {
+  if (!output) {
+    return null;
+  }
+  const sections: string[] = [];
+  const stdout = output.stdout.trim();
+  const stderr = output.stderr.trim();
+  if (stdout.length > 0) {
+    sections.push(`stdout\n${stdout}${output.stdoutTruncated ? "\n[truncated]" : ""}`);
+  }
+  if (stderr.length > 0) {
+    sections.push(`stderr\n${stderr}${output.stderrTruncated ? "\n[truncated]" : ""}`);
+  }
+  return sections.length > 0 ? sections.join("\n\n") : null;
 }
 
 export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
@@ -562,16 +579,21 @@ const makeWsRpcLayer = (
           ),
         );
 
-      const appendSetupScriptActivity = (input: {
+      const appendBootstrapActivity = (input: {
         readonly threadId: ThreadId;
-        readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
+        readonly kind:
+          | "worktree.requested"
+          | "worktree.created"
+          | "setup-script.requested"
+          | "setup-script.started"
+          | "setup-script.failed";
         readonly summary: string;
         readonly createdAt: string;
         readonly payload: Record<string, unknown>;
         readonly tone: "info" | "error";
       }) =>
         Effect.all({
-          commandId: serverCommandId("setup-script-activity"),
+          commandId: serverCommandId("bootstrap-activity"),
           activityId: serverEventId,
         }).pipe(
           Effect.flatMap(({ commandId, activityId }) =>
@@ -846,7 +868,7 @@ const makeWsRpcLayer = (
             readonly worktreePath: string;
           }) => {
             const detail = projectSetupScriptCompatibilityDetail(input.error);
-            return appendSetupScriptActivity({
+            return appendBootstrapActivity({
               threadId: command.threadId,
               kind: "setup-script.failed",
               summary: "Setup script failed to start",
@@ -884,7 +906,7 @@ const makeWsRpcLayer = (
                 worktreePath: input.worktreePath,
               };
               yield* Effect.all([
-                appendSetupScriptActivity({
+                appendBootstrapActivity({
                   threadId: command.threadId,
                   kind: "setup-script.requested",
                   summary: "Starting setup script",
@@ -892,7 +914,7 @@ const makeWsRpcLayer = (
                   payload,
                   tone: "info",
                 }),
-                appendSetupScriptActivity({
+                appendBootstrapActivity({
                   threadId: command.threadId,
                   kind: "setup-script.started",
                   summary: "Setup script started",
@@ -955,6 +977,32 @@ const makeWsRpcLayer = (
                 );
             });
 
+          const recordWorktreeActivity = (input: {
+            readonly kind: "worktree.requested" | "worktree.created";
+            readonly summary: string;
+            readonly payload: Record<string, unknown>;
+            readonly tone: "info" | "error";
+          }) =>
+            nowIso.pipe(
+              Effect.flatMap((createdAt) =>
+                appendBootstrapActivity({
+                  threadId: command.threadId,
+                  kind: input.kind,
+                  summary: input.summary,
+                  createdAt,
+                  payload: input.payload,
+                  tone: input.tone,
+                }),
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning("failed to record worktree bootstrap activity", {
+                  threadId: command.threadId,
+                  kind: input.kind,
+                  detail: error.message,
+                }),
+              ),
+            );
+
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
               yield* dispatchFromClient({
@@ -974,6 +1022,16 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
+              yield* recordWorktreeActivity({
+                kind: "worktree.requested",
+                summary: `Creating worktree from ${bootstrap.prepareWorktree.baseBranch}`,
+                payload: {
+                  baseBranch: bootstrap.prepareWorktree.baseBranch,
+                  branch: bootstrap.prepareWorktree.branch,
+                  projectCwd: bootstrap.prepareWorktree.projectCwd,
+                },
+                tone: "info",
+              });
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
               // "Start from origin" is a stored default; repos without an
               // origin remote fall back to the local base branch instead of
@@ -1012,6 +1070,17 @@ const makeWsRpcLayer = (
                 worktreePath: targetWorktreePath,
               });
               yield* refreshGitStatus(targetWorktreePath);
+              const output = formatWorktreeCreationOutput(worktree.output);
+              yield* recordWorktreeActivity({
+                kind: "worktree.created",
+                summary: "Worktree ready",
+                payload: {
+                  worktreePath: targetWorktreePath,
+                  refName: worktree.worktree.refName,
+                  ...(output ? { detail: output } : {}),
+                },
+                tone: "info",
+              });
             }
 
             yield* runSetupProgram();
