@@ -51,14 +51,20 @@ export function resolveSourceControlWriterModelSelection(
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
-  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+  if (!selection) {
     return settings.textGenerationModelSelection;
   }
+
   if (providers === undefined) {
-    return selection;
+    return isModelSelectionProviderEnabled(settings, selection)
+      ? selection
+      : settings.textGenerationModelSelection;
   }
 
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  // Provider snapshots are the live routing state. Settings can lag while an
+  // instance is being rebuilt, so do not reject a healthy snapshot based on
+  // the older persisted instance envelope.
   return provider?.enabled === true && isProviderAvailable(provider)
     ? selection
     : settings.textGenerationModelSelection;
