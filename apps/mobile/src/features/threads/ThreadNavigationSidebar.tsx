@@ -146,6 +146,7 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
+  readonly onSnoozeFor: (thread: EnvironmentThreadShell) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onRequestVisibility: () => void;
@@ -991,6 +992,7 @@ function ThreadNavigationSidebarPane(
                 return index !== -1 && index < arrangedPinnedKeys.length - 1;
               })()}
               onSnoozeThread={snoozeThread}
+              onSnoozeFor={props.onSnoozeFor}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
               onPinThread={pinThread}

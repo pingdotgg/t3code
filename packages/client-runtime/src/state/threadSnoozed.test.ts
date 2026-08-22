@@ -7,6 +7,8 @@ import {
   canSnooze,
   effectiveSnoozed,
   resolveSnoozePresets,
+  resolveSnoozeForDefault,
+  snoozeForTimeError,
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
@@ -296,5 +298,28 @@ describe("resolveSnoozePresets", () => {
     );
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
+  });
+});
+
+describe("custom snooze times", () => {
+  it("defaults to at least an hour ahead on a 15-minute boundary", () => {
+    const now = localDate(2026, 4, 8, 10, 7);
+    const value = resolveSnoozeForDefault(now);
+
+    expect(value.getTime()).toBeGreaterThanOrEqual(now.getTime() + 60 * 60 * 1_000);
+    expect(value.getMinutes() % 15).toBe(0);
+    expect(value.getSeconds()).toBe(0);
+    expect(value.getMilliseconds()).toBe(0);
+  });
+
+  it("rejects invalid, equal, and past values", () => {
+    const now = localDate(2026, 4, 8, 10);
+
+    expect(snoozeForTimeError(new Date(Number.NaN), { now })).toBe("Choose a valid date and time.");
+    expect(snoozeForTimeError(new Date(now), { now })).toBe("Choose a time in the future.");
+    expect(snoozeForTimeError(localDate(2026, 4, 8, 9), { now })).toBe(
+      "Choose a time in the future.",
+    );
+    expect(snoozeForTimeError(localDate(2026, 4, 8, 11), { now })).toBeNull();
   });
 });
