@@ -894,9 +894,7 @@ export function deriveMessagesTimelineRows(input: {
             onlyToolEntries: true,
             summary: summarizeToolGroup(visibleGroupedEntries),
             summaryKind,
-            hasFailure: visibleGroupedEntries.every((entry) =>
-              workEntryDisplayIndicatesToolFailure(entry),
-            ),
+            hasFailure: workEntryDisplayIndicatesToolFailure(visibleGroupedEntries.at(-1)!),
           });
           if (expanded) {
             for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
@@ -960,7 +958,7 @@ export function deriveMessagesTimelineRows(input: {
               onlyToolEntries: hiddenEntries.every(workLogEntryIsToolLike),
               summary: null,
               summaryKind: null,
-              hasFailure: hiddenEntries.every((entry) =>
+              hasFailure: hiddenEntries.some((entry) =>
                 workEntryDisplayIndicatesToolFailure(entry),
               ),
             });
