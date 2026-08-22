@@ -261,7 +261,22 @@ function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
     .join("; ");
 }
 
-function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+function windowsEnvironmentValueAssignment(name: string): string {
+  // One-arg GetEnvironmentVariable reads the process env. GUI apps often
+  // inherit a stale User PATH, so merge Machine + User + Process for PATH.
+  if (name === "PATH") {
+    return [
+      "$machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')",
+      "$user = [Environment]::GetEnvironmentVariable('Path', 'User')",
+      "$process = [Environment]::GetEnvironmentVariable('Path', 'Process')",
+      "$value = (@($machine, $user, $process) | Where-Object { $_ -and $_.Length -gt 0 }) -join ';'",
+    ].join("; ");
+  }
+
+  return `$value = [Environment]::GetEnvironmentVariable('${name}')`;
+}
+
+export function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
     ...names.flatMap((name) => {
@@ -271,7 +286,7 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        windowsEnvironmentValueAssignment(name),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
@@ -444,6 +459,64 @@ export function mergePathValues(
 function readEnvPath(env: NodeJS.ProcessEnv): string | undefined {
   return env.PATH ?? env.Path ?? env.path;
 }
+
+export function parseWindowsRegistryPathValue(output: string): string | undefined {
+  const match = output.match(/^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.*)$/im);
+  const value = match?.[1]?.replace(/\r$/, "").trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
+function expandWindowsRegistryPathValue(value: string, env: NodeJS.ProcessEnv): string {
+  return value.replace(/%([^%]+)%/gi, (match, name: string) => {
+    if (name.toUpperCase() === "PATH") return match;
+    const resolved = env[name] ?? env[name.toUpperCase()] ?? env[name.toLowerCase()];
+    return resolved && resolved.length > 0 ? resolved : match;
+  });
+}
+
+function windowsRegExePath(env: NodeJS.ProcessEnv): string {
+  const root = env.SystemRoot?.trim() || env.SYSTEMROOT?.trim() || "C:\\Windows";
+  return `${root}\\System32\\reg.exe`;
+}
+
+function readWindowsRegistryPath(
+  hive: "HKCU" | "HKLM",
+  env: NodeJS.ProcessEnv,
+  execFile: ExecFileSyncLike,
+): string | undefined {
+  const key =
+    hive === "HKCU"
+      ? "HKCU\\Environment"
+      : "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
+  try {
+    const output = execFile(windowsRegExePath(env), ["query", key, "/v", "Path"], {
+      encoding: "utf8",
+      timeout: 2000,
+    });
+    const raw = parseWindowsRegistryPathValue(output);
+    return raw ? expandWindowsRegistryPathValue(raw, env) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function readWindowsUserAndMachinePath(
+  env: NodeJS.ProcessEnv = process.env,
+  execFile: ExecFileSyncLike = NodeChildProcess.execFileSync as ExecFileSyncLike,
+): string | undefined {
+  const user = readWindowsRegistryPath("HKCU", env, execFile);
+  const machine = readWindowsRegistryPath("HKLM", env, execFile);
+  return mergePathValues(user, machine, "win32");
+}
+
+export type WindowsPersistentPathReader = (env: NodeJS.ProcessEnv) => string | undefined;
+
+export const WindowsPersistentPath = Context.Reference<WindowsPersistentPathReader>(
+  "@t3tools/shared/shell/WindowsPersistentPath",
+  {
+    defaultValue: () => readWindowsUserAndMachinePath,
+  },
+);
 
 function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
   return readEnvPath(env) ?? "";
@@ -680,8 +753,14 @@ export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArra
 
   return [
     ...(appData ? [`${appData}\\npm`] : []),
-    ...(localAppData ? [`${localAppData}\\Programs\\nodejs`, `${localAppData}\\Volta\\bin`] : []),
-    ...(localAppData ? [`${localAppData}\\pnpm`] : []),
+    ...(localAppData
+      ? [
+          `${localAppData}\\Programs\\nodejs`,
+          `${localAppData}\\Volta\\bin`,
+          `${localAppData}\\pnpm`,
+          `${localAppData}\\cursor-agent`,
+        ]
+      : []),
     ...(userProfile
       ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
       : []),
@@ -718,11 +797,17 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
 ): Effect.fn.Return<Partial<NodeJS.ProcessEnv>, never, FileSystem.FileSystem | Path.Path> {
   const readEnvironment = yield* WindowsShellEnvironment;
   const commandAvailable = yield* CommandAvailability;
+  const readPersistentPath = yield* WindowsPersistentPath;
   const inheritedPath = readEnvPath(env);
+  const persistentPath = readPersistentPath(env);
   const shellPath = readWindowsEnvironmentSafely(readEnvironment, ["PATH"], {
     loadProfile: false,
   }).PATH;
-  const mergedPath = mergePathValues(shellPath, inheritedPath, "win32");
+  const mergedPath = mergePathValues(
+    persistentPath,
+    mergePathValues(shellPath, inheritedPath, "win32"),
+    "win32",
+  );
   const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
   const baselinePath = mergePathValues(knownCliPath, mergedPath, "win32");
   const baselinePatch: Partial<NodeJS.ProcessEnv> = baselinePath ? { PATH: baselinePath } : {};
