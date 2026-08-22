@@ -553,6 +553,147 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps a compaction row visible instead of folding it as work", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "/compact",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-entry-compaction",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:23Z",
+          entry: {
+            id: "work-compaction",
+            createdAt: "2026-01-01T00:00:23Z",
+            turnId: "turn-1" as never,
+            label: "Context compacted · 46k → 5.9k tokens · 23s",
+            tone: "info" as const,
+            sourceActivityKind: "context-compaction",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    // Compaction is not work: nothing folds, the result row is the timeline,
+    // and it renders as its own first-class row rather than a work-log entry.
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(rows.map((row) => row.id)).toEqual(["user-entry", "work-entry-compaction"]);
+    expect(rows[1]).toMatchObject({
+      kind: "compaction",
+      label: "Context compacted · 46k → 5.9k tokens · 23s",
+      failed: false,
+      detail: null,
+    });
+  });
+
+  it("carries the provider failure reason on a failed compaction row", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-entry-compaction-failed",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:23Z",
+          entry: {
+            id: "work-compaction-failed",
+            createdAt: "2026-01-01T00:00:23Z",
+            turnId: "turn-1" as never,
+            label: "Context compaction failed",
+            detail: "Conversation too short to compact",
+            tone: "error" as const,
+            sourceActivityKind: "context-compaction",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows[0]).toMatchObject({
+      kind: "compaction",
+      label: "Context compaction failed",
+      failed: true,
+      detail: "Conversation too short to compact",
+    });
+  });
+
+  it("folds a mixed turn's work around the compaction row without counting it", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "do the thing",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-entry-tool",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work-tool",
+            createdAt: "2026-01-01T00:00:05Z",
+            turnId: "turn-1" as never,
+            label: "Ran a command",
+            tone: "tool" as const,
+          },
+        },
+        {
+          id: "work-entry-compaction",
+          kind: "work",
+          createdAt: "2026-01-01T00:02:00Z",
+          entry: {
+            id: "work-compaction",
+            createdAt: "2026-01-01T00:02:00Z",
+            turnId: "turn-1" as never,
+            label: "Context compacted",
+            tone: "info" as const,
+            sourceActivityKind: "context-compaction",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    // The fold covers only the work; the compaction row stays a sibling and
+    // its timestamp never inflates the worked duration.
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "work-entry-compaction",
+    ]);
+    const fold = rows.find((row) => row.kind === "turn-fold");
+    expect(fold).toMatchObject({ label: "Worked for 5.0s" });
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The

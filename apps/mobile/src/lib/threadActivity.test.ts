@@ -203,6 +203,113 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("labels context compaction entries with token delta and duration when provided", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-compaction"),
+      projectId: ProjectId.make("project-1"),
+      title: "Compaction thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-compaction"),
+          kind: "context-compaction",
+          summary: "Context compacted",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            state: "compacted",
+            detail: {
+              compact_metadata: {
+                trigger: "auto",
+                pre_tokens: 148_000,
+                post_tokens: 12_400,
+                duration_ms: 45_000,
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed).toMatchObject([
+      {
+        type: "compaction",
+        id: "activity-compaction",
+        label: "Context compacted · 148k → 12k tokens · 45s",
+        failed: false,
+      },
+    ]);
+
+    // Compaction is not work: nothing folds, the result row stays visible.
+    const presented = deriveThreadFeedPresentation(feed, null, new Set());
+    expect(presented.some((entry) => entry.type === "turn-fold")).toBe(false);
+    expect(presented).toMatchObject([{ type: "compaction" }]);
+  });
+
+  it("carries the provider failure reason on a failed compaction row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-compaction-failed"),
+      projectId: ProjectId.make("project-1"),
+      title: "Failed compaction thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-compaction-failed"),
+          kind: "context-compaction",
+          summary: "Context compaction failed",
+          tone: "error",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            state: "failed",
+            detail: "Conversation too short to compact",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toMatchObject([
+      {
+        type: "compaction",
+        failed: true,
+        detail: "Conversation too short to compact",
+      },
+    ]);
+  });
+
+  it("folds a mixed turn's work around the compaction row without counting it", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-mixed-compaction"),
+      projectId: ProjectId.make("project-1"),
+      title: "Mixed compaction thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-tool"),
+          kind: "tool.completed",
+          summary: "Ran a command",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId: TurnId.make("turn-1"),
+          tone: "tool",
+        }),
+        makeActivity({
+          id: EventId.make("activity-compaction"),
+          kind: "context-compaction",
+          summary: "Context compacted",
+          createdAt: "2026-04-01T00:02:00.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: { state: "compacted" },
+        }),
+      ],
+    });
+
+    // The fold covers only the work; the compaction row stays a sibling and
+    // its timestamp never inflates the worked duration.
+    const presented = deriveThreadFeedPresentation(buildThreadFeed(thread), null, new Set());
+    expect(presented).toMatchObject([
+      { type: "turn-fold", label: "Worked for 1ms" },
+      { type: "compaction", label: "Context compacted" },
+    ]);
+  });
+
   it("collapses matching tool lifecycle rows like desktop", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-2"),
@@ -567,6 +674,7 @@ describe("buildThreadFeed", () => {
         type: "working",
         id: "working-indicator-row",
         createdAt: startedAt,
+        compactingSince: null,
       },
     ]);
     expect(deriveThreadFeedPresentation(presented, null, new Set())).toEqual([]);
@@ -589,6 +697,7 @@ describe("buildThreadFeed", () => {
       icon: "command",
       toolLike: true,
       status,
+      activityKind: "tool.completed",
     });
     const feed: ThreadFeedEntry[] = [
       {

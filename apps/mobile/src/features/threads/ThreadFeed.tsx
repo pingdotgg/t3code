@@ -148,6 +148,8 @@ export interface ThreadFeedProps {
   readonly agentLabel: string;
   readonly latestTurn: ThreadFeedLatestTurn | null;
   readonly activeWorkStartedAt: string | null;
+  /** Set while the provider compacts context; the working row says so. */
+  readonly compactingSince: string | null;
   readonly listRef: RefObject<LegendListRef | null>;
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
@@ -818,7 +820,34 @@ function renderFeedEntry(
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
   if (entry.type === "working") {
-    return <WorkingTimelineRow startedAt={entry.createdAt} />;
+    return (
+      <WorkingTimelineRow
+        startedAt={entry.compactingSince ?? entry.createdAt}
+        compacting={entry.compactingSince !== null}
+      />
+    );
+  }
+
+  if (entry.type === "compaction") {
+    return (
+      <View className="mb-3 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]">
+        <View className="min-h-11 flex-row items-center">
+          <Text
+            className={
+              entry.failed
+                ? "font-t3-medium text-sm tabular-nums text-danger-foreground"
+                : "font-t3-medium text-sm tabular-nums text-foreground-muted"
+            }
+            numberOfLines={1}
+          >
+            {entry.label}
+          </Text>
+        </View>
+        {entry.detail ? (
+          <Text className="mb-2 text-xs text-foreground-muted">{entry.detail}</Text>
+        ) : null}
+      </View>
+    );
   }
 
   if (entry.type === "turn-fold") {
@@ -1008,7 +1037,10 @@ function renderFeedEntry(
   );
 }
 
-const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
+const WorkingTimelineRow = memo(function WorkingTimelineRow(props: {
+  readonly startedAt: string;
+  readonly compacting: boolean;
+}) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -1028,7 +1060,7 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
         <View className="h-1 w-1 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
       </View>
       <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
-        Working for {durationLabel}
+        {props.compacting ? "Compacting context for" : "Working for"} {durationLabel}
       </Text>
     </View>
   );
@@ -1571,11 +1603,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         expandedTurnIds,
         expandedWorkGroupIds,
         props.activeWorkStartedAt,
+        props.compactingSince,
       ),
     [
       expandedTurnIds,
       expandedWorkGroupIds,
       props.activeWorkStartedAt,
+      props.compactingSince,
       props.feed,
       props.latestTurn,
     ],
@@ -1774,6 +1808,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       switch (entry.type) {
         case "turn-fold":
           return TURN_FOLD_HEIGHT;
+        case "compaction":
+          // A failure reason appends a variable detail block — fall back to
+          // measurement for those rows.
+          return entry.detail === null ? TURN_FOLD_HEIGHT : undefined;
         case "work-toggle":
           return WORK_GROUP_TOGGLE_HEIGHT;
         case "working":
@@ -1982,6 +2020,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         </View>
         {props.feed.length === 0 &&
         props.activeWorkStartedAt === null &&
+        props.compactingSince === null &&
         props.contentPresentation.kind === "ready" ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ThreadFeedPlaceholder

@@ -273,6 +273,13 @@ interface ClaudeSessionContext {
   /** Task ids that have started and not yet reached a terminal state. */
   readonly liveTaskIds: Set<string>;
   turnState: ClaudeTurnState | undefined;
+  /**
+   * True between the CLI reporting status "compacting" and any compaction-end
+   * signal (compact_boundary, a status carrying compact_result, or the CLI
+   * reporting a non-running session state). Read wherever a heartbeat must
+   * report compaction instead of generic running work.
+   */
+  compacting: boolean;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
@@ -581,6 +588,14 @@ function normalizeClaudeContextUsageApiSnapshot(
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
     compactsAutomatically: value.isAutoCompactEnabled,
   });
+}
+
+function isCompactionStatusMessage(message: SDKMessage): boolean {
+  return (
+    message.type === "system" &&
+    message.subtype === "status" &&
+    (message.status === "compacting" || message.compact_result !== undefined)
+  );
 }
 
 function compactBoundaryTokenUsageSnapshot(
@@ -3101,6 +3116,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
     }
 
+    // Heartbeats report that the session is busy, and only a turn moves it out
+    // of that state again. Work such as compaction routinely outlives the turn
+    // that asked for it, so with no turn to attribute a heartbeat to there is
+    // nothing that would ever clear the state it reports. `session_state_changed`
+    // is exempt: it is authoritative and reports idle as well as busy, so it
+    // clears itself. Compaction statuses are exempt too: the start reports the
+    // session compacting and the end lands it back on ready, so the pair clears
+    // itself and compaction that outlives its turn stays visible.
+    if (!context.turnState) {
+      switch (message.subtype as string) {
+        case "status":
+          // While compaction is in flight, every status message is part of
+          // its lifecycle — the closing one (with or without compact_result)
+          // must land the session back on ready.
+          if (isCompactionStatusMessage(message) || context.compacting) {
+            break;
+          }
+          return;
+        case "api_retry":
+          if (context.compacting) {
+            break;
+          }
+          return;
+      }
+    }
+
     switch (message.subtype) {
       case "init":
         yield* offerRuntimeEvent({
@@ -3111,18 +3152,46 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "status":
+      case "status": {
+        // A `requesting` status during compaction is the compaction's own
+        // model request, not the end of it (SDKStatus is
+        // 'compacting' | 'requesting' | null); only a status that reports
+        // something other than active work lowers the flag. A `compact_result`
+        // always reports a finished compaction, so it ends the flag no matter
+        // which status rides along with it.
+        context.compacting =
+          message.compact_result === undefined &&
+          (message.status === "compacting" ||
+            (context.compacting && message.status === "requesting"));
+        // A compaction that fails leaves no compact_boundary behind; the
+        // closing status message is the only place the CLI admits it, so
+        // surface it as a failed context_compaction item.
+        if (message.compact_result === "failed") {
+          const compactError = trimmedString(message.compact_error);
+          yield* offerRuntimeEvent({
+            ...base,
+            type: "item.completed",
+            payload: {
+              itemType: "context_compaction",
+              status: "failed",
+              ...(compactError ? { detail: compactError } : {}),
+              data: message,
+            },
+          });
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
           payload: {
-            state: message.status === "compacting" ? "waiting" : "running",
+            state: context.compacting ? "compacting" : context.turnState ? "running" : "ready",
             reason: `status:${message.status ?? "active"}`,
             detail: message,
           },
         });
         return;
+      }
       case "compact_boundary":
+        context.compacting = false;
         yield* emitThreadTokenUsage(
           context,
           compactBoundaryTokenUsageSnapshot(
@@ -3141,6 +3210,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: {
             state: "compacted",
             detail: message,
+          },
+        });
+        // The boundary is itself a compaction-end signal: clear the busy
+        // state here so a closing status that never arrives cannot leave the
+        // session compacting forever.
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "session.state.changed",
+          payload: {
+            state: context.turnState ? "running" : "ready",
+            reason: "compact_boundary",
           },
         });
         return;
@@ -3359,25 +3439,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // Transport-level retry heartbeat. Surfacing each attempt as a
         // warning row spammed the work log (10 rows during a 502 storm);
         // the terminal result/error path reports the actual failure. Keep
-        // the session visibly alive instead.
+        // the session visibly alive instead — still compacting when the
+        // retried request is compaction work.
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
           payload: {
-            state: "running",
+            state: context.compacting ? "compacting" : "running",
             reason: `api_retry:${message.attempt}/${message.max_retries}`,
           },
         });
         return;
       case "session_state_changed":
-        // Authoritative turn-over signal from the CLI.
+        // Authoritative turn-over signal from the CLI. A non-running state
+        // also closes any compaction the CLI never reported the end of.
+        if (message.state !== "running") {
+          context.compacting = false;
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
           payload: {
             state:
               message.state === "running"
-                ? "running"
+                ? context.compacting
+                  ? "compacting"
+                  : "running"
                 : message.state === "requires_action"
                   ? "waiting"
                   : "ready",
@@ -4269,6 +4356,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         workflowMemberFingerprints,
         liveTaskIds,
         turnState: undefined,
+        compacting: false,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
@@ -4369,6 +4457,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.turnState && context.turnState.synthetic !== true ? context.turnState : null;
     if (context.turnState && steeringTurnState === null) {
       yield* completeTurn(context, "completed");
+    }
+    // A fresh user turn is not a continuation of an earlier compaction. If a
+    // compaction-end signal was lost, the flag would otherwise survive here
+    // and the new turn's own `requesting` heartbeats would report the whole
+    // turn as compacting. The new turn takes over the session's label (the
+    // ingestion layer clears the compacting overlay on turn start for the
+    // same reason); a compaction still finishing in the background only
+    // reports again if it emits another `compacting` status.
+    if (steeringTurnState === null) {
+      context.compacting = false;
     }
 
     if (modelSelection?.model) {

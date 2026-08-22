@@ -840,10 +840,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
+  const isCompacting = thread.session?.statusDetail === "compacting";
   const topStatus =
     status === "working"
       ? {
-          label: "Working",
+          label: isCompacting ? "Compacting" : "Working",
           icon: "working" as const,
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
@@ -878,19 +879,32 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   icon: null,
                   className: "text-red-700 dark:text-red-300",
                 }
-              : isWoke
+              : isCompacting
                 ? {
-                    label: "Woke",
-                    icon: "woke" as const,
-                    className: "text-amber-700 dark:text-amber-300",
+                    // Compaction can run on a ready session (a /compact whose
+                    // turn already closed). Live activity outranks the Woke
+                    // and Done attention markers, same as Working above —
+                    // they come back once the overlay clears.
+                    label: "Compacting",
+                    icon: "working" as const,
+                    className: cn(
+                      "text-sky-600 dark:text-sky-400",
+                      !props.isActive && "opacity-75",
+                    ),
                   }
-                : isUnread
+                : isWoke
                   ? {
-                      label: "Done",
-                      icon: "done" as const,
-                      className: "text-emerald-700 dark:text-emerald-300",
+                      label: "Woke",
+                      icon: "woke" as const,
+                      className: "text-amber-700 dark:text-amber-300",
                     }
-                  : null;
+                  : isUnread
+                    ? {
+                        label: "Done",
+                        icon: "done" as const,
+                        className: "text-emerald-700 dark:text-emerald-300",
+                      }
+                    : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1474,7 +1488,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
                         <span role="status">{topStatus.label}</span>
-                        {status === "working" ? (
+                        {/* Compacting counts from the session's compaction
+                            clock, not from turn start. */}
+                        {isCompacting && thread.session ? (
+                          <span aria-hidden>
+                            <WorkingDuration
+                              startedAt={
+                                thread.session.compactingSince ?? thread.session.updatedAt
+                              }
+                            />
+                          </span>
+                        ) : status === "working" ? (
                           <span aria-hidden>
                             <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
                           </span>

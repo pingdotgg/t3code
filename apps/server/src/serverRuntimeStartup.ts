@@ -317,10 +317,16 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   );
 
   for (const thread of orphanedThreads) {
-    const session = thread.session;
-    if (session === null) {
+    if (thread.session === null) {
       continue;
     }
+    // A session settled into error keeps its identity fields but not the
+    // compaction overlay: nothing ever clears the overlay on a dead session.
+    const {
+      statusDetail: _statusDetail,
+      compactingSince: _compactingSince,
+      ...session
+    } = thread.session;
     yield* Effect.gen(function* () {
       const binding = yield* directory.getBinding(thread.id);
       if (Option.isSome(binding)) {

@@ -764,6 +764,7 @@ function mapCollabAgentEvent(
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  options?: { readonly turnOpen?: boolean },
 ): ReadonlyArray<ProviderRuntimeEvent> {
   if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
     return mapCollabAgentEvent(event, canonicalThreadId);
@@ -947,12 +948,19 @@ function mapToRuntimeEvents(
     ];
   }
 
+  // The protocol deprecates thread/compacted in favor of the ContextCompaction
+  // item, and the item/completed mapping already turns that item into the
+  // compaction activity. Consuming the notification silently keeps the two
+  // signals from double-reporting the same compaction.
+  if (event.method === "thread/compacted") {
+    return [];
+  }
+
   if (
     event.method === "thread/status/changed" ||
     event.method === "thread/archived" ||
     event.method === "thread/unarchived" ||
-    event.method === "thread/closed" ||
-    event.method === "thread/compacted"
+    event.method === "thread/closed"
   ) {
     const payload =
       event.method === "thread/status/changed"
@@ -968,11 +976,9 @@ function mapToRuntimeEvents(
               ? "archived"
               : event.method === "thread/closed"
                 ? "closed"
-                : event.method === "thread/compacted"
-                  ? "compacted"
-                  : payload
-                    ? toThreadState(payload.status)
-                    : "active",
+                : payload
+                  ? toThreadState(payload.status)
+                  : "active",
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1106,7 +1112,22 @@ function mapToRuntimeEvents(
 
   if (event.method === "item/started") {
     const started = mapItemLifecycle(event, canonicalThreadId, "item.started");
-    return started ? [started] : [];
+    if (!started) {
+      return [];
+    }
+    // Compaction is session-wide busy work, not a tool call: raise the
+    // compacting session state alongside the item so the thread reports it.
+    if (started.type === "item.started" && started.payload.itemType === "context_compaction") {
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "session.state.changed",
+          payload: { state: "compacting", reason: "item:context_compaction" },
+        },
+        started,
+      ];
+    }
+    return [started];
   }
 
   if (event.method === "item/completed") {
@@ -1132,7 +1153,28 @@ function mapToRuntimeEvents(
       ];
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    return completed ? [completed] : [];
+    if (!completed) {
+      return [];
+    }
+    if (
+      completed.type === "item.completed" &&
+      completed.payload.itemType === "context_compaction"
+    ) {
+      // A compaction that outlived its turn must land the session on ready,
+      // not running: with no turn left, nothing else would clear it.
+      return [
+        completed,
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "session.state.changed",
+          payload: {
+            state: options?.turnOpen === false ? "ready" : "running",
+            reason: "item:context_compaction",
+          },
+        },
+      ];
+    }
+    return [completed];
   }
 
   if (
@@ -1717,6 +1759,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        // Whether each thread has an open turn, from the turn lifecycle
+        // notifications this session has seen. Compaction items completing
+        // after their turn closed read it to land the session on ready
+        // instead of an uncleared running. Threads never observed default to
+        // open so an attach mid-turn keeps today's behavior.
+        const turnOpenByThread = new Map<string, boolean>();
+
         // Fork into the session scope, not the calling fiber. `forkChild` makes
         // this a child of `startSession`, and Effect interrupts a fiber's
         // children when it completes, so the consumer died on return and every
@@ -1724,7 +1773,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            if (event.kind === "notification" && event.method === "turn/started") {
+              turnOpenByThread.set(String(event.threadId), true);
+            }
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId, {
+              turnOpen: turnOpenByThread.get(String(event.threadId)) !== false,
+            });
+            if (
+              event.kind === "notification" &&
+              (event.method === "turn/completed" || event.method === "turn/aborted")
+            ) {
+              turnOpenByThread.set(String(event.threadId), false);
+            }
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

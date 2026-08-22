@@ -42,6 +42,10 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
 
+#### Compaction
+
+A provider summarizing a thread's context to reclaim its context window. While it runs, the session carries a `statusDetail` of `compacting` on top of whatever status the turn lifecycle produces (`running` during a turn, `ready` when compaction outlives it), plus a `compactingSince` timestamp marking when it began, which clients render as "Compacting context" with its elapsed time instead of "Working". The result lands as a `context-compaction` activity — with token delta and duration when the provider reports them, and an error tone when compaction failed. Claude, Codex, and OpenCode report compaction; the ACP providers (Cursor, Grok) have no compaction concept. See [ProviderRuntimeIngestion.ts][5].
+
 ### Orchestration
 
 Orchestration is the server-side domain layer that turns runtime activity into stable app state. The main entry point is [OrchestrationEngine.ts][7], with core logic in [decider.ts][8] and [projector.ts][4].

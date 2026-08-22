@@ -2373,6 +2373,12 @@ function ChatViewContent(props: ChatViewProps) {
     localDispatchStartedAt,
     latestUserMessageAt,
   );
+  // The session carries the compaction clock on its own field; updatedAt is
+  // the fallback for sessions projected by builds without it.
+  const compactingSince =
+    activeThread?.session?.statusDetail === "compacting"
+      ? (activeThread.session.compactingSince ?? activeThread.session.updatedAt)
+      : null;
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -6507,6 +6513,7 @@ function ChatViewContent(props: ChatViewProps) {
                 isWorking={isWorking}
                 workingStepLabel={workingStepLabel}
                 activeTurnStartedAt={activeWorkStartedAt}
+                compactingSince={compactingSince}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}

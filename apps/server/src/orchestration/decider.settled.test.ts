@@ -528,6 +528,23 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("does not unsettle for a session that is only busy compacting", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-compacting"),
+          threadId: ThreadId.make("thread-1"),
+          session: { ...makeSession("running"), statusDetail: "compacting" },
+          createdAt: NOW,
+        },
+        readModel: makeReadModel("settled"),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual(["thread.session-set"]);
+    }),
+  );
+
   it.effect("does not unsettle for session stop/error status writes", () =>
     Effect.gen(function* () {
       for (const status of ["stopped", "error", "ready", "idle"] as const) {

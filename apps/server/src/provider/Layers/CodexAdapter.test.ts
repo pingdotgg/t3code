@@ -556,6 +556,165 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("raises and clears the compacting session state around contextCompaction items", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 4).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-compaction-started"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("compaction_1"),
+        payload: {
+          startedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "contextCompaction",
+            id: "compaction_1",
+          },
+        },
+      });
+      yield* runtime.emit({
+        id: asEventId("evt-compaction-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("compaction_1"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "contextCompaction",
+            id: "compaction_1",
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["session.state.changed", "item.started", "item.completed", "session.state.changed"],
+      );
+      NodeAssert.deepStrictEqual(
+        events.flatMap((event) =>
+          event.type === "session.state.changed" ? [`${event.payload.state}`] : [],
+        ),
+        ["compacting", "running"],
+      );
+      NodeAssert.ok(events[1]?.type === "item.started");
+      NodeAssert.equal(events[1].payload.itemType, "context_compaction");
+      NodeAssert.ok(events[2]?.type === "item.completed");
+      NodeAssert.equal(events[2].payload.itemType, "context_compaction");
+    }),
+  );
+
+  it.effect("lands the session on ready when compaction completes after its turn closed", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 3).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-turn-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "turn/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turn: {
+            id: "turn-1",
+            items: [],
+            status: "completed",
+          },
+        },
+      });
+      yield* runtime.emit({
+        id: asEventId("evt-compaction-after-turn"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("compaction_2"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "contextCompaction",
+            id: "compaction_2",
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["turn.completed", "item.completed", "session.state.changed"],
+      );
+      NodeAssert.ok(events[2]?.type === "session.state.changed");
+      NodeAssert.equal(events[2].payload.state, "ready");
+    }),
+  );
+
+  it.effect("consumes deprecated thread/compacted notifications silently", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-thread-compacted"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "thread/compacted",
+        threadId: asThreadId("thread-1"),
+        payload: { threadId: "thread-1" },
+      });
+      // A follow-up mapped notification proves the deprecated one emitted
+      // nothing ahead of it.
+      yield* runtime.emit({
+        id: asEventId("evt-thread-archived"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "thread/archived",
+        threadId: asThreadId("thread-1"),
+        payload: { threadId: "thread-1" },
+      });
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "thread.state.changed");
+      if (firstEvent.value.type !== "thread.state.changed") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.state, "archived");
+    }),
+  );
+
   it.effect("labels MCP lifecycle entries with server and tool names", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

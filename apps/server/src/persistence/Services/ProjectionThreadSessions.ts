@@ -10,6 +10,7 @@ import {
   RuntimeMode,
   IsoDateTime,
   OrchestrationSessionStatus,
+  OrchestrationSessionStatusDetail,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -24,6 +25,8 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 export const ProjectionThreadSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
+  statusDetail: Schema.NullOr(OrchestrationSessionStatusDetail),
+  compactingSince: Schema.NullOr(IsoDateTime),
   providerName: Schema.NullOr(Schema.String),
   providerInstanceId: Schema.NullOr(ProviderInstanceId),
   runtimeMode: RuntimeMode,

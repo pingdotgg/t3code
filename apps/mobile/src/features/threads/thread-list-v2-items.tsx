@@ -422,7 +422,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
 
   const status = resolveThreadListV2Status(thread);
-  const statusLabel = STATUS_LABEL_BY_STATUS[status];
+  // Compaction can run on a ready session (a /compact whose turn already
+  // closed), so the overlay covers ready as well as working — but never
+  // approval, input, or failed, which need the user's attention.
+  const statusLabel =
+    thread.session?.statusDetail === "compacting" && (status === "working" || status === "ready")
+      ? { label: "Compacting", className: "text-sky-600 dark:text-sky-400" }
+      : STATUS_LABEL_BY_STATUS[status];
   const timeLabel = threadTimeLabel(thread);
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);

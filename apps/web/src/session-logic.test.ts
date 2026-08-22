@@ -1869,6 +1869,32 @@ describe("deriveWorkLogEntries context window handling", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.label).toBe("Context compacted");
   });
+
+  it("labels context compaction entries with token delta and duration when provided", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "compaction-2",
+        turnId: "turn-1",
+        kind: "context-compaction",
+        summary: "Context compacted",
+        tone: "info",
+        payload: {
+          state: "compacted",
+          detail: {
+            compact_metadata: {
+              trigger: "auto",
+              pre_tokens: 148_000,
+              post_tokens: 12_400,
+              duration_ms: 45_000,
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Context compacted · 148k → 12k tokens · 45s");
+  });
 });
 
 describe("isLatestTurnSettled", () => {
