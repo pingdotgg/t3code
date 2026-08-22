@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -304,6 +305,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
+  const fileSystem = yield* FileSystem.FileSystem;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -600,9 +602,109 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    const effectiveCwd = resolveThreadWorkspaceCwd({
-      thread,
-      projects: project ? [project] : [],
+    const validateProjectCheckoutBranch = Effect.fnUntraced(function* (input: {
+      readonly deletedWorktreePath?: string;
+    }) {
+      const expectedBranch = thread.branch;
+      if (!project || !expectedBranch) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: input.deletedWorktreePath
+            ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and its project checkout or expected branch could not be found.`
+            : `Thread '${threadId}' is bound to a project branch that could not be resolved.`,
+        });
+      }
+
+      const projectCheckoutExists = yield* fileSystem.exists(project.workspaceRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: providerErrorLabel(String(desiredInstanceId)),
+              method: "thread.turn.start",
+              cause,
+              detail: input.deletedWorktreePath
+                ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and T3 Code could not check its project checkout '${project.workspaceRoot}'.`
+                : `T3 Code could not check project checkout '${project.workspaceRoot}' for thread '${threadId}'.`,
+            }),
+        ),
+      );
+      if (!projectCheckoutExists) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: input.deletedWorktreePath
+            ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and its project checkout '${project.workspaceRoot}' is also missing.`
+            : `Thread '${threadId}' is bound to branch '${expectedBranch}', but its project checkout '${project.workspaceRoot}' is missing.`,
+        });
+      }
+
+      const localStatus = yield* vcsStatusBroadcaster
+        .refreshLocalStatus(project.workspaceRoot)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterRequestError({
+                provider: providerErrorLabel(String(desiredInstanceId)),
+                method: "thread.turn.start",
+                cause,
+                detail: input.deletedWorktreePath
+                  ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}', and T3 Code could not verify the branch in project checkout '${project.workspaceRoot}'.`
+                  : `T3 Code could not verify project checkout '${project.workspaceRoot}' for thread '${threadId}' on branch '${expectedBranch}'.`,
+              }),
+          ),
+        );
+      const currentBranch = localStatus.isRepo ? localStatus.refName : null;
+      if (currentBranch !== expectedBranch) {
+        const currentBranchLabel = localStatus.isRepo
+          ? (currentBranch ?? "detached HEAD")
+          : "not a Git repository";
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: input.deletedWorktreePath
+            ? `Thread '${threadId}' points to deleted worktree '${input.deletedWorktreePath}' for branch '${expectedBranch}'. The project checkout '${project.workspaceRoot}' is on '${currentBranchLabel}', so T3 Code refused to run the turn in the wrong checkout. Restore the worktree or check out '${expectedBranch}' in the project checkout and retry.`
+            : `Thread '${threadId}' is bound to branch '${expectedBranch}', but project checkout '${project.workspaceRoot}' is on '${currentBranchLabel}'. T3 Code refused to run the turn in the wrong checkout. Check out '${expectedBranch}' and retry.`,
+        });
+      }
+
+      return project.workspaceRoot;
+    });
+    const effectiveCwd = yield* Effect.gen(function* () {
+      const resolvedCwd = resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      });
+      if (!thread.worktreePath) {
+        return thread.branch ? yield* validateProjectCheckoutBranch({}) : resolvedCwd;
+      }
+
+      const worktreeExists = yield* fileSystem.exists(thread.worktreePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: providerErrorLabel(String(desiredInstanceId)),
+              method: "thread.turn.start",
+              cause,
+              detail: `T3 Code could not check whether thread '${threadId}' worktree '${thread.worktreePath}' still exists.`,
+            }),
+        ),
+      );
+      if (worktreeExists) {
+        return thread.worktreePath;
+      }
+
+      const projectCheckout = yield* validateProjectCheckoutBranch({
+        deletedWorktreePath: thread.worktreePath,
+      });
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("deleted-worktree-repair"),
+        threadId,
+        worktreePath: null,
+      });
+      return projectCheckout;
     });
 
     const startProviderSession = (input?: {
@@ -786,11 +888,12 @@ const make = Effect.gen(function* () {
   )(function* (input: {
     readonly threadId: ThreadId;
     readonly branch: string | null;
+    readonly cwd: string | null;
     readonly worktreePath: string | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
-    if (!input.branch || !input.worktreePath) {
+    if (!input.branch || !input.cwd) {
       return;
     }
     if (!isTemporaryWorktreeBranch(input.branch)) {
@@ -798,7 +901,7 @@ const make = Effect.gen(function* () {
     }
 
     const oldBranch = input.branch;
-    const cwd = input.worktreePath;
+    const cwd = input.cwd;
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
       const settings = yield* serverSettingsService.getSettings;
@@ -827,7 +930,7 @@ const make = Effect.gen(function* () {
         commandId: yield* serverCommandId("worktree-branch-rename"),
         threadId: input.threadId,
         branch: renamed.branch,
-        worktreePath: cwd,
+        worktreePath: input.worktreePath,
       });
       yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
     }).pipe(
@@ -1085,34 +1188,6 @@ const make = Effect.gen(function* () {
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
-    if (isFirstUserMessageTurn) {
-      const project = yield* resolveProject(thread.projectId);
-      const generationCwd =
-        resolveThreadWorkspaceCwd({
-          thread,
-          projects: project ? [project] : [],
-        }) ?? process.cwd();
-      const generationInput = {
-        messageText: message.text,
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-        ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
-      };
-
-      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-        threadId: event.payload.threadId,
-        branch: thread.branch,
-        worktreePath: thread.worktreePath,
-        ...generationInput,
-      }).pipe(Effect.forkScoped);
-
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
-        yield* maybeGenerateThreadTitleForFirstTurn({
-          threadId: event.payload.threadId,
-          cwd: generationCwd,
-          ...generationInput,
-        }).pipe(Effect.forkScoped);
-      }
-    }
 
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
@@ -1166,6 +1241,38 @@ const make = Effect.gen(function* () {
 
     if (Option.isNone(sendTurnRequest)) {
       return;
+    }
+
+    if (isFirstUserMessageTurn) {
+      const firstTurnThread = yield* resolveThread(event.payload.threadId);
+      if (firstTurnThread) {
+        const project = yield* resolveProject(firstTurnThread.projectId);
+        const workspaceCwd = resolveThreadWorkspaceCwd({
+          thread: firstTurnThread,
+          projects: project ? [project] : [],
+        });
+        const generationInput = {
+          messageText: message.text,
+          ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+          ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
+        };
+
+        yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+          threadId: event.payload.threadId,
+          branch: firstTurnThread.branch,
+          cwd: workspaceCwd ?? null,
+          worktreePath: firstTurnThread.worktreePath,
+          ...generationInput,
+        }).pipe(Effect.forkScoped);
+
+        if (canReplaceThreadTitle(firstTurnThread.title, event.payload.titleSeed)) {
+          yield* maybeGenerateThreadTitleForFirstTurn({
+            threadId: event.payload.threadId,
+            cwd: workspaceCwd ?? process.cwd(),
+            ...generationInput,
+          }).pipe(Effect.forkScoped);
+        }
+      }
     }
 
     yield* providerService
