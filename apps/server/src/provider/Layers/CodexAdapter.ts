@@ -1519,6 +1519,23 @@ function mapToRuntimeEvents(
     const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
     const message = payload?.error.message ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
+
+    // A usage-limit stop is quota, not a malfunction, and the turn's failure
+    // state lands separately via turn/completed — so the row is a labeled
+    // warning (the provider message carries the reset time), not a red error.
+    if (payload?.error.codexErrorInfo === "usageLimitExceeded") {
+      return [
+        {
+          type: "runtime.warning",
+          ...runtimeEventBase(event, canonicalThreadId),
+          payload: {
+            message,
+            ...(event.payload !== undefined ? { detail: event.payload } : {}),
+          },
+        },
+      ];
+    }
+
     return [
       {
         type: willRetry ? "runtime.warning" : "runtime.error",
