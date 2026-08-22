@@ -1,4 +1,5 @@
 import {
+  DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -417,8 +418,11 @@ describe("serverSettings helpers", () => {
     const custom = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       automaticGitFetchInterval: Duration.seconds(15),
     });
+    // Pinned to the constant, not a literal: this asserts "an override equal to
+    // the balanced preset reconciles back to the preset", which is about the
+    // reconciliation, not about the preset's particular value.
     const next = applyServerSettingsPatch(custom, {
-      automaticGitFetchInterval: Duration.seconds(30),
+      automaticGitFetchInterval: DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
     });
 
     expect(next.backgroundActivity).toEqual({
@@ -427,7 +431,9 @@ describe("serverSettings helpers", () => {
       overrides: {},
     });
     expect(next.backgroundActivityProfile).toBe("balanced");
-    expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(30_000);
+    expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(
+      Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL),
+    );
   });
 
   it("drops custom overrides that duplicate the base profile", () => {
@@ -437,7 +443,9 @@ describe("serverSettings helpers", () => {
         profile: "custom",
         baseProfile: "balanced",
         overrides: {
-          automaticGitFetchInterval: Duration.seconds(30),
+          // Equal to the balanced preset by construction, so the override is
+          // redundant and should be dropped.
+          automaticGitFetchInterval: DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
         },
       },
     });
