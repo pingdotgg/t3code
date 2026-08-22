@@ -135,6 +135,11 @@ it.effect("uses gh json listing for non-open change request state queries", () =
 
     const changeRequests = yield* provider.listChangeRequests({
       cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "git@github.com:T3Tools/t3code.git",
+      },
       headSelector: "feature/merged",
       state: "all",
       limit: 10,
@@ -149,6 +154,8 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       "all",
       "--limit",
       "10",
+      "--repo",
+      "T3Tools/t3code",
       "--json",
       "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
     ]);
@@ -158,6 +165,114 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       changeRequests[0]?.updatedAt,
       Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00.000Z")),
     );
+  }),
+);
+
+it.effect("targets the upstream repository when listing open pull requests for a fork", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "https://github.com/T3Tools/t3code.git",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "T3Tools/t3code");
+  }),
+);
+
+it.effect("normalizes a trailing slash after an upstream Git URL suffix", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "https://github.com/T3Tools/t3code.git/",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "T3Tools/t3code");
+  }),
+);
+
+it.effect("preserves a GitHub Enterprise host in upstream repository coordinates", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "github.example.com",
+          baseUrl: "https://github.example.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@github.example.com:platform/t3code.git",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "github.example.com/platform/t3code");
+  }),
+);
+
+it.effect("preserves a custom GitHub Enterprise port in upstream repository coordinates", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "github.example.com:8443",
+          baseUrl: "https://github.example.com:8443",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://github.example.com:8443/platform/t3code.git",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "github.example.com:8443/platform/t3code");
   }),
 );
 
@@ -175,6 +290,45 @@ it.effect("treats empty non-open change request listing output as no results", (
     });
 
     assert.deepStrictEqual(changeRequests, []);
+  }),
+);
+
+it.effect("looks up qualified fork heads directly for non-open listings", () =>
+  Effect.gen(function* () {
+    let args: ReadonlyArray<string> = [];
+    const provider = yield* makeProvider({
+      execute: (input) => {
+        args = input.args;
+        return Effect.succeed(
+          processResult(
+            JSON.stringify({
+              number: 52,
+              title: "Requested owner",
+              url: "https://github.com/pingdotgg/t3code/pull/52",
+              baseRefName: "main",
+              headRefName: "feature/shared",
+              state: "CLOSED",
+              updatedAt: "2026-01-02T00:00:00.000Z",
+              headRepositoryOwner: { login: "octocat" },
+            }),
+          ),
+        );
+      },
+    });
+
+    const changeRequests = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "octocat:feature/shared",
+      state: "all",
+      limit: 1,
+    });
+
+    assert.deepStrictEqual(
+      changeRequests.map((changeRequest) => changeRequest.number),
+      [52],
+    );
+    assert.include(args.join(" "), "pr view octocat:feature/shared");
+    assert.notInclude(args.join(" "), "--limit");
   }),
 );
 
@@ -203,6 +357,47 @@ it.effect("creates GitHub PRs through provider-neutral input names", () =>
       headSelector: "owner:feature/provider",
       title: "Provider PR",
       bodyFile: "/tmp/body.md",
+    });
+  }),
+);
+
+it.effect("passes upstream and fork repositories to GitHub PR creation", () =>
+  Effect.gen(function* () {
+    let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      createPullRequest: (input) => {
+        createInput = input;
+        return Effect.void;
+      },
+    });
+
+    yield* provider.createChangeRequest({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+      source: {
+        refName: "feature/provider",
+        owner: "octocat",
+        repository: "octocat/t3code",
+      },
+      baseRefName: "main",
+      headSelector: "octocat:feature/provider",
+      title: "Provider PR",
+      bodyFile: "/tmp/body.md",
+    });
+
+    assert.deepStrictEqual(createInput, {
+      cwd: "/repo",
+      baseBranch: "main",
+      headSelector: "octocat:feature/provider",
+      title: "Provider PR",
+      bodyFile: "/tmp/body.md",
+      repository: "pingdotgg/t3code",
+      headRepository: "octocat/t3code",
     });
   }),
 );
