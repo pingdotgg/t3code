@@ -51,6 +51,7 @@ const RawActorSchema = Schema.Struct({
 const RawLabelSchema = Schema.Struct({
   name: Schema.String,
   color: Schema.optional(Schema.NullOr(Schema.String)),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawReviewRequestSchema = Schema.Struct({
@@ -1129,10 +1130,19 @@ function toReviewDecision(value: string | null | undefined): PullRequestReviewDe
 
 function toLabels(
   raw: ReadonlyArray<Schema.Schema.Type<typeof RawLabelSchema>> | undefined,
+  includeDescription = false,
 ): ReadonlyArray<PullRequestLabel> {
   return (raw ?? []).flatMap((label) => {
     const name = trimmed(label.name);
-    return name === null ? [] : [{ name, color: trimmed(label.color) }];
+    return name === null
+      ? []
+      : [
+          {
+            name,
+            color: trimmed(label.color),
+            ...(includeDescription ? { description: trimmed(label.description) } : {}),
+          },
+        ];
   });
 }
 
@@ -1363,6 +1373,7 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
 function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRequestDetail {
   return {
     ...toListItem(raw),
+    labels: toLabels(raw.labels, true),
     headRepositoryOwner: trimmed(raw.headRepositoryOwner?.login),
     body: raw.body ?? "",
     changedFiles: raw.changedFiles ?? 0,

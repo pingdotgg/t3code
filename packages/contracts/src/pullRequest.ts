@@ -126,6 +126,8 @@ export type PullRequestActor = typeof PullRequestActor.Type;
 export const PullRequestLabel = Schema.Struct({
   name: TrimmedNonEmptyString,
   color: Schema.NullOr(Schema.String),
+  /** Absent where the host does not report label metadata, and null for no description. */
+  description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type PullRequestLabel = typeof PullRequestLabel.Type;
 

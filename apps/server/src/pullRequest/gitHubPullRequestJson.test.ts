@@ -71,6 +71,20 @@ describe("pull request list decoding", () => {
     expect(entry?.reviewRequestLogins).toEqual(["octocat"]);
   });
 
+  it("keeps label descriptions out of list rows", () => {
+    const [entry] = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            labels: [{ name: " bug ", color: " ff0000 ", description: "Not sent here." }],
+          },
+        ]),
+      ),
+    ).items;
+
+    expect(entry?.labels).toEqual([{ name: "bug", color: "ff0000" }]);
+  });
+
   it("normalizes the review decision and reports nothing for one GitHub does not summarize", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(
@@ -220,6 +234,28 @@ describe("pull request detail decoding", () => {
       ["build", "pending"],
       ["test", "failure"],
       ["ci/legacy", "success"],
+    ]);
+  });
+
+  it("keeps label descriptions in detail and normalizes an empty one", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          labels: [
+            { name: " bug ", color: " ff0000 ", description: " Something is broken. " },
+            { name: "docs", color: null, description: "   " },
+            { name: "legacy", color: null },
+          ],
+        }),
+      ),
+    );
+
+    expect(detail.labels).toEqual([
+      { name: "bug", color: "ff0000", description: "Something is broken." },
+      { name: "docs", color: null, description: null },
+      { name: "legacy", color: null, description: null },
     ]);
   });
 

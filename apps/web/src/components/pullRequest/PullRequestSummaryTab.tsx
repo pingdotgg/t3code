@@ -3,6 +3,7 @@ import type {
   PullRequestActor,
   PullRequestComment,
   PullRequestDetailView,
+  PullRequestLabel,
   PullRequestRef,
 } from "@t3tools/contracts";
 import {
@@ -68,6 +69,51 @@ function reviewerKey(login: string): string {
 function labelDotColor(color: string | null): string | null {
   const hex = color?.trim().replace(/^#/, "") ?? "";
   return /^[0-9a-fA-F]{6}$/.test(hex) ? `#${hex}` : null;
+}
+
+function PullRequestLabelChip({ label }: { readonly label: PullRequestLabel }) {
+  const dot = labelDotColor(label.color);
+  const description = label.description?.trim();
+  const contents = (
+    <>
+      <span
+        aria-hidden
+        className="size-2 shrink-0 rounded-full bg-muted-foreground"
+        {...(dot ? { style: { backgroundColor: dot } } : {})}
+      />
+      <span className="truncate">{label.name}</span>
+    </>
+  );
+
+  if (!description) {
+    return (
+      <span className="inline-flex max-w-48 items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs">
+        {contents}
+      </span>
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex max-w-48 cursor-help items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        }
+      >
+        {contents}
+      </TooltipTrigger>
+      <TooltipPopup
+        align="start"
+        side="bottom"
+        className="max-w-80 whitespace-normal leading-tight wrap-anywhere"
+      >
+        {description}
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** The avatar carries the attribution alone; who it is arrives on hover, like the reviewer row. */
@@ -610,22 +656,9 @@ export function PullRequestSummaryTab({
           {detail.labels.length > 0 ? (
             <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
               <span className="flex min-w-0 flex-wrap items-center gap-1">
-                {detail.labels.map((label) => {
-                  const dot = labelDotColor(label.color);
-                  return (
-                    <span
-                      key={label.name}
-                      className="inline-flex max-w-48 items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs"
-                    >
-                      <span
-                        aria-hidden
-                        className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                        {...(dot ? { style: { backgroundColor: dot } } : {})}
-                      />
-                      <span className="truncate">{label.name}</span>
-                    </span>
-                  );
-                })}
+                {detail.labels.map((label) => (
+                  <PullRequestLabelChip key={label.name} label={label} />
+                ))}
               </span>
             </MetaRow>
           ) : null}
