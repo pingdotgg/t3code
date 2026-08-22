@@ -279,6 +279,13 @@ struct FeatureComposerView: View {
 
     private var composerFooter: some View {
         HStack(spacing: 2) {
+            if FeatureComposerKeyboardDismissPolicy.showsDismissControl(
+                isFocused: focused.wrappedValue,
+                canDismiss: onDismissKeyboard != nil
+            ) {
+                dismissKeyboardButton
+            }
+
             FeatureImageAttachmentPicker(
                 attachments: $attachments,
                 preparationState: $attachmentPreparation,
@@ -309,6 +316,26 @@ struct FeatureComposerView: View {
         .padding(.horizontal, 7)
         .padding(.top, 2)
         .padding(.bottom, 8)
+    }
+
+    /// A grown composer plus the keyboard can hide the whole transcript, so the
+    /// draft needs an escape hatch that is not a scroll gesture. Only the focus
+    /// state changes, which leaves the draft — and its caret — exactly where it was.
+    private var dismissKeyboardButton: some View {
+        Button {
+            onDismissKeyboard?()
+            focused.wrappedValue = false
+        } label: {
+            Image(systemName: "keyboard.chevron.compact.down")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(T3Colors.textSecondary)
+                .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hide keyboard")
+        .accessibilityHint("Keeps your draft and shows the thread")
+        .accessibilityIdentifier("composer-dismiss-keyboard")
     }
 
     private var submitButton: some View {
@@ -578,6 +605,16 @@ struct FeatureComposerView: View {
         guard imagesAllowed, !providers.isEmpty else { return false }
         attachImageProviders(providers)
         return true
+    }
+}
+
+/// The explicit "hide keyboard" control only earns its place in the footer while
+/// the keyboard is actually up, and only where the surface behind the composer is
+/// worth getting back to — the thread transcript passes a dismiss handler, other
+/// composers do not.
+enum FeatureComposerKeyboardDismissPolicy {
+    static func showsDismissControl(isFocused: Bool, canDismiss: Bool) -> Bool {
+        isFocused && canDismiss
     }
 }
 

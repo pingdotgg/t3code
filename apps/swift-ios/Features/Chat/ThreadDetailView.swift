@@ -676,7 +676,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         )
         collectionView.backgroundColor = T3Colors.uiBackground
         collectionView.alwaysBounceVertical = true
-        collectionView.keyboardDismissMode = .onDrag
+        collectionView.keyboardDismissMode = .interactive
         collectionView.delaysContentTouches = false
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.isPrefetchingEnabled = true
@@ -750,6 +750,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
         private var onDismissKeyboard: (() -> Void)?
+        private var dragOriginY: CGFloat?
 
         deinit {
             markdownPrefetches.values.forEach { $0.task.cancel() }
@@ -1174,10 +1175,27 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             (scrollView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = false
+            dragOriginY = scrollView.contentOffset.y
+        }
+
+        /// `keyboardDismissMode = .interactive` only engages once the drag reaches
+        /// the keyboard's own frame, and the transcript is laid out above it. Track
+        /// the drag ourselves so reaching back through the thread hands the reader
+        /// the transcript immediately, wherever the drag started.
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard scrollView.isDragging, let dragOriginY else { return }
+            guard TranscriptKeyboardDismissPolicy.shouldDismiss(
+                dragOriginY: dragOriginY,
+                currentY: scrollView.contentOffset.y
+            ) else {
+                return
+            }
+            self.dragOriginY = nil
             onDismissKeyboard?()
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            dragOriginY = nil
             guard !decelerate else { return }
             updateBottomAnchor(for: scrollView)
         }
@@ -1297,6 +1315,18 @@ struct TranscriptViewportGeometry: Equatable {
         guard contentChanged || viewportChanged else { return nil }
 
         return bottomOffset
+    }
+}
+
+/// Reaching back through a bottom-anchored transcript is a downward drag, and it
+/// is the clearest signal that the reader wants the thread rather than the
+/// keyboard. Upward drags stay silent so a nudge toward the latest turn keeps the
+/// draft editable.
+enum TranscriptKeyboardDismissPolicy {
+    static let downwardThreshold: CGFloat = 16
+
+    static func shouldDismiss(dragOriginY: CGFloat, currentY: CGFloat) -> Bool {
+        dragOriginY - currentY >= downwardThreshold
     }
 }
 
