@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatProviderSkillDisplayName,
+  mergeProviderSkills,
   resolveProviderSkillSourceKind,
 } from "./providerSkills.ts";
 
@@ -73,5 +74,61 @@ describe("resolveProviderSkillSourceKind", () => {
         path: "/opt/skills/team-review/SKILL.md",
       }),
     ).toBe("other");
+  });
+});
+
+describe("mergeProviderSkills", () => {
+  it("keeps global skills and lets project skills override matching names", () => {
+    expect(
+      mergeProviderSkills(
+        [
+          {
+            name: "global-only",
+            path: "/home/user/.agents/skills/global-only/SKILL.md",
+            enabled: true,
+            scope: "user",
+          },
+          {
+            name: "deploy",
+            path: "/home/user/.agents/skills/deploy/SKILL.md",
+            enabled: true,
+            scope: "user",
+          },
+        ],
+        [
+          {
+            name: "deploy",
+            path: "/workspace/.agents/skills/deploy/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+          {
+            name: "project-only",
+            path: "/workspace/.agents/skills/project-only/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        name: "deploy",
+        path: "/workspace/.agents/skills/deploy/SKILL.md",
+        enabled: true,
+        scope: "project",
+      },
+      {
+        name: "global-only",
+        path: "/home/user/.agents/skills/global-only/SKILL.md",
+        enabled: true,
+        scope: "user",
+      },
+      {
+        name: "project-only",
+        path: "/workspace/.agents/skills/project-only/SKILL.md",
+        enabled: true,
+        scope: "project",
+      },
+    ]);
   });
 });

@@ -4748,7 +4748,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
-  it.effect("routes websocket rpc projects.listEntries and projects.readFile", () =>
+  it.effect("routes websocket rpc project file and skill reads", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -4757,6 +4757,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fs.writeFileString(
         path.join(workspaceDir, "src", "index.ts"),
         "export const answer = 42;\n",
+      );
+      yield* fs.makeDirectory(path.join(workspaceDir, ".agents", "skills", "review"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, ".agents", "skills", "review", "SKILL.md"),
+        "---\nname: review\ndescription: Review this project.\n---\n",
       );
 
       yield* buildAppUnderTest();
@@ -4770,6 +4777,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               cwd: workspaceDir,
               relativePath: "src/index.ts",
             }),
+            skills: client[WS_METHODS.projectsListSkills]({
+              cwd: workspaceDir,
+              driver: ProviderDriverKind.make("codex"),
+            }),
           }),
         ),
       );
@@ -4781,6 +4792,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         byteLength: 26,
         truncated: false,
       });
+      assert.deepEqual(response.skills, [
+        {
+          name: "review",
+          description: "Review this project.",
+          path: path.join(workspaceDir, ".agents", "skills", "review", "SKILL.md"),
+          enabled: true,
+          scope: "project",
+        },
+      ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 

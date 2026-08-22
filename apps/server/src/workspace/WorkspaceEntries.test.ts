@@ -11,6 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
@@ -119,6 +120,96 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         );
         expect(result.entries.some((entry) => entry.path.startsWith("node_modules"))).toBe(false);
         expect(result.truncated).toBe(false);
+      }),
+    );
+  });
+
+  describe("listSkills", () => {
+    it.effect("discovers common project skills for every provider", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-agent-skills-" });
+        yield* writeTextFile(
+          cwd,
+          ".agents/skills/unslop/SKILL.md",
+          "---\nname: unslop\ndescription: Remove AI writing patterns.\n---\n",
+        );
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+
+        for (const driver of [
+          "codex",
+          "claudeAgent",
+          "cursor",
+          "grok",
+          "opencode",
+          "futureProvider",
+        ].map((value) => ProviderDriverKind.make(value))) {
+          expect(yield* workspaceEntries.listSkills({ cwd, driver })).toEqual([
+            {
+              name: "unslop",
+              description: "Remove AI writing patterns.",
+              path: path.join(cwd, ".agents", "skills", "unslop", "SKILL.md"),
+              enabled: true,
+              scope: "project",
+            },
+          ]);
+        }
+      }),
+    );
+
+    it.effect("includes provider-native project skill directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-native-skills-" });
+        const cases = [
+          [ProviderDriverKind.make("claudeAgent"), ".claude"],
+          [ProviderDriverKind.make("cursor"), ".cursor"],
+          [ProviderDriverKind.make("grok"), ".grok"],
+          [ProviderDriverKind.make("opencode"), ".opencode"],
+        ] as const;
+
+        for (const [driver, directory] of cases) {
+          yield* writeTextFile(
+            cwd,
+            `${directory}/skills/${driver}/SKILL.md`,
+            `---\nname: ${driver}\ndescription: ${driver} project skill.\n---\n`,
+          );
+        }
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const [driver] of cases) {
+          expect(
+            (yield* workspaceEntries.listSkills({ cwd, driver })).map((skill) => skill.name),
+          ).toContain(driver);
+        }
+        expect(
+          yield* workspaceEntries.listSkills({ cwd, driver: ProviderDriverKind.make("codex") }),
+        ).toEqual([]);
+      }),
+    );
+
+    it.effect("prefers provider-native skills over common project skills", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-skill-precedence-" });
+        yield* writeTextFile(
+          cwd,
+          ".agents/skills/deploy/SKILL.md",
+          "---\nname: deploy\ndescription: Common deploy.\n---\n",
+        );
+        yield* writeTextFile(
+          cwd,
+          ".cursor/skills/deploy/SKILL.md",
+          "---\nname: deploy\ndescription: Cursor deploy.\n---\n",
+        );
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const skills = yield* workspaceEntries.listSkills({
+          cwd,
+          driver: ProviderDriverKind.make("cursor"),
+        });
+
+        expect(skills).toHaveLength(1);
+        expect(skills[0]?.description).toBe("Cursor deploy.");
       }),
     );
   });

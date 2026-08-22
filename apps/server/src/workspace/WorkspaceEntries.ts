@@ -12,16 +12,19 @@ import * as Schema from "effect/Schema";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProviderDriverKind,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchContentsInput,
   ProjectSearchContentsResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
+import { parse as parseYamlDocument } from "yaml";
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -84,6 +87,39 @@ export const WorkspaceEntriesError = Schema.Union([
 ]);
 export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
+const SKILL_FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+const PROVIDER_PROJECT_SKILL_DIRECTORIES: Readonly<Record<string, ReadonlyArray<string>>> = {
+  claudeAgent: [".claude"],
+  cursor: [".cursor"],
+  grok: [".grok"],
+  opencode: [".claude", ".opencode"],
+};
+
+function parseSkillFrontmatter(contents: string): {
+  readonly name?: string;
+  readonly description?: string;
+} | null {
+  const match = SKILL_FRONTMATTER_PATTERN.exec(contents);
+  if (!match) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = parseYamlDocument(match[1] ?? "");
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  const description = typeof record.description === "string" ? record.description.trim() : "";
+  return {
+    ...(name ? { name } : {}),
+    ...(description ? { description } : {}),
+  };
+}
+
 export class WorkspaceEntries extends Context.Service<
   WorkspaceEntries,
   {
@@ -93,6 +129,10 @@ export class WorkspaceEntries extends Context.Service<
     readonly list: (
       input: ProjectListEntriesInput,
     ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
+    readonly listSkills: (input: {
+      readonly cwd: string;
+      readonly driver: ProviderDriverKind;
+    }) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
     readonly search: (
       input: ProjectSearchEntriesInput,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntriesError>;
@@ -288,7 +328,44 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search, searchContents });
+  const listSkills: WorkspaceEntries["Service"]["listSkills"] = Effect.fn(
+    "WorkspaceEntries.listSkills",
+  )(function* ({ cwd, driver }) {
+    const skillDirectories = [".agents", ...(PROVIDER_PROJECT_SKILL_DIRECTORIES[driver] ?? [])];
+    const skillsByName = new Map<string, ServerProviderSkill>();
+
+    for (const directory of skillDirectories) {
+      const skillsRoot = path.join(cwd, directory, "skills");
+      const entries = yield* Effect.tryPromise(() => NodeFSP.readdir(skillsRoot)).pipe(
+        Effect.orElseSucceed((): string[] => []),
+      );
+
+      for (const entry of entries.toSorted()) {
+        const skillPath = path.join(skillsRoot, entry, "SKILL.md");
+        const contents = yield* Effect.tryPromise(() => NodeFSP.readFile(skillPath, "utf8")).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (contents === undefined) continue;
+
+        const frontmatter = parseSkillFrontmatter(contents);
+        if (frontmatter === null) continue;
+        const name = frontmatter.name ?? entry.trim();
+        if (!name) continue;
+
+        skillsByName.set(name, {
+          name,
+          path: skillPath,
+          enabled: true,
+          scope: "project",
+          ...(frontmatter.description ? { description: frontmatter.description } : {}),
+        });
+      }
+    }
+
+    return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  });
+
+  return WorkspaceEntries.of({ browse, list, listSkills, refresh, search, searchContents });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

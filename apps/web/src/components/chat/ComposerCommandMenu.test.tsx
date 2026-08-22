@@ -24,6 +24,23 @@ describe("ComposerCommandMenu", () => {
     expect(markup).not.toContain("dropdown-glass");
   });
 
+  it("describes pending slash skill discovery without file-search copy", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[]}
+        resolvedTheme="dark"
+        isLoading
+        triggerKind="slash-command"
+        activeItemId={null}
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Searching workspace skills...");
+    expect(markup).not.toContain("Searching workspace files...");
+  });
+
   it("renders commands without a category heading or invented icons", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu

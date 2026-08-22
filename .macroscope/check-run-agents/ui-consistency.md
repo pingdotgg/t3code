@@ -12,6 +12,8 @@ include:
   - "apps/web/src/**/*.ts"
   - "apps/web/src/**/*.tsx"
   - "apps/web/src/**/*.css"
+  - "apps/mobile/src/**/*.ts"
+  - "apps/mobile/src/**/*.tsx"
 conclusion: failure
 showToolCalls: true
 ---
@@ -69,6 +71,8 @@ The goal is not to minimize CSS or class counts at any cost. The goal is to put 
 
 ## Change discipline
 
+- Keep async loading and empty-state copy aligned with the active trigger and data source. When a shared menu adds an async query, trace the popover mount condition, the `isLoading` source, and its copy branch so pending skill discovery stays visible and cannot fall through to file-search text.
+- For workspace-scoped composer data on web or mobile, trace the cwd prop to its source. Existing threads must prefer the active thread or worktree cwd over the parent project's workspace root so branch-local files, skills, and commands cannot come from the wrong checkout.
 - Review the pull request's changed scope and directly affected consumers. Do not turn a focused PR into a demand for unrelated legacy cleanup.
 - Prefer the smallest durable contract over a component-specific workaround or a broad abstraction with one consumer.
 - Preserve intentional exceptions and comments that explain browser, virtualizer, theme, or Electron constraints.
