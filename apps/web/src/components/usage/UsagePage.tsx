@@ -1,11 +1,20 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import type {
+  EnvironmentId,
+  ProviderInstanceId,
+  ProviderRateLimits,
+  UsageProviderKind,
+} from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
-import { cn } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
+import { environmentPresentations } from "../../state/presentation";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import {
   enumerateDays,
@@ -19,10 +28,20 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
+import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   WorkspaceBreadcrumb,
@@ -31,8 +50,24 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { CodexLimitsPanel } from "./CodexLimitsPanel";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+
+interface CodexLimitsTarget {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly label: string;
+  readonly creditId?: string;
+  readonly rateLimits: ProviderRateLimits;
+}
+
+const RESET_OUTCOME_TOAST = {
+  reset: { type: "success", title: "Codex limits reset" },
+  nothingToReset: { type: "warning", title: "Codex limits did not need a reset" },
+  noCredit: { type: "warning", title: "No banked reset is available" },
+  alreadyRedeemed: { type: "warning", title: "This banked reset was already used" },
+} as const;
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -48,6 +83,14 @@ export function UsagePage() {
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [resetTarget, setResetTarget] = useState<
+    (CodexLimitsTarget & { readonly idempotencyKey: string }) | null
+  >(null);
+  const [usingReset, setUsingReset] = useState(false);
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const consumeReset = useAtomCommand(serverEnvironment.consumeProviderRateLimitReset, {
+    reportFailure: false,
+  });
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
@@ -74,6 +117,52 @@ export function UsagePage() {
     () => (isPast24Hours ? merged.hourly : merged.daily).toReversed(),
     [isPast24Hours, merged.daily, merged.hourly],
   );
+
+  const codexLimits = useMemo(() => {
+    const targets: CodexLimitsTarget[] = [];
+    for (const [environmentId, presentation] of presentations) {
+      for (const provider of presentation.serverConfig?.providers ?? []) {
+        if (provider.driver !== "codex" || !provider.rateLimits) continue;
+        const availableCredit = provider.rateLimits.resetCredits?.credits?.find(
+          (credit) => credit.status === "available",
+        );
+        targets.push({
+          environmentId,
+          instanceId: provider.instanceId,
+          label: (provider.displayName ?? "Codex") + " · " + presentation.entry.target.label,
+          ...(availableCredit ? { creditId: availableCredit.id } : {}),
+          rateLimits: provider.rateLimits,
+        });
+      }
+    }
+    return targets;
+  }, [presentations]);
+
+  const useBankedReset = useCallback(async () => {
+    if (!resetTarget || usingReset) return;
+    setUsingReset(true);
+    const result = await consumeReset({
+      environmentId: resetTarget.environmentId,
+      input: {
+        instanceId: resetTarget.instanceId,
+        idempotencyKey: resetTarget.idempotencyKey,
+        ...(resetTarget.creditId ? { creditId: resetTarget.creditId } : {}),
+      },
+    });
+    setUsingReset(false);
+
+    if (result._tag !== "Success") {
+      toastManager.add({
+        type: "error",
+        title: "Could not use banked reset",
+        description: "Codex did not accept the reset. Try again.",
+      });
+      return;
+    }
+
+    setResetTarget(null);
+    toastManager.add(RESET_OUTCOME_TOAST[result.value.outcome]);
+  }, [consumeReset, resetTarget, usingReset]);
 
   const selectWindow = (days: number) => {
     setWindowSelection({
@@ -209,6 +298,15 @@ export function UsagePage() {
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
                 />
+
+                {codexLimits.map((target) => (
+                  <CodexLimitsPanel
+                    key={target.environmentId + ":" + target.instanceId}
+                    label={target.label}
+                    rateLimits={target.rateLimits}
+                    onUseReset={() => setResetTarget({ ...target, idempotencyKey: randomUUID() })}
+                  />
+                ))}
 
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-col gap-5">
@@ -431,6 +529,31 @@ export function UsagePage() {
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
+
+      <AlertDialog
+        open={resetTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !usingReset) setResetTarget(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use a banked reset?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This uses one reset for {resetTarget?.label}. It resets both limits and moves your
+              weekly reset date.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />} disabled={usingReset}>
+              Cancel
+            </AlertDialogClose>
+            <Button disabled={usingReset} onClick={() => void useBankedReset()}>
+              {usingReset ? "Using reset…" : "Use reset"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </SidebarInset>
   );
 }

@@ -1146,7 +1146,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           }),
       );
 
-      it.effect("returns the cached provider list when a manual refresh fails", () =>
+      it.effect("keeps a consumed reset successful when its refresh fails", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
           const codexInstanceId = ProviderInstanceId.make("codex");
@@ -1181,7 +1181,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
             },
-            adapter: {} as ProviderInstance["adapter"],
+            adapter: {
+              ...({} as ProviderInstance["adapter"]),
+              consumeRateLimitResetCredit: () => Effect.succeed("reset" as const),
+            },
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
@@ -1220,6 +1223,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
               cachedProvider,
             ]);
+
+            const consume = registry.consumeRateLimitResetCredit;
+            assert.isDefined(consume);
+            assert.strictEqual(
+              yield* consume(codexInstanceId, { idempotencyKey: "attempt-1" }),
+              "reset",
+            );
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

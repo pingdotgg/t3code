@@ -158,6 +158,73 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ProviderRateLimitWindow = Schema.Struct({
+  usedPercent: Schema.Number,
+  resetsAt: Schema.optional(Schema.Number),
+  windowDurationMins: Schema.optional(Schema.Number),
+});
+export type ProviderRateLimitWindow = typeof ProviderRateLimitWindow.Type;
+
+export const ProviderRateLimitResetCredit = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  status: Schema.Literals(["available", "redeeming", "redeemed", "unknown"]),
+  grantedAt: Schema.Number,
+  expiresAt: Schema.optional(Schema.Number),
+  title: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderRateLimitResetCredit = typeof ProviderRateLimitResetCredit.Type;
+
+export const ProviderRateLimits = Schema.Struct({
+  primary: Schema.optional(ProviderRateLimitWindow),
+  secondary: Schema.optional(ProviderRateLimitWindow),
+  resetCredits: Schema.optional(
+    Schema.Struct({
+      availableCount: NonNegativeInt,
+      credits: Schema.optional(Schema.Array(ProviderRateLimitResetCredit)),
+    }),
+  ),
+});
+export type ProviderRateLimits = typeof ProviderRateLimits.Type;
+
+export const ProviderRateLimitResetOutcome = Schema.Literals([
+  "reset",
+  "nothingToReset",
+  "noCredit",
+  "alreadyRedeemed",
+]);
+export type ProviderRateLimitResetOutcome = typeof ProviderRateLimitResetOutcome.Type;
+
+export const ProviderRateLimitResetRequest = Schema.Struct({
+  creditId: Schema.optionalKey(TrimmedNonEmptyString),
+  idempotencyKey: TrimmedNonEmptyString,
+});
+export type ProviderRateLimitResetRequest = typeof ProviderRateLimitResetRequest.Type;
+
+export const ServerProviderRateLimitResetInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  creditId: Schema.optionalKey(TrimmedNonEmptyString),
+  idempotencyKey: TrimmedNonEmptyString,
+});
+export type ServerProviderRateLimitResetInput = typeof ServerProviderRateLimitResetInput.Type;
+
+export const ServerProviderRateLimitResetResult = Schema.Struct({
+  outcome: ProviderRateLimitResetOutcome,
+});
+export type ServerProviderRateLimitResetResult = typeof ServerProviderRateLimitResetResult.Type;
+
+export class ServerProviderRateLimitResetError extends Schema.TaggedErrorClass<ServerProviderRateLimitResetError>()(
+  "ServerProviderRateLimitResetError",
+  {
+    instanceId: ProviderInstanceId,
+    reason: TrimmedNonEmptyString,
+  },
+) {
+  override get message(): string {
+    return `Could not use a banked reset for provider '${this.instanceId}': ${this.reason}`;
+  }
+}
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -194,6 +261,7 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  rateLimits: Schema.optionalKey(ProviderRateLimits),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

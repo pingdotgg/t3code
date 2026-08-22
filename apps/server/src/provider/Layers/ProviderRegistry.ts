@@ -26,6 +26,7 @@ import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderRateLimitResetRequest,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -41,6 +42,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
+import { ProviderInstanceNotFoundError, ProviderUnsupportedError } from "../Errors.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
@@ -496,6 +498,23 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* refreshOneSource(providerSource);
     });
 
+    const consumeRateLimitResetCredit = Effect.fn("consumeRateLimitResetCredit")(function* (
+      instanceId: ProviderInstanceId,
+      input: ProviderRateLimitResetRequest,
+    ) {
+      const instance = yield* instanceRegistry.getInstance(instanceId);
+      if (!instance) {
+        return yield* new ProviderInstanceNotFoundError({ instanceId });
+      }
+      const consume = instance.adapter.consumeRateLimitResetCredit;
+      if (!consume) {
+        return yield* new ProviderUnsupportedError({ provider: instance.driverKind });
+      }
+      const outcome = yield* consume(input);
+      yield* refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure));
+      return outcome;
+    });
+
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
       "getProviderMaintenanceCapabilitiesForInstance",
     )(function* (instanceId: ProviderInstanceId, provider: ProviderDriverKind) {
@@ -710,6 +729,7 @@ export const ProviderRegistryLive = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      consumeRateLimitResetCredit,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

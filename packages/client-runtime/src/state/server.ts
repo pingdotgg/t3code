@@ -731,6 +731,14 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    consumeProviderRateLimitReset: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:consume-provider-rate-limit-reset",
+      tag: WS_METHODS.serverConsumeProviderRateLimitReset,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
+      },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

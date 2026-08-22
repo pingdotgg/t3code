@@ -9,12 +9,19 @@
 import type {
   ProviderInstanceId,
   ProviderDriverKind,
+  ProviderRateLimitResetOutcome,
+  ProviderRateLimitResetRequest,
   ServerProvider,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
+import type {
+  ProviderAdapterError,
+  ProviderInstanceNotFoundError,
+  ProviderUnsupportedError,
+} from "../Errors.ts";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
 export type ProviderMaintenanceActionKind = "update";
@@ -47,6 +54,14 @@ export interface ProviderRegistryShape {
   readonly refreshInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  readonly consumeRateLimitResetCredit?: (
+    instanceId: ProviderInstanceId,
+    input: ProviderRateLimitResetRequest,
+  ) => Effect.Effect<
+    ProviderRateLimitResetOutcome,
+    ProviderAdapterError | ProviderInstanceNotFoundError | ProviderUnsupportedError
+  >;
 
   /**
    * Resolve the maintenance capabilities owned by one live provider instance.

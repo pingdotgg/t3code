@@ -12,6 +12,8 @@ import type {
   ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderUserInputAnswers,
+  ProviderRateLimitResetRequest,
+  ProviderRateLimitResetOutcome,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
@@ -113,6 +115,10 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  readonly consumeRateLimitResetCredit?: (
+    input: ProviderRateLimitResetRequest,
+  ) => Effect.Effect<ProviderRateLimitResetOutcome, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

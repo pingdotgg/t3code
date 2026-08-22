@@ -239,6 +239,40 @@ const validationLayer = it.layer(
   ),
 );
 
+const rateLimitLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: validationRuntimeFactory.factory,
+        consumeRateLimitResetCredit: () => Effect.succeed("reset"),
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+rateLimitLayer("CodexAdapterLive rate-limit resets", (it) => {
+  it.effect("redeems a banked reset through the Codex account API", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const consume = adapter.consumeRateLimitResetCredit;
+      NodeAssert.ok(consume);
+      const outcome = yield* consume({
+        creditId: "reset-1",
+        idempotencyKey: "attempt-1",
+      });
+
+      NodeAssert.equal(outcome, "reset");
+    }),
+  );
+});
+
 validationLayer("CodexAdapterLive validation", (it) => {
   it.effect("returns validation error for non-codex provider on startSession", () =>
     Effect.gen(function* () {

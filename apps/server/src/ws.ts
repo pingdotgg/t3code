@@ -52,6 +52,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  ServerProviderRateLimitResetError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -1532,6 +1533,30 @@ const makeWsRpcLayer = (
               ? providerRegistry.refreshInstance(input.instanceId)
               : providerRegistry.refresh()
             ).pipe(Effect.map((providers) => ({ providers }))),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverConsumeProviderRateLimitReset]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverConsumeProviderRateLimitReset,
+            Effect.gen(function* () {
+              const consume = providerRegistry.consumeRateLimitResetCredit;
+              if (!consume) {
+                return yield* new ServerProviderRateLimitResetError({
+                  instanceId: input.instanceId,
+                  reason: "This provider does not support banked resets.",
+                });
+              }
+              const outcome = yield* consume(input.instanceId, input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerProviderRateLimitResetError({
+                      instanceId: input.instanceId,
+                      reason: cause.message,
+                    }),
+                ),
+              );
+              return { outcome };
+            }),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>

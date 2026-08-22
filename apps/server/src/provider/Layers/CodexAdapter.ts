@@ -14,6 +14,8 @@ import {
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
+  type ProviderRateLimitResetOutcome,
+  type ProviderRateLimitResetRequest,
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
   type ThreadTokenUsageSnapshot,
@@ -64,6 +66,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { consumeCodexRateLimitResetCredit } from "./CodexProvider.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -85,6 +88,9 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly consumeRateLimitResetCredit?: (
+    input: ProviderRateLimitResetRequest,
+  ) => Effect.Effect<ProviderRateLimitResetOutcome, CodexErrors.CodexAppServerError>;
 }
 
 interface CodexAdapterSessionContext {
@@ -1959,6 +1965,37 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const hasSession: CodexAdapterShape["hasSession"] = (threadId) =>
     Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped));
 
+  const consumeRateLimitReset: NonNullable<CodexAdapterShape["consumeRateLimitResetCredit"]> = (
+    input,
+  ) =>
+    (options?.consumeRateLimitResetCredit
+      ? options.consumeRateLimitResetCredit(input)
+      : consumeCodexRateLimitResetCredit(
+          {
+            binaryPath: codexConfig.binaryPath,
+            cwd: process.cwd(),
+            ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
+            launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
+            ...(options?.environment ? { environment: options.environment } : {}),
+          },
+          input,
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.scoped,
+        )
+    ).pipe(
+      Effect.timeout("30 seconds"),
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "account/rateLimitResetCredit/consume",
+            detail: cause.message,
+            cause,
+          }),
+      ),
+    );
+
   const stopAll: CodexAdapterShape["stopAll"] = () =>
     Effect.forEach(Array.from(sessions.values()), stopSessionInternal, {
       concurrency: 1,
@@ -1983,6 +2020,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    consumeRateLimitResetCredit: consumeRateLimitReset,
     respondToRequest,
     respondToUserInput,
     stopSession,

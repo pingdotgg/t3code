@@ -3,8 +3,49 @@ import { assert, it } from "@effect/vitest";
 import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
+  mapCodexRateLimits,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
+
+it("maps Codex windows and banked resets into the provider snapshot", () => {
+  assert.deepStrictEqual(
+    mapCodexRateLimits({
+      rateLimits: {
+        primary: { usedPercent: 72, resetsAt: 1_777_000_000, windowDurationMins: 300 },
+        secondary: { usedPercent: 46, resetsAt: null, windowDurationMins: null },
+      },
+      rateLimitResetCredits: {
+        availableCount: 2,
+        credits: [
+          {
+            id: "reset-1",
+            resetType: "codexRateLimits",
+            status: "available",
+            grantedAt: 1_776_000_000,
+            expiresAt: 1_778_000_000,
+            title: "Referral reset",
+          },
+        ],
+      },
+    }),
+    {
+      primary: { usedPercent: 72, resetsAt: 1_777_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 46 },
+      resetCredits: {
+        availableCount: 2,
+        credits: [
+          {
+            id: "reset-1",
+            status: "available",
+            grantedAt: 1_776_000_000,
+            expiresAt: 1_778_000_000,
+            title: "Referral reset",
+          },
+        ],
+      },
+    },
+  );
+});
 
 it("keeps current Codex models out of legacy models", () => {
   assert.deepStrictEqual(

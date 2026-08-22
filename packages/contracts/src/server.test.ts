@@ -115,6 +115,31 @@ describe("ServerProvider", () => {
 
     expect(parsed.models[0]?.isLegacy).toBe(true);
   });
+
+  it("decodes Codex rate limits and banked resets", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      rateLimits: {
+        primary: { usedPercent: 72, resetsAt: 1_777_000_000, windowDurationMins: 300 },
+        secondary: { usedPercent: 46, resetsAt: 1_777_604_800, windowDurationMins: 10_080 },
+        resetCredits: {
+          availableCount: 1,
+          credits: [
+            {
+              id: "reset-1",
+              status: "available",
+              grantedAt: 1_776_000_000,
+              expiresAt: 1_778_000_000,
+              title: "Referral reset",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.rateLimits?.resetCredits?.availableCount).toBe(1);
+    expect(parsed.rateLimits?.resetCredits?.credits?.[0]?.expiresAt).toBe(1_778_000_000);
+  });
 });
 
 describe("server config forward compatibility", () => {
