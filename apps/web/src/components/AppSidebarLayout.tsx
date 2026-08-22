@@ -139,6 +139,7 @@ function ProjectProjectionRetention() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
+  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
   // Settings routes show the settings nav in place of whichever thread
   // sidebar is active.
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -234,7 +235,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         ) : legacySidebarEnabled ? (
           <LegacyThreadSidebar />
         ) : (
-          <ThreadSidebar />
+          <ThreadSidebar
+            projectScopeKey={projectScopeKey}
+            onProjectScopeKeyChange={setProjectScopeKey}
+          />
         )}
         <SidebarRail onDoubleClick={resetSidebarWidth} />
       </Sidebar>
