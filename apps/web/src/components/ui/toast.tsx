@@ -46,6 +46,7 @@ export type ThreadToastData = {
   onClose?: (() => void) | undefined;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
+  disableSwipe?: boolean;
   additionalActions?: ReadonlyArray<{
     id: string;
     props: ComponentPropsWithoutRef<"button">;
@@ -648,11 +649,13 @@ function Toasts({ position }: { position: ToastPosition }) {
                 } as CSSProperties
               }
               swipeDirection={
-                position.includes("center")
-                  ? [isTop ? "up" : "down"]
-                  : position.includes("left")
-                    ? ["left", isTop ? "up" : "down"]
-                    : ["right", isTop ? "up" : "down"]
+                toast.data?.disableSwipe
+                  ? []
+                  : position.includes("center")
+                    ? [isTop ? "up" : "down"]
+                    : position.includes("left")
+                      ? ["left", isTop ? "up" : "down"]
+                      : ["right", isTop ? "up" : "down"]
               }
               toast={toast}
             >

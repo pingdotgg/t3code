@@ -23,6 +23,11 @@ adapter in a child scope. Adapter implementations live beside them in
 [`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
 transport, config, and event shapes are mapped.
 
+The OpenCode driver uses OpenCode 2 and follows the CLI's desktop lifecycle instead of owning a daemon. Its runtime runs the
+idempotent `opencode2 service start`, reads the service credential with the CLI's service password
+command, and attaches to that singleton over the native `/api/*` HTTP and
+SSE protocol. T3 Code never starts `opencode2 serve` and never stops or deletes the shared service.
+
 ## Registry and routing
 
 Two registries separate configuration from live processes:

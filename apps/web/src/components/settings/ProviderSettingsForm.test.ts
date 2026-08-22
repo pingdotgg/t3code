@@ -26,29 +26,36 @@ describe("ProviderSettingsForm helpers", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();
 
-    const serverPassword = deriveProviderSettingsFields(opencode!).find(
-      (field) => field.key === "serverPassword",
+    const binaryPath = deriveProviderSettingsFields(opencode!).find(
+      (field) => field.key === "binaryPath",
     );
 
-    expect(serverPassword).toMatchObject({
-      label: "Server password",
-      description: "Stored in plain text on disk.",
-      control: "password",
+    expect(binaryPath).toMatchObject({
+      label: "Binary path",
+      control: "text",
     });
   });
 
-  it("preserves unknown config keys while omitting empty configurable fields", () => {
+  it("exposes one OpenCode provider backed by OpenCode 2", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
-    expect(opencode).toBeDefined();
 
-    const serverUrl = deriveProviderSettingsFields(opencode!).find(
-      (field) => field.key === "serverUrl",
-    );
-    expect(serverUrl).toBeDefined();
+    expect(opencode).toMatchObject({ label: "OpenCode", badgeLabel: "New" });
+    expect(DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode2")]).toBeUndefined();
+    expect(deriveProviderSettingsFields(opencode!).map((field) => field.key)).toEqual([
+      "binaryPath",
+    ]);
+  });
+
+  it("preserves unknown config keys while omitting empty configurable fields", () => {
+    const codex = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("codex")];
+    expect(codex).toBeDefined();
+
+    const homePath = deriveProviderSettingsFields(codex!).find((field) => field.key === "homePath");
+    expect(homePath).toBeDefined();
 
     const next = nextProviderConfigWithFieldValue(
-      { forkOwned: 1, serverUrl: "http://127.0.0.1:4096" },
-      serverUrl!,
+      { forkOwned: 1, homePath: "~/.codex" },
+      homePath!,
       "",
     );
 

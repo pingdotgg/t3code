@@ -83,8 +83,8 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     return true;
   }
 
-  // OpenCode's initial snapshot is deliberately non-authoritative while its
-  // first probe is still running. A probe error from an installed CLI/server
+  // OpenCode snapshots are deliberately non-authoritative while their first
+  // probe is still running. A probe error from an installed CLI/server
   // is likewise partial: it could not establish the current inventory.
   // Conversely, disabled and missing-CLI snapshots are authoritative removals,
   // as are successful ready/warning inventories (including an empty one after

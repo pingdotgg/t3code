@@ -560,9 +560,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             binaryPath: "  /opt/homebrew/bin/claude  ",
           },
           opencode: {
-            binaryPath: "  /opt/homebrew/bin/opencode  ",
-            serverUrl: "  http://127.0.0.1:4096  ",
-            serverPassword: "  secret-password  ",
+            binaryPath: "  /opt/homebrew/bin/opencode2  ",
           },
         },
       });
@@ -583,11 +581,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         launchArgs: "",
       });
       assert.deepEqual(next.providers.opencode, {
-        // OpenCode is disabled by default; this update only touches paths.
-        enabled: false,
-        binaryPath: "/opt/homebrew/bin/opencode",
-        serverUrl: "http://127.0.0.1:4096",
-        serverPassword: "secret-password",
+        enabled: true,
+        binaryPath: "/opt/homebrew/bin/opencode2",
         customModels: [],
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -649,8 +644,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             binaryPath: "/opt/homebrew/bin/codex",
           },
           opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
+            binaryPath: "/opt/homebrew/bin/opencode2-preview",
           },
         },
         automaticGitFetchInterval: Duration.seconds(10),
@@ -671,8 +665,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             binaryPath: "/opt/homebrew/bin/codex",
           },
           opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
+            binaryPath: "/opt/homebrew/bin/opencode2-preview",
           },
         },
         backgroundActivity: {
