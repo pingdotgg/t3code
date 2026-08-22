@@ -230,6 +230,12 @@ describe("ServerSettings worktree defaults", () => {
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
   });
+
+  it("defaults the worktree branch prefix and accepts an empty prefix", () => {
+    expect(decodeServerSettings({}).worktreeBranchPrefix).toBe("t3code");
+    expect(decodeServerSettingsPatch({ worktreeBranchPrefix: "" }).worktreeBranchPrefix).toBe("");
+    expect(() => decodeServerSettingsPatch({ worktreeBranchPrefix: "/.." })).toThrow();
+  });
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {
