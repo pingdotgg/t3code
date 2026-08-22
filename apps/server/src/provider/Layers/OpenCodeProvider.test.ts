@@ -389,4 +389,32 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
       );
     }),
   );
+
+  it.effect("does not publish locally discovered skills for configured servers", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-provider-test-" });
+      const workspace = path.join(tempDir, "workspace");
+      const skillDir = path.join(workspace, ".opencode", "skills", "local-only-skill");
+
+      yield* fs.makeDirectory(skillDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(skillDir, "SKILL.md"),
+        ["---", "name: local-only-skill", "---"].join("\n"),
+      );
+      runtimeMock.state.inventory = {
+        providerList: { connected: ["openai"], all: [], default: {} },
+        agents: [],
+        skills: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
+        workspace,
+      );
+
+      NodeAssert.deepEqual(snapshot.skills, []);
+    }),
+  );
 });

@@ -44,7 +44,9 @@ function isDisableFlagSet(value: string | undefined): boolean {
 function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) {
-    return { kind: "missing" };
+    // An opening `---` without a closing delimiter is invalid frontmatter, not a
+    // file without frontmatter, so skip it instead of trusting its directory name.
+    return /^---\r?\n/.test(contents) ? { kind: "malformed" } : { kind: "missing" };
   }
 
   let parsed: unknown;

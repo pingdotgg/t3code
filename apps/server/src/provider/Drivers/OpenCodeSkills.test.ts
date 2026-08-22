@@ -216,6 +216,7 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
 
       yield* writeSkill(skillsDir, "no-frontmatter", "# Just a heading\n");
       yield* writeSkill(skillsDir, "broken-yaml", "---\nname: [unclosed\n---\n");
+      yield* writeSkill(skillsDir, "unterminated-frontmatter", "---\nname: unterminated\n");
       yield* fs.makeDirectory(skillsDir, { recursive: true });
       yield* fs.writeFileString(path.join(skillsDir, "README.md"), "not a skill");
 

@@ -353,7 +353,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
-  const discoveredSkills = yield* discoverOpenCodeSkills(cwd, resolvedEnvironment);
+  // An external OpenCode server loads skills from its own filesystem; publishing
+  // locally discovered ones here would advertise skills the server cannot invoke.
+  const discoveredSkills = isExternalServer
+    ? []
+    : yield* discoverOpenCodeSkills(cwd, resolvedEnvironment);
 
   const fallback = (cause: unknown, version: string | null = null) => {
     const failure = formatOpenCodeProbeError({
