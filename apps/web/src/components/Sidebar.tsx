@@ -134,6 +134,7 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
+  resolveSidebarThreadTopStatusKind,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
   resolveWorkingStartedAt,
@@ -840,8 +841,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
+  const topStatusKind = resolveSidebarThreadTopStatusKind({ status, isWoke, isUnread });
   const topStatus =
-    status === "working"
+    topStatusKind === "working"
       ? {
           label: "Working",
           icon: "working" as const,
@@ -852,7 +854,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           // the label at full strength.
           className: cn("text-sky-600 dark:text-sky-400", !props.isActive && "opacity-75"),
         }
-      : status === "monitoring"
+      : topStatusKind === "monitoring"
         ? {
             // Monitoring is calm background presence, not active progress
             // (monitoring-pill D6), so it keeps the label at full strength.
@@ -860,31 +862,31 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             icon: null,
             className: "text-sky-600 dark:text-sky-400",
           }
-        : status === "approval"
+        : topStatusKind === "approval"
           ? {
               label: "Approval",
               icon: null,
               className: "text-amber-700 dark:text-amber-300",
             }
-          : status === "input"
+          : topStatusKind === "input"
             ? {
                 label: "Input",
                 icon: null,
                 className: "text-indigo-600 dark:text-indigo-300",
               }
-            : status === "failed"
+            : topStatusKind === "failed"
               ? {
                   label: "Failed",
                   icon: null,
                   className: "text-red-700 dark:text-red-300",
                 }
-              : isWoke
+              : topStatusKind === "woke"
                 ? {
                     label: "Woke",
                     icon: "woke" as const,
                     className: "text-amber-700 dark:text-amber-300",
                   }
-                : isUnread
+                : topStatusKind === "done"
                   ? {
                       label: "Done",
                       icon: "done" as const,

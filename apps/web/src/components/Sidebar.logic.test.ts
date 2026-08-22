@@ -21,6 +21,7 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
+  resolveSidebarThreadTopStatusKind,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
@@ -758,8 +759,86 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("ready");
   });
 
+  it("keeps pending input and approvals ahead of a live watch loop", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingUserInput: true,
+        session: null,
+        backgroundLiveness: "monitoring",
+      }),
+    ).toBe("input");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingApprovals: true,
+        session: null,
+        backgroundLiveness: "monitoring",
+      }),
+    ).toBe("approval");
+  });
+
+  it("reports a live watch loop only when nothing else is happening", () => {
+    expect(
+      resolveSidebarThreadStatus({ ...idle, session: null, backgroundLiveness: "monitoring" }),
+    ).toBe("monitoring");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, session: null, backgroundLiveness: "working" }),
+    ).toBe("working");
+  });
+
   it("defaults to ready with no session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
+  });
+});
+
+describe("resolveSidebarThreadTopStatusKind", () => {
+  const quiet = { status: "ready" as const, isWoke: false, isUnread: false };
+
+  it("shows an unread completion instead of monitoring, so a watch loop cannot mask it", () => {
+    expect(
+      resolveSidebarThreadTopStatusKind({ ...quiet, status: "monitoring", isUnread: true }),
+    ).toBe("done");
+  });
+
+  it("shows a wake instead of monitoring", () => {
+    expect(
+      resolveSidebarThreadTopStatusKind({ ...quiet, status: "monitoring", isWoke: true }),
+    ).toBe("woke");
+  });
+
+  it("keeps monitoring once the completion has been read", () => {
+    expect(resolveSidebarThreadTopStatusKind({ ...quiet, status: "monitoring" })).toBe(
+      "monitoring",
+    );
+  });
+
+  it("keeps working ahead of an unread completion: background work is still in flight", () => {
+    expect(resolveSidebarThreadTopStatusKind({ ...quiet, status: "working", isUnread: true })).toBe(
+      "working",
+    );
+  });
+
+  it("keeps approval, input, and failure ahead of an unread completion", () => {
+    expect(
+      resolveSidebarThreadTopStatusKind({ ...quiet, status: "approval", isUnread: true }),
+    ).toBe("approval");
+    expect(resolveSidebarThreadTopStatusKind({ ...quiet, status: "input", isUnread: true })).toBe(
+      "input",
+    );
+    expect(resolveSidebarThreadTopStatusKind({ ...quiet, status: "failed", isUnread: true })).toBe(
+      "failed",
+    );
+  });
+
+  it("prefers a wake over an unread completion on a settled thread", () => {
+    expect(resolveSidebarThreadTopStatusKind({ ...quiet, isWoke: true, isUnread: true })).toBe(
+      "woke",
+    );
+  });
+
+  it("returns null for a read, settled thread with nothing live", () => {
+    expect(resolveSidebarThreadTopStatusKind(quiet)).toBeNull();
   });
 });
 
@@ -1125,6 +1204,27 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("shows an unread completion ahead of monitoring, then monitoring once it is read", () => {
+    const settledWithWatchLoop = {
+      ...baseThread,
+      session: { ...baseThread.session, status: "idle" as const, activeTurnId: null as never },
+      latestTurn: { completedAt: "2026-03-09T12:00:00.000Z" } as never,
+      backgroundLiveness: "monitoring" as const,
+    };
+
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...settledWithWatchLoop, lastVisitedAt: "2026-03-09T11:00:00.000Z" },
+      }),
+    ).toMatchObject({ label: "Completed" });
+
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...settledWithWatchLoop, lastVisitedAt: "2026-03-09T13:00:00.000Z" },
+      }),
+    ).toMatchObject({ label: "Monitoring" });
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({
@@ -1227,6 +1327,25 @@ describe("resolveProjectStatusIndicator", () => {
         },
       ]),
     ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
+  });
+
+  it("does not let a monitoring sibling hide a completed thread", () => {
+    expect(
+      resolveProjectStatusIndicator([
+        {
+          label: "Monitoring",
+          colorClass: "text-sky-600",
+          dotClass: "bg-sky-500",
+          pulse: false,
+        },
+        {
+          label: "Completed",
+          colorClass: "text-emerald-600",
+          dotClass: "bg-emerald-500",
+          pulse: false,
+        },
+      ]),
+    ).toMatchObject({ label: "Completed" });
   });
 
   it("prefers plan-ready over completed when no stronger action is needed", () => {
