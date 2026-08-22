@@ -92,7 +92,8 @@ import {
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipScrollDismissProvider, TooltipTrigger } from "../ui/tooltip";
+import { createTooltipScrollDismissController } from "../ui/tooltipScrollDismiss";
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
@@ -285,6 +286,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  const tooltipScrollDismissController = useMemo(createTooltipScrollDismissController, []);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -451,7 +453,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
   }, [anchorMessageId, handleAnchorReady, rows]);
 
-  const handleScroll = useCallback(() => {
+  const updateTimelineScrollState = useCallback(() => {
     const state = listRef.current?.getState?.();
     const isAtEnd = resolveTimelineIsAtEnd(state, contentInsetEndAdjustment);
     if (isAtEnd !== undefined) {
@@ -481,10 +483,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, [contentInsetEndAdjustment, listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
 
+  const handleScroll = useCallback(() => {
+    tooltipScrollDismissController.dismissHoveredTooltip();
+    updateTimelineScrollState();
+  }, [tooltipScrollDismissController, updateTimelineScrollState]);
+
   useEffect(() => {
-    const frame = requestAnimationFrame(handleScroll);
+    const frame = requestAnimationFrame(updateTimelineScrollState);
     return () => cancelAnimationFrame(frame);
-  }, [handleScroll, rows.length]);
+  }, [rows.length, updateTimelineScrollState]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -578,7 +585,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }
 
-  return (
+  const timeline = (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
         <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
@@ -635,6 +642,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         </div>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
+  );
+
+  return (
+    <TooltipScrollDismissProvider
+      onTriggerHoverChange={tooltipScrollDismissController.setHoveredTooltip}
+    >
+      {timeline}
+    </TooltipScrollDismissProvider>
   );
 });
 
