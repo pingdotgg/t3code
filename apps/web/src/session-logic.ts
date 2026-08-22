@@ -1585,6 +1585,21 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
   );
 }
 
+// Some providers bake a "<ToolName>: " heading onto payload.detail while the
+// command preview stays bare, e.g. detail "Bash: ls" vs command "ls".
+// payload.data.toolName carries that same name (preserved through server-side
+// payload projection), so strip exactly that prefix before comparing, rather
+// than guessing at an arbitrary "word:" heading — a detail like "warning:
+// true" must stay visible even when the command happens to be "true".
+function stripToolNamePrefix(value: string, payload: Record<string, unknown> | null): string {
+  const toolName = asTrimmedString(asRecord(payload?.data)?.toolName);
+  if (!toolName) {
+    return value;
+  }
+  const prefix = `${toolName}: `;
+  return value.toLowerCase().startsWith(prefix.toLowerCase()) ? value.slice(prefix.length) : value;
+}
+
 function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
@@ -1592,7 +1607,9 @@ function extractToolDetail(
   const rawDetail = asTrimmedString(payload?.detail);
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
-  const normalizedDetail = normalizePreviewForComparison(detail);
+  const normalizedDetail = normalizePreviewForComparison(
+    detail ? stripToolNamePrefix(detail, payload) : detail,
+  );
   const commandTool = isCommandToolDetail(payload, heading);
   const commandPreview = commandTool
     ? extractToolCommand(payload)

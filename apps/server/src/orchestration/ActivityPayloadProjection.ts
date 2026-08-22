@@ -381,6 +381,12 @@ export function projectActivityPayload(
   if ("kind" in data) {
     projectedData.kind = data.kind;
   }
+  if ("toolName" in data) {
+    // The web client needs this to recognize a "<toolName>: " heading some
+    // providers bake into payload.detail as redundant with the command
+    // preview it renders separately (see extractToolDetail).
+    projectedData.toolName = data.toolName;
+  }
 
   const rawOutput = projectRawOutput(data.rawOutput) ?? projectAcpContent(data.content);
   if (rawOutput) {

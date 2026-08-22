@@ -82,4 +82,40 @@ describe("deriveWorkLogEntries command output", () => {
     expect(entry?.command).toBe("true");
     expect(entry?.detail).toBeUndefined();
   });
+
+  it("drops duplicated command detail when it only differs by a toolName prefix", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("bash-prefixed-command", {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: 'Bash: cd project && grep -n "TODO" file.md',
+        data: {
+          toolName: "Bash",
+          kind: "execute",
+          command: 'cd project && grep -n "TODO" file.md',
+        },
+      }),
+    ]);
+
+    expect(entry?.command).toBe('cd project && grep -n "TODO" file.md');
+    expect(entry?.detail).toBeUndefined();
+  });
+
+  it("keeps a labeled detail that merely ends with the command text", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("unrelated-suffix-match", {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: "warning: true",
+        data: {
+          toolName: "Bash",
+          kind: "execute",
+          command: "true",
+        },
+      }),
+    ]);
+
+    expect(entry?.command).toBe("true");
+    expect(entry?.detail).toBe("warning: true");
+  });
 });
