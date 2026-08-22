@@ -1,0 +1,18 @@
+{
+  "name": "@t3tools/plugin-runtime-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vp test run",
+    "typecheck": "tsgo --noEmit",
+    "demo": "node src/demo.ts"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.8",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
