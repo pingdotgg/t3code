@@ -37,6 +37,7 @@ import {
   StyleSheet,
   Text as NativeText,
   type ColorValue,
+  type TextStyle,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -103,6 +104,13 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import {
+  createAndroidSelectableHeadingStyle,
+  createAndroidSelectableMarkdownRenderers,
+} from "./androidSelectableMarkdownRenderers";
+
+/** theme.spacing.s; the markdown library draws the h1 rule this far below the text. */
+const MARKDOWN_HEADING_RULE_SPACING = 4;
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -461,7 +469,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       },
       spacing: {
         xs: 4,
-        s: 4,
+        s: MARKDOWN_HEADING_RULE_SPACING,
         m: 8,
         l: 8,
         xl: 16,
@@ -529,6 +537,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     };
 
     const createMarkdownRenderers = (
+      bodyTextColor: string,
+      headingStyle: TextStyle | undefined,
+      headingBorderColor: string,
       inlineTextColor: string,
       inlineCodeTextColor: string,
       blockBackgroundColor: string,
@@ -537,6 +548,29 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
     ): CustomRenderers => ({
+      ...(Platform.OS === "android"
+        ? createAndroidSelectableMarkdownRenderers({
+            paragraph: {
+              color: bodyTextColor,
+              fontFamily: regularFontFamily,
+              fontSize: markdownFontSizes.m,
+              lineHeight: markdownFontSizes.bodyLineHeight,
+              marginBottom: preserveSoftBreaks ? 0 : 10,
+            },
+            listItemText: {
+              color: bodyTextColor,
+              fontFamily: regularFontFamily,
+              fontSize: markdownFontSizes.m,
+              lineHeight: markdownFontSizes.bodyLineHeight,
+            },
+            heading: createAndroidSelectableHeadingStyle({
+              fontSizes: markdownFontSizes,
+              borderColor: headingBorderColor,
+              borderSpacing: MARKDOWN_HEADING_RULE_SPACING,
+              override: headingStyle,
+            }),
+          })
+        : {}),
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
@@ -701,6 +735,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         theme: userTheme,
         styles: userStyles,
         renderers: createMarkdownRenderers(
+          markdownUserBodyColor,
+          userStyles.heading,
+          markdownUserFenceBg,
           markdownUserCodeText,
           markdownUserInlineCodeText,
           markdownUserFenceBg,
@@ -734,6 +771,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         theme: assistantTheme,
         styles: assistantStyles,
         renderers: createMarkdownRenderers(
+          markdownBodyColor,
+          assistantStyles.heading,
+          markdownCodeBg,
           markdownCodeText,
           markdownInlineCodeText,
           markdownCodeBg,
