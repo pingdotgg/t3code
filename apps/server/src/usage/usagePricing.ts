@@ -24,7 +24,21 @@ export interface ModelRate {
   readonly cacheCreationCostPerToken: number;
 }
 
-export type RateTable = ReadonlyMap<string, ModelRate>;
+/**
+ * Parsed pricing data with source models kept separate from derived aliases.
+ *
+ * Keeping these indexes distinct prevents a convenience alias from inflating
+ * the model count or being mistaken for an exact provider-qualified entry.
+ */
+export interface RateTable {
+  readonly exactRates: ReadonlyMap<string, ModelRate>;
+  readonly bareAliases: ReadonlyMap<string, ModelRate>;
+  readonly modelCount: number;
+}
+
+export function emptyRateTable(): RateTable {
+  return { exactRates: new Map(), bareAliases: new Map(), modelCount: 0 };
+}
 
 /** Raw shape of one LiteLLM entry, narrowed to the fields we read. */
 interface LiteLlmEntry {
@@ -43,11 +57,15 @@ function finiteNumber(value: unknown): number | null {
  *
  * Entries without both an input and an output rate are dropped: a half-priced
  * model would silently under-report cost, which is worse than reporting the
- * model as unpriced.
+ * model as unpriced. Provider-qualified keys remain distinct. A bare alias is
+ * added only for a canonical entry or one unambiguous provider candidate.
  */
 export function parseRateTable(document: unknown): RateTable {
-  const table = new Map<string, ModelRate>();
-  if (typeof document !== "object" || document === null) return table;
+  const candidatesByKey = new Map<
+    string,
+    Array<{ readonly rawName: string; readonly rate: ModelRate }>
+  >();
+  if (typeof document !== "object" || document === null) return emptyRateTable();
 
   for (const [name, raw] of Object.entries(document as Record<string, unknown>)) {
     if (typeof raw !== "object" || raw === null) continue;
@@ -56,7 +74,9 @@ export function parseRateTable(document: unknown): RateTable {
     const output = finiteNumber(entry.output_cost_per_token);
     if (input === null || output === null) continue;
 
-    table.set(normalizeModelName(name), {
+    const key = normalizeRateKey(name);
+    if (key.length === 0) continue;
+    const rate = {
       inputCostPerToken: input,
       outputCostPerToken: output,
       // Anthropic bills cache reads at a discount and cache writes at a
@@ -64,20 +84,72 @@ export function parseRateTable(document: unknown): RateTable {
       // input rather than as free.
       cacheReadCostPerToken: finiteNumber(entry.cache_read_input_token_cost) ?? input,
       cacheCreationCostPerToken: finiteNumber(entry.cache_creation_input_token_cost) ?? input,
-    });
+    };
+    const candidates = candidatesByKey.get(key) ?? [];
+    candidates.push({ rawName: name, rate });
+    candidatesByKey.set(key, candidates);
   }
-  return table;
+
+  const exactRates = new Map<string, ModelRate>();
+  for (const [key, candidates] of candidatesByKey) {
+    const selected = selectExactCandidate(key, candidates);
+    if (selected !== null) exactRates.set(key, selected.rate);
+  }
+
+  const candidatesByAlias = new Map<
+    string,
+    Array<{ readonly key: string; readonly rate: ModelRate }>
+  >();
+  for (const [key, rate] of exactRates) {
+    const alias = normalizeModelName(key);
+    const candidates = candidatesByAlias.get(alias) ?? [];
+    candidates.push({ key, rate });
+    candidatesByAlias.set(alias, candidates);
+  }
+
+  const bareAliases = new Map<string, ModelRate>();
+  for (const [alias, candidates] of candidatesByAlias) {
+    const canonical = candidates.find((candidate) => candidate.key === alias);
+    if (canonical === undefined && candidates.length === 1) {
+      const [candidate] = candidates;
+      if (candidate !== undefined) bareAliases.set(alias, candidate.rate);
+    }
+  }
+
+  return { exactRates, bareAliases, modelCount: exactRates.size };
+}
+
+/**
+ * Selects one source entry after normalization.
+ *
+ * A collision is only resolved when one entry has the canonical normalized
+ * spelling verbatim. Otherwise neither variant has trustworthy provenance, so
+ * dropping the key is safer than making pricing depend on document order.
+ */
+function selectExactCandidate(
+  key: string,
+  candidates: readonly { readonly rawName: string; readonly rate: ModelRate }[],
+): { readonly rawName: string; readonly rate: ModelRate } | null {
+  if (candidates.length === 1) return candidates[0] ?? null;
+  return candidates.find((candidate) => candidate.rawName === key) ?? null;
+}
+
+export function rateTableModelCount(table: RateTable): number {
+  return table.modelCount;
+}
+
+function normalizeRateKey(model: string): string {
+  return model.trim().toLowerCase();
 }
 
 /**
  * Canonicalises a model name for lookup.
  *
- * Strips a `provider/` prefix (LiteLLM publishes both `claude-opus-5` and
- * `anthropic/claude-opus-5`) and lowercases, since transcripts are inconsistent
- * about casing.
+ * Strips a `provider/` prefix and lowercases. This derives a candidate bare
+ * alias; exact provider-qualified lookup uses the normalized full key first.
  */
 export function normalizeModelName(model: string): string {
-  const trimmed = model.trim().toLowerCase();
+  const trimmed = normalizeRateKey(model);
   const slash = trimmed.lastIndexOf("/");
   return slash === -1 ? trimmed : trimmed.slice(slash + 1);
 }
@@ -99,9 +171,11 @@ const UNPRICEABLE_MODELS = new Set([
 ]);
 
 export function lookupRate(table: RateTable, model: string): ModelRate | null {
+  const exact = normalizeRateKey(model);
   const normalized = normalizeModelName(model);
   if (normalized.length === 0 || UNPRICEABLE_MODELS.has(normalized)) return null;
-  return table.get(normalized) ?? null;
+  if (exact.includes("/")) return table.exactRates.get(exact) ?? null;
+  return table.exactRates.get(exact) ?? table.bareAliases.get(exact) ?? null;
 }
 
 export interface PricedUsage {

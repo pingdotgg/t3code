@@ -38,7 +38,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
-import { parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  emptyRateTable,
+  parseRateTable,
+  rateTableModelCount,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -129,7 +134,7 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
-  let rates: RateTable = new Map();
+  let rates: RateTable = emptyRateTable();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
 
@@ -149,7 +154,7 @@ export const make = Effect.gen(function* () {
       );
       if (fromDisk !== null) {
         const parsed = parseRateTable(fromDisk.document);
-        if (parsed.size > 0) {
+        if (rateTableModelCount(parsed) > 0) {
           rates = parsed;
           ratesFetchedAtMs = fromDisk.fetchedAtMs;
           ratesStatus = "cached";
@@ -167,12 +172,12 @@ export const make = Effect.gen(function* () {
     if (fetched === null) {
       // The refresh failed; whatever we are serving is now past its TTL and
       // must not keep claiming to be fresh.
-      if (rates.size > 0) ratesStatus = "cached";
+      if (rateTableModelCount(rates) > 0) ratesStatus = "cached";
       return;
     }
 
     const parsed = parseRateTable(fetched);
-    if (parsed.size === 0) return;
+    if (rateTableModelCount(parsed) === 0) return;
 
     rates = parsed;
     ratesFetchedAtMs = now;
@@ -436,7 +441,7 @@ export const make = Effect.gen(function* () {
           ratesFetchedAtMs === null
             ? null
             : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
-        knownModels: rates.size,
+        knownModels: rateTableModelCount(rates),
       },
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;

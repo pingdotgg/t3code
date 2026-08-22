@@ -1,20 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { UsageAggregator } from "./usageAggregation.ts";
-import type { RateTable } from "./usagePricing.ts";
+import { parseRateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
-const rates: RateTable = new Map([
-  [
-    "claude-fable-5",
-    {
-      inputCostPerToken: 1e-5,
-      outputCostPerToken: 5e-5,
-      cacheReadCostPerToken: 1e-6,
-      cacheCreationCostPerToken: 1.25e-5,
-    },
-  ],
-]);
+const rates = parseRateTable({
+  "claude-fable-5": {
+    input_cost_per_token: 1e-5,
+    output_cost_per_token: 5e-5,
+    cache_read_input_token_cost: 1e-6,
+    cache_creation_input_token_cost: 1.25e-5,
+  },
+});
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
