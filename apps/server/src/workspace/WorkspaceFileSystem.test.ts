@@ -377,6 +377,34 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reports an atomic replace of the symlink's own path", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "real/config.json", '{ "value": "before" }\n');
+        const alias = path.join(cwd, "alias.json");
+        yield* fileSystem.symlink(path.join(cwd, "real", "config.json"), alias).pipe(Effect.orDie);
+
+        // The editor/git pattern: write a temp file beside the alias and rename
+        // over it. That fires in the alias's directory, not the target's, so a
+        // watch that only followed the canonical path would miss it.
+        //
+        // Like the sibling symlink test, this discriminates on inotify and not
+        // on macOS, where FSEvents coalesces to directory granularity and
+        // delivers a matching event either way.
+        const temp = path.join(cwd, "alias.json.tmp");
+        const replaceAlias = Effect.gen(function* () {
+          yield* fileSystem.writeFileString(temp, '{ "value": "after" }\n').pipe(Effect.orDie);
+          yield* fileSystem.rename(temp, alias).pipe(Effect.orDie);
+        });
+
+        const event = yield* awaitFirstChange(cwd, "alias.json", replaceAlias);
+
+        expect(event).toEqual(Option.some({ relativePath: "alias.json" }));
+      }),
+    );
+
     it.effect("rejects a watch that escapes the workspace through a symlink", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

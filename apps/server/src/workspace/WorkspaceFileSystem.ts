@@ -341,47 +341,63 @@ export const make = Effect.gen(function* () {
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
         });
-        // Prefer the canonical leaf, so a symlinked file follows edits made
-        // through its target's own path. Fall back to the parent when the leaf
-        // does not resolve, so a watch still attaches to a path that is
-        // momentarily absent — mid atomic-replace, or not yet created. Either
-        // way the directory that gets watched is proven inside the workspace,
-        // and an escaping symlink still fails rather than falling back.
+
+        // A symlinked file can be changed from either end, and the two land in
+        // different directories: an edit through the target's own path fires
+        // beside the target, while an atomic rename-over-temp save on the alias
+        // fires beside the alias. Watch both, and the ordinary case collapses
+        // back to one watcher because the two coincide.
+        const aliasDirectory = yield* realPathWithinRoot(input, path.dirname(target.absolutePath));
+        const aliasWatch = {
+          directory: aliasDirectory,
+          fileName: path.basename(target.absolutePath),
+        };
+        const watched: Array<typeof aliasWatch> = [aliasWatch];
+
+        // Missing leaf is not an error: a watch must still attach to a path
+        // that is momentarily absent, mid atomic-replace or not yet created.
         const canonical = yield* Effect.tryPromise({
           try: () => NodeFSP.realpath(target.absolutePath),
           catch: () => null,
         }).pipe(Effect.orElseSucceed(() => null));
-        const watchedPath =
-          canonical === null
-            ? path.join(
-                yield* realPathWithinRoot(input, path.dirname(target.absolutePath)),
-                path.basename(target.absolutePath),
-              )
-            : yield* realPathWithinRoot(input, canonical);
-        const directory = path.dirname(watchedPath);
-        const fileName = path.basename(watchedPath);
+        if (canonical !== null) {
+          // Contained, not merely resolved: an escaping symlink fails here
+          // rather than quietly falling back to the alias-only watch.
+          const canonicalPath = yield* realPathWithinRoot(input, canonical);
+          const directory = path.dirname(canonicalPath);
+          const fileName = path.basename(canonicalPath);
+          if (directory !== aliasWatch.directory || fileName !== aliasWatch.fileName) {
+            watched.push({ directory, fileName });
+          }
+        }
 
-        return fileSystem.watch(directory).pipe(
-          Stream.filter(
-            (event) =>
-              event.path === fileName ||
-              event.path === watchedPath ||
-              path.resolve(directory, event.path) === watchedPath,
+        const changes = watched.map(({ directory, fileName }) =>
+          fileSystem.watch(directory).pipe(
+            Stream.filter(
+              (event) =>
+                event.path === fileName ||
+                path.resolve(directory, event.path) === path.join(directory, fileName),
+            ),
+            Stream.mapError(
+              (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: path.join(directory, fileName),
+                  operationPath: directory,
+                  operation: "watch",
+                  cause,
+                }),
+            ),
           ),
-          // Debounce so the file is fully written before subscribers re-read it.
+        );
+
+        const [first, second] = changes;
+        return (second === undefined ? first! : Stream.merge(first!, second)).pipe(
+          // Debounce so the file is fully written before subscribers re-read it,
+          // and so both watchers reporting one save stay a single event.
           Stream.debounce(Duration.millis(100)),
           Stream.map(() => ({ relativePath: target.relativePath })),
-          Stream.mapError(
-            (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: watchedPath,
-                operationPath: directory,
-                operation: "watch",
-                cause,
-              }),
-          ),
         );
       }),
     );
