@@ -130,28 +130,41 @@ describe("derivePendingApprovals", () => {
     ]);
   });
 
-  it("derives dynamic tool requests as actionable generic approvals", () => {
+  it.each([
+    {
+      name: "dynamic tool",
+      requestId: "req-dynamic-tool",
+      requestType: "dynamic_tool_call",
+      detail: "Search the web",
+    },
+    {
+      name: "legacy unknown",
+      requestId: "req-legacy-unknown",
+      requestType: "unknown",
+      detail: "*",
+    },
+  ])("derives $name requests as actionable command approvals", (approval) => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
-        id: "approval-open-dynamic-tool",
+        id: `approval-open-${approval.name.replace(" ", "-")}`,
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "approval.requested",
         summary: "Approval requested",
         tone: "approval",
         payload: {
-          requestId: "req-dynamic-tool",
-          requestType: "dynamic_tool_call",
-          detail: "Search the web",
+          requestId: approval.requestId,
+          requestType: approval.requestType,
+          detail: approval.detail,
         },
       }),
     ];
 
     expect(derivePendingApprovals(activities)).toEqual([
       {
-        requestId: "req-dynamic-tool",
+        requestId: approval.requestId,
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
-        detail: "Search the web",
+        detail: approval.detail,
       },
     ]);
   });

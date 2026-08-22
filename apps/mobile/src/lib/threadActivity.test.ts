@@ -14,6 +14,7 @@ import {
 import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
+  derivePendingApprovals,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -124,6 +125,33 @@ function makeActivity(
     ...input,
   };
 }
+
+describe("derivePendingApprovals", () => {
+  it("keeps legacy unknown approvals actionable", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: EventId.make("approval-legacy-unknown"),
+        kind: "approval.requested",
+        summary: "Approval requested",
+        createdAt: "2026-04-01T00:00:02.000Z",
+        payload: {
+          requestId: "req-legacy-unknown",
+          requestType: "unknown",
+          detail: "*",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-legacy-unknown",
+        requestKind: "command",
+        createdAt: "2026-04-01T00:00:02.000Z",
+        detail: "*",
+      },
+    ]);
+  });
+});
 
 function makeThread(
   input: Partial<OrchestrationThread> & Pick<OrchestrationThread, "id" | "projectId" | "title">,
