@@ -2,8 +2,13 @@ import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "../../state/atom-registry";
-import { activateCloudRelayAccount, deactivateCloudRelayAccount } from "./CloudAuthProvider";
+import {
+  activateCloudRelayAccount,
+  deactivateCloudRelayAccount,
+  releaseCloudRelayUiAccount,
+} from "./CloudAuthProvider";
 import { setAgentAwarenessRelayTokenProvider } from "../agent-awareness/remoteRegistration";
+import { acquireBackgroundManagedRelaySession } from "./managedRelaySessionOwnership";
 
 vi.mock("@clerk/expo", () => ({
   ClerkProvider: vi.fn(),
@@ -35,6 +40,7 @@ vi.mock("./publicConfig", () => ({
 }));
 
 vi.mock("../agent-awareness/remoteRegistration", () => ({
+  releaseAgentAwarenessRelayTokenProvider: vi.fn(),
   setAgentAwarenessRelayTokenProvider: vi.fn(),
   unregisterAgentAwarenessDeviceForCurrentUser: vi.fn(),
 }));
@@ -56,5 +62,19 @@ describe("CloudAuthProvider relay account isolation", () => {
     expect(appAtomRegistry.get(managedRelaySessionAtom)).toBeNull();
     expect(vi.mocked(setAgentAwarenessRelayTokenProvider)).toHaveBeenLastCalledWith(null);
     await cleanup;
+  });
+
+  it("preserves the background session when the UI bridge unmounts", () => {
+    const releaseBackground = acquireBackgroundManagedRelaySession({
+      accountId: "account-1",
+      readClerkToken: async () => "background-token",
+    });
+    activateCloudRelayAccount("account-1", async () => "ui-token");
+
+    releaseCloudRelayUiAccount();
+
+    expect(appAtomRegistry.get(managedRelaySessionAtom)?.accountId).toBe("account-1");
+    releaseBackground?.();
+    expect(appAtomRegistry.get(managedRelaySessionAtom)).toBeNull();
   });
 });

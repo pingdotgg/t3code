@@ -32,6 +32,21 @@ That gives you:
 - transport security at the network layer
 - less exposure than opening the server to the public internet
 
+## Keeping the Android App Connected
+
+On Android, **Keep connected in background** keeps saved environments and their thread lists
+synchronized while the phone is locked or another app is open. Enable it under **Settings** →
+**Background connection**.
+
+The setting works with direct LAN, Tailscale, and T3 Connect environments. Android shows a silent
+ongoing notification while it is enabled, and the extra network activity can increase battery and
+mobile-data use. Allow unrestricted battery use when prompted for more reliable operation while the
+screen is off.
+
+Force-stopping T3 Code prevents Android from restarting the connection until you launch the app
+again. If a Tailscale environment depends on the Tailscale Android app, that VPN must also remain
+connected.
+
 ## Enabling Network Access
 
 There are three ways to reach your server from another device: expose the desktop app's backend,

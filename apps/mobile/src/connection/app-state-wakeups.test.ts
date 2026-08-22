@@ -18,4 +18,19 @@ describe("mobileApplicationActiveWakeup", () => {
       mobileApplicationActiveWakeup(20_000, 20_000 + MOBILE_BACKGROUND_RECONNECT_AFTER_MS),
     ).toBe("application-active-reconnect");
   });
+
+  it("preserves a protected background connection", () => {
+    expect(
+      mobileApplicationActiveWakeup(20_000, 20_000 + MOBILE_BACKGROUND_RECONNECT_AFTER_MS, {
+        serviceRunning: true,
+        runtimeReady: true,
+      }),
+    ).toBe("application-active-preserved");
+    expect(
+      mobileApplicationActiveWakeup(20_000, 20_000 + MOBILE_BACKGROUND_RECONNECT_AFTER_MS, {
+        serviceRunning: true,
+        runtimeReady: false,
+      }),
+    ).toBe("application-active-reconnect");
+  });
 });

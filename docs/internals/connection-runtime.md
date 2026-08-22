@@ -157,6 +157,23 @@ Application code must not construct RPC clients, retry loops, or raw
 orchestration commands. Persistence paths belong to the platform registration
 and cache stores, with explicit migration or invalidation policy.
 
+### Android background owner
+
+The opt-in Android foreground service starts the existing mobile runtime through
+React Native Headless JS. Its only data lease mounts the aggregate thread-shell
+atom, which keeps shell subscriptions and caches current for every saved
+environment. The UI and service share the process-wide Atom registry, so they
+still produce one supervisor and one transport per environment.
+
+T3 Connect has matching UI and background credential owners. UI ownership wins
+while mounted; a cold headless start restores Clerk's persisted session for the
+same relay runtime. Direct and Tailscale connections do not wait for Clerk.
+
+The service uses a silent ongoing notification, a Headless JS CPU wake lock,
+and a best-effort Wi-Fi lock. It restores an enabled preference after normal
+process reclamation, package replacement, or reboot. Android force-stop remains
+absolute until the user launches the app again.
+
 ## Verification
 
 Core state-machine tests use `@effect/vitest` and deterministic service layers.
