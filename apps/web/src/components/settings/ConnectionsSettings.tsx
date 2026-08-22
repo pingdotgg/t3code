@@ -1356,7 +1356,7 @@ type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   routes: ReadonlyArray<ConnectionCatalogEntry>;
   removingEnvironmentId: EnvironmentId | null;
-  switchingRouteEnvironmentId: EnvironmentId | null;
+  switchingRouteEnvironmentIds: ReadonlySet<EnvironmentId>;
   onConnect: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
   onSelectRoute: (environmentId: EnvironmentId, routeId: string) => void;
@@ -1381,7 +1381,7 @@ function SavedBackendListRow({
   environment,
   routes,
   removingEnvironmentId,
-  switchingRouteEnvironmentId,
+  switchingRouteEnvironmentIds,
   onConnect,
   onRemove,
   onSelectRoute,
@@ -1517,11 +1517,12 @@ function SavedBackendListRow({
                 className="w-full min-w-0 sm:w-48"
                 aria-label={`Connection method for ${environment.label}`}
                 disabled={
-                  switchingRouteEnvironmentId !== null || removingEnvironmentId === environmentId
+                  switchingRouteEnvironmentIds.has(environmentId) ||
+                  removingEnvironmentId === environmentId
                 }
               >
                 <SelectValue>
-                  {switchingRouteEnvironmentId === environmentId
+                  {switchingRouteEnvironmentIds.has(environmentId)
                     ? "Switching…"
                     : connectionRouteLabel(environment.entry)}
                 </SelectValue>
@@ -1869,8 +1870,9 @@ export function ConnectionsSettings() {
     return keys;
   }, [savedEnvironments]);
   const [sshConnectionError, setSshConnectionError] = useState<string | null>(null);
-  const [switchingRouteEnvironmentId, setSwitchingRouteEnvironmentId] =
-    useState<EnvironmentId | null>(null);
+  const [switchingRouteEnvironmentIds, setSwitchingRouteEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(new Set());
   const [connectingSshHostAlias, setConnectingSshHostAlias] = useState<string | null>(null);
 
   const [desktopServerExposureMutationError, setDesktopServerExposureMutationError] = useState<
@@ -2334,10 +2336,14 @@ export function ConnectionsSettings() {
 
   const handleSelectSavedBackendRoute = useCallback(
     async (environmentId: EnvironmentId, routeId: string) => {
-      setSwitchingRouteEnvironmentId(environmentId);
+      setSwitchingRouteEnvironmentIds((current) => new Set(current).add(environmentId));
       setSavedBackendError(null);
       const result = await selectEnvironmentRoute({ environmentId, routeId });
-      setSwitchingRouteEnvironmentId(null);
+      setSwitchingRouteEnvironmentIds((current) => {
+        const next = new Set(current);
+        next.delete(environmentId);
+        return next;
+      });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         const message =
@@ -3540,7 +3546,7 @@ export function ConnectionsSettings() {
             environment={environment}
             routes={desktopBridge ? (environmentRoutes.get(environment.environmentId) ?? []) : []}
             removingEnvironmentId={removingSavedEnvironmentId}
-            switchingRouteEnvironmentId={switchingRouteEnvironmentId}
+            switchingRouteEnvironmentIds={switchingRouteEnvironmentIds}
             onConnect={handleConnectSavedBackend}
             onRemove={handleRemoveSavedBackend}
             onSelectRoute={handleSelectSavedBackendRoute}
