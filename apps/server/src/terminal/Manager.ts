@@ -1865,6 +1865,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               nextAction.historyWrite,
             );
           }
+
+          if (nextAction.type === "output") {
+            yield* publishEvent({
+              type: "output",
+              threadId: nextAction.threadId,
+              terminalId: nextAction.terminalId,
+              sequence: nextAction.sequence,
+              data: nextAction.data,
+            });
+          } else if (nextAction.type === "exit") {
+            yield* publishEvent({
+              type: "exited",
+              threadId: nextAction.threadId,
+              terminalId: nextAction.terminalId,
+              sequence: nextAction.sequence,
+              exitCode: nextAction.exitCode,
+              exitSignal: nextAction.exitSignal,
+            });
+          }
+
           return nextAction;
         }),
       );
@@ -1874,13 +1894,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (action.type === "output") {
-        yield* publishEvent({
-          type: "output",
-          threadId: action.threadId,
-          terminalId: action.terminalId,
-          sequence: action.sequence,
-          data: action.data,
-        });
         continue;
       }
 
@@ -1888,14 +1901,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* unregisterTerminal({
         threadId: action.threadId,
         terminalId: action.terminalId,
-      });
-      yield* publishEvent({
-        type: "exited",
-        threadId: action.threadId,
-        terminalId: action.terminalId,
-        sequence: action.sequence,
-        exitCode: action.exitCode,
-        exitSignal: action.exitSignal,
       });
       yield* evictInactiveSessionsIfNeeded();
       return;

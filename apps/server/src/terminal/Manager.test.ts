@@ -740,6 +740,44 @@ it.layer(
     }),
   );
 
+  it.effect("publishes output before a concurrent clear", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const outputStarted = yield* Deferred.make<void>();
+      const releaseOutput = yield* Deferred.make<void>();
+      const publishedEvents = yield* Ref.make<ReadonlyArray<"output" | "cleared">>([]);
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.gen(function* () {
+          if (event.type === "output") {
+            yield* Deferred.succeed(outputStarted, undefined);
+            yield* Deferred.await(releaseOutput);
+            yield* Ref.update(publishedEvents, (events) => [...events, "output"]);
+          } else if (event.type === "cleared") {
+            yield* Ref.update(publishedEvents, (events) => [...events, "cleared"]);
+          }
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      process.emitData("before clear\n");
+      yield* Deferred.await(outputStarted);
+
+      const clearFiber = yield* manager
+        .clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseOutput, undefined);
+      yield* Fiber.join(clearFiber);
+
+      expect(yield* Ref.get(publishedEvents)).toEqual(["output", "cleared"]);
+    }),
+  );
+
   it.effect("restarts terminal with empty transcript and respawns pty", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();
