@@ -15,6 +15,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./projectScaffold": {
+      "types": "./src/projectScaffold.ts",
+      "import": "./src/projectScaffold.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"

@@ -92,6 +92,15 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
+    scaffold: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:scaffold",
+      tag: WS_METHODS.projectsScaffold,
+      scheduler: projectScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,

@@ -298,3 +298,29 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     } as any);
   }
 }
+
+export const ProjectScaffoldInput = Schema.Struct({
+  // Human-readable project name; the server derives the README heading and
+  // favicon letter from it. The folder name comes from destinationPath.
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  destinationPath: TrimmedNonEmptyString,
+});
+export type ProjectScaffoldInput = typeof ProjectScaffoldInput.Type;
+
+export const ProjectScaffoldResult = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type ProjectScaffoldResult = typeof ProjectScaffoldResult.Type;
+
+export class ProjectScaffoldError extends Schema.TaggedErrorClass<ProjectScaffoldError>()(
+  "ProjectScaffoldError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}

@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 
 import {
   buildAddProjectRemoteSourceReadiness,
+  buildCreateProjectDestination,
   buildProjectCreateCommand,
   canCreateProjectInEnvironment,
   findExistingAddProject,
@@ -267,5 +268,36 @@ describe("add project shared logic", () => {
       createWorkspaceRootIfMissing: true,
       defaultModelSelection: null,
     });
+  });
+});
+
+describe("buildCreateProjectDestination", () => {
+  it("nests the slug under t3-projects in the base browse path", () => {
+    expect(buildCreateProjectDestination({ baseBrowsePath: "~/", name: "Cool Idea 3" })).toEqual({
+      slug: "cool-idea-3",
+      parentPath: "~/t3-projects/",
+      destinationPath: "~/t3-projects/cool-idea-3",
+    });
+  });
+
+  it("respects a configured base directory", () => {
+    expect(buildCreateProjectDestination({ baseBrowsePath: "/work/", name: "demo" })).toEqual({
+      slug: "demo",
+      parentPath: "/work/t3-projects/",
+      destinationPath: "/work/t3-projects/demo",
+    });
+  });
+
+  it("uses windows separators for windows base paths", () => {
+    expect(buildCreateProjectDestination({ baseBrowsePath: "C:\\work\\", name: "demo" })).toEqual({
+      slug: "demo",
+      parentPath: "C:\\work\\t3-projects\\",
+      destinationPath: "C:\\work\\t3-projects\\demo",
+    });
+  });
+
+  it("returns null while the name has no usable slug", () => {
+    expect(buildCreateProjectDestination({ baseBrowsePath: "~/", name: "!!!" })).toBeNull();
+    expect(buildCreateProjectDestination({ baseBrowsePath: "~/", name: "  " })).toBeNull();
   });
 });
