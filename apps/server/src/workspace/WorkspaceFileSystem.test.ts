@@ -1,9 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -262,6 +266,87 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+  });
+
+  describe("watchFile", () => {
+    /**
+     * `fs.watch` registration is not observable, so the writer keeps rewriting
+     * until the watcher reports instead of racing a fixed startup delay. It
+     * pauses longer than the debounce window between rewrites so the stream
+     * gets the quiet period it waits for.
+     */
+    const awaitFirstChange = Effect.fn("awaitFirstChange")(function* (
+      cwd: string,
+      relativePath: string,
+      rewrite: Effect.Effect<void, never, FileSystem.FileSystem | Path.Path>,
+    ) {
+      const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const watcher = yield* workspaceFileSystem
+        .watchFile({ cwd, relativePath })
+        .pipe(Stream.runHead, Effect.forkChild());
+      const writer = yield* rewrite.pipe(
+        Effect.delay(Duration.millis(300)),
+        Effect.forever,
+        Effect.forkChild(),
+      );
+      const event = yield* Fiber.join(watcher).pipe(Effect.timeout(Duration.seconds(10)));
+      yield* Fiber.interrupt(writer);
+      return event;
+    });
+
+    it.effect("reports a plain on-disk write", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "package.json",
+          '{ "description": "An awesome horse platform" }\n',
+        );
+
+        const event = yield* awaitFirstChange(
+          cwd,
+          "package.json",
+          writeTextFile(cwd, "package.json", '{ "description": "An awesome course platform" }\n'),
+        );
+
+        expect(event).toEqual(Option.some({ relativePath: "package.json" }));
+      }),
+    );
+
+    it.effect("reports an atomic replace that swaps the file's inode", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const answer = 42;\n");
+
+        const target = path.join(cwd, "src/index.ts");
+        const temp = path.join(cwd, "src/index.ts.tmp");
+        const replace = Effect.gen(function* () {
+          yield* fileSystem.writeFileString(temp, "export const answer = 43;\n").pipe(Effect.orDie);
+          yield* fileSystem.rename(temp, target).pipe(Effect.orDie);
+        });
+
+        const event = yield* awaitFirstChange(cwd, "src/index.ts", replace);
+
+        expect(event).toEqual(Option.some({ relativePath: "src/index.ts" }));
+      }),
+    );
+
+    it.effect("rejects watches outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const error = yield* workspaceFileSystem
+          .watchFile({ cwd, relativePath: "../escape.md" })
+          .pipe(Stream.runHead, Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
       }),
     );
   });

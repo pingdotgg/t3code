@@ -4784,6 +4784,53 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("routes websocket rpc subscribeProjectFileChanges for edits made outside the app", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-watch-" });
+      const filePath = path.join(workspaceDir, "package.json");
+      const before = '{ "description": "An awesome horse platform" }\n';
+      const after = '{ "description": "An awesome course platform" }\n';
+      yield* fs.writeFileString(filePath, before);
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const watcher = yield* client[WS_METHODS.subscribeProjectFileChanges]({
+              cwd: workspaceDir,
+              relativePath: "package.json",
+            }).pipe(Stream.runHead, Effect.forkChild());
+            // `fs.watch` registration is not observable, so rewrite until the
+            // subscription reports rather than racing a fixed startup delay.
+            // The pause outlasts the watcher's debounce window.
+            const writer = yield* fs
+              .writeFileString(filePath, after)
+              .pipe(
+                Effect.orDie,
+                Effect.delay(Duration.millis(300)),
+                Effect.forever,
+                Effect.forkChild(),
+              );
+            const event = yield* Fiber.join(watcher).pipe(Effect.timeout(Duration.seconds(10)));
+            yield* Fiber.interrupt(writer);
+            const file = yield* client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "package.json",
+            });
+            return { event, file };
+          }),
+        ),
+      );
+
+      assert.deepEqual(result.event, Option.some({ relativePath: "package.json" }));
+      assert.equal(result.file.contents, after);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

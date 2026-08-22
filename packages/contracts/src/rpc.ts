@@ -99,6 +99,7 @@ import {
   RelayClientStatusSchema,
 } from "./relayClient.ts";
 import {
+  ProjectFileChangedEvent,
   ProjectListEntriesError,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
@@ -304,6 +305,7 @@ export const WS_METHODS = {
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
+  subscribeProjectFileChanges: "subscribeProjectFileChanges",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
@@ -640,6 +642,17 @@ export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
   error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
+});
+
+/**
+ * Watches one workspace file and emits whenever it changes on disk, so an open
+ * viewer re-reads instead of pinning whatever it read when it was opened.
+ */
+export const WsSubscribeProjectFileChangesRpc = Rpc.make(WS_METHODS.subscribeProjectFileChanges, {
+  payload: ProjectReadFileInput,
+  success: ProjectFileChangedEvent,
+  error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
+  stream: true,
 });
 
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
@@ -1028,6 +1041,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
+  WsSubscribeProjectFileChangesRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,

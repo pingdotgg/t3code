@@ -1899,6 +1899,21 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.subscribeProjectFileChanges]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeProjectFileChanges,
+            workspaceFileSystem.watchFile(input).pipe(
+              Stream.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,

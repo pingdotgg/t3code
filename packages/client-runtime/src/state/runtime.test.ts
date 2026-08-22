@@ -12,7 +12,9 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import {
   environmentRpcKey,
   createAtomCommandScheduler,
+  createInvalidatableQueryAtom,
   createRuntimeCommand,
+  createStreamRevisionAtom,
   scheduleAtomCommandEffect,
   executeAtomCommand,
   executeAtomQuery,
@@ -495,6 +497,96 @@ describe("runtime command runner", () => {
     expect(await second).toMatchObject({ _tag: "Success", value: 3, waiting: false });
     expect(await third).toMatchObject({ _tag: "Success", value: 3, waiting: false });
     expect(executed).toEqual([1, 3]);
+    registry.dispose();
+  });
+});
+
+describe("createInvalidatableQueryAtom", () => {
+  it("refetches when the revision changes, and only then, inside the stale window", async () => {
+    const runtime = Atom.runtime(Layer.empty);
+    const revisions = Atom.make(0);
+    let reads = 0;
+    const query = createInvalidatableQueryAtom(runtime, {
+      label: "test.invalidatable",
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      revisions,
+      execute: () => Effect.sync(() => (reads += 1)),
+    });
+    const registry = AtomRegistry.make();
+
+    expect(await executeAtomQuery(registry, query)).toMatchObject({
+      _tag: "Success",
+      value: 1,
+    });
+
+    // Fresh within `staleTime`: reading again must not hit the source.
+    expect(await executeAtomQuery(registry, query)).toMatchObject({
+      _tag: "Success",
+      value: 1,
+    });
+    expect(reads).toBe(1);
+
+    // A revision bump means the underlying data moved, so the stale window
+    // stops applying — this is the stale-file-viewer fix.
+    registry.set(revisions, 1);
+
+    expect(await executeAtomQuery(registry, query)).toMatchObject({
+      _tag: "Success",
+      value: 2,
+    });
+    expect(reads).toBe(2);
+    registry.dispose();
+  });
+
+  it("keeps serving the stale window when no revisions are supplied", async () => {
+    const runtime = Atom.runtime(Layer.empty);
+    let reads = 0;
+    const query = createInvalidatableQueryAtom(runtime, {
+      label: "test.plain",
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      execute: () => Effect.sync(() => (reads += 1)),
+    });
+    const registry = AtomRegistry.make();
+
+    await executeAtomQuery(registry, query);
+    await executeAtomQuery(registry, query);
+
+    expect(reads).toBe(1);
+    registry.dispose();
+  });
+});
+
+describe("createStreamRevisionAtom", () => {
+  it("counts emissions and ignores everything else", async () => {
+    const runtime = Atom.runtime(Layer.empty);
+    const latch = Latch.makeUnsafe();
+    const revisions = createStreamRevisionAtom(
+      runtime,
+      Stream.fromArray(["changed", "changed"]).pipe(Stream.concat(Stream.fromEffect(latch.await))),
+      { label: "test.revisions", idleTtlMs: 60_000 },
+    );
+    const registry = AtomRegistry.make();
+    const observed: Array<number> = [];
+    let unsubscribe = () => {};
+    const secondRevision = new Promise<number>((resolve) => {
+      unsubscribe = registry.subscribe(
+        revisions,
+        (revision) => {
+          observed.push(revision);
+          if (revision === 2) resolve(revision);
+        },
+        { immediate: true },
+      );
+    });
+
+    // Two emissions, two revisions — identical payloads still count as two,
+    // because the emission is the signal, not its contents.
+    expect(await secondRevision).toBe(2);
+    // Waiting states never rewind the revision.
+    expect(observed).toEqual([...observed].toSorted((a, b) => a - b));
+    unsubscribe();
     registry.dispose();
   });
 });

@@ -52,6 +52,14 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
+  /**
+   * Server-pushed staleness signal. Every emission recomputes the query, which
+   * re-runs `execute` outright — `staleTimeMs` only gates SWR's own background
+   * revalidation, so a change that lands inside the stale window still lands in
+   * the UI. Use this instead of polling when the server can say when the
+   * underlying data moved.
+   */
+  readonly invalidate?: (input: Input) => Stream.Stream<unknown, unknown, R>;
 }
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
@@ -505,11 +513,27 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       { initialValue: null },
     ),
   );
+  const invalidate = options.invalidate;
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
-    const queryAtom = runtime
-      .atom((get) => {
+    const revisions =
+      invalidate === undefined
+        ? undefined
+        : createStreamRevisionAtom(
+            runtime,
+            followStreamInEnvironment(target.environmentId, invalidate(target.input)),
+            { label: `${options.label}:invalidate:${key}`, idleTtlMs },
+          );
+    return createInvalidatableQueryAtom(runtime, {
+      label: `${options.label}:${key}`,
+      idleTtlMs,
+      staleTimeMs: options.staleTimeMs ?? 30_000,
+      ...(options.refreshIntervalMs === undefined
+        ? {}
+        : { refreshIntervalMs: options.refreshIntervalMs }),
+      ...(revisions === undefined ? {} : { revisions }),
+      execute: (get) => {
         const generation = Option.getOrNull(
           AsyncResult.value(get(rpcGenerationAtom(target.environmentId))),
         );
@@ -517,21 +541,80 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           return Effect.never;
         }
         return runInEnvironment(target.environmentId, options.execute(target.input));
-      })
-      .pipe(
-        Atom.swr({
-          staleTime: options.staleTimeMs ?? 30_000,
-          revalidateOnMount: true,
-        }),
-        Atom.setIdleTTL(idleTtlMs),
-      );
-    return (
-      options.refreshIntervalMs === undefined
-        ? queryAtom
-        : queryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs))
-    ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
+      },
+    });
   });
   return (target) => family(environmentRpcKey(target));
+}
+
+/**
+ * Counts emissions of `stream` as a plain revision number.
+ *
+ * Counting on the client keeps the revision insensitive to everything a query
+ * should not refetch for: waiting states, reconnects and repeated payloads all
+ * map back to the same number, and the atom's `Object.is` equality drops them.
+ */
+export function createStreamRevisionAtom<R, ER, A, E>(
+  runtime: Atom.AtomRuntime<R, ER>,
+  stream: Stream.Stream<A, E, R>,
+  options: { readonly label: string; readonly idleTtlMs: number },
+): Atom.Atom<number> {
+  return runtime
+    .atom(
+      stream.pipe(
+        Stream.mapAccum(
+          () => 0,
+          (revision: number) => [revision + 1, [revision + 1]] as const,
+        ),
+      ),
+      { initialValue: 0 },
+    )
+    .pipe(
+      Atom.map((result: AsyncResult.AsyncResult<unknown, unknown>) => {
+        const revision = AsyncResult.value(result);
+        return Option.isSome(revision) && typeof revision.value === "number" ? revision.value : 0;
+      }),
+      Atom.setIdleTTL(options.idleTtlMs),
+      Atom.withLabel(options.label),
+    );
+}
+
+/**
+ * Stale-while-revalidate query atom that also re-executes whenever `revisions`
+ * changes.
+ *
+ * `staleTimeMs` only gates SWR's own background revalidation, so a revision
+ * bump refetches even inside the stale window. That is the point: a push that
+ * says the data moved must not be answered with a cached value.
+ */
+export function createInvalidatableQueryAtom<R, ER, A, E>(
+  runtime: Atom.AtomRuntime<R, ER>,
+  options: {
+    readonly label: string;
+    readonly execute: (get: Atom.AtomContext) => Effect.Effect<A, E, R>;
+    readonly revisions?: Atom.Atom<number>;
+    readonly staleTimeMs: number;
+    readonly idleTtlMs: number;
+    readonly refreshIntervalMs?: number;
+  },
+): Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
+  const revisions = options.revisions;
+  const queryAtom = runtime
+    .atom((get: Atom.AtomContext) => {
+      if (revisions !== undefined) {
+        get(revisions);
+      }
+      return options.execute(get);
+    })
+    .pipe(
+      Atom.swr({ staleTime: options.staleTimeMs, revalidateOnMount: true }),
+      Atom.setIdleTTL(options.idleTtlMs),
+    );
+  return (
+    options.refreshIntervalMs === undefined
+      ? queryAtom
+      : queryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs))
+  ).pipe(Atom.setIdleTTL(options.idleTtlMs), Atom.withLabel(options.label));
 }
 
 export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
@@ -598,8 +681,17 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
+    /**
+     * Server-pushed staleness signal for this query — see the `invalidate`
+     * option on {@link createEnvironmentQueryAtomFamily}. Pass a subscription
+     * whose emissions mean "this query's data changed"; the payload is ignored.
+     */
+    readonly invalidate?: (
+      input: EnvironmentRpcInput<TTag>,
+    ) => Stream.Stream<unknown, unknown, EnvironmentSupervisor | R>;
   },
 ) {
+  const invalidate = options.invalidate;
   return createEnvironmentQueryAtomFamily(runtime, {
     label: options.label,
     ...(options.staleTimeMs === undefined ? {} : { staleTimeMs: options.staleTimeMs }),
@@ -607,6 +699,14 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     ...(options.refreshIntervalMs === undefined
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
+    ...(invalidate === undefined
+      ? {}
+      : {
+          // A watcher that cannot start must not take the query down with it:
+          // the query keeps working, it just stops self-refreshing.
+          invalidate: (input: EnvironmentRpcInput<TTag>) =>
+            invalidate(input).pipe(Stream.catchCause(() => Stream.empty)),
+        }),
     execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
   });
 }

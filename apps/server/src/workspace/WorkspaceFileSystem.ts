@@ -10,17 +10,20 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type {
+  ProjectFileChangedEvent,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -43,6 +46,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<W
       "close",
       "make-directory",
       "write-file",
+      "watch",
     ]),
     cause: Schema.Defect(),
   },
@@ -121,6 +125,19 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /**
+     * Emit a change event every time the file changes on disk.
+     *
+     * The stream is a signal only: subscribers re-read through `readFile`, so
+     * every size, binary and error rule stays in one place. Events are
+     * debounced because a single save is several `fs.watch` events.
+     */
+    readonly watchFile: (
+      input: ProjectReadFileInput,
+    ) => Stream.Stream<
+      ProjectFileChangedEvent,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
   }
@@ -297,7 +314,47 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ readFile, writeFile });
+  /**
+   * Watches the containing directory rather than the file itself: saves that
+   * land as rename-over-temp (git, most editors, atomic writers) replace the
+   * inode, and a file-level watch would follow the discarded one.
+   */
+  const watchFile: WorkspaceFileSystem["Service"]["watchFile"] = (input) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+        const directory = path.dirname(target.absolutePath);
+        const fileName = path.basename(target.absolutePath);
+
+        return fileSystem.watch(directory).pipe(
+          Stream.filter(
+            (event) =>
+              event.path === fileName ||
+              event.path === target.absolutePath ||
+              path.resolve(directory, event.path) === target.absolutePath,
+          ),
+          // Debounce so the file is fully written before subscribers re-read it.
+          Stream.debounce(Duration.millis(100)),
+          Stream.map(() => ({ relativePath: target.relativePath })),
+          Stream.mapError(
+            (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: target.absolutePath,
+                operationPath: directory,
+                operation: "watch",
+                cause,
+              }),
+          ),
+        );
+      }),
+    );
+
+  return WorkspaceFileSystem.of({ readFile, writeFile, watchFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);
