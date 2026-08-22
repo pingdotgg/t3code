@@ -94,6 +94,7 @@ function makeDesktopWindowLayer(
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
     dispatchMenuAction: () => Effect.void,
     zoomMain: () => Effect.void,
+    openThread: () => Effect.void,
     syncAppearance: Effect.void,
   });
 }
