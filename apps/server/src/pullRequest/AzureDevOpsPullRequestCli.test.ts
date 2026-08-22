@@ -97,6 +97,49 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("names the repository the way az does, not the way the remote does", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 1))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        // What the service calls a repository below an Azure host: the whole remote path.
+        repository: "acme/platform/_git/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal@acme.dev",
+        limit: 10,
+      });
+
+      // az puts `--repository` straight into the REST route it builds, so the path would address
+      // a route that does not exist and Azure would answer 404 rather than an empty listing.
+      const args = argsOfCall(0);
+      assert.strictEqual(args[args.indexOf("--repository") + 1], "web");
+      expect(args).not.toContain("acme/platform/_git/web");
+    }),
+  );
+
+  it.effect("unescapes the repository name, which the remote path carries escaped", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 1))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        // A project and a repository both named with a space, as the remote spells them.
+        repository: "acme/shared%20platform/_git/web%20client",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal@acme.dev",
+        limit: 10,
+      });
+
+      const args = argsOfCall(0);
+      assert.strictEqual(args[args.indexOf("--repository") + 1], "web client");
+    }),
+  );
+
   it.effect("reads the page unnarrowed when asked to search, having nothing to search with", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
@@ -506,6 +549,13 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(argsOfCall(0)).toContain("rest");
       expect(argsOfCall(0)).toContain(
         "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads?api-version=7.1",
+      );
+      // Azure DevOps is not the resource az asks for a token for by default, and it answers the
+      // sign-in page rather than refusing the wrong one, so the call has to name it.
+      const args = argsOfCall(0);
+      assert.strictEqual(
+        args[args.indexOf("--resource") + 1],
+        "499b84ac-1321-427f-aa17-267ca6975798",
       );
     }),
   );
