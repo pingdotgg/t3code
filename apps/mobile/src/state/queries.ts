@@ -2,10 +2,17 @@ import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   OrchestrationThread,
+  ServerProviderSkill,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
 } from "@t3tools/contracts";
+import {
+  type ProviderSkillInventoryContext,
+  resolveProviderSkillInventoryRequest,
+  resolveProviderSkillInventoryTarget,
+  selectProviderSkills,
+} from "@t3tools/client-runtime/state/provider-skill-inventory";
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
@@ -21,6 +28,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 import {
@@ -133,6 +141,31 @@ export function useBranches(input: {
           },
         })
       : null,
+  );
+}
+
+/**
+ * Skills and inventory loading state for a composer or message feed.
+ * Snapshot-mode providers never hit the network; project-mode providers issue
+ * one request per (environment, scope, instance).
+ */
+export function useProviderSkills(context: ProviderSkillInventoryContext): {
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly isPending: boolean;
+} {
+  const target = resolveProviderSkillInventoryTarget(context);
+  const request = resolveProviderSkillInventoryRequest(target);
+  const result = useEnvironmentQuery(
+    request === null ? null : serverEnvironment.skillInventory(request),
+  );
+  const provider = target.provider;
+  const inventory = result.data;
+  return useMemo(
+    () => ({
+      skills: selectProviderSkills({ provider, inventory }),
+      isPending: result.isPending,
+    }),
+    [inventory, provider, result.isPending],
   );
 }
 

@@ -25,6 +25,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -53,6 +54,22 @@ export interface ProviderDriverMetadata {
 }
 
 /**
+ * Optional capability for drivers whose skill inventory depends on where the
+ * agent runs, rather than being a property of the environment as a whole.
+ *
+ * `ProviderRegistry` derives the matching wire capability from this field, so
+ * drivers only declare project-scoped inventory once.
+ *
+ * Discovery is best-effort by contract: no error channel, because a broken
+ * skill must never fail the picker or downgrade provider health.
+ */
+export interface ProviderSkillInventory {
+  readonly list: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
+}
+
+/**
  * One materialized provider instance. Held by the registry, looked up by
  * `instanceId`, torn down by closing the scope it was created in.
  *
@@ -71,6 +88,8 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /** Absent for drivers whose `snapshot.skills` is the whole inventory. */
+  readonly skillInventory?: ProviderSkillInventory;
 }
 
 export interface ProviderContinuationIdentity {

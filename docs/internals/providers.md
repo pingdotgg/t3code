@@ -39,6 +39,34 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Skill inventory
+
+Most drivers publish their skills once, as `ServerProvider.skills` on the status snapshot, and the
+composer's `$` menu renders that array with no round trip.
+
+Cursor cannot: its skills come from `.cursor/skills`, `.agents/skills`, `.codex/skills`, and
+`.claude/skills` under both the user's home and the workspace, so the answer depends on the directory
+the agent will run in — a different project or a worktree thread has a different inventory. Such a
+driver implements the optional `skillInventory` capability on
+[`ProviderInstance`][adapterdriver]. The provider registry derives
+`skillInventoryMode: "project"` on every published snapshot, so the capability has one source of
+truth. Clients see that flag and call the `providers.skillInventory` RPC with a thread or project id
+instead of reading `skills`.
+
+For instances with `skillInventory`, the RPC resolves the scope to a working directory server-side
+([`ProviderSkillInventory.ts`][skills], reusing `resolveThreadWorkspaceCwd` so a worktree thread lists
+its worktree's skills) and then asks the instance. Snapshot-mode providers intentionally bypass
+working-directory resolution and return the cached `snapshot.skills` directly. The RPC accepts an
+identifier rather than a path, so the surface cannot become a filesystem probe. Request-level failures
+(unknown instance, unknown project or thread, unresolvable scope) are reported through the tagged
+`ServerProviderSkillInventoryError` contract. Once discovery begins, per-entry filesystem failures
+during traversal have no error channel: an unreadable root or directory removes every skill in that
+subtree, while an unreadable `SKILL.md` removes only that skill; malformed metadata uses Cursor's
+documented fallback rules when possible. Canonical path checks reject skill roots that leave their user-home or
+workspace boundary and nested symlinks that leave the skill root; directory plus entry budgets bound
+traversal work. Cursor's own scan lives in [`CursorSkills.ts`][cursorskills], which documents the
+naming, precedence, and fallback rules verified against the real CLI.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
@@ -82,6 +110,9 @@ when a request opens (approval) or user input is requested, via
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
+[adapterdriver]: ../../apps/server/src/provider/ProviderDriver.ts
+[skills]: ../../apps/server/src/provider/ProviderSkillInventory.ts
+[cursorskills]: ../../apps/server/src/provider/Drivers/CursorSkills.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts
 [service]: ../../apps/server/src/provider/Layers/ProviderService.ts

@@ -24,6 +24,19 @@ export function composerSubmissionIntentForEnter(input: {
   return input.modifierKey && input.isDraftThread ? "background" : "foreground";
 }
 
+export function resolveComposerMenuLoading(input: {
+  triggerKind: ComposerTriggerKind | null;
+  pathQuery: string;
+  isPathSearchPending: boolean;
+  isSkillInventoryPending: boolean;
+  skillCount: number;
+}): boolean {
+  if (input.triggerKind === "skill") {
+    return input.skillCount === 0 && input.isSkillInventoryPending;
+  }
+  return input.triggerKind === "path" && input.pathQuery.length > 0 && input.isPathSearchPending;
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }

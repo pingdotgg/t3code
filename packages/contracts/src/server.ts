@@ -97,6 +97,17 @@ export const ServerProviderSkill = Schema.Struct({
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 /**
+ * Where a provider's skill inventory comes from.
+ *
+ * Absent means the environment-wide `ServerProvider.skills` array is the
+ * whole inventory. `"project"` means inventory depends on the directory the
+ * agent will run in, so it must be requested per thread or project through
+ * `providers.skillInventory`.
+ */
+export const ServerProviderSkillInventoryMode = Schema.Literal("project");
+export type ServerProviderSkillInventoryMode = typeof ServerProviderSkillInventoryMode.Type;
+
+/**
  * Availability of a configured provider instance from the runtime's POV.
  *
  *  - `available` — the build ships this driver and an instance is wired
@@ -192,6 +203,11 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Absent means `"snapshot"` — `skills` above is the whole inventory. A
+  // `"project"` provider computes its inventory per working directory, so
+  // clients must ask `providers.skillInventory` for a thread or project
+  // instead of reading `skills`.
+  skillInventoryMode: Schema.optional(ServerProviderSkillInventoryMode),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });
@@ -212,6 +228,14 @@ export type ServerProviders = typeof ServerProviders.Type;
  */
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
+
+/**
+ * Whether this provider's `$` inventory must be requested per thread/project
+ * rather than read from `snapshot.skills`. Absent means snapshot mode, so
+ * existing producers keep their zero-round-trip picker.
+ */
+export const usesProjectSkillInventory = (snapshot: ServerProvider): boolean =>
+  snapshot.skillInventoryMode === "project";
 
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,
@@ -608,6 +632,57 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
 ) {
   override get message(): string {
     return `Provider update failed for ${this.provider}: ${this.reason}`;
+  }
+}
+
+/**
+ * Which working directory the inventory is for. Deliberately an identifier
+ * rather than a `cwd` (unlike the sibling `projects.*` RPCs): only the server
+ * knows a thread resolves to `worktreePath ?? project.workspaceRoot`, and a
+ * surface that accepts no filesystem path cannot drift into a path probe.
+ */
+export const ServerProviderSkillInventoryScope = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("thread"), threadId: ThreadId }),
+  Schema.Struct({ kind: Schema.Literal("project"), projectId: ProjectId }),
+]);
+export type ServerProviderSkillInventoryScope = typeof ServerProviderSkillInventoryScope.Type;
+
+export const ServerProviderSkillInventoryInput = Schema.Struct({
+  scope: ServerProviderSkillInventoryScope,
+  instanceId: ProviderInstanceId,
+});
+export type ServerProviderSkillInventoryInput = typeof ServerProviderSkillInventoryInput.Type;
+
+export const ServerProviderSkillInventoryResult = Schema.Struct({
+  skills: Schema.Array(ServerProviderSkill),
+});
+export type ServerProviderSkillInventoryResult = typeof ServerProviderSkillInventoryResult.Type;
+
+export const ServerProviderSkillInventoryFailure = Schema.Literals([
+  "unknown_instance",
+  "unknown_project",
+  "unknown_thread",
+  "unresolvable_workspace",
+  "project_read_model_unavailable",
+  "thread_read_model_unavailable",
+]);
+export type ServerProviderSkillInventoryFailure = typeof ServerProviderSkillInventoryFailure.Type;
+
+export class ServerProviderSkillInventoryError extends Schema.TaggedErrorClass<ServerProviderSkillInventoryError>()(
+  "ServerProviderSkillInventoryError",
+  {
+    failure: ServerProviderSkillInventoryFailure,
+    instanceId: ProviderInstanceId,
+    scope: ServerProviderSkillInventoryScope,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    const scope =
+      this.scope.kind === "project"
+        ? `project '${this.scope.projectId}'`
+        : `thread '${this.scope.threadId}'`;
+    return `Provider skill inventory failed for ${scope} with instance '${this.instanceId}' (${this.failure}).`;
   }
 }
 

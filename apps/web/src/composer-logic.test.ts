@@ -9,6 +9,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  resolveComposerMenuLoading,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
@@ -66,6 +67,56 @@ describe("composerSubmissionIntentForEnter", () => {
         isDraftThread: false,
       }),
     ).toBe("foreground");
+  });
+});
+
+describe("resolveComposerMenuLoading", () => {
+  it("keeps the skill menu in its loading state while its first inventory is pending", () => {
+    expect(
+      resolveComposerMenuLoading({
+        triggerKind: "skill",
+        pathQuery: "",
+        isPathSearchPending: false,
+        isSkillInventoryPending: true,
+        skillCount: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not mark an empty snapshot inventory as loading", () => {
+    expect(
+      resolveComposerMenuLoading({
+        triggerKind: "skill",
+        pathQuery: "",
+        isPathSearchPending: false,
+        isSkillInventoryPending: false,
+        skillCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps cached skill rows visible while an inventory refresh is pending", () => {
+    expect(
+      resolveComposerMenuLoading({
+        triggerKind: "skill",
+        pathQuery: "",
+        isPathSearchPending: false,
+        isSkillInventoryPending: true,
+        skillCount: 1,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps path searches loading only after the user enters a query", () => {
+    const input = {
+      triggerKind: "path" as const,
+      isPathSearchPending: true,
+      isSkillInventoryPending: false,
+      skillCount: 0,
+    };
+
+    expect(resolveComposerMenuLoading({ ...input, pathQuery: "src" })).toBe(true);
+    expect(resolveComposerMenuLoading({ ...input, pathQuery: "" })).toBe(false);
   });
 });
 

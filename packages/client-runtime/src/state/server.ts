@@ -707,6 +707,18 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
     }),
+    // Requested while a scoped surface displays a project-inventory provider.
+    // Each cold subscription costs a recursive scan on the
+    // environment server and a round trip for remote clients. The family key
+    // (environment + scope + instance) makes concurrent consumers share one
+    // request; the short stale window absorbs rapid resubscriptions without
+    // making "reopen to see a removed skill disappear" untrue.
+    skillInventory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:providers:skill-inventory",
+      tag: WS_METHODS.providersSkillInventory,
+      staleTimeMs: 5_000,
+      idleTtlMs: 60_000,
+    }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {

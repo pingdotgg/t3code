@@ -724,6 +724,19 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Show full message");
   }, 20_000);
 
+  it("renders resolved provider skills in sent user messages", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        skills={[{ name: "ios-debugger-agent", displayName: "iOS Debugger Agent" }]}
+        timelineEntries={[buildUserTimelineEntry("$ios-debugger-agent what is this")]}
+      />,
+    );
+
+    expect(markup).toContain("iOS Debugger Agent");
+    expect(markup).toContain('data-markdown-copy="$ios-debugger-agent"');
+  });
+
   it("renders chips for standalone element-pick context messages", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

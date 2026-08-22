@@ -37,6 +37,13 @@ export interface ProjectionSnapshotSequence {
   readonly snapshotSequence: number;
 }
 
+export interface ProjectionThreadWorkspaceContext {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly workspaceRoot: string | null;
+  readonly worktreePath: string | null;
+}
+
 export interface ProjectionThreadCheckpointContext {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -139,6 +146,14 @@ export interface ProjectionSnapshotQueryShape {
   readonly getFirstActiveThreadIdByProjectId: (
     projectId: ProjectId,
   ) => Effect.Effect<Option.Option<ThreadId>, ProjectionRepositoryError>;
+
+  /**
+   * Read the workspace context for a non-deleted thread, including archived
+   * threads. The project root is absent when the owning project is unavailable.
+   */
+  readonly getThreadWorkspaceContextById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProjectionThreadWorkspaceContext>, ProjectionRepositoryError>;
 
   /**
    * Read the checkpoint context needed to resolve a single thread diff.

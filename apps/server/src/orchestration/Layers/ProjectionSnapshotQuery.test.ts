@@ -551,7 +551,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'full-access',
             'default',
             NULL,
-            NULL,
+            '/tmp/archive-worktree',
             NULL,
             NULL,
             0,
@@ -588,6 +588,31 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+
+      const archivedThreadId = ThreadId.make("thread-archived");
+      const archivedThread = yield* snapshotQuery.getThreadShellById(archivedThreadId);
+      assert.equal(archivedThread._tag, "None");
+
+      const archivedWorkspaceContext =
+        yield* snapshotQuery.getThreadWorkspaceContextById(archivedThreadId);
+      assert.equal(archivedWorkspaceContext._tag, "Some");
+      if (archivedWorkspaceContext._tag === "Some") {
+        assert.equal(archivedWorkspaceContext.value.workspaceRoot, "/tmp/archive-test");
+        assert.equal(archivedWorkspaceContext.value.worktreePath, "/tmp/archive-worktree");
+      }
+
+      yield* sql`
+        UPDATE projection_projects
+        SET deleted_at = '2026-04-06T00:00:08.000Z'
+        WHERE project_id = 'project-archive-test'
+      `;
+      const contextWithoutActiveProject =
+        yield* snapshotQuery.getThreadWorkspaceContextById(archivedThreadId);
+      assert.equal(contextWithoutActiveProject._tag, "Some");
+      if (contextWithoutActiveProject._tag === "Some") {
+        assert.equal(contextWithoutActiveProject.value.workspaceRoot, null);
+        assert.equal(contextWithoutActiveProject.value.worktreePath, "/tmp/archive-worktree");
+      }
     }),
   );
 
