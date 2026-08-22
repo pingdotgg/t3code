@@ -1,0 +1,21 @@
+{
+  "name": "t3code-github-events",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "alchemy dev",
+    "test": "vp test run",
+    "typecheck": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "alchemy": "2.0.0-beta.65",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.1",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
