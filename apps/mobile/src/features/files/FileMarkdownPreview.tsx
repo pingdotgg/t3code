@@ -18,6 +18,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
+  type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 
@@ -28,7 +29,7 @@ interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
-function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
+function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): MarkdownPreviewStyles {
   const { appearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
     () => resolveMarkdownFontSizes(appearance.baseFontSize),
@@ -68,6 +69,14 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
           {children}
         </NativeText>
       ),
+      image: ({ node }) =>
+        node.href && renderImage
+          ? (renderImage({
+              href: node.href,
+              alt: node.alt ?? null,
+              title: node.title ?? null,
+            }) ?? undefined)
+          : undefined,
     };
 
     return {
@@ -165,6 +174,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
     mediumFontFamily,
     nativeMarkdownTypography,
     regularFontFamily,
+    renderImage,
     strong,
     boldFontFamily,
   ]);
@@ -173,6 +183,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
 export function FileMarkdownPreview(props: {
   readonly markdown: string;
   readonly onRefresh?: () => Promise<void> | void;
+  readonly renderImage?: MarkdownImageRenderer;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
@@ -186,7 +197,7 @@ export function FileMarkdownPreview(props: {
       setIsPullRefreshing(false);
     }
   }, [props.onRefresh]);
-  const styles = useMarkdownPreviewStyles();
+  const styles = useMarkdownPreviewStyles(props.renderImage);
   const onLinkPress = useCallback((href: string) => {
     void tryOpenExternalUrl(href, "markdown-link");
   }, []);
@@ -209,6 +220,7 @@ export function FileMarkdownPreview(props: {
           <SelectableMarkdownText
             markdown={props.markdown}
             onLinkPress={onLinkPress}
+            renderImage={props.renderImage}
             textStyle={styles.nativeTextStyle}
           />
         ) : (
