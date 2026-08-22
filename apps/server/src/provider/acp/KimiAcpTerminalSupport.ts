@@ -171,103 +171,110 @@ export const makeKimiAcpTerminalManager = (input: {
       });
 
     const handleCreateTerminal: KimiAcpTerminalManager["handleCreateTerminal"] = (request) =>
-      Effect.gen(function* () {
-        const terminalId = `term-${++nextTerminalId}`;
-        const scope = yield* Scope.make();
-        const pendingCreation: KimiPendingTerminalCreation = {
-          scope,
-          killRequested: false,
-          disposeRequested: false,
-        };
-        pendingCreations.set(terminalId, pendingCreation);
-        const env = request.env
-          ? Object.fromEntries(request.env.map((entry) => [entry.name, entry.value]))
-          : undefined;
-        // Kimi sends an absolute command path (its Git Bash wrapper on
-        // Windows), so no shell resolution is involved.
-        const handle = yield* input.childProcessSpawner
-          .spawn(
-            ChildProcess.make(request.command, request.args ?? [], {
-              ...(request.cwd ? { cwd: request.cwd } : {}),
-              ...(env ? { env, extendEnv: true } : {}),
-              stdin: "ignore",
-              // Kill escalation for release/shutdown of commands that ignore
-              // the default termination signal.
-              forceKillAfter: "5 seconds",
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const terminalId = `term-${++nextTerminalId}`;
+          const scope = yield* Scope.make();
+          const pendingCreation: KimiPendingTerminalCreation = {
+            scope,
+            killRequested: false,
+            disposeRequested: false,
+          };
+          pendingCreations.set(terminalId, pendingCreation);
+          const env = request.env
+            ? Object.fromEntries(request.env.map((entry) => [entry.name, entry.value]))
+            : undefined;
+          // Kimi sends an absolute command path (its Git Bash wrapper on
+          // Windows), so no shell resolution is involved.
+          const handleExit = yield* Effect.exit(
+            restore(
+              input.childProcessSpawner
+                .spawn(
+                  ChildProcess.make(request.command, request.args ?? [], {
+                    ...(request.cwd ? { cwd: request.cwd } : {}),
+                    ...(env ? { env, extendEnv: true } : {}),
+                    stdin: "ignore",
+                    // Kill escalation for release/shutdown of commands that ignore
+                    // the default termination signal.
+                    forceKillAfter: "5 seconds",
+                  }),
+                )
+                .pipe(
+                  Effect.provideService(Scope.Scope, scope),
+                  Effect.mapError((cause) =>
+                    EffectAcpErrors.AcpRequestError.internalError(
+                      `Failed to spawn terminal command '${request.command}'.`,
+                      undefined,
+                      { method: "terminal/create", cause },
+                    ),
+                  ),
+                ),
+            ),
+          );
+          if (Exit.isFailure(handleExit)) {
+            pendingCreations.delete(terminalId);
+            yield* Effect.ignore(Scope.close(scope, Exit.void));
+            return yield* Effect.failCause(handleExit.cause);
+          }
+          const handle = handleExit.value;
+
+          const buffer: KimiTerminalOutputBuffer = {
+            output: "",
+            outputBytes: 0,
+            truncated: false,
+            byteLimit: Math.max(0, request.outputByteLimit ?? DEFAULT_OUTPUT_BYTE_LIMIT),
+          };
+          const exit = yield* Deferred.make<KimiTerminalExit>();
+
+          // One streaming decoder per stream so interleaving cannot split a
+          // multi-byte character across decode calls.
+          const drainStream = (stream: typeof handle.stdout): Effect.Effect<void> =>
+            Effect.suspend(() => {
+              const decoder = new TextDecoder("utf-8");
+              return Stream.runForEach(stream, (chunk) =>
+                Effect.sync(() =>
+                  appendTerminalOutput(buffer, decoder.decode(chunk, { stream: true })),
+                ),
+              ).pipe(
+                Effect.ensuring(Effect.sync(() => appendTerminalOutput(buffer, decoder.decode()))),
+                Effect.ignore,
+              );
+            });
+
+          const stdoutFiber = yield* drainStream(handle.stdout).pipe(Effect.forkIn(scope));
+          const stderrFiber = yield* drainStream(handle.stderr).pipe(Effect.forkIn(scope));
+          yield* handle.exitCode.pipe(
+            Effect.matchEffect({
+              onSuccess: (exitCode) => Deferred.succeed(exit, { exitCode, signal: null }),
+              onFailure: (error) => Deferred.succeed(exit, exitFromSignalFailure(error)),
             }),
-          )
-          .pipe(
-            Effect.provideService(Scope.Scope, scope),
-            Effect.onError(() =>
-              Effect.sync(() => pendingCreations.delete(terminalId)).pipe(
-                Effect.andThen(Effect.ignore(Scope.close(scope, Exit.void))),
-              ),
-            ),
-            Effect.mapError((cause) =>
-              EffectAcpErrors.AcpRequestError.internalError(
-                `Failed to spawn terminal command '${request.command}'.`,
-                undefined,
-                { method: "terminal/create", cause },
-              ),
-            ),
+            Effect.forkIn(scope),
           );
 
-        const buffer: KimiTerminalOutputBuffer = {
-          output: "",
-          outputBytes: 0,
-          truncated: false,
-          byteLimit: Math.max(0, request.outputByteLimit ?? DEFAULT_OUTPUT_BYTE_LIMIT),
-        };
-        const exit = yield* Deferred.make<KimiTerminalExit>();
-
-        // One streaming decoder per stream so interleaving cannot split a
-        // multi-byte character across decode calls.
-        const drainStream = (stream: typeof handle.stdout): Effect.Effect<void> =>
-          Effect.suspend(() => {
-            const decoder = new TextDecoder("utf-8");
-            return Stream.runForEach(stream, (chunk) =>
-              Effect.sync(() =>
-                appendTerminalOutput(buffer, decoder.decode(chunk, { stream: true })),
-              ),
-            ).pipe(
-              Effect.ensuring(Effect.sync(() => appendTerminalOutput(buffer, decoder.decode()))),
-              Effect.ignore,
+          const terminalState: KimiTerminalState = {
+            scope,
+            buffer,
+            exit,
+            drainFibers: [stdoutFiber, stderrFiber],
+            kill: Effect.ignore(handle.kill()),
+          };
+          terminals.set(terminalId, terminalState);
+          pendingCreations.delete(terminalId);
+          if (pendingCreation.disposeRequested) {
+            yield* disposeTerminal(terminalId, terminalState);
+            return yield* EffectAcpErrors.AcpRequestError.internalError(
+              "Terminal creation was cancelled because the Kimi session stopped.",
+              undefined,
+              { method: "terminal/create" },
             );
-          });
-
-        const stdoutFiber = yield* drainStream(handle.stdout).pipe(Effect.forkIn(scope));
-        const stderrFiber = yield* drainStream(handle.stderr).pipe(Effect.forkIn(scope));
-        yield* handle.exitCode.pipe(
-          Effect.matchEffect({
-            onSuccess: (exitCode) => Deferred.succeed(exit, { exitCode, signal: null }),
-            onFailure: (error) => Deferred.succeed(exit, exitFromSignalFailure(error)),
-          }),
-          Effect.forkIn(scope),
-        );
-
-        const terminalState: KimiTerminalState = {
-          scope,
-          buffer,
-          exit,
-          drainFibers: [stdoutFiber, stderrFiber],
-          kill: Effect.ignore(handle.kill()),
-        };
-        terminals.set(terminalId, terminalState);
-        pendingCreations.delete(terminalId);
-        if (pendingCreation.disposeRequested) {
-          yield* disposeTerminal(terminalId, terminalState);
-          return yield* EffectAcpErrors.AcpRequestError.internalError(
-            "Terminal creation was cancelled because the Kimi session stopped.",
-            undefined,
-            { method: "terminal/create" },
-          );
-        }
-        if (pendingCreation.killRequested) {
-          yield* Deferred.succeed(exit, { exitCode: null, signal: "SIGTERM" });
-          yield* terminalState.kill;
-        }
-        return { terminalId } satisfies EffectAcpSchema.CreateTerminalResponse;
-      });
+          }
+          if (pendingCreation.killRequested) {
+            yield* Deferred.succeed(exit, { exitCode: null, signal: "SIGTERM" });
+            yield* terminalState.kill;
+          }
+          return { terminalId } satisfies EffectAcpSchema.CreateTerminalResponse;
+        }),
+      );
 
     const handleTerminalOutput: KimiAcpTerminalManager["handleTerminalOutput"] = (request) =>
       Effect.gen(function* () {

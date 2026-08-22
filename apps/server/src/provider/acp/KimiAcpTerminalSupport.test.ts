@@ -269,6 +269,41 @@ describe("KimiAcpTerminalSupport", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("interrupting a spawned creation closes its scope and clears pending ownership", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnCompleted = yield* Deferred.make<void>();
+      const holdRegistration = yield* Deferred.make<void>();
+      const finalizerRan = yield* Deferred.make<void>();
+      const manager = yield* makeKimiAcpTerminalManager({
+        childProcessSpawner: {
+          ...childProcessSpawner,
+          spawn: (command) =>
+            Effect.gen(function* () {
+              const handle = yield* childProcessSpawner.spawn(command);
+              yield* Effect.addFinalizer(() =>
+                Deferred.succeed(finalizerRan, undefined).pipe(Effect.asVoid),
+              );
+              yield* Deferred.succeed(spawnCompleted, undefined);
+              yield* Deferred.await(holdRegistration);
+              return handle;
+            }),
+        },
+      });
+      const { command, args } = nodeScript("setTimeout(() => {}, 600000)");
+      const createFiber = yield* manager
+        .handleCreateTerminal({ sessionId: SESSION_ID, command, args })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(spawnCompleted);
+      yield* Fiber.interrupt(createFiber);
+      yield* Deferred.await(finalizerRan);
+      assert.isTrue(yield* Deferred.isDone(finalizerRan));
+      yield* manager.killAll;
+      yield* manager.shutdown;
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("shutdown kills open terminals and forgets them", () =>
     withTerminalManager((manager) =>
       Effect.gen(function* () {
