@@ -1115,8 +1115,13 @@ const makeWsRpcLayer = (
 
       const refreshGitStatus = (cwd: string) =>
         vcsStatusBroadcaster
-          .refreshStatus(cwd)
-          .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+          .invalidateStatus(cwd)
+          .pipe(
+            Effect.andThen(vcsStatusBroadcaster.refreshStatus(cwd)),
+            Effect.ignoreCause({ log: true }),
+            Effect.forkDetach,
+            Effect.asVoid,
+          );
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
