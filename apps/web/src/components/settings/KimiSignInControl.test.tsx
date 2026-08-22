@@ -96,7 +96,25 @@ describe("KimiSignInControl", () => {
     expect(
       visitElements(personal, (element) => element.props.href === "https://auth.example/personal"),
     ).not.toBeNull();
+    const liveStatus = visitElements(personal, (element) => element.props.role === "status");
+    expect(liveStatus?.props["aria-live"]).toBe("polite");
     expect(visitElements(work, (element) => element.props.href !== undefined)).toBeNull();
+  });
+
+  it("announces sign-in failures as a polite live status", () => {
+    state.values.set(`${environmentId}:${workId}`, {
+      status: "failed",
+      message: "Kimi sign-in failed.",
+    });
+
+    const control = renderControl(workId);
+    const failure = visitElements(
+      control,
+      (element) => element.props.role === "status" && element.props["aria-live"] === "polite",
+    );
+
+    expect(failure).not.toBeNull();
+    expect(failure?.props.children).toBe("Kimi sign-in failed.");
   });
 
   it("signs out the authenticated provider instance", async () => {

@@ -69,7 +69,11 @@ export function KimiSignInControl({
 
   if (signInState.status === "waiting") {
     return (
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-[1.45]">
+      <div
+        className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-[1.45]"
+        role="status"
+        aria-live="polite"
+      >
         <LoaderIcon className="size-3 shrink-0 animate-spin text-muted-foreground" aria-hidden />
         <a
           className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-2 hover:text-foreground/80"
@@ -108,7 +112,13 @@ export function KimiSignInControl({
         Sign in with Kimi
       </Button>
       {signInState.status === "failed" ? (
-        <span className="text-[13px] leading-[1.45] text-destructive">{signInState.message}</span>
+        <span
+          className="text-[13px] leading-[1.45] text-destructive"
+          role="status"
+          aria-live="polite"
+        >
+          {signInState.message}
+        </span>
       ) : null}
     </div>
   );
