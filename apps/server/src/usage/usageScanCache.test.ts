@@ -4,6 +4,7 @@ import {
   decodeScanCache,
   dedupeWithinFile,
   encodeScanCache,
+  isReusableCachedFile,
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -31,7 +32,13 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
 function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][]): ScanCache {
   const cache: ScanCache = new Map();
   for (const [path, mtimeMs, records] of entries) {
-    cache.set(path, { size: records.length * 10, mtimeMs, provider: "claude", records });
+    cache.set(path, {
+      size: records.length * 10,
+      mtimeMs,
+      provider: "claude",
+      completeFromMs: null,
+      records,
+    });
   }
   return cache;
 }
@@ -57,6 +64,31 @@ describe("scan cache round trip", () => {
 
     expect(encoded.models).toEqual(["claude-fable-5"]);
     expect(encoded.sessions).toEqual(["session-a"]);
+  });
+
+  it("round-trips an MCode SQLite entry with its coverage bound", () => {
+    const mcodeRecord = record({
+      provider: "mcode",
+      model: "minimax/MiniMax-M3",
+      sessionId: "mcode-session",
+      dedupeKey: "mcode:1",
+    });
+    const original: ScanCache = new Map([
+      [
+        "/home/user/.minimax/v2/sqlite/runtime-state.sqlite",
+        {
+          size: 42,
+          mtimeMs: 200,
+          provider: "mcode",
+          completeFromMs: 1_786_000_000_000,
+          records: [mcodeRecord],
+        },
+      ],
+    ]);
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))))).toEqual(
+      original,
+    );
   });
 
   it("treats a corrupt or foreign document as an empty cache", () => {
@@ -105,6 +137,28 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
     expect(restored.has("/a.jsonl")).toBe(false);
+  });
+});
+
+describe("isReusableCachedFile", () => {
+  const entry = {
+    size: 42,
+    mtimeMs: 100,
+    provider: "mcode" as const,
+    completeFromMs: 1_000,
+    records: [record({ provider: "mcode" })],
+  };
+
+  it("reuses a broad MCode scan for a narrower request", () => {
+    expect(isReusableCachedFile(entry, { size: 42, mtimeMs: 100, provider: "mcode" }, 2_000)).toBe(
+      true,
+    );
+  });
+
+  it("rejects a narrow MCode scan for a broader request", () => {
+    expect(isReusableCachedFile(entry, { size: 42, mtimeMs: 100, provider: "mcode" }, 500)).toBe(
+      false,
+    );
   });
 });
 

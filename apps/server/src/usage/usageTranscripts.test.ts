@@ -4,6 +4,7 @@ import {
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseMcodeUsageRow,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -233,6 +234,73 @@ describe("parseCodexLine", () => {
       );
       expect(record).not.toBeNull();
     });
+  });
+});
+
+describe("parseMcodeUsageRow", () => {
+  it("keeps uncached input separate from both cache categories", () => {
+    expect(
+      parseMcodeUsageRow({
+        id: 17,
+        session_id: "session-a",
+        model: "minimax/MiniMax-M3",
+        ts: 1_786_000_000_000,
+        input_tokens: 120,
+        output_tokens: 45,
+        reasoning_tokens: 12,
+        cache_read_tokens: 900,
+        cache_write_tokens: 30,
+        cost_usd: 0,
+      }),
+    ).toEqual({
+      provider: "mcode",
+      timestampMs: 1_786_000_000_000,
+      model: "minimax/MiniMax-M3",
+      sessionId: "session-a",
+      totals: {
+        uncachedInputTokens: 120,
+        cachedInputTokens: 900,
+        cacheCreationTokens: 30,
+        outputTokens: 45,
+        reasoningTokens: 12,
+      },
+      reportedCostUsd: null,
+      dedupeKey: "mcode:17",
+    });
+  });
+
+  it("keeps rows with missing historical model attribution", () => {
+    expect(
+      parseMcodeUsageRow({
+        id: 18,
+        session_id: "session-b",
+        model: null,
+        ts: 1_786_000_001_000,
+        input_tokens: 10,
+        output_tokens: 5,
+        reasoning_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_usd: 0.25,
+      })?.model,
+    ).toBe("unknown");
+  });
+
+  it("keeps positive reported cost even when token counters are zero", () => {
+    expect(
+      parseMcodeUsageRow({
+        id: 19,
+        session_id: "session-c",
+        model: "minimax/MiniMax-M3",
+        ts: 1_786_000_002_000,
+        input_tokens: 0,
+        output_tokens: 0,
+        reasoning_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_usd: 0.5,
+      })?.reportedCostUsd,
+    ).toBe(0.5);
   });
 });
 

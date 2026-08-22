@@ -41,13 +41,17 @@ import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
+  type McodeUsageStoreProbe,
+  probeMcodeUsageStore,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  statSqliteUsageStore,
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
   encodeScanCache,
+  isReusableCachedFile,
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -66,6 +70,9 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** Clients predating MCode omit their supported response contract. */
+const PRE_MCODE_USAGE_CONTRACT_VERSION = 4 as const;
+
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
@@ -74,6 +81,12 @@ const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
   document: Schema.Unknown,
 });
+
+interface TranscriptSource {
+  readonly provider: UsageProviderKind;
+  readonly dir: string;
+  readonly file?: string;
+}
 const decodeRatesCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
 );
@@ -93,13 +106,59 @@ export class UsageService extends Context.Service<
   }
 >()("t3/usage/UsageService") {}
 
+export function resolveMcodeDataDir(
+  environment: Readonly<Record<string, string | undefined>>,
+  defaultDataDir: string,
+): string {
+  return (
+    environment["MINIMAX_DATA_DIR"]?.trim() ||
+    environment["MAVIS_DATA_DIR"]?.trim() ||
+    defaultDataDir
+  );
+}
+
+export function chooseMcodeUsageStore(
+  primaryPath: string,
+  primaryProbe: McodeUsageStoreProbe,
+  alternatePath: string,
+  alternateProbe: McodeUsageStoreProbe,
+): string {
+  if (primaryProbe !== "absent") return primaryPath;
+  return alternateProbe === "absent" ? primaryPath : alternatePath;
+}
+
+export function negotiateUsageContractVersion(
+  requestedVersion: number | undefined,
+): typeof PRE_MCODE_USAGE_CONTRACT_VERSION | typeof USAGE_CONTRACT_VERSION {
+  return requestedVersion !== undefined && requestedVersion >= USAGE_CONTRACT_VERSION
+    ? USAGE_CONTRACT_VERSION
+    : PRE_MCODE_USAGE_CONTRACT_VERSION;
+}
+
+export type UsageSourceExistence = "present" | "missing" | "failed";
+
+export function classifyUsageSourceExistence(exists: boolean | null): UsageSourceExistence {
+  return exists === null ? "failed" : exists ? "present" : "missing";
+}
+
+export function summarizeSourceReadFailures(
+  totalFiles: number,
+  failedFiles: number,
+): Pick<UsageSource, "status" | "message"> {
+  if (failedFiles === 0) return { status: "ok", message: null };
+  return {
+    status: failedFiles === totalFiles ? "failed" : "partial",
+    message: `${failedFiles} usage file${failedFiles === 1 ? "" : "s"} could not be read.`,
+  };
+}
+
 /** Empty summary, for suites that only need the RPC surface to resolve. */
 export const layerTest = Layer.succeed(
   UsageService,
   UsageService.of({
     readSummary: (input) =>
       Effect.succeed({
-        contractVersion: USAGE_CONTRACT_VERSION,
+        contractVersion: negotiateUsageContractVersion(input.contractVersion),
         readAt: "1970-01-01T00:00:00.000Z",
         timeZone: input.timeZone,
         sinceDay: input.sinceDay,
@@ -219,10 +278,25 @@ export const make = Effect.gen(function* () {
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+    const mcodeDataDir = resolveMcodeDataDir(process.env, path.join(NodeOS.homedir(), ".minimax"));
+    const primaryMcodeDb = path.join(mcodeDataDir, "v2", "sqlite", "runtime-state.sqlite");
+    const alternateMcodeDb = path.join(mcodeDataDir, "v2", "chats", "local-runtime.sqlite");
+    const [primaryProbe, alternateProbe] = yield* Effect.promise(() =>
+      Promise.all([probeMcodeUsageStore(primaryMcodeDb), probeMcodeUsageStore(alternateMcodeDb)]),
+    );
+    const mcodeDb = chooseMcodeUsageStore(
+      primaryMcodeDb,
+      primaryProbe,
+      alternateMcodeDb,
+      alternateProbe,
+    );
+
+    const sources: readonly TranscriptSource[] = [
+      { provider: "claude", dir: claudeDir },
+      { provider: "codex", dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "mcode", dir: path.dirname(mcodeDb), file: mcodeDb },
     ];
+    return sources;
   });
 
   /**
@@ -263,34 +337,39 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+    mcodeSinceMs: number,
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
       // at one directory, a hit parsed by the other parser must not be reused.
-      if (
-        cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
-        cached.provider === provider
-      ) {
+      if (cached && isReusableCachedFile(cached, { size, mtimeMs, provider }, mcodeSinceMs)) {
         return cached.records;
       }
 
-      const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      const parsed = yield* Effect.promise(() =>
+        readTranscriptRecords(filePath, provider, mcodeSinceMs),
+      );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null) return null;
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
+      fileCache.set(filePath, {
+        size,
+        mtimeMs,
+        provider,
+        completeFromMs: provider === "mcode" ? mcodeSinceMs : null,
+        records,
+      });
       cacheDirty = true;
       return records;
     });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+    const contractVersion = negotiateUsageContractVersion(input.contractVersion);
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -323,13 +402,20 @@ export const make = Effect.gen(function* () {
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     yield* ensureRates();
     yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so `readSummary` stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const resolvedDirs = yield* resolveTranscriptDirs().pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    const dirs =
+      contractVersion >= USAGE_CONTRACT_VERSION
+        ? resolvedDirs
+        : resolvedDirs.filter((source) => source.provider !== "mcode");
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -353,36 +439,63 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir } of dirs) {
+    for (const source of dirs) {
+      const { provider, dir } = source;
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        .exists(source.file ?? dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      const existence = classifyUsageSourceExistence(exists);
 
-      if (!exists) {
+      if (existence !== "present") {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "missing",
+          status: existence,
           scannedFiles: 0,
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+          message:
+            existence === "failed"
+              ? source.file === undefined
+                ? "Transcript directory could not be inspected."
+                : "Usage store could not be inspected."
+              : source.file === undefined
+                ? "No transcript directory on this environment."
+                : "No usage store on this environment.",
         });
         continue;
       }
 
-      walkedRoots.push(dir);
-      const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      const listing = yield* Effect.promise(async () => {
+        if (source.file === undefined) return listTranscriptFiles(dir, windowStartMs);
+        const files = await statSqliteUsageStore(source.file, windowStartMs);
+        return files === null ? { files: [], failedEntries: 1 } : { files, failedEntries: 0 };
+      });
+      const files = listing.files;
+      // Only a complete listing proves that an absent cached path was deleted.
+      // Any failure keeps the warm cache available for the next retry.
+      if (listing.failedEntries === 0) walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let failedFiles = listing.failedEntries;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
       for (const file of files) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        const records = yield* readFileRecords(
+          file.path,
+          file.size,
+          file.mtimeMs,
+          provider,
+          windowStartMs,
+        );
+        if (records === null) {
+          failedFiles += 1;
+          continue;
+        }
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -397,14 +510,18 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const readHealth = summarizeSourceReadFailures(
+        files.length + listing.failedEntries,
+        failedFiles,
+      );
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status: readHealth.status,
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message: readHealth.message,
       });
     }
 
@@ -412,7 +529,7 @@ export const make = Effect.gen(function* () {
       livePaths,
       walkedRoots,
       windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      retentionCutoffMs,
     });
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();
@@ -422,7 +539,7 @@ export const make = Effect.gen(function* () {
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
-      contractVersion: USAGE_CONTRACT_VERSION,
+      contractVersion,
       readAt: DateTime.formatIso(readAt),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
