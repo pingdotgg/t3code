@@ -278,6 +278,27 @@ interface PersistHistoryRequest extends HistoryWrite {
   immediate: boolean;
 }
 
+function mergePersistHistoryRequests(
+  current: PersistHistoryRequest,
+  next: PersistHistoryRequest,
+): PersistHistoryRequest {
+  if (next.mode === "truncate") {
+    return {
+      ...next,
+      immediate: current.immediate || next.immediate,
+    };
+  }
+  const contents = `${current.contents}${next.contents}`;
+  return {
+    contents,
+    mode: current.mode,
+    immediate:
+      current.immediate ||
+      next.immediate ||
+      Buffer.byteLength(contents) >= DEFAULT_PERSIST_CHUNK_BYTES,
+  };
+}
+
 type PendingProcessEvent =
   | { type: "output"; data: string }
   | { type: "exit"; event: PtyAdapter.PtyExitEvent };
@@ -1389,31 +1410,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* registerKillFiber(process, fiber);
   });
 
+  const failedPersistByKey = new Map<string, HistoryWrite>();
   const persistWorker = yield* makeKeyedCoalescingWorker<
     string,
     PersistHistoryRequest,
     never,
     never
   >({
-    merge: (current, next) => {
-      if (next.mode === "truncate") {
-        return {
-          ...next,
-          immediate: current.immediate || next.immediate,
-        };
-      }
-      const contents = `${current.contents}${next.contents}`;
-      return {
-        contents,
-        mode: current.mode,
-        immediate:
-          current.immediate ||
-          next.immediate ||
-          Buffer.byteLength(contents) >= DEFAULT_PERSIST_CHUNK_BYTES,
-      };
-    },
+    merge: mergePersistHistoryRequests,
     process: Effect.fn("terminal.persistHistoryWorker")(function* (sessionKey, request) {
-      if (!request.immediate) {
+      const failedRequest = failedPersistByKey.get(sessionKey);
+      const nextRequest =
+        failedRequest === undefined
+          ? request
+          : mergePersistHistoryRequests({ ...failedRequest, immediate: false }, request);
+      if (!nextRequest.immediate) {
         yield* Effect.sleep(DEFAULT_PERSIST_DEBOUNCE_MS);
       }
 
@@ -1423,19 +1434,54 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       yield* fileSystem
-        .writeFileString(historyPath(threadId, terminalId), request.contents, {
-          flag: request.mode === "append" ? "a" : "w",
+        .writeFileString(historyPath(threadId, terminalId), nextRequest.contents, {
+          flag: nextRequest.mode === "append" ? "a" : "w",
         })
         .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("failed to persist terminal history", {
-              threadId,
-              terminalId,
-              error,
-            }),
-          ),
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.sync(() => {
+                failedPersistByKey.set(sessionKey, nextRequest);
+              }).pipe(
+                Effect.andThen(
+                  Effect.logWarning("failed to persist terminal history", {
+                    threadId,
+                    terminalId,
+                    error,
+                  }),
+                ),
+              ),
+            onSuccess: () =>
+              Effect.sync(() => {
+                failedPersistByKey.delete(sessionKey);
+              }),
+          }),
         );
     }),
+  });
+
+  const drainPersist = Effect.fn("terminal.drainPersist")(function* (
+    threadId: string,
+    terminalId: string,
+  ) {
+    yield* persistWorker.drainKey(toSessionKey(threadId, terminalId));
+  });
+
+  const retryFailedPersist = Effect.fn("terminal.retryFailedPersist")(function* (
+    threadId: string,
+    terminalId: string,
+  ) {
+    const sessionKey = toSessionKey(threadId, terminalId);
+    yield* drainPersist(threadId, terminalId);
+    if (!failedPersistByKey.has(sessionKey)) {
+      return;
+    }
+    yield* persistWorker.enqueue(sessionKey, {
+      contents: "",
+      mode: "append",
+      immediate: true,
+    });
+    yield* drainPersist(threadId, terminalId);
   });
 
   const queuePersist = Effect.fn("terminal.queuePersist")(function* (
@@ -1449,20 +1495,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
   });
 
-  const drainPersist = Effect.fn("terminal.drainPersist")(function* (
-    threadId: string,
-    terminalId: string,
-  ) {
-    yield* persistWorker.drainKey(toSessionKey(threadId, terminalId));
-  });
-
   const flushPersist = Effect.fn("terminal.flushPersist")(function* (
     threadId: string,
     terminalId: string,
+    history: string,
   ) {
-    yield* persistWorker.enqueue(toSessionKey(threadId, terminalId), {
+    const sessionKey = toSessionKey(threadId, terminalId);
+    yield* persistWorker.enqueue(sessionKey, {
       contents: "",
       mode: "append",
+      immediate: true,
+    });
+    yield* drainPersist(threadId, terminalId);
+    if (!failedPersistByKey.has(sessionKey)) {
+      return;
+    }
+    yield* persistWorker.enqueue(sessionKey, {
+      contents: history,
+      mode: "truncate",
       immediate: true,
     });
     yield* drainPersist(threadId, terminalId);
@@ -1574,6 +1624,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
+    failedPersistByKey.delete(toSessionKey(threadId, terminalId));
     yield* fileSystem.remove(historyPath(threadId, terminalId), { force: true }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("failed to delete terminal history", {
@@ -2062,9 +2113,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (Option.isSome(session)) {
       yield* stopProcess(session.value);
       yield* unregisterTerminal({ threadId, terminalId });
-      yield* flushPersist(threadId, terminalId);
+      yield* flushPersist(threadId, terminalId, session.value.history);
     } else {
-      yield* drainPersist(threadId, terminalId);
+      yield* retryFailedPersist(threadId, terminalId);
     }
 
     const removed = yield* modifyManagerState((state) => {
@@ -2220,11 +2271,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session: TerminalSessionState,
       ) {
         cleanupProcessHandles(session);
-        yield* drainPersist(session.threadId, session.terminalId);
         if (session.process) {
           yield* clearKillFiber(session.process);
           yield* runKillEscalation(session.process, session.threadId, session.terminalId);
         }
+        yield* flushPersist(session.threadId, session.terminalId, session.history);
       });
 
       yield* Effect.forEach(sessions, cleanupSession, {
@@ -2241,7 +2292,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const sessionKey = toSessionKey(input.threadId, terminalId);
     const existing = yield* getSession(input.threadId, terminalId);
     if (Option.isNone(existing)) {
-      yield* drainPersist(input.threadId, terminalId);
+      yield* retryFailedPersist(input.threadId, terminalId);
       const history = yield* readHistory(input.threadId, terminalId);
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;

@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -1137,6 +1138,51 @@ it.layer(
       expect(writes.length).toBeGreaterThan(0);
       expect(writes.every((write) => write.flag === "a")).toBe(true);
       expect(writes.map((write) => write.contents).join("")).toBe("first redraw\rsecond redraw\r");
+    }),
+  );
+
+  it.effect("retries a failed history append before close completes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const failedAppend = yield* Deferred.make<void>();
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "writeFileString",
+        pathOrDescriptor: "terminal-history",
+      });
+      let shouldFailAppend = true;
+      const recoveringFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (path, contents, options) => {
+          if (
+            path.endsWith(".log") &&
+            options?.flag === "a" &&
+            contents.length > 0 &&
+            shouldFailAppend
+          ) {
+            shouldFailAppend = false;
+            return Deferred.succeed(failedAppend, undefined).pipe(
+              Effect.andThen(Effect.fail(cause)),
+            );
+          }
+          return fileSystem.writeFileString(path, contents, options);
+        },
+      });
+      const { manager, ptyAdapter, logsDir } = yield* createManager(100).pipe(
+        Effect.provideService(FileSystem.FileSystem, recoveringFileSystem),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("survives retry\r");
+      yield* Deferred.await(failedAppend);
+      yield* manager.close({ threadId: "thread-1" });
+
+      const historyPath = yield* historyLogPath(logsDir);
+      expect(yield* readFileString(historyPath)).toBe("survives retry\r");
     }),
   );
 
