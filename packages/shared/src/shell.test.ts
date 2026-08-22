@@ -275,6 +275,45 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
   });
 
+  it("reads the Machine and User registry scopes for PATH", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(
+      () =>
+        "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n" +
+        "__T3CODE_ENV_FNM_DIR_START__\nC:\\fnm\n__T3CODE_ENV_FNM_DIR_END__\n",
+    );
+
+    expect(readEnvironmentFromWindowsShell(["PATH", "FNM_DIR"], execFile)).toEqual({
+      PATH: "C:\\Tools",
+      FNM_DIR: "C:\\fnm",
+    });
+
+    // Pin the full ordered statement sequence, not isolated substrings. This
+    // command cannot execute on the machines that run this suite, so the text
+    // is the only guard. A substring assertion still passes with the scoped
+    // reads discarded, with the join dropped, or with the order reversed.
+    const command = execFile.mock.calls[0]?.[1].at(-1) ?? "";
+    expect(command).toContain(
+      [
+        "$value = [Environment]::GetEnvironmentVariable('PATH')",
+        "$machine = [Environment]::GetEnvironmentVariable('PATH', 'Machine')",
+        "$user = [Environment]::GetEnvironmentVariable('PATH', 'User')",
+        "$value = (@($value, $machine, $user) | Where-Object { $_ }) -join ';'",
+        "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
+      ].join("; "),
+    );
+    expect(command).toContain(
+      "$value = [Environment]::GetEnvironmentVariable('FNM_DIR'); if ($null -ne $value",
+    );
+    expect(command).not.toContain("[Environment]::GetEnvironmentVariable('FNM_DIR', 'Machine')");
+    expect(command).not.toContain("[Environment]::GetEnvironmentVariable('FNM_DIR', 'User')");
+  });
+
   it("falls back to Windows PowerShell when pwsh.exe is unavailable", () => {
     const execFile = vi.fn<
       (
