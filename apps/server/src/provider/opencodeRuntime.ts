@@ -211,6 +211,12 @@ export function parseModelsCliOutput(stdout: string): {
     { readonly id: string; readonly name: string; readonly models: { [key: string]: Model } }
   >;
   readonly connected: ReadonlyArray<string>;
+  /**
+   * The output ended mid-record, so providers printed after the cut are missing. The
+   * CLI prints slug/JSON pairs, so a trailing slug with no body - or with a body that
+   * does not parse - can only mean the output was cut short.
+   */
+  readonly truncated: boolean;
 } {
   const providers = new Map<
     string,
@@ -220,10 +226,19 @@ export function parseModelsCliOutput(stdout: string): {
   let currentSlug: string | null = null;
   const jsonLines: Array<string> = [];
 
+  // `sawBody` keeps a bodyless `opencode models` listing (no `--verbose`) from reading
+  // as truncated, and `lastRecordIncomplete` tracks only the final record because that
+  // is the one a cut lands on.
+  let sawBody = false;
+  let lastRecordIncomplete = false;
+
   const flushModel = () => {
-    if (currentSlug !== null && jsonLines.length > 0) {
+    if (currentSlug !== null) {
       const jsonStr = jsonLines.join("\n").trim();
-      if (jsonStr.length > 0) {
+      if (jsonStr.length === 0) {
+        lastRecordIncomplete = sawBody;
+      } else {
+        sawBody = true;
         try {
           const model = JSON.parse(jsonStr) as Model;
           const separator = currentSlug.indexOf("/");
@@ -237,8 +252,10 @@ export function parseModelsCliOutput(stdout: string): {
             }
             provider.models[modelID] = model;
           }
+          lastRecordIncomplete = false;
         } catch {
           // Skip unparseable model JSON
+          lastRecordIncomplete = true;
         }
       }
     }
@@ -263,7 +280,7 @@ export function parseModelsCliOutput(stdout: string): {
   }
   flushModel();
 
-  return { providers, connected: [...providers.keys()] };
+  return { providers, connected: [...providers.keys()], truncated: lastRecordIncomplete };
 }
 
 /** @internal */
@@ -744,8 +761,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       let agentsResult = initialAgentsResult;
       let skillsResult = initialSkillsResult;
 
-      // Retry once after 1s on transient failures (e.g. SQLite "database is locked")
-      const needsModelsRetry = modelsResult._tag === "Failure" || modelsResult.value.code !== 0;
+      const parseModels = (result: typeof modelsResult) =>
+        result._tag === "Success" && result.value.code === 0
+          ? parseModelsCliOutput(result.value.stdout)
+          : undefined;
+      let parsed = parseModels(modelsResult);
+
+      // Retry once after 1s on transient failures (e.g. SQLite "database is locked") and
+      // on a truncated inventory, which the CLI reports as a clean exit.
+      const needsModelsRetry = parsed === undefined || parsed.truncated;
       const needsAgentsRetry = agentsResult._tag === "Failure" || agentsResult.value.code !== 0;
       const needsSkillsRetry = skillsResult._tag === "Failure" || skillsResult.value.code !== 0;
       if (needsModelsRetry || needsAgentsRetry || needsSkillsRetry) {
@@ -761,6 +785,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         modelsResult = m2;
         agentsResult = a2;
         skillsResult = s2;
+        parsed = parseModels(modelsResult);
       }
 
       if (modelsResult._tag === "Failure") {
@@ -778,7 +803,15 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         });
       }
 
-      const parsed = parseModelsCliOutput(modelsResult.value.stdout);
+      // Reporting a partial inventory would silently drop every provider printed after
+      // the cut, so surface it instead.
+      if (parsed === undefined || parsed.truncated) {
+        return yield* new OpenCodeRuntimeError({
+          operation: "loadInventoryFromCli",
+          detail: "OpenCode models output ended mid-record, so the inventory is incomplete.",
+        });
+      }
+
       const connected = [...parsed.connected];
       const allProviders: ProviderListResponse["all"] = [...parsed.providers.values()].map(
         (provider) => ({
