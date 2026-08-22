@@ -8,6 +8,7 @@ import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
   PermissionResult,
+  SDKControlGetContextUsageResponse,
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -95,8 +96,21 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     }
   }
 
+  /** Simulates a wedged CLI: the control request is taken and never answered. */
+  public hangInterrupt = false;
+
+  /**
+   * Left undefined by default so `queryCurrentContextUsage` short-circuits,
+   * matching the tests that predate context usage. Assigned per-test to cover
+   * the probe, including the wedged case where it never settles.
+   */
+  public getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+
   readonly interrupt = async (): Promise<void> => {
     this.interruptCalls.push(undefined);
+    if (this.hangInterrupt) {
+      await new Promise<never>(() => {});
+    }
   };
 
   readonly stopTask = async (taskId: string): Promise<void> => {
@@ -1658,6 +1672,59 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(stoppedTaskEvent.payload.status, "stopped");
         assert.equal(stoppedTaskEvent.payload.taskType, "local_agent");
         assert.equal(stoppedTaskEvent.payload.title, "Agent A");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("interruptTurn stops a session whose runtime never answers its control channel", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const turnCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      // A wedged CLI stops answering its control channel altogether, so the
+      // context-usage probe that completeTurn runs during teardown hangs on
+      // the same dead channel. Both bounds have to fire, or the escalation
+      // stalls in the same place the interrupt did.
+      harness.query.hangInterrupt = true;
+      harness.query.getContextUsage = () => new Promise<never>(() => {});
+      const interruptFiber = yield* adapter.interruptTurn(session.threadId).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      yield* TestClock.adjust("1 second");
+
+      // Stop returns instead of hanging on the unanswered control request.
+      yield* Fiber.join(interruptFiber);
+      assert.equal(harness.query.interruptCalls.length, 1);
+      // ...and the unresponsive runtime is torn down, so the thread is not
+      // left pinned to a session that can never report a terminal state.
+      assert.equal(harness.query.closeCalls, 1);
+
+      const turnCompletedEvents = Array.from(yield* Fiber.join(turnCompletedFiber));
+      const turnCompleted = turnCompletedEvents[0];
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+        assert.equal(turnCompleted.payload.state, "interrupted");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

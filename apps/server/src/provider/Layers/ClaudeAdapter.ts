@@ -2100,13 +2100,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return undefined;
     }
 
+    // Bounded because this rides the same control channel as interrupt, and
+    // completeTurn runs on the teardown path: an unbounded probe against a
+    // wedged CLI would hang the very escalation meant to free the thread.
+    // A skipped context-meter refresh is invisible next to a stranded turn.
     const usage = yield* Effect.promise(async () => {
       try {
         return await context.query.getContextUsage?.();
       } catch {
         return undefined;
       }
-    });
+    }).pipe(Effect.timeoutOption("1 second"), Effect.map(Option.getOrUndefined));
     if (!usage) {
       return undefined;
     }
@@ -4518,10 +4522,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           { concurrency: 8, discard: true },
         ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
       }
-      yield* Effect.tryPromise({
+      // Bounded for the same reason as the tasks above, and this is the one
+      // that actually strands a thread: a wedged CLI never answers the
+      // interrupt control request, so an unbounded await left the session
+      // pinned at "running" forever. Every later Stop press then queued
+      // behind a promise that would never settle, the client's outbox stayed
+      // blocked on the busy session, and the thread could not even be
+      // archived. Stop has to mean something, so a runtime that will not
+      // acknowledge gets torn down instead — the same path its own process
+      // exit would have taken, which completes the turn and frees the thread.
+      const acknowledged = yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
         catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
-      });
+      }).pipe(Effect.timeoutOption("10 seconds"));
+      if (Option.isNone(acknowledged)) {
+        yield* Effect.logWarning("claude.turn.interrupt.timeout", {
+          threadId,
+        });
+        yield* stopSessionInternal(context, { emitExitEvent: true });
+      }
     },
   );
 
