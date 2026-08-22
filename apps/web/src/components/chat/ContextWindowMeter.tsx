@@ -1,5 +1,6 @@
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import { cn } from "~/lib/utils";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 
@@ -40,7 +41,12 @@ export function ContextWindowMeter(props: {
           <Button
             size="icon-sm"
             variant="ghost-muted"
-            className="size-7 rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground"
+            className={cn(
+              "rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground",
+              usedPercentage
+                ? "h-7 w-auto gap-1 px-1.5 sm:h-7 sm:w-auto"
+                : "size-7",
+            )}
             aria-label={
               usage.maxTokens !== null && usedPercentage
                 ? `Context window ${usedPercentage} used`
@@ -75,6 +81,14 @@ export function ContextWindowMeter(props: {
                 />
               </svg>
             </span>
+            {usedPercentage ? (
+              <span
+                aria-hidden="true"
+                className="text-[9px] leading-none tabular-nums text-secondary-label"
+              >
+                {usedPercentage}
+              </span>
+            ) : null}
           </Button>
         }
       />
