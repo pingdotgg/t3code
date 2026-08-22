@@ -195,6 +195,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
+      assert.equal(defaultsByCommand.get("thread.rename" as KeybindingCommand), "mod+shift+r");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
       assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");
@@ -280,7 +281,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
         yield* writeKeybindingsConfig(keybindingsConfigPath, [
           { key: "mod+shift+t", command: "terminal.toggle" },
-          { key: "mod+shift+r", command: "script.run-tests.run" },
+          { key: "mod+shift+z", command: "script.run-tests.run" },
         ]);
 
         yield* Effect.gen(function* () {

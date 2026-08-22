@@ -1712,7 +1712,7 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, open, openMobile, setOpen, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
@@ -2389,10 +2389,15 @@ export default function Sidebar() {
 
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
-  const startThreadRename = useCallback((threadRef: ScopedThreadRef, title: string) => {
-    setRenamingThreadKey(scopedThreadKey(threadRef));
-    setRenamingTitle(title);
-  }, []);
+  const startThreadRename = useCallback(
+    (threadRef: ScopedThreadRef, title: string) => {
+      const threadKey = scopedThreadKey(threadRef);
+      if (renamingThreadKey === threadKey) return;
+      setRenamingThreadKey(threadKey);
+      setRenamingTitle(title);
+    },
+    [renamingThreadKey],
+  );
   const cancelThreadRename = useCallback(() => setRenamingThreadKey(null), []);
   const commitThreadRename = useCallback(
     (threadRef: ScopedThreadRef, title: string, originalTitle: string) => {
@@ -3281,6 +3286,27 @@ export default function Sidebar() {
           modelPickerOpen: isModelPickerOpen(),
         },
       });
+      if (command === "thread.rename") {
+        const activeThread = routeThreadKey
+          ? threads.find(
+              (thread) =>
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+            )
+          : null;
+        if (!activeThread || activeThread.archivedAt !== null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (isSearchingThreads) clearThreadSearch();
+        const activeThreadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+        if (projectScopeKey !== null && !threadByKey.has(scopedThreadKey(activeThreadRef))) {
+          setProjectScopeKey(null);
+        }
+        if (isMobile ? !openMobile : !open) {
+          (isMobile ? setOpenMobile : setOpen)(true);
+        }
+        startThreadRename(activeThreadRef, activeThread.title);
+        return;
+      }
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
@@ -3309,10 +3335,20 @@ export default function Sidebar() {
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
     keybindings,
+    clearThreadSearch,
+    isSearchingThreads,
+    isMobile,
     navigateToThread,
     orderedThreadKeys,
+    open,
+    openMobile,
+    projectScopeKey,
     routeTerminalOpen,
     routeThreadKey,
+    setOpen,
+    setOpenMobile,
+    startThreadRename,
+    threads,
     threadByKey,
   ]);
 
