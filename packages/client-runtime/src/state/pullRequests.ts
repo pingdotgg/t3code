@@ -106,6 +106,31 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    /**
+     * Which files this reader has already cleared, apart from the diff: the answer moves with
+     * every checkbox rather than with every push, and a patch of a few hundred files must not
+     * be re-fetched to learn that one box was ticked.
+     */
+    filesViewed: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:files-viewed",
+      tag: WS_METHODS.pullRequestsFilesViewed,
+      staleTimeMs: 15_000,
+    }),
+    /**
+     * One request per batch of presses, and one in flight per change request: the host applies
+     * these in order, and a reader ticking down a file list faster than the round trip would
+     * otherwise race their own presses.
+     */
+    setFilesViewed: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-files-viewed",
+      tag: WS_METHODS.pullRequestsSetFilesViewed,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.repository, input.number]),
+      },
+    }),
     runAction: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:run-action",
       tag: WS_METHODS.pullRequestsRunAction,

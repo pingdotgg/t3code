@@ -9,6 +9,7 @@ import type {
   PullRequestChecksState,
   PullRequestComment,
   PullRequestCommit,
+  PullRequestFileViewedState,
   PullRequestLabel,
   PullRequestMergeCapabilities,
   PullRequestOmittedFileStat,
@@ -2238,4 +2239,123 @@ export function decodePullRequestFilesJson(
     rawCount: decoded.success.length,
     omittedFileStats,
   });
+}
+
+/**
+ * Which files of a pull request the signed-in account has cleared.
+ *
+ * GraphQL only, since the REST files endpoint the patch is read from carries no viewed state at
+ * all, so this is a second read rather than a wider version of the first. One page of a hundred
+ * files costs a single point of the hourly budget, which is why it can ride the diff's own
+ * refresh without being noticed.
+ */
+export const PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { path viewerViewedState }
+      }
+    }
+  }
+}`;
+
+const RawPullRequestFilesViewedSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        pullRequest: Schema.NullOr(
+          Schema.Struct({
+            files: Schema.Struct({
+              pageInfo: Schema.Struct({
+                hasNextPage: Schema.Boolean,
+                endCursor: Schema.NullOr(Schema.String),
+              }),
+              nodes: Schema.NullOr(
+                Schema.Array(
+                  Schema.NullOr(
+                    Schema.Struct({
+                      path: Schema.String,
+                      // Decoded as a plain string and narrowed below: a GitHub release that adds
+                      // a fourth state must not fail the whole page.
+                      viewerViewedState: Schema.String,
+                    }),
+                  ),
+                ),
+              ),
+            }),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodePullRequestFilesViewed = decodeJsonResult(RawPullRequestFilesViewedSchema);
+
+export interface GitHubPullRequestFilesViewedPage {
+  readonly files: ReadonlyArray<{
+    readonly path: string;
+    readonly state: PullRequestFileViewedState;
+  }>;
+  /** Where the next page carries on, or null once the host has no more to give. */
+  readonly nextCursor: string | null;
+}
+
+/** Anything this host does not name is treated as unread, which is the state that asks for least. */
+function toFileViewedState(raw: string): PullRequestFileViewedState {
+  switch (raw.trim().toUpperCase()) {
+    case "VIEWED":
+      return "viewed";
+    case "DISMISSED":
+      return "dismissed";
+    default:
+      return "unviewed";
+  }
+}
+
+export function decodePullRequestFilesViewedJson(
+  raw: string,
+): Result.Result<GitHubPullRequestFilesViewedPage, DecodeFailure> {
+  const decoded = decodePullRequestFilesViewed(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const files = decoded.success.data.repository?.pullRequest?.files;
+  if (files === undefined) return Result.succeed({ files: [], nextCursor: null });
+  return Result.succeed({
+    files: (files.nodes ?? []).flatMap((node) =>
+      node === null || node.path.length === 0
+        ? []
+        : [{ path: node.path, state: toFileViewedState(node.viewerViewedState) }],
+    ),
+    nextCursor: files.pageInfo.hasNextPage ? files.pageInfo.endCursor : null,
+  });
+}
+
+/**
+ * One document that clears and restores as many files as the reader ticked, rather than one
+ * request each.
+ *
+ * GitHub has no bulk form of either mutation, and `markFileAsViewed` and `unmarkFileAsViewed`
+ * take a single path, so the batching is done with aliases. Top-level mutation fields run in the order
+ * they are written, so the last word about a path is the one that sticks, and the whole burst
+ * costs one HTTP round trip and one subprocess instead of one of each per press.
+ *
+ * Paths travel as variables rather than inside the document: they are the host's own strings, but
+ * a path is data and a document is not, and building one out of the other is how injection starts.
+ */
+export function buildSetFilesViewedGraphQlMutation(
+  files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>,
+): { readonly query: string; readonly variables: Readonly<Record<string, string>> } | null {
+  if (files.length === 0) return null;
+  const parameters = files.map((_, index) => `$path${index}: String!`).join(", ");
+  const fields = files
+    .map(
+      (file, index) =>
+        `  f${index}: ${file.viewed ? "markFileAsViewed" : "unmarkFileAsViewed"}(input: { pullRequestId: $pullRequestId, path: $path${index} }) { clientMutationId }`,
+    )
+    .join("\n");
+  return {
+    query: `mutation($pullRequestId: ID!, ${parameters}) {\n${fields}\n}`,
+    variables: Object.fromEntries(files.map((file, index) => [`path${index}`, file.path])),
+  };
 }

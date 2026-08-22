@@ -22,6 +22,7 @@ import {
   type PullRequestDiffFileContentsResult,
   type PullRequestDiffStat,
   type PullRequestDiffInput,
+  type PullRequestFilesViewedResult,
   type PullRequestDiffResult,
   type PullRequestInvalidateInput,
   type PullRequestListEntry,
@@ -37,6 +38,7 @@ import {
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerRequestInput,
+  type PullRequestSetFilesViewedInput,
   type PullRequestSubmitReviewInput,
   type PullRequestThreadReplyInput,
   type PullRequestThreadResolutionInput,
@@ -103,6 +105,12 @@ const COMMIT_DIFF_CACHE_TTL = Duration.minutes(10);
 /** Sized like the client's own stale time; a row's counts move only when somebody pushes. */
 const LIST_STATS_CACHE_TTL = Duration.seconds(60);
 /**
+ * Short, and with no stale window behind it: this is the reader's own bookkeeping, and the
+ * press that changes it is the same press the page is already showing optimistically. Held at
+ * all only so opening a change request on two devices costs one read.
+ */
+const FILES_VIEWED_CACHE_TTL = Duration.seconds(15);
+/**
  * How long a cache's last success may still be served while a fresh read runs behind it.
  * Bounded by how the page actually revalidates: clients re-read on mount and once a minute
  * while open, and every one of those reads repopulates the cache in the background — so in
@@ -119,6 +127,7 @@ const LIST_CACHE_CAPACITY = 64;
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
 const DIFF_CACHE_CAPACITY = 128;
+const FILES_VIEWED_CACHE_CAPACITY = 128;
 
 export type PullRequestError = PullRequestUnavailableError | PullRequestOperationError;
 
@@ -144,6 +153,12 @@ export class PullRequestService extends Context.Service<
     readonly diffFileContents: (
       input: PullRequestDiffFileContentsInput,
     ) => Effect.Effect<PullRequestDiffFileContentsResult, PullRequestError>;
+    readonly filesViewed: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestFilesViewedResult, PullRequestError>;
+    readonly setFilesViewed: (
+      input: PullRequestSetFilesViewedInput,
+    ) => Effect.Effect<void, PullRequestError>;
     readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
@@ -450,6 +465,12 @@ function withRateLimitBackoff(
     ...(api.getDiffFileContents === undefined
       ? {}
       : { getDiffFileContents: wrap("getDiffFileContents", api.getDiffFileContents) }),
+    ...(api.getFilesViewed === undefined
+      ? {}
+      : { getFilesViewed: wrap("getFilesViewed", api.getFilesViewed) }),
+    ...(api.setFilesViewed === undefined
+      ? {}
+      : { setFilesViewed: interactive("setFilesViewed", api.setFilesViewed) }),
     runAction: interactive("runAction", api.runAction),
     ...(api.updateChangeRequest === undefined
       ? {}
@@ -1297,6 +1318,51 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const filesViewedUncached = (input: PullRequestRef) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) => {
+        const read = project.api.getFilesViewed;
+        return project.api.capabilities.viewedFiles === true && read
+          ? read({
+              cwd: project.project.workspaceRoot,
+              repository: project.repository,
+              host: project.host,
+              number: input.number,
+            }).pipe(Effect.mapError(toPullRequestError("filesViewed")))
+          : Effect.fail(
+              new PullRequestOperationError({
+                operation: "filesViewed",
+                detail: "This host does not track which files a reader has seen.",
+              }),
+            );
+      }),
+    );
+
+  const setFilesViewed: PullRequestService["Service"]["setFilesViewed"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
+        const write = project.api.setFilesViewed;
+        return project.api.capabilities.viewedFiles === true && write
+          ? write({
+              cwd: project.project.workspaceRoot,
+              repository: project.repository,
+              host: project.host,
+              number: input.number,
+              files: input.files,
+            }).pipe(Effect.mapError(toPullRequestError("setFilesViewed")))
+          : Effect.fail(
+              new PullRequestOperationError({
+                operation: "setFilesViewed",
+                detail: "This host does not track which files a reader has seen.",
+              }),
+            );
+      }),
+      // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
+      // change request, and dropping a 300-file diff on every checkbox is the whole cost of
+      // the feature. Only this reader's own bookkeeping is forgotten.
+      Effect.tap(() => Effect.sync(() => bumpFilesViewedEpoch(input))),
+    );
+
   const runAction: PullRequestService["Service"]["runAction"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
@@ -1872,14 +1938,20 @@ export const make = Effect.gen(function* () {
   const REF_EPOCH_CAPACITY = 2_048;
   const refScope = (ref: PullRequestRef) => `${ref.projectId} ${ref.repository} ${ref.number}`;
   const refEpoch = (ref: PullRequestRef) => refEpochs.get(refScope(ref)) ?? 0;
-  const bumpRefEpoch = (ref: PullRequestRef) => {
+  const bumpEpoch = (epochs: Map<string, number>, ref: PullRequestRef) => {
     const scope = refScope(ref);
-    if (!refEpochs.has(scope) && refEpochs.size >= REF_EPOCH_CAPACITY) {
-      const oldest = refEpochs.keys().next().value;
-      if (oldest !== undefined) refEpochs.delete(oldest);
+    if (!epochs.has(scope) && epochs.size >= REF_EPOCH_CAPACITY) {
+      const oldest = epochs.keys().next().value;
+      if (oldest !== undefined) epochs.delete(oldest);
     }
-    refEpochs.set(scope, ++epochCounter);
+    epochs.set(scope, ++epochCounter);
   };
+  const bumpRefEpoch = (ref: PullRequestRef) => bumpEpoch(refEpochs, ref);
+  // Its own scope, so a press forgets the reader's ticks and nothing else. The read's key
+  // carries both epochs, which is what makes an ordinary refresh re-ask for these too.
+  const filesViewedEpochs = new Map<string, number>();
+  const filesViewedEpoch = (ref: PullRequestRef) => filesViewedEpochs.get(refScope(ref)) ?? 0;
+  const bumpFilesViewedEpoch = (ref: PullRequestRef) => bumpEpoch(filesViewedEpochs, ref);
 
   /** The positional filter slot of a cache key, back as the record `listUncached` takes. */
   const filtersOfKey = (
@@ -2060,6 +2132,34 @@ export const make = Effect.gen(function* () {
     return staleDiff(key, Cache.get(diffCache, key));
   };
 
+  const filesViewedCache = yield* Cache.makeWith(
+    (key: string) => {
+      const [, , projectId, repository, number] = JSON.parse(key) as [
+        number,
+        number,
+        string,
+        string,
+        number,
+      ];
+      return filesViewedUncached({ projectId, repository, number } as PullRequestRef);
+    },
+    {
+      capacity: FILES_VIEWED_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? FILES_VIEWED_CACHE_TTL : Duration.zero),
+    },
+  );
+  const filesViewed: PullRequestService["Service"]["filesViewed"] = (input) =>
+    Cache.get(
+      filesViewedCache,
+      JSON.stringify([
+        refEpoch(input),
+        filesViewedEpoch(input),
+        input.projectId,
+        input.repository,
+        input.number,
+      ]),
+    );
+
   const listStatsCache = yield* Cache.makeWith(
     (key: string) => {
       const [, refs] = JSON.parse(key) as [number, ReadonlyArray<[string, string, number]>];
@@ -2130,6 +2230,8 @@ export const make = Effect.gen(function* () {
     threadComments,
     diff,
     diffFileContents,
+    filesViewed,
+    setFilesViewed,
     runAction: invalidatedByMutation(runAction),
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),

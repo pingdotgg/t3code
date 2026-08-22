@@ -8,6 +8,7 @@ import type {
   PullRequestChecksState,
   PullRequestCheck,
   PullRequestComment,
+  PullRequestFileViewed,
   PullRequestCommit,
   PullRequestInvolvement,
   PullRequestLabel,
@@ -201,6 +202,12 @@ export interface ProviderDiffFileContents {
   readonly newContents: string;
 }
 
+export interface ProviderFilesViewed {
+  readonly files: ReadonlyArray<PullRequestFileViewed>;
+  /** The host has more files than were read, so the ones missing here are not "unviewed". */
+  readonly truncated: boolean;
+}
+
 export interface ProviderRepositoryRef {
   readonly cwd: string;
   /** Provider-native repository identity, e.g. `owner/repo` or `group/subgroup/project`. */
@@ -354,6 +361,29 @@ export interface PullRequestProviderApi {
       readonly newPath: string;
     },
   ) => Effect.Effect<ProviderDiffFileContents, PullRequestProviderError>;
+
+  /**
+   * Which files the reader has already cleared. Only called when `capabilities.viewedFiles` is
+   * true, and read apart from the patch: a host that reports this at all reports it on a clock of
+   * its own, moving with every press rather than with every push.
+   */
+  readonly getFilesViewed?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderFilesViewed, PullRequestProviderError>;
+
+  /**
+   * Clears files, or puts them back. Only called when `capabilities.viewedFiles` is true.
+   *
+   * Takes several at once because that is how they are pressed. A provider whose host has no
+   * bulk form still owes one round trip for the batch rather than one per file, since the point
+   * of gathering them here is that the host is asked once.
+   */
+  readonly setFilesViewed?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
 
   readonly runAction: (
     input: ProviderRepositoryRef & {

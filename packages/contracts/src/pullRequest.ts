@@ -384,6 +384,16 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this field was.
    */
   reactions: Schema.optional(Schema.Boolean),
+  /**
+   * A file can be marked as read by the person reading it, and the mark taken back. Optional for
+   * the same reason as `reactions`: a server that says nothing about it has none, which is what
+   * every server before this field was.
+   *
+   * True on GitHub alone so far. The others expose no equivalent, and a checkbox whose mark is
+   * forgotten the moment the tab closes is worse than no checkbox: it looks like the one beside
+   * it and keeps none of its promises.
+   */
+  viewedFiles: Schema.optional(Schema.Boolean),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   /**
@@ -799,6 +809,59 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
   newContents: Schema.String,
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
+
+/**
+ * Where one file of a change request stands with the person reading it.
+ *
+ * `dismissed` is the state that earns this its own read: the file was cleared, and has since been
+ * pushed to. It is not `viewed`, since the reader has not seen what is there now, and it is not
+ * `unviewed` either, because saying so would lose the one thing worth telling them, which is that
+ * this file and not the other forty is the one that moved.
+ */
+export const PullRequestFileViewedState = Schema.Literals(["unviewed", "viewed", "dismissed"]);
+export type PullRequestFileViewedState = typeof PullRequestFileViewedState.Type;
+
+export const PullRequestFileViewed = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  state: PullRequestFileViewedState,
+});
+export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
+
+/**
+ * Which files of a change request the reader has cleared, read apart from the diff itself.
+ *
+ * Its own read rather than a field on the patch, for the same reason the listing's line counts
+ * are their own: the two move on entirely different clocks. A patch changes when somebody pushes,
+ * and is cached by the minute; this changes on every press of the checkbox. Carrying it on the
+ * diff would mean either forgetting a three-hundred-file patch each time a box is ticked, or
+ * showing a reader their own last press as stale.
+ */
+export const PullRequestFilesViewedResult = Schema.Struct({
+  /** Only the files the host reported a state for. A file missing from this list is unviewed. */
+  files: Schema.Array(PullRequestFileViewed),
+  /**
+   * The host had more files than were read. The checkbox still works on everything on screen;
+   * the count beside it is the one thing that cannot be trusted to be whole, and says so.
+   */
+  truncated: Schema.Boolean,
+});
+export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.Type;
+
+/**
+ * Files to clear, or to put back. Several at once because a reader working down a diff ticks
+ * boxes far faster than a host answers: the surface gathers a burst into one request rather than
+ * opening a subprocess per press.
+ */
+export const PullRequestSetFilesViewedInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  files: Schema.Array(
+    Schema.Struct({
+      path: TrimmedNonEmptyString,
+      viewed: Schema.Boolean,
+    }),
+  ),
+});
+export type PullRequestSetFilesViewedInput = typeof PullRequestSetFilesViewedInput.Type;
 
 export const PullRequestActionInput = Schema.Struct({
   ...PullRequestRef.fields,

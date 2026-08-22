@@ -42,3 +42,24 @@ export function isFileDiffCollapsed(
   const foldedByDefault = foldOverride !== "expanded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
+
+/**
+ * The reader's fold choices after a file was ticked off, or put back.
+ *
+ * Clearing a file puts it away and un-clearing brings it back, so the tick moves the fold as if
+ * the reader had pressed the chevron themselves, which keeps folding a difference from what the
+ * toolbar last asked, and so keeps "collapse all" from ticking anything off.
+ */
+export function toggleFileDiffFoldForViewed(
+  fileKey: string,
+  viewed: boolean,
+  foldOverride: DiffFoldOverride,
+  toggledFileKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
+    return toggledFileKeys;
+  const next = new Set(toggledFileKeys);
+  if (next.has(fileKey)) next.delete(fileKey);
+  else next.add(fileKey);
+  return next;
+}

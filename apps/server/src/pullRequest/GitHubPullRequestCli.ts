@@ -7,6 +7,7 @@ import {
   resolvePullRequestAuthorFilter,
   type PullRequestAction,
   type PullRequestActor,
+  type PullRequestFileViewed,
   type PullRequestInvolvement,
   type PullRequestListFilters,
   type PullRequestListState,
@@ -30,10 +31,12 @@ import {
   ADD_REACTION_GRAPHQL_MUTATION,
   buildReviewSubmissionJson,
   buildReviewerRequestJson,
+  buildSetFilesViewedGraphQlMutation,
   decodeActorAvatarsJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
+  decodePullRequestFilesViewedJson,
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
@@ -53,6 +56,7 @@ import {
   decodeBaseComparisonJson,
   PULL_REQUEST_DETAIL_JSON_FIELDS,
   PULL_REQUEST_LIST_JSON_FIELDS,
+  PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY,
   PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
   REACTION_SUBJECT_PULL_REQUEST_GRAPHQL_QUERY,
   REMOVE_REACTION_GRAPHQL_MUTATION,
@@ -263,6 +267,12 @@ const PULL_REQUEST_FALLBACK_MAX_ROWS = 1_000;
 
 /** What the files API serves at most in one response, which is what one slice is made of. */
 const DIFF_FILES_PAGE_SIZE = 100;
+/**
+ * How many hundred-file pages of viewed state one read will walk. A point of the hourly GraphQL
+ * budget per page, against a change request nobody reviews in one sitting past the first few
+ * hundred files: beyond this the read stops and says it was cut short.
+ */
+const FILES_VIEWED_MAX_PAGES = 5;
 
 /**
  * Pages of review threads to follow before the conversation is reported as truncated. GitHub
@@ -306,6 +316,12 @@ export interface GitHubPullRequestDiffSlice {
   readonly nextCursor: string | null;
   /** GitHub's own counts for the files whose hunks it withheld from this slice. */
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+}
+
+export interface GitHubPullRequestFilesViewed {
+  readonly files: ReadonlyArray<PullRequestFileViewed>;
+  /** GitHub had more files than the page budget below would read. */
+  readonly truncated: boolean;
 }
 
 export class GitHubPullRequestCli extends Context.Service<
@@ -414,6 +430,30 @@ export class GitHubPullRequestCli extends Context.Service<
       { readonly oldContents: string; readonly newContents: string },
       GitHubPullRequestCliError
     >;
+
+    /**
+     * Which files of the pull request the signed-in account has cleared, and which of those have
+     * been pushed to since. Read apart from the patch because GitHub only reports it over GraphQL,
+     * and because the two answers go stale at completely different rates.
+     */
+    readonly getPullRequestFilesViewed: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<GitHubPullRequestFilesViewed, GitHubPullRequestCliError>;
+
+    /**
+     * Clears files, or puts them back, as one request. GitHub takes a single path per mutation,
+     * so a burst is batched with aliases into one document rather than one subprocess per press.
+     */
+    readonly setPullRequestFilesViewed: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     readonly listReviewThreadComments: (input: {
       readonly cwd: string;
@@ -1762,6 +1802,58 @@ export const make = Effect.gen(function* () {
         query: REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
         variables: { threadId: input.threadId, body: input.body },
       }),
+
+    getPullRequestFilesViewed: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const read = (
+        after: string | null,
+        collected: ReadonlyArray<PullRequestFileViewed>,
+        pagesLeft: number,
+      ): Effect.Effect<GitHubPullRequestFilesViewed, GitHubPullRequestCliError> =>
+        graphqlRead({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "getPullRequestFilesViewed",
+          variables: [
+            ["-f", `owner=${owner}`],
+            ["-f", `name=${name}`],
+            ["-F", `number=${input.number}`],
+            ...(after === null
+              ? []
+              : ([["-f", `after=${after}`]] as ReadonlyArray<readonly [string, string]>)),
+          ],
+          query: PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY,
+          decode: decodePullRequestFilesViewedJson,
+        }).pipe(
+          Effect.flatMap((page) => {
+            const files = [...collected, ...page.files];
+            if (page.nextCursor === null) {
+              return Effect.succeed({ files, truncated: false });
+            }
+            // A change nobody could read in one sitting is not worth a point of budget a page:
+            // the boxes on screen still work, and the count says it is partial rather than lying.
+            return pagesLeft <= 1
+              ? Effect.succeed({ files, truncated: true })
+              : read(page.nextCursor, files, pagesLeft - 1);
+          }),
+        );
+      return read(null, [], FILES_VIEWED_MAX_PAGES);
+    },
+
+    setPullRequestFilesViewed: (input) => {
+      const mutation = buildSetFilesViewedGraphQlMutation(input.files);
+      if (mutation === null) return Effect.void;
+      return pullRequestNodeId({ ...input, operation: "setPullRequestFilesViewed" }).pipe(
+        Effect.flatMap((pullRequestId) =>
+          graphql({
+            cwd: input.cwd,
+            host: input.host,
+            query: mutation.query,
+            variables: { pullRequestId, ...mutation.variables },
+          }),
+        ),
+      );
+    },
 
     setReviewThreadResolution: (input) =>
       graphql({

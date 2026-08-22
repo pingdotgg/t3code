@@ -1753,6 +1753,16 @@ const makeWsRpcLayer = (
             pullRequests.diffFileContents(input),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.pullRequestsFilesViewed]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsFilesViewed, pullRequests.filesViewed(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsSetFilesViewed]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetFilesViewed,
+            pullRequests.setFilesViewed(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsRunAction]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsRunAction, pullRequests.runAction(input), {
             "rpc.aggregate": "pull-requests",

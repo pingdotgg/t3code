@@ -2603,4 +2603,148 @@ layer("GitHubPullRequestCli.layer", (it) => {
       ]);
     }),
   );
+
+  it.effect("reads every page of viewed files, and says so when there are too many", () =>
+    Effect.gen(function* () {
+      const page = (index: number, hasNextPage: boolean) =>
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    files: {
+                      pageInfo: { hasNextPage, endCursor: `cursor-${index}` },
+                      nodes: [
+                        { path: `src/file${index}.ts`, viewerViewedState: "VIEWED" },
+                        { path: `src/other${index}.ts`, viewerViewedState: "UNVIEWED" },
+                      ],
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      mockedExecute
+        .mockReturnValueOnce(page(0, true))
+        .mockReturnValueOnce(page(1, true))
+        .mockReturnValueOnce(page(2, false));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const viewed = yield* cli.getPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      // The first page asks from the start; each one after it carries the cursor before it.
+      assert.isFalse(callAt(0).args.some((arg) => arg.startsWith("after=")));
+      expect(callAt(1).args).toContain("after=cursor-0");
+      expect(callAt(2).args).toContain("after=cursor-1");
+      assert.isFalse(viewed.truncated);
+      expect(viewed.files.map((file) => [file.path, file.state])).toEqual([
+        ["src/file0.ts", "viewed"],
+        ["src/other0.ts", "unviewed"],
+        ["src/file1.ts", "viewed"],
+        ["src/other1.ts", "unviewed"],
+        ["src/file2.ts", "viewed"],
+        ["src/other2.ts", "unviewed"],
+      ]);
+    }),
+  );
+
+  it.effect("stops paging viewed files rather than following a change without end", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    files: {
+                      pageInfo: { hasNextPage: true, endCursor: "cursor" },
+                      nodes: [{ path: "src/file.ts", viewerViewedState: "VIEWED" }],
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const viewed = yield* cli.getPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 5);
+      assert.isTrue(viewed.truncated);
+      assert.strictEqual(viewed.files.length, 5);
+    }),
+  );
+
+  it.effect("clears and restores a burst of files in one request", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output(JSON.stringify({ data: { repository: { pullRequest: { id: "PR_1" } } } })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        files: [
+          { path: "src/a.ts", viewed: true },
+          { path: "src/b.ts", viewed: false },
+        ],
+      });
+
+      // One request to learn the pull request's node id, one for every press together.
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const sent = JSON.parse(callAt(1).stdin ?? "") as {
+        query: string;
+        variables: Record<string, string>;
+      };
+      expect(sent.query).toContain("f0: markFileAsViewed");
+      expect(sent.query).toContain("f1: unmarkFileAsViewed");
+      expect(sent.variables).toEqual({
+        pullRequestId: "PR_1",
+        path0: "src/a.ts",
+        path1: "src/b.ts",
+      });
+    }),
+  );
+
+  it.effect("asks the host nothing when nothing was pressed", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        files: [],
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 0);
+    }),
+  );
 });

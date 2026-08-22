@@ -53,6 +53,21 @@ T3 Code works with the platforms your team already uses:
 - Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
 
+**Keep your place in a long review**
+
+- Tick a file off in the **Code** tab once you have read it. The file collapses, and the toolbar
+  keeps a running count of how many files you have cleared
+- Untick it to open the file back up
+- Your ticks are stored with the pull request itself, so a review you start on one machine picks up
+  where you left it on the next, and in your browser too
+- If a file is pushed to after you cleared it, it comes back marked **Changed** so you know to look
+  again
+- GitHub only. GitLab, Bitbucket, and Azure DevOps do not keep this, so the checkbox is not shown
+  there
+- Scope the **Code** tab to a single commit and the checkboxes stay, so you can read a change one
+  commit at a time. A tick belongs to the pull request, not to the commit, so a file you clear
+  there is cleared everywhere
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

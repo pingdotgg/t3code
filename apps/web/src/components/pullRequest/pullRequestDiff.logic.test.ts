@@ -1,7 +1,11 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  isFileDiffCollapsed,
+  isLineInFileDiff,
+  toggleFileDiffFoldForViewed,
+} from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
@@ -77,5 +81,33 @@ describe("isFileDiffCollapsed", () => {
   it("still answers to a toggle after either toolbar press", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  });
+});
+
+describe("toggleFileDiffFoldForViewed", () => {
+  it("puts a file away when it is ticked off", () => {
+    // Files start folded, so one the reader had opened is the case that has somewhere to go.
+    const opened = new Set(["a.ts"]);
+    expect([...toggleFileDiffFoldForViewed("a.ts", true, null, opened)]).toEqual([]);
+  });
+
+  it("brings a file back when the tick is taken off", () => {
+    expect([...toggleFileDiffFoldForViewed("a.ts", false, null, new Set())]).toEqual(["a.ts"]);
+  });
+
+  it("leaves the fold alone when it already says what the tick does", () => {
+    const folded = new Set<string>();
+    expect(toggleFileDiffFoldForViewed("a.ts", true, null, folded)).toBe(folded);
+  });
+
+  it("moves against whatever the toolbar last asked for", () => {
+    // Everything is open, so ticking a file off has to fold that one against the default.
+    expect([...toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set())]).toEqual(["a.ts"]);
+    expect(toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set()).size).toBe(0);
+  });
+
+  it("touches only the file that was ticked", () => {
+    const toggled = new Set(["a.ts", "b.ts"]);
+    expect([...toggleFileDiffFoldForViewed("a.ts", true, null, toggled)]).toEqual(["b.ts"]);
   });
 });

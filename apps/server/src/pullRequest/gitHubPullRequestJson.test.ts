@@ -4,10 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildReviewSubmissionJson,
   buildReviewerRequestJson,
+  buildSetFilesViewedGraphQlMutation,
   decodeBaseComparisonJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
+  decodePullRequestFilesViewedJson,
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
@@ -1359,5 +1361,99 @@ describe("how far a branch trails its base", () => {
 
   it("refuses a body that is not the answer to this question", () => {
     expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
+  });
+});
+
+describe("decodePullRequestFilesViewedJson", () => {
+  const page = (
+    nodes: ReadonlyArray<unknown>,
+    pageInfo: { hasNextPage: boolean; endCursor: string | null },
+  ) =>
+    JSON.stringify({
+      data: { repository: { pullRequest: { files: { pageInfo, nodes } } } },
+    });
+
+  it("reads each file's state and where the next page carries on", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      page(
+        [
+          { path: "src/a.ts", viewerViewedState: "VIEWED" },
+          { path: "src/b.ts", viewerViewedState: "UNVIEWED" },
+          { path: "src/c.ts", viewerViewedState: "DISMISSED" },
+        ],
+        { hasNextPage: true, endCursor: "cursor-2" },
+      ),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({
+      files: [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "unviewed" },
+        { path: "src/c.ts", state: "dismissed" },
+      ],
+      nextCursor: "cursor-2",
+    });
+  });
+
+  it("treats a state it has never heard of as unread rather than failing the page", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      page([{ path: "src/a.ts", viewerViewedState: "SOMETHING_NEW" }], {
+        hasNextPage: false,
+        endCursor: null,
+      }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({
+      files: [{ path: "src/a.ts", state: "unviewed" }],
+      nextCursor: null,
+    });
+  });
+
+  it("answers empty for a pull request the host has nothing to say about", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      JSON.stringify({ data: { repository: { pullRequest: null } } }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({ files: [], nextCursor: null });
+  });
+});
+
+describe("buildSetFilesViewedGraphQlMutation", () => {
+  it("asks for nothing when nothing was pressed", () => {
+    expect(buildSetFilesViewedGraphQlMutation([])).toBeNull();
+  });
+
+  it("clears and restores in one document, each file under its own alias", () => {
+    const mutation = buildSetFilesViewedGraphQlMutation([
+      { path: "src/a.ts", viewed: true },
+      { path: "src/b.ts", viewed: false },
+    ]);
+    expect(mutation).not.toBeNull();
+    if (mutation === null) return;
+    expect(mutation.query).toContain(
+      "mutation($pullRequestId: ID!, $path0: String!, $path1: String!)",
+    );
+    expect(mutation.query).toContain(
+      "f0: markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path0 })",
+    );
+    expect(mutation.query).toContain(
+      "f1: unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path1 })",
+    );
+    expect(mutation.variables).toEqual({ path0: "src/a.ts", path1: "src/b.ts" });
+  });
+
+  it("keeps a path out of the document, so one cannot be read as part of it", () => {
+    const mutation = buildSetFilesViewedGraphQlMutation([
+      { path: '") { __typename } evil: markFileAsViewed(input: { path: "x', viewed: true },
+    ]);
+    expect(mutation).not.toBeNull();
+    if (mutation === null) return;
+    expect(mutation.query).not.toContain("evil");
+    expect(mutation.variables.path0).toBe(
+      '") { __typename } evil: markFileAsViewed(input: { path: "x',
+    );
   });
 });

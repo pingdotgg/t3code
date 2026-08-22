@@ -3385,3 +3385,84 @@ it.effect("names the signed-in account in the detail, and says nothing where the
     assert.strictEqual(unnamed.viewer, undefined);
   }),
 );
+
+it.effect("keeps the diff cached across a file being ticked off", () =>
+  Effect.gen(function* () {
+    let diffReads = 0;
+    let viewedReads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge"],
+            mergeMethods: ["merge"],
+            search: true,
+            reactions: true,
+            viewedFiles: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getDiff: () => {
+            diffReads += 1;
+            return Effect.succeed({ patch: "@@", truncated: false, nextCursor: null });
+          },
+          getFilesViewed: () => {
+            viewedReads += 1;
+            return Effect.succeed({
+              files: [{ path: "src/a.ts", state: "viewed" as const }],
+              truncated: false,
+            });
+          },
+          setFilesViewed: () => Effect.void,
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
+
+    yield* service.diff(reference);
+    yield* service.filesViewed(reference);
+    yield* service.setFilesViewed({ ...reference, files: [{ path: "src/a.ts", viewed: false }] });
+    yield* service.diff(reference);
+    yield* service.filesViewed(reference);
+
+    // The press forgets only the reader's own ticks: a diff of any size survives it.
+    assert.strictEqual(diffReads, 1);
+    assert.strictEqual(viewedReads, 2);
+  }),
+);
+
+it.effect("refuses to track viewed files on a host that does not", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitlab", {
+          getFilesViewed: () => Effect.die("must not be called"),
+          setFilesViewed: () => Effect.die("must not be called"),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "group/project", number: 1 };
+
+    const read = yield* Effect.flip(service.filesViewed(reference));
+    const write = yield* Effect.flip(
+      service.setFilesViewed({ ...reference, files: [{ path: "a.ts", viewed: true }] }),
+    );
+
+    assert.strictEqual(read._tag, "PullRequestOperationError");
+    assert.strictEqual(write._tag, "PullRequestOperationError");
+  }),
+);
