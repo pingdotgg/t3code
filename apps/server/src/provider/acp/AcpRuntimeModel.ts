@@ -80,6 +80,12 @@ export interface AcpPermissionRequest {
   readonly toolCall?: AcpToolCallState;
 }
 
+export interface AcpAvailableCommand {
+  readonly name: string;
+  readonly description?: string;
+  readonly inputHint?: string;
+}
+
 export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ModeChanged";
@@ -108,6 +114,10 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "AvailableCommandsChanged";
+      readonly commands: ReadonlyArray<AcpAvailableCommand>;
     };
 
 type AcpSessionSetupResponse =
@@ -572,6 +582,25 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           rawPayload: params,
         });
       }
+      break;
+    }
+    case "available_commands_update": {
+      const commands: Array<AcpAvailableCommand> = [];
+      for (const command of upd.availableCommands) {
+        const name = command.name.trim();
+        if (!name) {
+          continue;
+        }
+        commands.push({
+          name,
+          ...(command.description?.trim() ? { description: command.description.trim() } : {}),
+          ...(command.input?.hint?.trim() ? { inputHint: command.input.hint.trim() } : {}),
+        });
+      }
+      events.push({
+        _tag: "AvailableCommandsChanged",
+        commands,
+      });
       break;
     }
     default:

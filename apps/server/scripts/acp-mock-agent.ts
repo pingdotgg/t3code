@@ -36,6 +36,9 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const emitAvailableCommands = process.env.T3_ACP_EMIT_AVAILABLE_COMMANDS === "1";
+const emitTaskToolCall = process.env.T3_ACP_EMIT_TASK_TOOL_CALL === "1";
+const emitBackgroundTask = process.env.T3_ACP_EMIT_BACKGROUND_TASK === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -310,11 +313,29 @@ const program = Effect.gen(function* () {
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (emitAvailableCommands) {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "research",
+                description: "Deep research on a topic",
+                input: { hint: "topic to research" },
+              },
+              { name: "plan", description: "Create an implementation plan" },
+            ],
+          },
+        });
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
@@ -624,6 +645,106 @@ const program = Effect.gen(function* () {
           update: {
             sessionUpdate: "agent_message_chunk",
             content: { type: "text", text: "after tool" },
+          },
+        });
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitBackgroundTask) {
+        // Mirrors copilot-cli background agents: the launch tool_call is
+        // followed by an early `end_turn` response, then the agent keeps
+        // streaming progress and an idle report after the RPC has settled.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "task-bg-1",
+            title: "Wait and write hello",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              agent_type: "task",
+              name: "delayed-hello",
+              mode: "background",
+              description: "Wait and write hello",
+            },
+          },
+        });
+
+        yield* Effect.forkDetach(
+          Effect.gen(function* () {
+            yield* Effect.sleep("150 millis");
+            yield* agent.client.sessionUpdate({
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "hello" },
+              },
+            });
+            yield* agent.client.sessionUpdate({
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: "wake-read-1",
+                title: "read_agent",
+                kind: "read",
+                status: "pending",
+                rawInput: { agent_id: "delayed-hello", since_turn: 0 },
+              },
+            });
+            yield* agent.client.sessionUpdate({
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "wake-read-1",
+                status: "completed",
+                rawOutput: {
+                  content:
+                    "Agent is idle (waiting for messages). agent_id: delayed-hello, agent_type: task, status: idle, elapsed: 19s",
+                },
+              },
+            });
+          }),
+        );
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitTaskToolCall) {
+        const taskToolCallId = "task-tool-1";
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: taskToolCallId,
+            title: "task",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              agent: "researcher",
+              prompt: "explore the codebase",
+            },
+          },
+        });
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: taskToolCallId,
+            status: "in_progress",
+          },
+        });
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: taskToolCallId,
+            status: "completed",
+            rawOutput: { summary: "research done" },
           },
         });
 

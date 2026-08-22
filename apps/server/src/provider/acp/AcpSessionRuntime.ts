@@ -367,7 +367,12 @@ export const make = (
 
     const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
 
-    yield* acp.handleSessionUpdate((notification) =>
+    // Updates can legitimately arrive before session setup settles (e.g.
+    // Copilot advertises slash-command skills right after session/new).
+    // Buffer them and re-dispatch once the root session id is known.
+    const preStartUpdatesRef = yield* Ref.make<Array<EffectAcpSchema.SessionNotification>>([]);
+
+    const processStartedNotification = (notification: EffectAcpSchema.SessionNotification) =>
       Effect.gen(function* () {
         const gate = yield* Ref.get(sessionLoadGateRef);
         if (Option.isSome(gate) && gate.value.active) {
@@ -401,6 +406,42 @@ export const make = (
           assistantItemRuntimeId,
           params: notification,
         });
+      });
+
+    const drainPreStartUpdates = (rootSessionId: string) =>
+      Effect.gen(function* () {
+        const buffered = yield* Ref.getAndSet(preStartUpdatesRef, []);
+        yield* Effect.forEach(
+          buffered,
+          (notification) =>
+            notification.sessionId === rootSessionId
+              ? processStartedNotification(notification)
+              : Effect.void,
+          { discard: true },
+        );
+      });
+
+    yield* acp.handleSessionUpdate((notification) =>
+      Effect.gen(function* () {
+        const startState = yield* Ref.get(startStateRef);
+        if (startState._tag !== "Started") {
+          yield* Ref.update(preStartUpdatesRef, (buffer) => [...buffer, notification]);
+          // The session/load idle detector counts every gated touch, replays
+          // included; buffered traffic must keep feeding it.
+          const gate = yield* Ref.get(sessionLoadGateRef);
+          if (Option.isSome(gate) && gate.value.active) {
+            const lastActivityAtMillis = yield* Clock.currentTimeMillis;
+            yield* Ref.set(
+              sessionLoadGateRef,
+              Option.some({
+                ...gate.value,
+                lastActivityAtMillis,
+              }),
+            );
+          }
+          return;
+        }
+        yield* processStartedNotification(notification);
       }),
     );
     const initializeClientCapabilities = {
@@ -541,15 +582,20 @@ export const make = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      // Agents that handle auth entirely outside ACP (GitHub login, cached
+      // tokens) advertise no auth methods; drivers signal that with an empty
+      // authMethodId and the handshake skips the authenticate round-trip.
+      if (options.authMethodId.trim().length > 0) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -672,6 +718,7 @@ export const make = (
               startOnce.pipe(
                 Effect.tap((result) =>
                   Ref.set(startStateRef, { _tag: "Started", result }).pipe(
+                    Effect.andThen(drainPreStartUpdates(result.sessionId)),
                     Effect.andThen(Deferred.succeed(deferred, result)),
                   ),
                 ),
@@ -934,7 +981,14 @@ function shouldEmitToolCallUpdate(
     return true;
   }
   if (!next.detail) {
-    return false;
+    // First sighting of a tool call carrying provider-supplied input (a
+    // subagent launch, a command) announces itself even before detail
+    // content streams in. Input-less placeholders stay suppressed.
+    if (previous !== undefined) {
+      return false;
+    }
+    const rawInput = next.data.rawInput;
+    return typeof rawInput === "object" && rawInput !== null && Object.keys(rawInput).length > 0;
   }
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
