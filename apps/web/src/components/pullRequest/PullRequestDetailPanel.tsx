@@ -561,11 +561,38 @@ export function PullRequestDetailPanel({
   // and at worst answer from it.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [refreshToken, setRefreshToken] = useState(0);
-  const refreshFromHost = useCallback(async () => {
-    await invalidate({ environmentId, input: { reference } });
-    refreshDetail();
-    setRefreshToken((token) => token + 1);
-  }, [environmentId, invalidate, reference, refreshDetail]);
+  const refreshFromHost = useCallback(
+    async (showFeedback = false) => {
+      const toastId = showFeedback
+        ? toastManager.add({
+            type: "loading",
+            title: "Refreshing pull request...",
+          })
+        : null;
+      const result = await invalidate({ environmentId, input: { reference } });
+      refreshDetail();
+      setRefreshToken((token) => token + 1);
+      if (toastId !== null) {
+        toastManager.update(
+          toastId,
+          result._tag === "Failure"
+            ? {
+                type: "error",
+                title: "Could not refresh pull request",
+                description: readableFailure(
+                  squashAtomCommandFailure(result),
+                  "Try again in a moment.",
+                ),
+              }
+            : {
+                type: "success",
+                title: "Pull request refreshed",
+              },
+        );
+      }
+    },
+    [environmentId, invalidate, reference, refreshDetail],
+  );
   // A refresh asked for by the page: the detail, and through the token below, the diff with it.
   const appliedForcedToken = useRef(forcedRefreshToken);
   useEffect(() => {
@@ -1322,7 +1349,10 @@ export function PullRequestDetailPanel({
                   <MoreHorizontalIcon className="size-4" />
                 </MenuTrigger>
                 <MenuPopup align="end" side="bottom" className="min-w-72">
-                  <MenuItem disabled={detailQuery.isPending} onClick={() => void refreshFromHost()}>
+                  <MenuItem
+                    disabled={detailQuery.isPending}
+                    onClick={() => void refreshFromHost(true)}
+                  >
                     <RefreshCwIcon className="size-3.5" />
                     Refresh
                   </MenuItem>
