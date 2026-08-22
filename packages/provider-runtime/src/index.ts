@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - This package exposes a Promise-based Node host boundary.
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -99,7 +99,8 @@ export async function createProviderRuntime(
   const cwd = options.cwd ?? process.cwd();
   const ownsStateDirectory = options.stateDirectory === undefined;
   const stateDirectory =
-    options.stateDirectory ?? (await mkdtemp(join(tmpdir(), "t3-provider-runtime-")));
+    options.stateDirectory ??
+    (await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-provider-runtime-")));
   const identity = providerIdentity(options.provider);
   const infrastructure = Layer.merge(
     NodeServices.layer,
@@ -128,7 +129,7 @@ export async function createProviderRuntime(
   } catch (error) {
     await runtime.dispose();
     if (ownsStateDirectory) {
-      await rm(stateDirectory, { force: true, recursive: true });
+      await NodeFSP.rm(stateDirectory, { force: true, recursive: true });
     }
     throw error;
   }
@@ -141,7 +142,7 @@ export async function createProviderRuntime(
   };
 
   return {
-    attachmentsDirectory: join(stateDirectory, "userdata", "attachments"),
+    attachmentsDirectory: NodePath.join(stateDirectory, "userdata", "attachments"),
     events: adapter.streamEvents.pipe(Stream.toAsyncIterable),
     async close() {
       if (closed) return;
@@ -153,7 +154,7 @@ export async function createProviderRuntime(
       } finally {
         await runtime.dispose();
         if (ownsStateDirectory) {
-          await rm(stateDirectory, { force: true, recursive: true });
+          await NodeFSP.rm(stateDirectory, { force: true, recursive: true });
         }
       }
     },
