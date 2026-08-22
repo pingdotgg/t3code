@@ -1,190 +1,64 @@
-import { useAutoAnimate } from "@formkit/auto-animate/react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { getClientRect } from "@dnd-kit/core";
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
-import {
-  SIDEBAR_DND_SECTIONS,
-  type SidebarDndSection,
-  type SidebarThreadDragTransaction,
-} from "../components/Sidebar.dnd.logic";
-
-const EMPTY_SECTION_HEIGHT = 48;
-
-export type SidebarThreadDragStateSetter = (
-  next:
-    | SidebarThreadDragTransaction
-    | null
-    | ((current: SidebarThreadDragTransaction | null) => SidebarThreadDragTransaction | null),
-) => void;
+interface PendingAnchor {
+  readonly node: HTMLElement;
+  top: number;
+}
 
 export interface SidebarDndLayout {
   readonly viewportRef: RefObject<HTMLDivElement | null>;
-  readonly viewportOverlayRef: RefObject<HTMLDivElement | null>;
-  readonly attachListRef: (node: HTMLUListElement | null) => void;
-  readonly handleThreadRowNodeChange: (threadKey: string, node: HTMLElement | null) => void;
-  readonly getThreadRowNode: (threadKey: string) => HTMLElement | null;
-  readonly pauseLayoutMotion: () => void;
-  readonly retainLayoutAnchor: (
-    preferred?: HTMLElement | null,
-    excludedThreadKey?: string | null,
-  ) => void;
+  readonly handleEntryNodeChange: (id: string, node: HTMLElement | null) => void;
+  readonly getEntryNode: (id: string) => HTMLElement | null;
+  readonly captureEntryPosition: (id: string | null) => void;
 }
 
-export function useSidebarDndLayout(input: {
-  transaction: SidebarThreadDragTransaction | null;
-  setTransaction: SidebarThreadDragStateSetter;
-  pinnedReorderInFlightRef: RefObject<boolean>;
-  sectionThreadCounts: Readonly<Record<SidebarDndSection, number>>;
-  canDropThreadInSection: (
-    thread: EnvironmentThreadShell,
-    source: SidebarDndSection,
-    destination: SidebarDndSection,
-  ) => boolean;
-}): SidebarDndLayout {
-  const [autoAnimateRef, setAutoAnimateEnabled] = useAutoAnimate<HTMLUListElement>({
-    duration: 150,
-    easing: "ease-out",
-  });
+function layoutTop(node: HTMLElement): number {
+  return getClientRect(node, { ignoreTransform: true }).top;
+}
+
+export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const viewportOverlayRef = useRef<HTMLDivElement>(null);
-  const threadRowNodesRef = useRef(new Map<string, HTMLElement>());
-  const layoutAnchorRef = useRef<{ element: HTMLElement; top: number } | null>(null);
-  const motionPausedRef = useRef(false);
+  const entryNodesRef = useRef(new Map<string, HTMLElement>());
+  const pendingAnchorRef = useRef<PendingAnchor | null>(null);
 
-  const handleThreadRowNodeChange = useCallback((threadKey: string, node: HTMLElement | null) => {
-    if (node === null) threadRowNodesRef.current.delete(threadKey);
-    else threadRowNodesRef.current.set(threadKey, node);
+  const handleEntryNodeChange = useCallback((id: string, node: HTMLElement | null) => {
+    if (node === null) entryNodesRef.current.delete(id);
+    else entryNodesRef.current.set(id, node);
   }, []);
-  const getThreadRowNode = useCallback(
-    (threadKey: string) => threadRowNodesRef.current.get(threadKey) ?? null,
-    [],
-  );
-  const visibleAnchor = useCallback(
-    (preferred: HTMLElement | null, excludedThreadKey: string | null) => {
-      const viewport = viewportRef.current;
-      if (viewport === null) return null;
-      const viewportRect = viewport.getBoundingClientRect();
-      const isVisible = (node: HTMLElement) => {
-        if (!node.isConnected || node.dataset.dndTransformed === "true") return false;
-        const rect = node.getBoundingClientRect();
-        return rect.bottom > viewportRect.top && rect.top < viewportRect.bottom;
-      };
-      if (preferred !== null && isVisible(preferred)) return preferred;
-      for (const [threadKey, node] of threadRowNodesRef.current) {
-        if (threadKey !== excludedThreadKey && isVisible(node)) return node;
-      }
-      return null;
-    },
-    [],
-  );
-  const retainLayoutAnchor = useCallback(
-    (preferred: HTMLElement | null = null, excludedThreadKey: string | null = null) => {
-      const element = visibleAnchor(preferred, excludedThreadKey);
-      layoutAnchorRef.current =
-        element === null ? null : { element, top: element.getBoundingClientRect().top };
-    },
-    [visibleAnchor],
-  );
-  const pauseLayoutMotion = useCallback(() => {
-    if (motionPausedRef.current) return;
-    motionPausedRef.current = true;
-    setAutoAnimateEnabled(false);
-  }, [setAutoAnimateEnabled]);
-
-  const moveEmptySectionsIntoViewport = useCallback(
-    (transaction: SidebarThreadDragTransaction) => {
-      if (transaction.phase !== "dragging" || transaction.viewportRailTopBySection !== null) {
-        return;
-      }
-      const sourceIndex = SIDEBAR_DND_SECTIONS.indexOf(transaction.sourceSection);
-      const sections = SIDEBAR_DND_SECTIONS.slice(0, sourceIndex).filter(
-        (section) =>
-          input.sectionThreadCounts[section] === 0 &&
-          input.canDropThreadInSection(
-            transaction.sourceThread,
-            transaction.sourceSection,
-            section,
-          ),
-      );
-      if (sections.length === 0) return;
-      input.setTransaction((current) =>
-        current === null || current.sourceThreadKey !== transaction.sourceThreadKey
-          ? current
-          : {
-              ...current,
-              viewportRailTopBySection: new Map(
-                sections.map((section, index) => [section, index * EMPTY_SECTION_HEIGHT]),
-              ),
-            },
-      );
-    },
-    [input.canDropThreadInSection, input.sectionThreadCounts, input.setTransaction],
-  );
+  const getEntryNode = useCallback((id: string) => entryNodesRef.current.get(id) ?? null, []);
+  const captureEntryPosition = useCallback((id: string | null) => {
+    const node = id === null ? null : (entryNodesRef.current.get(id) ?? null);
+    pendingAnchorRef.current =
+      node === null || !node.isConnected ? null : { node, top: layoutTop(node) };
+  }, []);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
-    const anchor = layoutAnchorRef.current;
-    if (
-      viewport !== null &&
-      anchor !== null &&
-      anchor.element.isConnected &&
-      anchor.element.dataset.dndTransformed !== "true"
-    ) {
-      const delta = anchor.element.getBoundingClientRect().top - anchor.top;
-      if (Math.abs(delta) > 0.5) {
-        const requestedScrollTop = viewport.scrollTop + delta;
-        viewport.scrollTop = requestedScrollTop;
-        if (Math.abs(viewport.scrollTop - requestedScrollTop) > 0.5 && input.transaction !== null) {
-          moveEmptySectionsIntoViewport(input.transaction);
-        }
-      }
-      layoutAnchorRef.current = {
-        element: anchor.element,
-        top: anchor.element.getBoundingClientRect().top,
-      };
-    } else if (input.transaction !== null) {
-      retainLayoutAnchor(null, input.transaction.sourceThreadKey);
-    }
+    const anchor = pendingAnchorRef.current;
+    pendingAnchorRef.current = null;
+    if (viewport === null || anchor === null || !anchor.node.isConnected) return;
 
-    if (input.transaction !== null || input.pinnedReorderInFlightRef.current) return;
-    if (motionPausedRef.current) {
-      motionPausedRef.current = false;
-      setAutoAnimateEnabled(true);
-    }
-    layoutAnchorRef.current = null;
-  });
+    const delta = layoutTop(anchor.node) - anchor.top;
+    if (Math.abs(delta) > 0.5) viewport.scrollTop += delta;
+  }, [revision]);
 
   useEffect(() => {
-    if (input.transaction === null) return;
-    const sourceThreadKey = input.transaction.sourceThreadKey;
     const viewport = viewportRef.current;
     if (viewport === null) return;
     const handleScroll = () => {
-      const anchor = layoutAnchorRef.current;
-      if (
-        anchor === null ||
-        !anchor.element.isConnected ||
-        anchor.element.dataset.dndTransformed === "true"
-      ) {
-        retainLayoutAnchor(null, sourceThreadKey);
-      } else {
-        layoutAnchorRef.current = {
-          element: anchor.element,
-          top: anchor.element.getBoundingClientRect().top,
-        };
-      }
+      const anchor = pendingAnchorRef.current;
+      if (anchor === null || !anchor.node.isConnected) return;
+      anchor.top = layoutTop(anchor.node);
     };
     viewport.addEventListener("scroll", handleScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", handleScroll);
-  }, [input.transaction, retainLayoutAnchor]);
+  }, []);
 
   return {
     viewportRef,
-    viewportOverlayRef,
-    attachListRef: autoAnimateRef,
-    handleThreadRowNodeChange,
-    getThreadRowNode,
-    pauseLayoutMotion,
-    retainLayoutAnchor,
+    handleEntryNodeChange,
+    getEntryNode,
+    captureEntryPosition,
   };
 }

@@ -1,5 +1,3 @@
-import type { SortingStrategy } from "@dnd-kit/sortable";
-import { verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
@@ -55,7 +53,6 @@ export function useSidebarPinnedDnd(input: {
   pinnedThreads: readonly EnvironmentThreadShell[];
   allPinnedThreads: readonly EnvironmentThreadShell[];
   reorderablePinnedKeys: ReadonlySet<string>;
-  transaction: SidebarThreadDragTransaction | null;
   reorderPinnedThread: ReturnType<typeof useThreadActions>["reorderPinnedThread"];
   canPinWithOrder: (thread: EnvironmentThreadShell) => boolean;
   canReorder: (thread: EnvironmentThreadShell) => boolean;
@@ -72,38 +69,6 @@ export function useSidebarPinnedDnd(input: {
       getId: sidebarThreadKey,
     });
   }, [input.pinnedThreads, optimisticPinnedOrder]);
-  const pinnedSortingOverIndex = useMemo(() => {
-    const transaction = input.transaction;
-    if (
-      transaction === null ||
-      transaction.phase !== "dragging" ||
-      transaction.sourceSection !== "pinned" ||
-      transaction.target?.section !== "pinned" ||
-      transaction.target.threadKey === null ||
-      transaction.target.edge === null
-    ) {
-      return null;
-    }
-    const keys = orderedPinnedThreads
-      .map(sidebarThreadKey)
-      .filter((threadKey) => input.reorderablePinnedKeys.has(threadKey));
-    const previewOrder = movePinnedThreadAtEdge({
-      keys,
-      activeKey: transaction.sourceThreadKey,
-      overKey: transaction.target.threadKey,
-      edge: transaction.target.edge,
-    });
-    return previewOrder?.indexOf(transaction.sourceThreadKey) ?? null;
-  }, [input.reorderablePinnedKeys, input.transaction, orderedPinnedThreads]);
-  const pinnedSortingStrategy = useCallback<SortingStrategy>(
-    (args) =>
-      verticalListSortingStrategy({
-        ...args,
-        overIndex: pinnedSortingOverIndex ?? args.overIndex,
-      }),
-    [pinnedSortingOverIndex],
-  );
-
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
     const canonical = input.pinnedThreads.filter((thread) =>
@@ -218,7 +183,7 @@ export function useSidebarPinnedDnd(input: {
         if (targetIndex !== -1) {
           insertionIndex = targetIndex + (transaction.target.edge === "after" ? 1 : 0);
         }
-      } else if (existingKeys.length === 0) {
+      } else {
         insertionIndex = 0;
       }
       const order = [...existingKeys];
@@ -263,7 +228,6 @@ export function useSidebarPinnedDnd(input: {
   return {
     optimisticPinnedOrder,
     orderedPinnedThreads,
-    pinnedSortingStrategy,
     pinnedReorderInFlightRef,
     handlePinnedReorder,
     planPinnedInsertion,

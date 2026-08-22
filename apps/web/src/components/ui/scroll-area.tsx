@@ -11,7 +11,6 @@ interface ScrollAreaProps extends ScrollAreaPrimitive.Root.Props {
   readonly hideScrollbars?: boolean;
   readonly chainVerticalScroll?: boolean;
   readonly viewportRef?: Ref<HTMLDivElement> | undefined;
-  readonly viewportOverlayRef?: Ref<HTMLDivElement> | undefined;
 }
 
 function getVirtualizedScrollFadeClassName({ top, bottom }: { top: boolean; bottom: boolean }) {
@@ -39,7 +38,6 @@ function ScrollArea({
   hideScrollbars = false,
   chainVerticalScroll = false,
   viewportRef,
-  viewportOverlayRef,
   ...props
 }: ScrollAreaProps) {
   return (
@@ -62,14 +60,6 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      {viewportOverlayRef !== undefined ? (
-        <div
-          ref={viewportOverlayRef}
-          aria-hidden
-          data-slot="scroll-area-viewport-overlay"
-          className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-[inherit]"
-        />
-      ) : null}
       {!hideScrollbars && (
         <>
           <ScrollBar orientation="vertical" />

@@ -689,16 +689,9 @@ function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof S
 interface SidebarContentProps extends React.ComponentProps<"div"> {
   readonly fixedHeader?: React.ReactNode;
   readonly viewportRef?: React.Ref<HTMLDivElement> | undefined;
-  readonly viewportOverlayRef?: React.Ref<HTMLDivElement> | undefined;
 }
 
-function SidebarContent({
-  className,
-  fixedHeader,
-  viewportRef,
-  viewportOverlayRef,
-  ...props
-}: SidebarContentProps) {
+function SidebarContent({ className, fixedHeader, viewportRef, ...props }: SidebarContentProps) {
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
@@ -706,7 +699,6 @@ function SidebarContent({
         hideScrollbars
         scrollFade
         viewportRef={viewportRef}
-        viewportOverlayRef={viewportOverlayRef}
         className="h-auto min-h-0 flex-1"
       >
         <div

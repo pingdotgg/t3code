@@ -1,6 +1,8 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
+import type { SidebarDndBoardEntry } from "./Sidebar.dnd.board";
+
 export type SidebarDndSection = "pinned" | "regular" | "snoozed" | "settled";
 
 export const SIDEBAR_DND_SECTIONS = [
@@ -44,15 +46,22 @@ export interface SidebarThreadDragTransaction {
   readonly sourceThread: EnvironmentThreadShell;
   readonly sourceThreadKey: string;
   readonly sourceSection: SidebarDndSection;
-  readonly sourceIndex: number;
-  readonly sourceRect: { readonly width: number; readonly height: number };
+  readonly sourceRect: {
+    readonly top: number;
+    readonly left: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly sourceScrollTop: number;
   readonly pointerAnchor: SidebarDndPointerAnchor;
+  readonly initialEntries: readonly SidebarDndBoardEntry[];
+  readonly entries: readonly SidebarDndBoardEntry[];
+  readonly emptySections: ReadonlySet<SidebarDndSection>;
   readonly target: SidebarThreadDropTarget | null;
   readonly receiptSequencesByEnvironment: ReadonlyMap<
     EnvironmentThreadShell["environmentId"],
     number
   > | null;
-  readonly viewportRailTopBySection: ReadonlyMap<SidebarDndSection, number> | null;
 }
 
 const DND_SECTION_ID_PREFIX = "sidebar-thread-section:";

@@ -1,14 +1,18 @@
-import { DndContext, DragOverlay, MeasuringStrategy, type DndContextProps } from "@dnd-kit/core";
+import { DndContext, type DndContextProps } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import { SortableContext, type SortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  type SortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
-import { createPortal } from "react-dom";
-import type { ReactNode } from "react";
+import { useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import type { SidebarDndLayout } from "../../hooks/useSidebarDndLayout";
-import type { SidebarThreadBoardSections } from "../Sidebar.dnd.board";
+import type { SidebarDndBoardEntry } from "../Sidebar.dnd.board";
 import {
   sidebarThreadKey,
   type SidebarDndPreviewVariant,
@@ -16,54 +20,65 @@ import {
   type SidebarThreadDragTransaction,
 } from "../Sidebar.dnd.logic";
 import {
+  SidebarThreadDndBoundary,
   SidebarThreadDndRow,
-  SidebarThreadDragOverlayContent,
-  SidebarThreadSectionDropZone,
+  SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT,
+  type SidebarThreadDndBoundaryBag,
   type SidebarThreadDndRowBag,
+  type SidebarThreadDragView,
 } from "./SidebarThreadDnd";
+import { SidebarThreadDropOutline } from "./SidebarThreadDropOutline";
 
 type SidebarThreadDndContextProps = Pick<
   DndContextProps,
-  "sensors" | "collisionDetection" | "onDragStart" | "onDragMove" | "onDragCancel" | "onDragEnd"
+  | "sensors"
+  | "collisionDetection"
+  | "onDragStart"
+  | "onDragMove"
+  | "onDragOver"
+  | "onDragCancel"
+  | "onDragEnd"
 >;
 
 export interface SidebarThreadRenderState {
   readonly dnd: SidebarThreadDndRowBag;
-  readonly dimmed: boolean;
+  readonly dragView: SidebarThreadDragView | null;
   readonly inert: boolean;
-  readonly dropIndicator: "before" | "after" | null;
 }
 
 export interface SidebarThreadBoardDnd {
   readonly contextProps: SidebarThreadDndContextProps;
   readonly layout: SidebarDndLayout;
   readonly transaction: SidebarThreadDragTransaction | null;
-  readonly sections: SidebarThreadBoardSections;
-  readonly reorderablePinnedKeys: ReadonlySet<string>;
-  readonly pinnedSortingStrategy: SortingStrategy;
+  readonly entries: readonly SidebarDndBoardEntry[];
+  readonly threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
   readonly optimisticPinnedOrderActive: boolean;
-  readonly dropIndicator: {
-    readonly threadKey: string;
-    readonly edge: "before" | "after";
-  } | null;
   readonly dragPreviewVariant: SidebarDndPreviewVariant | null;
+  readonly sortingOverIndex: number | null;
   readonly canDragThread: (thread: EnvironmentThreadShell, source: SidebarDndSection) => boolean;
   readonly canDropThreadInSection: (
     thread: EnvironmentThreadShell,
     source: SidebarDndSection,
     destination: SidebarDndSection,
   ) => boolean;
-  readonly isTemporarySectionRailVisible: (section: SidebarDndSection) => boolean;
+}
+
+function sortableStyle(bag: {
+  readonly transform: SidebarThreadDndBoundaryBag["transform"];
+  readonly transition: string | undefined;
+}): CSSProperties {
+  return {
+    transform: CSS.Translate.toString(bag.transform),
+    transition: bag.transition,
+  };
 }
 
 function SidebarThreadShelfHeader(props: {
   section: "snoozed" | "settled";
   count: number;
   expanded: boolean;
-  isDropOver: boolean;
   onToggle: () => void;
 }) {
-  if (props.count === 0) return null;
   const snoozed = props.section === "snoozed";
   const label = snoozed ? "Snoozed" : "Settled";
   const color = snoozed ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground/50";
@@ -75,30 +90,32 @@ function SidebarThreadShelfHeader(props: {
         onClick={props.onToggle}
         aria-expanded={props.expanded}
         data-testid={`sidebar-${props.section}-shelf-toggle`}
-        className={cn(
-          "mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left transition-colors",
-          props.isDropOver &&
-            "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-ring/50",
-        )}
+        className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left transition-colors"
       >
-        <span
-          className={cn(
-            "text-xs font-medium",
-            props.isDropOver ? "text-sidebar-accent-foreground" : color,
-          )}
-        >
+        <span className={cn("text-xs font-medium", color)}>
           {props.expanded ? label : `${label} (${props.count})`}
         </span>
-        <span className={cn("h-px flex-1", props.isDropOver ? "bg-sidebar-ring/50" : divider)} />
+        <span className={cn("h-px flex-1", divider)} />
         <ChevronDownIcon
           aria-hidden
-          className={cn(
-            "size-3 transition-transform",
-            props.expanded && "rotate-180",
-            props.isDropOver ? "text-sidebar-accent-foreground" : color,
-          )}
+          className={cn("size-3 transition-transform", props.expanded && "rotate-180", color)}
         />
       </button>
+    </div>
+  );
+}
+
+function EmptySectionRail(props: { section: SidebarDndSection; label: string; isOver: boolean }) {
+  return (
+    <div data-testid={`sidebar-${props.section}-drop-rail`} className="h-12 p-1">
+      <div
+        className={cn(
+          "flex h-10 items-center justify-center rounded-md border border-dashed text-xs font-medium text-muted-foreground/60",
+          props.isOver && "border-primary bg-primary/5 text-primary",
+        )}
+      >
+        {props.label}
+      </div>
     </div>
   );
 }
@@ -124,197 +141,237 @@ export function SidebarThreadBoard(props: {
     readonly onToggle: () => void;
     readonly onShowMore: () => void;
   };
-  dragPreviewProject: {
-    readonly title: string | null;
-    readonly cwd: string | null;
-    readonly faviconPath: string | null;
-  } | null;
 }) {
   const { dnd } = props;
-  const activeDropTransaction = dnd.transaction?.phase === "dragging" ? dnd.transaction : null;
-  const sectionDropDisabled = (section: SidebarDndSection) =>
-    activeDropTransaction === null ||
-    !dnd.canDropThreadInSection(
-      activeDropTransaction.sourceThread,
-      activeDropTransaction.sourceSection,
+  const emptyRailVisible = (section: SidebarDndSection) =>
+    dnd.transaction?.emptySections.has(section) === true &&
+    dnd.canDropThreadInSection(
+      dnd.transaction.sourceThread,
+      dnd.transaction.sourceSection,
       section,
     );
-  const renderThread = (thread: EnvironmentThreadShell, section: SidebarDndSection) => {
+  const pinnedSectionHasThreads =
+    dnd.transaction === null
+      ? dnd.entries[1]?.kind === "thread"
+      : !dnd.transaction.emptySections.has("pinned");
+
+  const renderBoundary = (entry: Extract<SidebarDndBoardEntry, { readonly kind: "boundary" }>) => (
+    <SidebarThreadDndBoundary
+      key={entry.id}
+      section={entry.section}
+      onNodeChange={dnd.layout.handleEntryNodeChange}
+    >
+      {(bag) => {
+        const railVisible = emptyRailVisible(entry.section);
+        let content: ReactNode = null;
+        switch (entry.section) {
+          case "pinned":
+            content = railVisible ? (
+              <EmptySectionRail section="pinned" label="Pinned" isOver={bag.isOver} />
+            ) : null;
+            break;
+          case "regular":
+            content = railVisible ? (
+              <EmptySectionRail section="regular" label="Regular" isOver={bag.isOver} />
+            ) : pinnedSectionHasThreads ? (
+              <div
+                aria-hidden
+                data-testid="sidebar-pinned-divider"
+                className="mx-2.5 my-1.5 h-px bg-sidebar-border/60"
+              />
+            ) : null;
+            break;
+          case "snoozed":
+            content =
+              props.snoozedShelf.threadCount > 0 || railVisible ? (
+                <SidebarThreadShelfHeader
+                  section="snoozed"
+                  count={props.snoozedShelf.threadCount}
+                  expanded={railVisible || props.snoozedShelf.expanded}
+                  onToggle={props.snoozedShelf.onToggle}
+                />
+              ) : null;
+            break;
+          case "settled":
+            content =
+              props.settledShelf.threadCount > 0 ? (
+                <SidebarThreadShelfHeader
+                  section="settled"
+                  count={props.settledShelf.threadCount}
+                  expanded={props.settledShelf.expanded}
+                  onToggle={props.settledShelf.onToggle}
+                />
+              ) : railVisible ? (
+                <EmptySectionRail section="settled" label="Settled" isOver={bag.isOver} />
+              ) : null;
+            break;
+          default: {
+            const _exhaustive: never = entry.section;
+            return _exhaustive;
+          }
+        }
+        return (
+          <li
+            ref={bag.setNodeRef}
+            data-sidebar-thread-section-boundary={entry.section}
+            className={cn("relative list-none", content === null && "h-0")}
+            style={sortableStyle(bag)}
+          >
+            {content}
+          </li>
+        );
+      }}
+    </SidebarThreadDndBoundary>
+  );
+
+  const renderThread = (
+    entry: Extract<SidebarDndBoardEntry, { readonly kind: "thread" }>,
+    section: SidebarDndSection,
+  ) => {
+    const thread = dnd.threadByKey.get(entry.id) ?? entry.thread;
     const threadKey = sidebarThreadKey(thread);
-    const rowVariant = section === "regular" || section === "pinned" ? "card" : "slim";
     const dragDisabled =
       dnd.optimisticPinnedOrderActive ||
       !dnd.canDragThread(thread, section) ||
       (dnd.transaction !== null && dnd.transaction.phase !== "dragging");
-    const renderVisualRow = (rowDnd: SidebarThreadDndRowBag) =>
-      props.renderThread(thread, section, {
-        dnd: rowDnd,
-        dimmed: dnd.transaction?.sourceThreadKey === threadKey,
-        inert:
-          dnd.transaction?.sourceThreadKey === threadKey && dnd.transaction.phase !== "dragging",
-        dropIndicator: dnd.dropIndicator?.threadKey === threadKey ? dnd.dropIndicator.edge : null,
-      });
-    const rowKey = `${threadKey}:${rowVariant}`;
     return (
       <SidebarThreadDndRow
-        key={rowKey}
+        key={threadKey}
         threadKey={threadKey}
+        section={section}
         dragDisabled={dragDisabled}
-        dropDisabled={sectionDropDisabled(section)}
-        sortable={section === "pinned" && dnd.reorderablePinnedKeys.has(threadKey)}
-        onNodeChange={dnd.layout.handleThreadRowNodeChange}
+        disableLayoutAnimation={
+          dnd.transaction?.sourceThreadKey === threadKey &&
+          section !== dnd.transaction.sourceSection
+        }
+        onNodeChange={dnd.layout.handleEntryNodeChange}
       >
-        {renderVisualRow}
+        {(rowDnd) =>
+          props.renderThread(thread, section, {
+            dnd: rowDnd,
+            dragView:
+              rowDnd.isDragging &&
+              dnd.transaction?.phase === "dragging" &&
+              dnd.dragPreviewVariant !== null
+                ? {
+                    variant: dnd.dragPreviewVariant,
+                    sourceRect: dnd.transaction.sourceRect,
+                    translation: {
+                      x: rowDnd.transform?.x ?? 0,
+                      y: rowDnd.transform?.y ?? 0,
+                    },
+                    scrollDeltaY:
+                      (dnd.layout.viewportRef.current?.scrollTop ??
+                        dnd.transaction.sourceScrollTop) - dnd.transaction.sourceScrollTop,
+                    pointerAnchor: dnd.transaction.pointerAnchor,
+                  }
+                : null,
+            inert:
+              dnd.transaction?.sourceThreadKey === threadKey &&
+              dnd.transaction.phase !== "dragging",
+          })
+        }
       </SidebarThreadDndRow>
     );
   };
-  const rail = (section: SidebarDndSection, label: string, isOver: boolean) => (
-    <div data-testid={`sidebar-${section}-drop-rail`} className="h-12 p-1">
-      <div
-        className={cn(
-          "flex h-10 items-center justify-center rounded-md border border-dashed text-xs font-medium text-muted-foreground/60",
-          isOver && "border-primary bg-primary/5 text-primary",
-        )}
-      >
-        {label}
-      </div>
-    </div>
-  );
-  const viewportRailTopBySection = dnd.transaction?.viewportRailTopBySection;
-  const viewportOverlayHost = dnd.layout.viewportOverlayRef.current;
-  const isViewportRail = (section: SidebarDndSection) =>
-    viewportOverlayHost !== null &&
-    dnd.isTemporarySectionRailVisible(section) &&
-    viewportRailTopBySection?.has(section) === true;
-  const renderViewportRail = (
-    section: SidebarDndSection,
-    label: string,
-    isOver: boolean,
-    setNodeRef: (node: HTMLElement | null) => void,
-  ) => {
-    const top = viewportRailTopBySection?.get(section);
-    if (top === undefined || viewportOverlayHost === null || !isViewportRail(section)) {
-      return null;
+
+  let section: SidebarDndSection = "pinned";
+  const boardEntries = dnd.entries.map((entry) => {
+    if (entry.kind === "boundary") {
+      section = entry.section;
+      return renderBoundary(entry);
     }
-    return createPortal(
-      <div ref={setNodeRef} className="pointer-events-auto absolute inset-x-0 z-30" style={{ top }}>
-        {rail(section, label, isOver)}
-      </div>,
-      viewportOverlayHost,
-      `sidebar-${section}-viewport-drop-rail`,
-    );
-  };
-  const renderSection = (
-    section: SidebarDndSection,
-    label: string,
-    content: (isOver: boolean) => ReactNode,
-  ) => (
-    <SidebarThreadSectionDropZone section={section} disabled={sectionDropDisabled(section)}>
-      {({ setNodeRef, isOver }) => {
-        const showRail = dnd.isTemporarySectionRailVisible(section);
-        const viewportRail = showRail
-          ? renderViewportRail(section, label, isOver, setNodeRef)
-          : null;
-        if (viewportRail !== null) return viewportRail;
-        return (
-          <li ref={setNodeRef} className="relative list-none">
-            {content(isOver)}
-            {showRail ? rail(section, label, isOver) : null}
-          </li>
-        );
-      }}
-    </SidebarThreadSectionDropZone>
+    return renderThread(entry, section);
+  });
+  const dragSourceHeight =
+    dnd.transaction?.phase === "dragging" ? dnd.transaction.sourceRect.height : null;
+  const dragPresentationHeight =
+    dnd.dragPreviewVariant === null
+      ? null
+      : SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[dnd.dragPreviewVariant];
+  const sortingStrategy = useMemo<SortingStrategy>(
+    () => (args) => {
+      const transform = verticalListSortingStrategy({
+        ...args,
+        overIndex: dnd.sortingOverIndex ?? args.overIndex,
+      });
+      if (
+        transform === null ||
+        args.index === args.activeIndex ||
+        dragSourceHeight === null ||
+        dragPresentationHeight === null
+      ) {
+        return transform;
+      }
+
+      const projectedIndex = dnd.sortingOverIndex ?? args.overIndex;
+      const followsProjectedActive =
+        projectedIndex < args.activeIndex
+          ? args.index >= projectedIndex
+          : args.index > projectedIndex;
+      if (!followsProjectedActive) return transform;
+
+      const heightDelta = dragPresentationHeight - dragSourceHeight;
+      return {
+        ...transform,
+        y: transform.y + heightDelta,
+      };
+    },
+    [dnd.sortingOverIndex, dragPresentationHeight, dragSourceHeight],
   );
+  const listRef = useRef<HTMLUListElement>(null);
 
   return (
     <DndContext
       {...dnd.contextProps}
       modifiers={[restrictToVerticalAxis]}
-      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       autoScroll={{
         layoutShiftCompensation: false,
         canScroll: (element) => element === dnd.layout.viewportRef.current,
       }}
     >
-      <ul ref={dnd.layout.attachListRef} role="list" className="flex flex-col gap-px">
+      <ul
+        ref={listRef}
+        role="list"
+        className={cn(
+          "relative flex flex-col gap-px",
+          dnd.transaction?.phase === "dragging" && "pointer-events-none",
+        )}
+      >
         {props.drafts}
-        {renderSection("pinned", "Pinned", () => (
-          <SortableContext
-            items={dnd.sections.pinned
-              .map(sidebarThreadKey)
-              .filter((threadKey) => dnd.reorderablePinnedKeys.has(threadKey))}
-            strategy={dnd.pinnedSortingStrategy}
-          >
-            <ul role="list" aria-label="Pinned threads" className="flex flex-col gap-px">
-              {dnd.sections.pinned.map((thread) => renderThread(thread, "pinned"))}
-            </ul>
-          </SortableContext>
-        ))}
-        {(dnd.sections.pinned.length > 0 || dnd.isTemporarySectionRailVisible("pinned")) &&
-        !isViewportRail("pinned") ? (
-          <li
-            aria-hidden
-            data-testid="sidebar-pinned-divider"
-            className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-          />
-        ) : null}
-        {renderSection("regular", "Regular", () => (
-          <ul role="list" aria-label="Regular threads" className="flex flex-col gap-px">
-            {dnd.sections.regular.map((thread) => renderThread(thread, "regular"))}
-          </ul>
-        ))}
-        {renderSection("snoozed", "Snooze", (isOver) => (
-          <>
-            <SidebarThreadShelfHeader
-              section="snoozed"
-              count={props.snoozedShelf.threadCount}
-              expanded={props.snoozedShelf.expanded}
-              isDropOver={isOver && !props.snoozedShelf.expanded}
-              onToggle={props.snoozedShelf.onToggle}
-            />
-            <ul role="list" aria-label="Snoozed threads" className="flex flex-col gap-px">
-              {dnd.sections.snoozed.map((thread) => renderThread(thread, "snoozed"))}
-            </ul>
-          </>
-        ))}
-        {renderSection("settled", "Settled", (isOver) => (
-          <>
-            <SidebarThreadShelfHeader
-              section="settled"
-              count={props.settledShelf.threadCount}
-              expanded={props.settledShelf.expanded}
-              isDropOver={isOver && !props.settledShelf.expanded}
-              onToggle={props.settledShelf.onToggle}
-            />
-            <ul role="list" aria-label="Settled threads" className="flex flex-col gap-px">
-              {dnd.sections.settled.map((thread) => renderThread(thread, "settled"))}
-            </ul>
-            {props.settledShelf.expanded && props.settledShelf.hiddenCount > 0 ? (
-              <button
-                type="button"
-                onClick={props.settledShelf.onShowMore}
-                className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-              >
-                <PlusIcon aria-hidden className="size-4 shrink-0" />
-                Show {props.settledShelf.showMoreCount} more
-              </button>
-            ) : null}
-          </>
-        ))}
-      </ul>
-      <DragOverlay adjustScale={false} dropAnimation={null}>
+        <SortableContext items={dnd.entries.map((entry) => entry.id)} strategy={sortingStrategy}>
+          {boardEntries}
+        </SortableContext>
         {dnd.transaction?.phase === "dragging" &&
-        dnd.dragPreviewVariant !== null &&
-        props.dragPreviewProject !== null ? (
-          <SidebarThreadDragOverlayContent
-            transaction={dnd.transaction}
-            variant={dnd.dragPreviewVariant}
-            projectTitle={props.dragPreviewProject.title}
-            projectCwd={props.dragPreviewProject.cwd}
-            projectFaviconPath={props.dragPreviewProject.faviconPath}
+        dnd.transaction.target !== null &&
+        dragPresentationHeight !== null &&
+        (dnd.transaction.target.section === "snoozed" ||
+          dnd.transaction.target.section === "settled") ? (
+          <SidebarThreadDropOutline
+            key={dnd.transaction.target.section}
+            section={dnd.transaction.target.section}
+            sourceSection={dnd.transaction.sourceSection}
+            sourceThreadKey={dnd.transaction.sourceThreadKey}
+            entries={dnd.transaction.initialEntries}
+            target={dnd.transaction.target}
+            presentationHeight={dragPresentationHeight}
+            listRef={listRef}
+            getEntryNode={dnd.layout.getEntryNode}
           />
         ) : null}
-      </DragOverlay>
+        {props.settledShelf.expanded && props.settledShelf.hiddenCount > 0 ? (
+          <li className="list-none">
+            <button
+              type="button"
+              onClick={props.settledShelf.onShowMore}
+              className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+            >
+              <PlusIcon aria-hidden className="size-4 shrink-0" />
+              Show {props.settledShelf.showMoreCount} more
+            </button>
+          </li>
+        ) : null}
+      </ul>
     </DndContext>
   );
 }

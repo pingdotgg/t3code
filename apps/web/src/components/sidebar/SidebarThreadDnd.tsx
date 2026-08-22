@@ -1,18 +1,21 @@
-import { useDroppable } from "@dnd-kit/core";
-import { useSortable } from "@dnd-kit/sortable";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 
-import { cn } from "~/lib/utils";
 import {
   createSidebarDndSectionId,
   type SidebarDndPreviewVariant,
   type SidebarDndSection,
 } from "../Sidebar.dnd.logic";
-import { animatePinnedLayoutChanges } from "../Sidebar.logic";
-import { SidebarThreadDragPreview } from "./SidebarThreadDragPreview";
+
+export const SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT = {
+  card: 82,
+  slim: 36,
+} satisfies Readonly<Record<SidebarDndPreviewVariant, number>>;
+
+const disableLayoutChanges: AnimateLayoutChanges = () => false;
 
 export type SidebarThreadDndRowBag = {
+  readonly section: SidebarDndSection;
   readonly listeners: ReturnType<typeof useSortable>["listeners"];
   readonly setNodeRef: (node: HTMLElement | null) => void;
   readonly transform: ReturnType<typeof useSortable>["transform"];
@@ -23,16 +26,17 @@ export type SidebarThreadDndRowBag = {
 
 export function SidebarThreadDndRow(props: {
   threadKey: string;
+  section: SidebarDndSection;
   dragDisabled: boolean;
-  dropDisabled: boolean;
-  sortable: boolean;
-  onNodeChange: (threadKey: string, node: HTMLElement | null) => void;
+  disableLayoutAnimation: boolean;
+  onNodeChange: (id: string, node: HTMLElement | null) => void;
   children: (bag: SidebarThreadDndRowBag) => ReactNode;
 }) {
   const sortable = useSortable({
     id: props.threadKey,
-    disabled: { draggable: props.dragDisabled, droppable: props.dropDisabled },
-    ...(props.sortable ? { animateLayoutChanges: animatePinnedLayoutChanges } : {}),
+    disabled: { draggable: props.dragDisabled, droppable: false },
+    data: { section: props.section },
+    ...(props.disableLayoutAnimation ? { animateLayoutChanges: disableLayoutChanges } : {}),
   });
   const setNodeRef = useCallback(
     (node: HTMLElement | null) => {
@@ -48,62 +52,77 @@ export function SidebarThreadDndRow(props: {
     [props.onNodeChange, props.threadKey],
   );
   return props.children({
+    section: props.section,
     listeners: sortable.listeners,
     setNodeRef,
-    transform: props.sortable ? sortable.transform : null,
-    transition: props.sortable ? sortable.transition : undefined,
+    transform: sortable.transform,
+    transition: sortable.transition,
     isDragging: sortable.isDragging,
-    isSortable: props.sortable,
+    isSortable: true,
   });
 }
 
-export function SidebarThreadSectionDropZone(props: {
+export interface SidebarThreadDndBoundaryBag {
+  readonly setNodeRef: (node: HTMLElement | null) => void;
+  readonly transform: ReturnType<typeof useSortable>["transform"];
+  readonly transition: string | undefined;
+  readonly isOver: boolean;
+}
+
+export function SidebarThreadDndBoundary(props: {
   section: SidebarDndSection;
-  disabled: boolean;
-  children: (bag: {
-    readonly setNodeRef: (node: HTMLElement | null) => void;
-    readonly isOver: boolean;
-  }) => ReactNode;
+  onNodeChange: (id: string, node: HTMLElement | null) => void;
+  children: (bag: SidebarThreadDndBoundaryBag) => ReactNode;
 }) {
-  const droppable = useDroppable({
-    id: createSidebarDndSectionId({ section: props.section }),
-    disabled: props.disabled,
+  const id = createSidebarDndSectionId({ section: props.section });
+  const sortable = useSortable({
+    id,
+    disabled: { draggable: true, droppable: false },
     data: { section: props.section },
   });
-  return props.children({ setNodeRef: droppable.setNodeRef, isOver: droppable.isOver });
-}
-
-export function SidebarThreadDropIndicator(props: { edge: "before" | "after" }) {
-  return (
-    <span
-      aria-hidden
-      data-testid="sidebar-thread-drop-indicator"
-      className={cn(
-        "pointer-events-none absolute inset-x-2.5 z-30 h-0 border-t-2 border-primary",
-        props.edge === "before" ? "top-0" : "bottom-0",
-      )}
-    />
+  const setNodeRef = useCallback(
+    (node: HTMLElement | null) => {
+      sortable.setNodeRef(node);
+      props.onNodeChange(id, node);
+    },
+    [id, props.onNodeChange, sortable.setNodeRef],
   );
+  useEffect(
+    () => () => {
+      props.onNodeChange(id, null);
+    },
+    [id, props.onNodeChange],
+  );
+  return props.children({
+    setNodeRef,
+    transform: sortable.transform,
+    transition: sortable.transition,
+    isOver: sortable.isOver,
+  });
 }
 
-export interface SidebarThreadDragOverlayTransaction {
-  readonly sourceThread: EnvironmentThreadShell;
+export interface SidebarThreadDragView {
+  readonly variant: SidebarDndPreviewVariant;
   readonly sourceRect: {
+    readonly top: number;
+    readonly left: number;
     readonly width: number;
     readonly height: number;
   };
+  readonly translation: {
+    readonly x: number;
+    readonly y: number;
+  };
+  readonly scrollDeltaY: number;
   readonly pointerAnchor: {
     readonly x: number;
     readonly y: number;
   };
 }
 
-export function SidebarThreadDragOverlayContent(props: {
-  transaction: SidebarThreadDragOverlayTransaction;
-  variant: SidebarDndPreviewVariant;
-  projectTitle: string | null;
-  projectCwd: string | null;
-  projectFaviconPath: string | null;
+export function SidebarThreadDragMorph(props: {
+  dragView: SidebarThreadDragView | null;
+  children: ReactNode;
 }) {
   const innerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<Animation | null>(null);
@@ -111,18 +130,28 @@ export function SidebarThreadDragOverlayContent(props: {
     readonly width: number;
     readonly height: number;
   } | null>(null);
-  const previewHeight = props.variant === "card" ? 82 : 36;
-  const previewWidth = props.transaction.sourceRect.width;
-  const left =
-    props.transaction.pointerAnchor.x * props.transaction.sourceRect.width -
-    props.transaction.pointerAnchor.x * previewWidth;
-  const top =
-    props.transaction.pointerAnchor.y * props.transaction.sourceRect.height -
-    props.transaction.pointerAnchor.y * previewHeight;
+  const previewHeight =
+    props.dragView === null
+      ? null
+      : SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[props.dragView.variant];
+  const previewWidth = props.dragView?.sourceRect.width ?? null;
+  const pointerAnchorX = props.dragView?.pointerAnchor.x ?? null;
+  const pointerAnchorY = props.dragView?.pointerAnchor.y ?? null;
 
   useLayoutEffect(() => {
     const node = innerRef.current;
-    if (node === null) return;
+    if (
+      node === null ||
+      previewHeight === null ||
+      previewWidth === null ||
+      pointerAnchorX === null ||
+      pointerAnchorY === null
+    ) {
+      animationRef.current?.cancel();
+      animationRef.current = null;
+      geometryRef.current = null;
+      return;
+    }
     const nextGeometry = { width: previewWidth, height: previewHeight };
     const previousGeometry = geometryRef.current;
     geometryRef.current = nextGeometry;
@@ -138,20 +167,16 @@ export function SidebarThreadDragOverlayContent(props: {
     const fromHeight = interruptedRect?.height ?? previousGeometry.height;
     const scaleX = settledRect.width > 0 ? fromWidth / settledRect.width : 1;
     const scaleY = settledRect.height > 0 ? fromHeight / settledRect.height : 1;
-    const settledAnchorX = settledRect.left + props.transaction.pointerAnchor.x * settledRect.width;
-    const settledAnchorY = settledRect.top + props.transaction.pointerAnchor.y * settledRect.height;
+    const settledAnchorX = settledRect.left + pointerAnchorX * settledRect.width;
+    const settledAnchorY = settledRect.top + pointerAnchorY * settledRect.height;
     const translateX =
       interruptedRect === null
         ? 0
-        : interruptedRect.left +
-          props.transaction.pointerAnchor.x * interruptedRect.width -
-          settledAnchorX;
+        : interruptedRect.left + pointerAnchorX * interruptedRect.width - settledAnchorX;
     const translateY =
       interruptedRect === null
         ? 0
-        : interruptedRect.top +
-          props.transaction.pointerAnchor.y * interruptedRect.height -
-          settledAnchorY;
+        : interruptedRect.top + pointerAnchorY * interruptedRect.height - settledAnchorY;
     animationRef.current = node.animate(
       [
         {
@@ -162,37 +187,47 @@ export function SidebarThreadDragOverlayContent(props: {
       ],
       { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "both" },
     );
-  }, [previewHeight, previewWidth, props.transaction.pointerAnchor]);
+  }, [pointerAnchorX, pointerAnchorY, previewHeight, previewWidth]);
   useEffect(() => () => animationRef.current?.cancel(), []);
+
+  if (
+    props.dragView === null ||
+    previewHeight === null ||
+    previewWidth === null ||
+    pointerAnchorX === null ||
+    pointerAnchorY === null
+  ) {
+    return props.children;
+  }
+
+  const left = pointerAnchorX * props.dragView.sourceRect.width - pointerAnchorX * previewWidth;
+  const top = pointerAnchorY * props.dragView.sourceRect.height - pointerAnchorY * previewHeight;
 
   return (
     <div
-      aria-hidden
-      className="relative"
+      className="pointer-events-none fixed z-20"
       style={{
-        width: props.transaction.sourceRect.width,
-        height: props.transaction.sourceRect.height,
+        top: props.dragView.sourceRect.top,
+        left: props.dragView.sourceRect.left,
+        width: props.dragView.sourceRect.width,
+        height: props.dragView.sourceRect.height,
+        transform: `translate3d(${props.dragView.translation.x}px, ${props.dragView.translation.y - props.dragView.scrollDeltaY}px, 0)`,
+        willChange: "transform",
       }}
     >
       <div
         ref={innerRef}
-        className="absolute"
+        className={props.dragView.variant === "card" ? "absolute py-0.5" : "absolute"}
         style={{
           left,
           top,
           width: previewWidth,
           height: previewHeight,
-          transformOrigin: `${props.transaction.pointerAnchor.x * 100}% ${props.transaction.pointerAnchor.y * 100}%`,
+          transformOrigin: `${pointerAnchorX * 100}% ${pointerAnchorY * 100}%`,
           willChange: "transform, opacity",
         }}
       >
-        <SidebarThreadDragPreview
-          thread={props.transaction.sourceThread}
-          variant={props.variant}
-          projectTitle={props.projectTitle}
-          projectCwd={props.projectCwd}
-          projectFaviconPath={props.projectFaviconPath}
-        />
+        {props.children}
       </div>
     </div>
   );
