@@ -1039,6 +1039,150 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-testid="file-diff"');
   });
 
+  it("renders user-input exchanges as a stylized question card instead of JSON", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-user-input",
+            kind: "user-input",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            userInputExchange: {
+              id: "entry-user-input",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              turnId: null,
+              questions: [
+                {
+                  id: "Which auth method should we use?",
+                  header: "Auth method",
+                  question: "Which auth method should we use?",
+                  options: [
+                    { label: "OAuth", description: "Use OAuth flows" },
+                    { label: "API keys", description: "Use static keys" },
+                  ],
+                  multiSelect: false,
+                },
+                {
+                  id: "Which features do you want?",
+                  header: "Features",
+                  question: "Which features do you want?",
+                  options: [
+                    { label: "Search", description: "Full text search" },
+                    { label: "Sync", description: "Background sync" },
+                  ],
+                  multiSelect: true,
+                },
+              ],
+              answers: {
+                "Which auth method should we use?": "OAuth",
+                "Which features do you want?": ["Search", "Sync"],
+              },
+              resolved: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Which auth method should we use?");
+    expect(markup).toContain("OAuth");
+    expect(markup).toContain("Which features do you want?");
+    expect(markup).toContain("Search, Sync");
+    expect(markup).not.toContain("&quot;questions&quot;");
+    // The card is collapsible via its header row, expanded by default.
+    expect(markup).toContain('aria-label="User input submitted"');
+    expect(markup).toContain("lucide-chevron-down");
+  });
+
+  it("renders a waiting placeholder for unresolved user-input exchanges", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-user-input-pending",
+            kind: "user-input",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            userInputExchange: {
+              id: "entry-user-input-pending",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              turnId: null,
+              questions: [
+                {
+                  id: "Continue?",
+                  header: "Approval",
+                  question: "Continue?",
+                  options: [{ label: "Yes", description: "Continue execution" }],
+                  multiSelect: false,
+                },
+              ],
+              resolved: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="User input requested"');
+    expect(markup).toContain("Continue?");
+    expect(markup).toContain("Waiting for your answer");
+  });
+
+  it("shows draft answers on pending exchanges as the user selects them", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        pendingUserInputDraftAnswersByRequestId={{
+          "req-live-1": {
+            "Which auth method should we use?": { selectedOptionLabels: ["OAuth"] },
+          },
+        }}
+        timelineEntries={[
+          {
+            id: "entry-user-input-live",
+            kind: "user-input",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            userInputExchange: {
+              id: "entry-user-input-live",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              turnId: null,
+              requestId: "req-live-1",
+              questions: [
+                {
+                  id: "Which auth method should we use?",
+                  header: "Auth method",
+                  question: "Which auth method should we use?",
+                  options: [
+                    { label: "OAuth", description: "Use OAuth flows" },
+                    { label: "API keys", description: "Use static keys" },
+                  ],
+                  multiSelect: false,
+                },
+                {
+                  id: "Which features do you want?",
+                  header: "Features",
+                  question: "Which features do you want?",
+                  options: [
+                    { label: "Search", description: "Full text search" },
+                    { label: "Sync", description: "Background sync" },
+                  ],
+                  multiSelect: true,
+                },
+              ],
+              resolved: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    // The answered question previews its draft answer immediately; the
+    // unanswered one still shows the waiting placeholder.
+    expect(markup).toContain("OAuth");
+    expect(markup).toContain("Waiting for your answer");
+  });
+
   it("renders a failure marker for failed tool lifecycle entries", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

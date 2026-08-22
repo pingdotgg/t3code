@@ -6,6 +6,7 @@ import {
   workLogEntryIsToolLike,
   type TimelineEntry,
   type TurnPlanEntry,
+  type UserInputExchangeEntry,
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
@@ -238,6 +239,12 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       turnPlan: TurnPlanEntry;
+    }
+  | {
+      kind: "user-input";
+      id: string;
+      createdAt: string;
+      userInputExchange: UserInputExchangeEntry;
     }
   | {
       kind: "working";
@@ -517,6 +524,9 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.turnId;
   }
+  if (entry.kind === "user-input") {
+    return entry.userInputExchange.turnId;
+  }
   return entry.kind === "work" ? (entry.entry.turnId ?? null) : null;
 }
 
@@ -725,7 +735,10 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.toolLifecycleStatus === "inProgress"
       );
     }
+    // A Q&A card is rendered content, and a pending one means the agent is
+    // blocked on the user — a "Thinking" shimmer under it would be a lie.
     if (entry.kind === "proposed-plan" || entry.kind === "turn-plan") return true;
+    if (entry.kind === "user-input") return true;
     return false;
   });
 
@@ -991,6 +1004,16 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "user-input") {
+      nextRows.push({
+        kind: "user-input",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        userInputExchange: timelineEntry.userInputExchange,
+      });
+      continue;
+    }
+
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
       unsettledTurnId !== null &&
@@ -1071,6 +1094,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "user-input":
+      return a.userInputExchange === (b as typeof a).userInputExchange;
 
     case "turn-plan": {
       const bp = b as typeof a;

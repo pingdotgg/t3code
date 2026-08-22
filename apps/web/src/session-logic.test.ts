@@ -15,6 +15,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
+  deriveUserInputExchanges,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   hasActionableProposedPlan,
@@ -2203,5 +2204,461 @@ describe("rerun workflows", () => {
     const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
     expect(spawnRows.map((row) => row.agentSpawn!.workflowId)).toEqual(["wf-run1", "wf-run2"]);
     expect(spawnRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
+  });
+});
+
+describe("deriveUserInputExchanges", () => {
+  const questionsPayload = [
+    {
+      id: "Which auth method should we use?",
+      header: "Auth method",
+      question: "Which auth method should we use?",
+      options: [
+        { label: "OAuth", description: "Use OAuth flows" },
+        { label: "API keys", description: "Use static keys" },
+      ],
+      multiSelect: false,
+    },
+    {
+      id: "Which features do you want?",
+      header: "Features",
+      question: "Which features do you want?",
+      options: [
+        { label: "Search", description: "Full text search" },
+        { label: "Sync", description: "Background sync" },
+      ],
+      multiSelect: true,
+    },
+  ];
+
+  it("merges a resolved exchange into one entry anchored at the request", () => {
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { requestId: "req-ui-1", questions: questionsPayload },
+      }),
+      makeActivity({
+        id: "unrelated-tool",
+        createdAt: "2026-02-23T00:00:05.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        tone: "tool",
+      }),
+      makeActivity({
+        id: "ui-resolved",
+        createdAt: "2026-02-23T00:00:09.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          requestId: "req-ui-1",
+          answers: {
+            "Which auth method should we use?": "OAuth",
+            "Which features do you want?": ["Search", "Sync"],
+          },
+        },
+      }),
+    ]);
+
+    expect(exchanges).toEqual([
+      {
+        id: "ui-requested",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: TurnId.make("turn-1"),
+        requestId: "req-ui-1",
+        questions: questionsPayload,
+        answers: {
+          "Which auth method should we use?": "OAuth",
+          "Which features do you want?": ["Search", "Sync"],
+        },
+        resolved: true,
+      },
+    ]);
+  });
+
+  it("keeps an unresolved exchange with its questions and no answers", () => {
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-pending",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: { requestId: "req-ui-2", questions: questionsPayload },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.resolved).toBe(false);
+    expect(exchanges[0]?.questions).toEqual(questionsPayload);
+    expect(exchanges[0]?.answers).toBeUndefined();
+  });
+
+  it("treats empty-string answers as unanswered instead of rendering blank text", () => {
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-rejected",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-ui-3",
+          questions: [
+            {
+              id: "q-0",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "ui-resolved-rejected",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          requestId: "req-ui-3",
+          answers: { "q-0": "" },
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.resolved).toBe(true);
+    expect(exchanges[0]?.answers).toBeUndefined();
+  });
+
+  it("shows a resolved exchange standalone when its request is missing from history", () => {
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-resolved-orphan",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          requestId: "req-ui-4",
+          answers: { "Which auth method should we use?": "OAuth" },
+        },
+      }),
+    ]);
+
+    expect(exchanges).toEqual([
+      {
+        id: "ui-resolved-orphan",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: null,
+        requestId: "req-ui-4",
+        questions: [],
+        answers: { "Which auth method should we use?": "OAuth" },
+        resolved: true,
+      },
+    ]);
+  });
+});
+
+describe("deriveWorkLogEntries user-input activities", () => {
+  it("omits user-input rows and raw AskUserQuestion tool rows from the work log", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "ui-requested",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: { requestId: "req-ui-1", questions: [] },
+      }),
+      makeActivity({
+        id: "ask-tool-row",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Tool call",
+        payload: {
+          itemType: "dynamic_tool_call",
+          detail: 'AskUserQuestion: {"questions":[{"question":"Which auth method?"}]}',
+          data: { toolName: "AskUserQuestion", input: { questions: [] } },
+        },
+      }),
+      makeActivity({
+        id: "ui-resolved",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: { requestId: "req-ui-1", answers: {} },
+      }),
+      makeActivity({
+        id: "other-tool-row",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        tone: "tool",
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["other-tool-row"]);
+  });
+});
+
+describe("deriveTimelineEntries user-input ordering", () => {
+  it("breaks createdAt ties between work rows and exchanges by activity sequence", () => {
+    const sharedCreatedAt = "2026-02-23T00:00:01.000Z";
+    const workEntries = deriveWorkLogEntries([
+      makeActivity({
+        id: "tool-after-question",
+        createdAt: sharedCreatedAt,
+        kind: "tool.completed",
+        summary: "Ran command",
+        tone: "tool",
+        sequence: 5,
+      }),
+    ]);
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-first",
+        createdAt: sharedCreatedAt,
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        sequence: 4,
+        payload: {
+          requestId: "req-order-1",
+          questions: [
+            {
+              id: "Continue?",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const timeline = deriveTimelineEntries([], [], workEntries, [], exchanges);
+    expect(timeline.map((entry) => entry.id)).toEqual([
+      "ui-requested-first",
+      "tool-after-question",
+    ]);
+  });
+});
+
+describe("deriveUserInputExchanges edge cases", () => {
+  it("keeps free-form questions that have no options", () => {
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-free-form",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-free-form",
+          questions: [
+            {
+              id: "q-free",
+              header: "Details",
+              question: "Describe the deployment target.",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.questions).toEqual([
+      {
+        id: "q-free",
+        header: "Details",
+        question: "Describe the deployment target.",
+        options: [],
+        multiSelect: false,
+      },
+    ]);
+  });
+
+  it("pairs a requestId-less resolution with the most recent open exchange", () => {
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-no-id",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          questions: [
+            {
+              id: "Continue?",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "ui-resolved-no-id",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          answers: { "Continue?": "Yes" },
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.id).toBe("ui-requested-no-id");
+    expect(exchanges[0]?.resolved).toBe(true);
+    expect(exchanges[0]?.answers).toEqual({ "Continue?": "Yes" });
+  });
+});
+
+describe("deriveUserInputExchanges stale requests", () => {
+  it("marks an exchange resolved when the provider reports its request as stale", () => {
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-stale",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-stale-1",
+          questions: [
+            {
+              id: "Continue?",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "ui-respond-failed-stale",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-stale-1",
+          detail:
+            "Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: req-stale-1",
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.resolved).toBe(true);
+    expect(exchanges[0]?.answers).toBeUndefined();
+  });
+});
+
+describe("deriveUserInputExchanges mixed sequence presence", () => {
+  it("pairs a resolution that sorts before its request into one exchange", () => {
+    // compareActivitiesByOrder sorts sequenced activities after unsequenced
+    // ones, so a sequenced request processes AFTER its unsequenced resolution.
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-seq",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        sequence: 10,
+        payload: {
+          requestId: "req-mixed-1",
+          questions: [
+            {
+              id: "Continue?",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "ui-resolved-unseq",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          requestId: "req-mixed-1",
+          answers: { "Continue?": "Yes" },
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.id).toBe("ui-requested-seq");
+    expect(exchanges[0]?.resolved).toBe(true);
+    expect(exchanges[0]?.answers).toEqual({ "Continue?": "Yes" });
+  });
+});
+
+describe("deriveUserInputExchanges answerless resolutions", () => {
+  it("settles a request whose answerless resolution sorted before it", () => {
+    // question.rejected-style resolutions carry empty answers; when mixed
+    // sequence presence sorts the resolution first, the later request must
+    // not open a forever-pending card.
+    const exchanges = deriveUserInputExchanges([
+      makeActivity({
+        id: "ui-requested-seq-rejected",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        sequence: 10,
+        payload: {
+          requestId: "req-rejected-1",
+          questions: [
+            {
+              id: "Continue?",
+              header: "Approval",
+              question: "Continue?",
+              options: [{ label: "Yes", description: "Continue execution" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "ui-resolved-empty",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+        payload: {
+          requestId: "req-rejected-1",
+          answers: {},
+        },
+      }),
+    ]);
+
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.id).toBe("ui-requested-seq-rejected");
+    expect(exchanges[0]?.resolved).toBe(true);
+    expect(exchanges[0]?.answers).toBeUndefined();
   });
 });

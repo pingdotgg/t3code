@@ -61,6 +61,24 @@ export type WorkLogToolLifecycleStatus =
   | "declined"
   | "stopped";
 
+/**
+ * One AskUserQuestion-style exchange, paired from its
+ * `user-input.requested`/`user-input.resolved` activities. First-class
+ * timeline content (like proposed plans), not a work-log row.
+ */
+export interface UserInputExchangeEntry {
+  id: string;
+  createdAt: string;
+  turnId: TurnId | null;
+  /** Source activity sequence — createdAt tiebreaker in the timeline merge. */
+  sequence?: number;
+  /** Links a pending exchange to its composer draft answers. */
+  requestId?: string;
+  questions: ReadonlyArray<UserInputQuestion>;
+  answers?: Readonly<Record<string, string | ReadonlyArray<string>>>;
+  resolved: boolean;
+}
+
 export interface WorkLogEntry {
   id: string;
   createdAt: string;
@@ -79,6 +97,8 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  /** Source activity sequence — createdAt tiebreaker in the timeline merge. */
+  sequence?: number;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
   /** Grouping key for subagent lifecycle rows (one row per agent). */
@@ -165,6 +185,12 @@ export type TimelineEntry =
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
+    }
+  | {
+      id: string;
+      kind: "user-input";
+      createdAt: string;
+      userInputExchange: UserInputExchangeEntry;
     };
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
@@ -457,6 +483,7 @@ export function derivePendingApprovals(
 
 function parseUserInputQuestions(
   payload: Record<string, unknown> | null,
+  parseOptions?: { allowEmptyOptions?: boolean },
 ): ReadonlyArray<UserInputQuestion> | null {
   const questions = payload?.questions;
   if (!Array.isArray(questions)) {
@@ -490,7 +517,9 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
+      // The composer panel needs options to offer; the timeline transcript can
+      // still display an option-less free-form question.
+      if (options.length === 0 && parseOptions?.allowEmptyOptions !== true) {
         return null;
       }
       return {
@@ -503,6 +532,35 @@ function parseUserInputQuestions(
     })
     .filter((question): question is UserInputQuestion => question !== null);
   return parsed.length > 0 ? parsed : null;
+}
+
+function parseUserInputAnswers(
+  payload: Record<string, unknown> | null,
+): Readonly<Record<string, string | ReadonlyArray<string>>> | null {
+  const answers = payload?.answers;
+  if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
+    return null;
+  }
+  const parsed: Record<string, string | ReadonlyArray<string>> = {};
+  for (const [question, answer] of Object.entries(answers as Record<string, unknown>)) {
+    // Adapters pad unanswered questions with "" (e.g. OpenCode) — treat those
+    // as missing so the row shows the no-answer placeholder, not blank text.
+    if (typeof answer === "string") {
+      if (answer.trim().length > 0) {
+        parsed[question] = answer;
+      }
+      continue;
+    }
+    if (Array.isArray(answer)) {
+      const labels = answer.filter(
+        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+      );
+      if (labels.length > 0) {
+        parsed[question] = labels;
+      }
+    }
+  }
+  return Object.keys(parsed).length > 0 ? parsed : null;
 }
 
 export function derivePendingUserInputs(
@@ -851,6 +909,12 @@ export function deriveWorkLogEntries(
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
+    // User-input exchanges are first-class timeline entries (see
+    // deriveUserInputExchanges), not work-log rows.
+    if (activity.kind === "user-input.requested" || activity.kind === "user-input.resolved") {
+      continue;
+    }
+    if (isUserInputToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
@@ -858,6 +922,155 @@ export function deriveWorkLogEntries(
     const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
     return Object.assign(rest, { sourceActivityKind: activityKind });
   });
+}
+
+/**
+ * Pairs `user-input.requested`/`user-input.resolved` activities by requestId
+ * into one Q&A exchange per interaction, anchored where the questions
+ * appeared. Unrelated rows may land between the request and the answer.
+ */
+export function deriveUserInputExchanges(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): UserInputExchangeEntry[] {
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const entries: UserInputExchangeEntry[] = [];
+  const openIndexByRequestId = new Map<string, number>();
+  // compareActivitiesByOrder sorts sequenced activities after unsequenced
+  // ones, so with mixed sequence presence a resolution can process before its
+  // request — remember it and pair when the request shows up. Answerless
+  // resolutions (question.rejected-style) render nothing standalone but must
+  // still settle their later-sorting request.
+  const orphanResolvedIndexByRequestId = new Map<string, number>();
+  const answerlessResolvedRequestIds = new Set<string>();
+  for (const activity of ordered) {
+    if (
+      activity.kind !== "user-input.requested" &&
+      activity.kind !== "user-input.resolved" &&
+      activity.kind !== "provider.user-input.respond.failed"
+    ) {
+      continue;
+    }
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const requestId =
+      typeof payload?.requestId === "string" && payload.requestId.length > 0
+        ? payload.requestId
+        : null;
+
+    // A stale respond-failure retires the prompt (the composer clears it via
+    // derivePendingUserInputs) — settle the card too, else it waits forever.
+    if (activity.kind === "provider.user-input.respond.failed") {
+      const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
+      if (requestId !== null && isStalePendingRequestFailureDetail(detail)) {
+        const openIndex = openIndexByRequestId.get(requestId);
+        if (openIndex !== undefined && !entries[openIndex]!.resolved) {
+          entries[openIndex] = { ...entries[openIndex]!, resolved: true };
+        }
+      }
+      continue;
+    }
+
+    if (activity.kind === "user-input.requested") {
+      const questions = parseUserInputQuestions(payload, { allowEmptyOptions: true });
+      if (!questions) {
+        continue;
+      }
+      const orphanIndex =
+        requestId !== null ? orphanResolvedIndexByRequestId.get(requestId) : undefined;
+      if (orphanIndex !== undefined) {
+        // The resolution processed first: re-anchor its entry at the request
+        // and attach the questions instead of emitting a duplicate card.
+        const orphan = entries[orphanIndex]!;
+        orphanResolvedIndexByRequestId.delete(requestId!);
+        entries[orphanIndex] = {
+          ...orphan,
+          id: activity.id,
+          createdAt: activity.createdAt,
+          turnId: activity.turnId,
+          ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+          questions,
+        };
+        continue;
+      }
+      const resolvedAnswerless =
+        requestId !== null && answerlessResolvedRequestIds.delete(requestId);
+      if (requestId && !resolvedAnswerless) {
+        openIndexByRequestId.set(requestId, entries.length);
+      }
+      entries.push({
+        id: activity.id,
+        createdAt: activity.createdAt,
+        turnId: activity.turnId,
+        ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+        ...(requestId !== null ? { requestId } : {}),
+        questions,
+        resolved: resolvedAnswerless,
+      });
+      continue;
+    }
+
+    const answers = parseUserInputAnswers(payload);
+    let openIndex = requestId !== null ? openIndexByRequestId.get(requestId) : undefined;
+    if (openIndex === undefined && requestId === null) {
+      // No requestId to pair on (contract edge — adapters normally stamp one):
+      // providers run one blocking prompt at a time, so the most recent open
+      // exchange is the one being resolved.
+      const lastOpenIndex = entries.findLastIndex((entry) => !entry.resolved);
+      openIndex = lastOpenIndex === -1 ? undefined : lastOpenIndex;
+    }
+    if (openIndex !== undefined) {
+      const open = entries[openIndex]!;
+      entries[openIndex] = {
+        ...open,
+        ...(answers ? { answers } : {}),
+        resolved: true,
+      };
+      continue;
+    }
+    // Resolved without a visible request (e.g. truncated history, or the
+    // request sorted after us): the answer keys are the question texts, so
+    // the exchange still renders; a later request re-anchors it.
+    if (answers) {
+      if (requestId !== null) {
+        orphanResolvedIndexByRequestId.set(requestId, entries.length);
+      }
+      entries.push({
+        id: activity.id,
+        createdAt: activity.createdAt,
+        turnId: activity.turnId,
+        ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+        ...(requestId !== null ? { requestId } : {}),
+        questions: [],
+        answers,
+        resolved: true,
+      });
+    } else if (requestId !== null) {
+      answerlessResolvedRequestIds.add(requestId);
+    }
+  }
+  return entries;
+}
+
+/**
+ * AskUserQuestion-style tool rows duplicate the structured
+ * user-input.requested/resolved rows (which carry the same questions and
+ * answers in parseable form) — hide the raw JSON row in favor of the Q&A one.
+ */
+function isUserInputToolActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") {
+    return false;
+  }
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  const data = asRecord(payload?.data);
+  if (data?.toolName === "AskUserQuestion") {
+    return true;
+  }
+  return typeof payload?.detail === "string" && payload.detail.startsWith("AskUserQuestion:");
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -928,6 +1141,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
+    ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
     label: taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress"
@@ -1791,6 +2005,7 @@ export function deriveTimelineEntries(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
   turnPlans: ReadonlyArray<TurnPlanEntry> = [],
+  userInputExchanges: ReadonlyArray<UserInputExchangeEntry> = [],
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
@@ -1816,9 +2031,46 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
+  const userInputRows: TimelineEntry[] = userInputExchanges.map((userInputExchange) => ({
+    id: userInputExchange.id,
+    kind: "user-input",
+    createdAt: userInputExchange.createdAt,
+    userInputExchange,
+  }));
+  return [
+    ...messageRows,
+    ...proposedPlanRows,
+    ...turnPlanRows,
+    ...workRows,
+    ...userInputRows,
+  ].toSorted(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || compareTimelineEntrySequences(a, b),
   );
+}
+
+/**
+ * Same-timestamp tiebreak for activity-backed entries (work rows and
+ * user-input exchanges carry their source activity's sequence): without it, a
+ * stable sort would order equal-createdAt ties by entry kind, not by when the
+ * activities actually happened.
+ */
+function compareTimelineEntrySequences(a: TimelineEntry, b: TimelineEntry): number {
+  const left = timelineEntrySequence(a);
+  const right = timelineEntrySequence(b);
+  if (left === undefined || right === undefined) {
+    return 0;
+  }
+  return left - right;
+}
+
+function timelineEntrySequence(entry: TimelineEntry): number | undefined {
+  if (entry.kind === "work") {
+    return entry.entry.sequence;
+  }
+  if (entry.kind === "user-input") {
+    return entry.userInputExchange.sequence;
+  }
+  return undefined;
 }
 
 export function inferCheckpointTurnCountByTurnId(
