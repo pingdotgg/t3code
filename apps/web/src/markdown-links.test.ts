@@ -90,6 +90,18 @@ describe("rewriteMarkdownFileUriHref", () => {
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
   });
 
+  it("preserves file uri authorities as windows UNC paths", () => {
+    expect(rewriteMarkdownFileUriHref("file://server/share/workspace-image.svg")).toBe(
+      "\\\\server\\share\\workspace-image.svg",
+    );
+  });
+
+  it("treats a localhost file uri as a local path", () => {
+    expect(rewriteMarkdownFileUriHref("file://localhost/home/me/notes.md")).toBe(
+      "/home/me/notes.md",
+    );
+  });
+
   it("unwraps angle-bracketed file uri hrefs", () => {
     expect(
       rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
@@ -135,6 +147,18 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("does not double-decode file URLs", () => {
     expect(resolveMarkdownFileLinkTarget("file:///Users/julius/project/file%2520name.md")).toBe(
       "/Users/julius/project/file%20name.md",
+    );
+  });
+
+  it("resolves file uri authorities as windows UNC paths", () => {
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
+      "\\\\server\\share\\workspace-image.svg",
+    );
+  });
+
+  it("resolves a localhost file uri as a local path", () => {
+    expect(resolveMarkdownFileLinkTarget("file://localhost/home/me/notes.md")).toBe(
+      "/home/me/notes.md",
     );
   });
 
