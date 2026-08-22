@@ -9,6 +9,7 @@ import showcaseConfig, {
   type ShowcaseStoreAssetSpec,
 } from "./mobile-showcase.config.ts";
 import {
+  buildShowcaseProjectionFixture,
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
   SHOWCASE_THREADS,
@@ -72,6 +73,34 @@ const config: ShowcaseConfig = {
     },
   ],
 };
+
+it("keeps showcase projection rows stable through the shared fixture writer", () => {
+  const workspaceRoots = new Map(
+    SHOWCASE_PROJECTS.map((project) => [project.id, `/showcase/${project.directory}`] as const),
+  );
+  const fixture = buildShowcaseProjectionFixture(
+    workspaceRoots,
+    SHOWCASE_PROJECTS,
+    SHOWCASE_THREADS,
+    Date.parse("2026-08-09T12:00:00.000Z"),
+  );
+
+  assert.equal(fixture.projects.length, SHOWCASE_PROJECTS.length);
+  assert.equal(fixture.threads.length, SHOWCASE_THREADS.length);
+  assert.equal(fixture.turns.length, SHOWCASE_THREADS.length);
+  assert.equal(
+    fixture.messages.length,
+    SHOWCASE_THREADS.reduce((count, thread) => count + (thread.response === null ? 1 : 2), 0),
+  );
+  assert.deepStrictEqual(
+    fixture.activities?.map((activity) => [activity.activityId, activity.sequence]),
+    [
+      ["trace-remote-handoff", 1],
+      ["sync-command-center", 2],
+      ["run-changed-suite", 3],
+    ],
+  );
+});
 
 it("parses repeatable capture filters", () => {
   const options = parseShowcaseCliArgs([
