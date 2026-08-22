@@ -55,8 +55,10 @@ After each prompt T3 reads Grok's prompt `_meta.usage` (including the official P
 totals / `cached_read_tokens` shape) and emits `thread.token-usage.updated`. Workflow child
 tokens are added as they arrive.
 
-Cost ticks (`costUsdTicks`) are not billed in T3 yet. Incomplete or partial Grok bills are
-treated as token counts only.
+The Usage page scans `~/.grok/sessions/**/updates.jsonl` the same way it reads Claude and
+Codex transcripts. Complete PromptUsage rows contribute token totals and, when
+`costUsdTicks` is present and the bill is not marked incomplete, a dollar amount
+(1e10 ticks = $1). Incomplete bills stay on the token side and never become $0.
 
 ## Rewind
 

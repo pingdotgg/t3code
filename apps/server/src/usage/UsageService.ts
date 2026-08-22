@@ -218,10 +218,12 @@ export const make = Effect.gen(function* () {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const grokHome = process.env.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok");
 
     return [
       { provider: "claude" as const, dir: claudeDir },
       { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "grok" as const, dir: path.join(grokHome, "sessions") },
     ];
   });
 
@@ -373,7 +375,11 @@ export const make = Effect.gen(function* () {
       }
 
       walkedRoots.push(dir);
-      const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      const listed = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      const files =
+        provider === "grok"
+          ? listed.filter((file) => path.basename(file.path) === "updates.jsonl")
+          : listed;
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  GROK_COST_USD_TICKS_PER_DOLLAR,
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseGrokLine,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -233,6 +235,86 @@ describe("parseCodexLine", () => {
       );
       expect(record).not.toBeNull();
     });
+  });
+});
+
+describe("parseGrokLine", () => {
+  function grokTurnCompleted(overrides?: {
+    promptId?: string;
+    incomplete?: boolean;
+    costUsdTicks?: number | null;
+  }): string {
+    return JSON.stringify({
+      timestamp: "2026-08-15T03:57:36.535Z",
+      method: "_x.ai/session/update",
+      params: {
+        sessionId: "sess-1",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: overrides?.promptId ?? "prompt-1",
+          stop_reason: "end_turn",
+          usage: {
+            inputTokens: 974_514,
+            outputTokens: 7_246,
+            totalTokens: 981_760,
+            cachedReadTokens: 847_360,
+            cacheCreationTokens: 0,
+            reasoningTokens: 4_743,
+            ...(overrides?.incomplete === true ? { usageIsIncomplete: true } : {}),
+            ...(overrides?.costUsdTicks === null
+              ? {}
+              : { costUsdTicks: overrides?.costUsdTicks ?? 1_626_488_800 }),
+            modelUsage: {
+              "grok-4.6-build": {
+                inputTokens: 974_514,
+                outputTokens: 7_246,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  it("reads PromptUsage totals, cache, and complete cost ticks", () => {
+    const record = parseGrokLine(grokTurnCompleted());
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("grok");
+    expect(record?.model).toBe("grok-4.6-build");
+    expect(record?.sessionId).toBe("sess-1");
+    expect(record?.dedupeKey).toBe("sess-1:prompt-1");
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 974_514 - 847_360,
+      cachedInputTokens: 847_360,
+      cacheCreationTokens: 0,
+      outputTokens: 7_246,
+      reasoningTokens: 4_743,
+    });
+    expect(record?.reportedCostUsd).toBeCloseTo(1_626_488_800 / GROK_COST_USD_TICKS_PER_DOLLAR);
+  });
+
+  it("does not treat an incomplete bill as $0", () => {
+    const record = parseGrokLine(grokTurnCompleted({ incomplete: true, costUsdTicks: 100 }));
+    expect(record?.reportedCostUsd).toBeNull();
+  });
+
+  it("dedupes the same prompt across ACP method aliases", () => {
+    const first = parseGrokLine(grokTurnCompleted({ promptId: "p2" }));
+    const second = parseGrokLine(
+      grokTurnCompleted({ promptId: "p2" }).replace("_x.ai/session/update", "session/update"),
+    );
+    expect(first?.dedupeKey).toBe(second?.dedupeKey);
+  });
+
+  it("ignores non-turn updates", () => {
+    expect(
+      parseGrokLine(
+        JSON.stringify({
+          timestamp: "2026-08-15T03:57:36.535Z",
+          params: { update: { sessionUpdate: "agent_message_chunk" } },
+        }),
+      ),
+    ).toBeNull();
   });
 });
 
