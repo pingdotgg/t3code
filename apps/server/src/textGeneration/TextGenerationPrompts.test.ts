@@ -6,7 +6,7 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import { normalizeCliError, sanitizePrTitle, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -243,6 +243,119 @@ describe("sanitizeThreadTitle", () => {
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
     ).toBe("Reconnect failures after restart because the se...");
+  });
+
+  it("unwraps a self-wrapped JSON envelope emitted as the title value", () => {
+    expect(sanitizeThreadTitle('{"title": "Fix the flaky login test"}')).toBe(
+      "Fix the flaky login test",
+    );
+  });
+
+  it("unwraps a single string value regardless of the key name", () => {
+    expect(sanitizeThreadTitle('{"name": "Add dark mode toggle"}')).toBe("Add dark mode toggle");
+    expect(sanitizeThreadTitle('{"summary": "Investigate reconnect regressions"}')).toBe(
+      "Investigate reconnect regressions",
+    );
+  });
+
+  it("extracts the sole string field even when other non-string fields exist", () => {
+    expect(
+      sanitizeThreadTitle('{"name": "Add dark mode toggle", "priority": 2, "done": false}'),
+    ).toBe("Add dark mode toggle");
+    expect(sanitizeThreadTitle('{"confidence": 0.9, "title": "Fix the flaky login test"}')).toBe(
+      "Fix the flaky login test",
+    );
+  });
+
+  it("prefers the title key when several string values are ambiguous", () => {
+    expect(
+      sanitizeThreadTitle('{"summary": "restate the request", "title": "Real thread name"}'),
+    ).toBe("Real thread name");
+  });
+
+  it("leaves an ambiguous object without a title key untouched", () => {
+    const raw = '{"name": "one", "label": "two"}';
+    expect(sanitizeThreadTitle(raw)).toBe(raw);
+  });
+
+  it("unwraps a JSON-encoded string wrapping the title", () => {
+    // The whole title arrives JSON-string-encoded, e.g. `"Fix the flaky login test"`.
+    expect(sanitizeThreadTitle('"Fix the flaky login test"')).toBe("Fix the flaky login test");
+  });
+
+  it("unwraps a JSON-string-encoded envelope (object serialised as a JSON string)", () => {
+    // Decodes to the string `{"title": "Fix the flaky login test"}`, then to the title.
+    expect(sanitizeThreadTitle('"{\\"title\\": \\"Fix the flaky login test\\"}"')).toBe(
+      "Fix the flaky login test",
+    );
+  });
+
+  it("unwraps a JSON envelope inside a Markdown code block", () => {
+    expect(sanitizeThreadTitle('```json\n{"title": "Add dark mode toggle"}\n```')).toBe(
+      "Add dark mode toggle",
+    );
+    expect(sanitizeThreadTitle('```\n{"name": "Add dark mode toggle"}\n```')).toBe(
+      "Add dark mode toggle",
+    );
+    expect(sanitizeThreadTitle('`{"title": "Add dark mode toggle"}`')).toBe("Add dark mode toggle");
+  });
+
+  it("unwraps an envelope on the same line as the fence opener", () => {
+    expect(sanitizeThreadTitle('```json {"title": "Add dark mode toggle"}```')).toBe(
+      "Add dark mode toggle",
+    );
+    expect(sanitizeThreadTitle('```{"name": "Add dark mode toggle"}```')).toBe(
+      "Add dark mode toggle",
+    );
+  });
+
+  it("keeps the first word of a single-line fenced prose title", () => {
+    // The leading token is only dropped when the remainder is parseable JSON.
+    expect(sanitizeThreadTitle("```Deploy {config} now```")).toBe("Deploy {config} now");
+  });
+
+  it("unwraps an envelope that is both quoted and fenced", () => {
+    // A JSON string whose contents are a fenced JSON block — Macroscope's case.
+    expect(sanitizeThreadTitle('"```json\\n{\\"title\\": \\"Fix test\\"}\\n```"')).toBe("Fix test");
+  });
+
+  it("does not unwrap a JSON object embedded in surrounding prose", () => {
+    expect(sanitizeThreadTitle('Document {"foo":"bar"} syntax')).toBe(
+      'Document {"foo":"bar"} syntax',
+    );
+    expect(sanitizeThreadTitle('Explain the {"name": "widget"} config')).toBe(
+      'Explain the {"name": "widget"} config',
+    );
+  });
+
+  it("unwraps a doubly-wrapped JSON envelope", () => {
+    expect(sanitizeThreadTitle('{"title": "{\\"title\\": \\"Refactor auth flow\\"}"}')).toBe(
+      "Refactor auth flow",
+    );
+  });
+
+  it("leaves a plain title containing braces untouched", () => {
+    expect(sanitizeThreadTitle("Handle { and } in the parser")).toBe(
+      "Handle { and } in the parser",
+    );
+  });
+});
+
+describe("sanitizePrTitle", () => {
+  it("unwraps a self-wrapped JSON envelope emitted as the title value", () => {
+    expect(sanitizePrTitle('{"title": "fix(auth): reject expired tokens"}')).toBe(
+      "fix(auth): reject expired tokens",
+    );
+  });
+
+  it("unwraps a JSON-string-encoded envelope (PR titles are not quote-stripped)", () => {
+    expect(sanitizePrTitle('"{\\"title\\": \\"fix(auth): reject expired tokens\\"}"')).toBe(
+      "fix(auth): reject expired tokens",
+    );
+  });
+
+  it("keeps a normal single-line title", () => {
+    expect(sanitizePrTitle("feat: add retry to uploader")).toBe("feat: add retry to uploader");
   });
 });
 

@@ -1,6 +1,116 @@
 import { TextGenerationError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+/** Guard against pathological nesting when unwrapping a self-wrapped title. */
+const MAX_TITLE_UNWRAP_DEPTH = 8;
+
+/**
+ * Peel one layer of Markdown code decoration: a fenced ```` ```lang … ``` ````
+ * block or inline `` `…` `` backticks. Returns the trimmed inner content, or the
+ * trimmed input when there is no such wrapper.
+ */
+function isParseableJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stripCodeMarkdown(value: string): string {
+  const trimmed = value.trim();
+
+  if (trimmed.startsWith("```") && trimmed.endsWith("```") && trimmed.length >= 6) {
+    const inner = trimmed.slice(3, -3);
+    const newlineIndex = inner.indexOf("\n");
+    if (newlineIndex >= 0) {
+      // Standard fence: the opener line holds an optional language tag and the
+      // content follows on the next line. Drop the tag only when it is one.
+      const infoString = inner.slice(0, newlineIndex).trim();
+      return /^[A-Za-z0-9_-]*$/.test(infoString)
+        ? inner.slice(newlineIndex + 1).trim()
+        : inner.trim();
+    }
+    // Single-line fence, e.g. ```json {"title":"x"}```: drop a leading language
+    // tag before an object/array, but only when doing so yields parseable JSON,
+    // so a real first word in a fenced prose title is never eaten.
+    const withoutTag = inner.replace(/^[A-Za-z0-9_-]+\s+(?=[[{])/, "");
+    return (withoutTag !== inner && isParseableJson(withoutTag) ? withoutTag : inner).trim();
+  }
+
+  const inline = trimmed.match(/^`+([^`]*)`+$/);
+  if (inline?.[1] !== undefined) {
+    return inline[1].trim();
+  }
+
+  return trimmed;
+}
+
+/**
+ * Some models ignore the structured-output contract and emit the whole JSON
+ * envelope as the field's value, so a title comes back as the literal string
+ * `{"title": "Fix the flaky test"}` (or a JSON-encoded string, possibly nested,
+ * possibly inside a Markdown code block) instead of `Fix the flaky test`. Peel
+ * that back at each level by first stripping a Markdown code block, then
+ * decoding as JSON:
+ *
+ * - decodes to a JSON string → recursively unwrap the decoded string;
+ * - decodes to a JSON object with exactly one string value → recursively unwrap
+ *   that value, whatever its key (`title`, `name`, `summary`, ...) and however
+ *   many non-string fields sit alongside it (`confidence`, `reasoning`, ...);
+ * - decodes to a JSON object with several string values → recursively unwrap a
+ *   string `title` when present, otherwise give up;
+ * - anything else (not JSON, a number, an array, an ambiguous object) → return
+ *   the value unchanged (after code-block stripping).
+ *
+ * Because plain prose is not valid JSON, a legitimate title that merely
+ * mentions an object, like `Document {"foo":"bar"} syntax`, is left intact.
+ */
+export function unwrapJsonEnvelopeTitle(raw: string): string {
+  return unwrapJsonValue(raw, 0);
+}
+
+function unwrapJsonValue(value: string, depth: number): string {
+  if (depth >= MAX_TITLE_UNWRAP_DEPTH) {
+    return value.trim();
+  }
+
+  // Strip a Markdown code block first, then attempt to decode as JSON.
+  const unwrapped = stripCodeMarkdown(value);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(unwrapped);
+  } catch {
+    return unwrapped;
+  }
+
+  if (typeof parsed === "string") {
+    return unwrapJsonValue(parsed, depth + 1);
+  }
+
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const stringValues = Object.values(parsed as Record<string, unknown>).filter(
+      (entry): entry is string => typeof entry === "string",
+    );
+    const [firstStringValue] = stringValues;
+    if (stringValues.length === 1 && firstStringValue !== undefined) {
+      // Single string value: use it whatever the key is called.
+      return unwrapJsonValue(firstStringValue, depth + 1);
+    }
+    if (stringValues.length > 1) {
+      // Ambiguous: disambiguate with a `title` key when present.
+      const title = (parsed as { title?: unknown }).title;
+      if (typeof title === "string") {
+        return unwrapJsonValue(title, depth + 1);
+      }
+    }
+  }
+
+  return unwrapped;
+}
+
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
@@ -35,7 +145,7 @@ export function sanitizeCommitSubject(raw: string): string {
 
 /** Normalise a raw PR title to a single line with a sensible fallback. */
 export function sanitizePrTitle(raw: string): string {
-  const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  const singleLine = unwrapJsonEnvelopeTitle(raw).split(/\r?\n/g)[0]?.trim() ?? "";
   if (singleLine.length > 0) {
     return singleLine;
   }
@@ -44,8 +154,7 @@ export function sanitizePrTitle(raw: string): string {
 
 /** Normalise a raw thread title to a compact single-line sidebar-safe label. */
 export function sanitizeThreadTitle(raw: string): string {
-  const normalized = raw
-    .trim()
+  const normalized = unwrapJsonEnvelopeTitle(raw)
     .split(/\r?\n/g)[0]
     ?.trim()
     .replace(/^['"`]+|['"`]+$/g, "")
