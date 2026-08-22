@@ -174,6 +174,22 @@ describe("VS Code theme import", () => {
     expect(green).toBeGreaterThan(red);
   });
 
+  it("rejects malformed CSS color() notation", () => {
+    for (const color of [
+      "color(srgb 0 0 0 / 1 / 0)",
+      "color(srgb 0wat 0 0)",
+      "color(srgb 0 0 0 / 100% trailing)",
+      "color(srgb 1. 0 0)",
+      "color(srgb 1.e2 0 0)",
+    ]) {
+      expect(() =>
+        parseVsCodeThemeFile({
+          name: "Malformed color function",
+          colors: { "editor.background": color },
+        }),
+      ).toThrow(/editor\.background/);
+    }
+  });
   it("pairs light and dark files from one family into dual-mode themes", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({

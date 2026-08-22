@@ -23,6 +23,10 @@ import {
 type VsCodeRgba = { r: number; g: number; b: number; a: number };
 type VsCodeRgb = { r: number; g: number; b: number };
 
+const CSS_COLOR_NUMBER =
+  "[+-]?(?:(?:\\d+(?:\\.\\d+)?)|(?:\\.\\d+))(?:[eE][+-]?\\d+)?";
+const CSS_COLOR_COMPONENT = new RegExp(`^(${CSS_COLOR_NUMBER})(%)?$`);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -37,6 +41,14 @@ function encodeGamma(value: number): number {
   return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
 }
 
+function parseColorComponent(value: string): number | null {
+  const match = CSS_COLOR_COMPONENT.exec(value);
+  if (!match) return null;
+  const number = Number(match[1]);
+  if (!Number.isFinite(number)) return null;
+  return match[2] ? number / 100 : number;
+}
+
 /**
  * `color(display-p3 r g b / a)` shows up in themes authored for wide-gamut
  * displays. Out-of-gamut colors clip to the sRGB edge, which is what a browser
@@ -46,20 +58,15 @@ function parseColorFunction(value: string): VsCodeRgba | null {
   const match = /^color\(\s*(display-p3|srgb)\s+([^)]+)\)$/i.exec(value);
   if (!match) return null;
   const [space, body] = [match[1]!.toLowerCase(), match[2]!];
-  const [channelPart, alphaPart] = body.split("/");
+  const [channelPart, alphaPart, ...extraParts] = body.split("/");
+  if (extraParts.length > 0) return null;
   const channels = channelPart!
     .trim()
     .split(/\s+/)
-    .map((part) => (part.endsWith("%") ? Number.parseFloat(part) / 100 : Number.parseFloat(part)));
-  if (channels.length !== 3 || channels.some((channel) => !Number.isFinite(channel))) return null;
-  const alphaRaw = alphaPart?.trim();
-  const alpha =
-    alphaRaw === undefined
-      ? 1
-      : alphaRaw.endsWith("%")
-        ? Number.parseFloat(alphaRaw) / 100
-        : Number.parseFloat(alphaRaw);
-  if (!Number.isFinite(alpha)) return null;
+    .map(parseColorComponent);
+  if (channels.length !== 3 || channels.some((channel) => channel === null)) return null;
+  const alpha = alphaPart === undefined ? 1 : parseColorComponent(alphaPart.trim());
+  if (alpha === null) return null;
 
   const [red, green, blue] = channels as [number, number, number];
   if (space === "srgb") {
