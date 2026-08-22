@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Raw filesystem readers and the worker watchdog run below the Effect service boundary.
 /**
  * Raw filesystem access for transcript scanning.
  *
@@ -14,6 +14,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
+import * as NodeTimers from "node:timers";
 import * as NodeWorkerThreads from "node:worker_threads";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
@@ -29,6 +30,8 @@ import {
 
 /** Wait through brief writer locks without stalling the server indefinitely. */
 const MCODE_BUSY_TIMEOUT_MS = 1_000;
+/** Bound a corrupt or unexpectedly expensive store independently of SQLite locks. */
+const MCODE_WORKER_WALL_TIMEOUT_MS = 30_000;
 
 type McodeWorkerRequest =
   | { readonly kind: "probe"; readonly filePath: string; readonly timeoutMs: number }
@@ -128,9 +131,11 @@ try {
 function runMcodeWorker(request: McodeWorkerRequest): Promise<McodeWorkerResponse | null> {
   return new Promise((resolve) => {
     let settled = false;
+    let timeout: ReturnType<typeof NodeTimers.setTimeout> | undefined;
     const settle = (value: McodeWorkerResponse | null) => {
       if (settled) return;
       settled = true;
+      if (timeout !== undefined) NodeTimers.clearTimeout(timeout);
       resolve(value);
     };
 
@@ -142,6 +147,11 @@ function runMcodeWorker(request: McodeWorkerRequest): Promise<McodeWorkerRespons
       worker.once("message", (message: McodeWorkerResponse) => settle(message));
       worker.once("error", () => settle(null));
       worker.once("exit", () => settle(null));
+      timeout = NodeTimers.setTimeout(() => {
+        void worker.terminate();
+        settle(null);
+      }, MCODE_WORKER_WALL_TIMEOUT_MS);
+      timeout.unref();
     } catch {
       settle(null);
     }
