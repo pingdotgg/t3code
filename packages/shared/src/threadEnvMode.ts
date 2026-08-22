@@ -34,3 +34,16 @@ export function isDefaultThreadEnvModeSettled(sources: {
     !sources.projectFilePending
   );
 }
+
+/**
+ * Worktree mode needs a git repository. A project that is not a repository
+ * resolves to local no matter what the defaults or a persisted draft say,
+ * so a non-git project never lands in the base-branch guard. Web and mobile
+ * both route their send path through this so the clients cannot disagree.
+ */
+export function resolveSendableThreadEnvMode(input: {
+  readonly requestedMode: ThreadEnvMode;
+  readonly isGitRepo: boolean;
+}): ThreadEnvMode {
+  return input.isGitRepo ? input.requestedMode : "local";
+}

@@ -21,6 +21,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import {
   isDefaultThreadEnvModeSettled,
   resolveDefaultThreadEnvMode,
+  resolveSendableThreadEnvMode,
 } from "@t3tools/shared/threadEnvMode";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -126,6 +127,12 @@ type NewTaskFlowContextValue = {
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
+  /** False once the project's git status reports no repository; worktree
+      mode is then unavailable and the composer hides its branch controls. */
+  readonly isGitRepo: boolean;
+  /** True once the project's git status has arrived. `isGitRepo` is a
+      provisional true before that, so a worktree send must wait for it. */
+  readonly gitStatusSettled: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
@@ -376,6 +383,30 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
     return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
   }, [t3ProjectFileData]);
+  // The ref actually checked out in the project root, serialized onto new
+  // local threads. It comes from the live status stream rather than listRefs'
+  // `current` flag, which is served from a cache that can lag an out-of-band
+  // `git switch` by minutes — and from the same value the PR badge compares
+  // against. Detached HEAD and non-repository projects report no ref, so this
+  // stays null instead of fabricating a branch. The status family is
+  // deduplicated per (environmentId, cwd) with the thread rows.
+  const projectGitStatus = useEnvironmentQuery(
+    // The empty-string check also skips the stand-in project's workspaceRoot.
+    selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? vcsEnvironment.status({
+          environmentId: selectedProject.environmentId,
+          input: { cwd: selectedProject.workspaceRoot },
+        })
+      : null,
+  );
+  const currentCheckoutBranchName = projectGitStatus.data?.refName ?? null;
+  // Worktree mode needs a repository. Default true while the status loads so
+  // switching projects does not flash Current checkout before it settles;
+  // the send path waits on `gitStatusSettled` instead of trusting the default.
+  // A failed status read counts as settled: the send goes ahead with the
+  // default and the server reports the real error instead of a silent block.
+  const gitStatusSettled = projectGitStatus.data !== null || projectGitStatus.error !== null;
+  const isGitRepo = projectGitStatus.data?.isRepo ?? true;
   const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
     projectSetting: selectedProject?.defaultThreadEnvMode,
     projectFile: t3ProjectFileDefaultMode,
@@ -389,9 +420,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projectSetting: selectedProject?.defaultThreadEnvMode,
     projectFilePending: t3ProjectFileQuery.isPending,
   });
-  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
-  const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
-  const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
+  const workspaceMode = resolveSendableThreadEnvMode({
+    requestedMode: selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode,
+    isGitRepo,
+  });
+  // A non-repository has no branches or worktrees, so a persisted selection
+  // from before the status arrived is stale metadata rather than a choice.
+  const selectedBranchName = isGitRepo
+    ? (selectedProjectDraft.workspaceSelection?.branch ?? null)
+    : null;
+  const selectedWorktreePath = isGitRepo
+    ? (selectedProjectDraft.workspaceSelection?.worktreePath ?? null)
+    : null;
   // Keep the user's explicit choice separate from the resolved display value:
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
@@ -555,22 +595,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ),
     [allBranchRefs],
   );
-  // The ref actually checked out in the project root, serialized onto new
-  // local threads. It comes from the live status stream rather than listRefs'
-  // `current` flag, which is served from a cache that can lag an out-of-band
-  // `git switch` by minutes — and from the same value the PR badge compares
-  // against. Detached HEAD and non-repository projects report no ref, so this
-  // stays null instead of fabricating a branch. The status family is
-  // deduplicated per (environmentId, cwd) with the thread rows.
-  const projectGitStatus = useEnvironmentQuery(
-    branchTarget.environmentId !== null && branchTarget.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: branchTarget.environmentId,
-          input: { cwd: branchTarget.cwd },
-        })
-      : null,
-  );
-  const currentCheckoutBranchName = projectGitStatus.data?.refName ?? null;
 
   const filteredBranches = useMemo(() => {
     const query = branchQuery.trim().toLowerCase();
@@ -844,8 +868,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       }
       const workspaceSelection = draft.workspaceSelection;
       // Fall back to the resolved mode (server default) so queued tasks drain
-      // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      // with the same mode the composer displayed. A non-git project drains
+      // as local even if the draft persisted worktree mode.
+      const mode = resolveSendableThreadEnvMode({
+        requestedMode: workspaceSelection?.mode ?? workspaceMode,
+        isGitRepo,
+      });
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back
@@ -881,8 +909,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           // queued local task drains days later against whatever is checked
           // out then, so recording a queue-time guess would pin a stale label
           // to a thread that ran somewhere else.
-          branch: workspaceSelection?.branch ?? null,
-          worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+          branch: isGitRepo ? (workspaceSelection?.branch ?? null) : null,
+          worktreePath:
+            mode === "worktree" || !isGitRepo ? null : (workspaceSelection?.worktreePath ?? null),
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
           // drain with the same origin mode the composer displayed.
@@ -896,6 +925,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       editingPendingProject,
       editingPendingTask,
+      isGitRepo,
       selectedEnvironmentServerConfig,
       selectedModel,
       selectedProject,
@@ -1019,6 +1049,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       hasMoreBranches,
       availableBranches,
       currentCheckoutBranchName,
+      isGitRepo,
+      gitStatusSettled,
       runtimeMode,
       interactionMode,
       planModeEnabled,
@@ -1067,6 +1099,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       buildPendingTaskMessage,
       cancelEditingPendingTask,
       currentCheckoutBranchName,
+      isGitRepo,
+      gitStatusSettled,
       editingPendingTask,
       environments,
       expandedProvider,

@@ -10,6 +10,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { resolveSendableThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -296,7 +297,10 @@ export function resolveSendEnvMode(input: {
   requestedEnvMode: DraftThreadEnvMode;
   isGitRepo: boolean;
 }): DraftThreadEnvMode {
-  return input.isGitRepo ? input.requestedEnvMode : "local";
+  return resolveSendableThreadEnvMode({
+    requestedMode: input.requestedEnvMode,
+    isGitRepo: input.isGitRepo,
+  });
 }
 
 export function resolveBackgroundDraftWorkspaceOptions(input: {
