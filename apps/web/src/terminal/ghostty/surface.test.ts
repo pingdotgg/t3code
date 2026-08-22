@@ -4,6 +4,8 @@ import type { GhosttyCell, GhosttyRow } from "./core";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
+  MAX_HYPERLINK_RANGE_CELLS,
+  MAX_HYPERLINK_RANGE_URI_LENGTH,
   advanceTerminalSelectionClickSequence,
   applyTerminalCopyEvent,
   clearPrimedTerminalCopyInput,
@@ -21,6 +23,7 @@ import {
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
+  terminalExplicitHyperlinkRange,
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
@@ -88,6 +91,137 @@ describe("terminalGridCellAt", () => {
     expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 223 })).toBeNull();
     expect(terminalGridCellAt({ ...options, clientX: 134, clientY: 224 })).toBeNull();
     expect(terminalGridCellAt({ ...options, clientX: 104, clientY: 264 })).toBeNull();
+  });
+});
+
+describe("terminalExplicitHyperlinkRange", () => {
+  const row = (over: Partial<GhosttyRow> = {}): GhosttyRow => ({
+    cells: [],
+    text: "",
+    isWrapContinuation: false,
+    wrapsToNext: false,
+    ...over,
+  });
+
+  const range = (
+    cell: { x: number; y: number },
+    linked: Set<string>,
+    rowData: GhosttyRow[],
+    cols: number,
+    uri = "https://t3.codes",
+  ) =>
+    terminalExplicitHyperlinkRange(cell, uri, {
+      cols,
+      rows: rowData.length,
+      rowData,
+      hasSameHyperlink: (x, y) => linked.has(`${x},${y}`),
+    });
+
+  it("expands over adjacent cells carrying the same hyperlink", () => {
+    expect(range({ x: 2, y: 0 }, new Set(["1,0", "2,0", "3,0"]), [row()], 5)).toEqual({
+      start: { x: 1, y: 0 },
+      end: { x: 3, y: 0 },
+    });
+  });
+
+  it("stops at cells without the hyperlink and at grid edges", () => {
+    expect(range({ x: 4, y: 0 }, new Set(["4,0", "5,0"]), [row()], 5)).toEqual({
+      start: { x: 4, y: 0 },
+      end: { x: 4, y: 0 },
+    });
+    expect(range({ x: 1, y: 0 }, new Set(["1,0"]), [row()], 5)).toEqual({
+      start: { x: 1, y: 0 },
+      end: { x: 1, y: 0 },
+    });
+  });
+
+  it("follows wrapped rows in both directions", () => {
+    const rowData = [
+      row({ wrapsToNext: true }),
+      row({ wrapsToNext: true, isWrapContinuation: true }),
+      row({ isWrapContinuation: true }),
+    ];
+    expect(range({ x: 3, y: 0 }, new Set(["3,0", "0,1", "1,1"]), rowData, 4)).toEqual({
+      start: { x: 3, y: 0 },
+      end: { x: 1, y: 1 },
+    });
+    expect(range({ x: 0, y: 2 }, new Set(["3,1", "0,2"]), rowData, 4)).toEqual({
+      start: { x: 3, y: 1 },
+      end: { x: 0, y: 2 },
+    });
+  });
+
+  it("truncates the walk at the scan cap when every probed cell matches", () => {
+    const cols = 8;
+    const rowCount = 600;
+    const rowData = Array.from({ length: rowCount }, (_, index) =>
+      row({
+        wrapsToNext: index < rowCount - 1,
+        isWrapContinuation: index > 0,
+      }),
+    );
+    let probes = 0;
+    const result = terminalExplicitHyperlinkRange({ x: 0, y: 0 }, "https://t3.codes", {
+      cols,
+      rows: rowCount,
+      rowData,
+      hasSameHyperlink: () => {
+        probes += 1;
+        return true;
+      },
+    });
+    expect(probes).toBe(MAX_HYPERLINK_RANGE_CELLS);
+    expect(result.start).toEqual({ x: 0, y: 0 });
+    expect(result.end).toEqual({
+      x: MAX_HYPERLINK_RANGE_CELLS % cols,
+      y: Math.floor(MAX_HYPERLINK_RANGE_CELLS / cols),
+    });
+  });
+
+  it("counts failed probes toward the scan cap", () => {
+    const cols = 8;
+    const rowCount = 600;
+    const rowData = Array.from({ length: rowCount }, (_, index) =>
+      row({
+        wrapsToNext: index < rowCount - 1,
+        isWrapContinuation: index > 0,
+      }),
+    );
+    let probes = 0;
+    const result = terminalExplicitHyperlinkRange({ x: 3, y: 0 }, "https://t3.codes", {
+      cols,
+      rows: rowCount,
+      rowData,
+      hasSameHyperlink: (x, y) => {
+        probes += 1;
+        return !(x === 2 && y === 0);
+      },
+    });
+    expect(probes).toBe(MAX_HYPERLINK_RANGE_CELLS);
+    expect(result.start).toEqual({ x: 3, y: 0 });
+    expect(result.end).toEqual({
+      x: (3 + MAX_HYPERLINK_RANGE_CELLS - 1) % cols,
+      y: Math.floor((3 + MAX_HYPERLINK_RANGE_CELLS - 1) / cols),
+    });
+  });
+
+  it("keeps oversized URIs to a single-cell range without probing neighbors", () => {
+    let probes = 0;
+    const result = terminalExplicitHyperlinkRange(
+      { x: 1, y: 1 },
+      "a".repeat(MAX_HYPERLINK_RANGE_URI_LENGTH + 1),
+      {
+        cols: 4,
+        rows: 2,
+        rowData: [row(), row()],
+        hasSameHyperlink: () => {
+          probes += 1;
+          return true;
+        },
+      },
+    );
+    expect(result).toEqual({ start: { x: 1, y: 1 }, end: { x: 1, y: 1 } });
+    expect(probes).toBe(0);
   });
 });
 

@@ -230,6 +230,58 @@ export function terminalGridCellAt(options: {
   };
 }
 
+export const MAX_HYPERLINK_RANGE_URI_LENGTH = 4096;
+
+export const MAX_HYPERLINK_RANGE_CELLS = 4096;
+
+// The OSC 8 URI is attacker-controlled and unbounded, and every hyperlink
+// probe decodes it in full, so the hover range walk is capped on both factors.
+// Without the caps a single oversized hyperlink spanning the viewport makes
+// each hover refresh allocate/decode viewport × URI-length bytes and freezes
+// the renderer.
+export function terminalExplicitHyperlinkRange(
+  cell: { x: number; y: number },
+  uri: string,
+  options: {
+    cols: number;
+    rows: number;
+    rowData: GhosttySnapshot["rowData"];
+    hasSameHyperlink: (x: number, y: number) => boolean;
+  },
+): GhosttyCellRange {
+  const start = { ...cell };
+  const end = { ...cell };
+  if (uri.length > MAX_HYPERLINK_RANGE_URI_LENGTH) return { start, end };
+  let scanned = 0;
+  while (scanned < MAX_HYPERLINK_RANGE_CELLS) {
+    const previous =
+      start.x > 0
+        ? { x: start.x - 1, y: start.y }
+        : start.y > 0 && options.rowData[start.y]?.isWrapContinuation
+          ? { x: options.cols - 1, y: start.y - 1 }
+          : null;
+    if (!previous) break;
+    scanned += 1;
+    if (!options.hasSameHyperlink(previous.x, previous.y)) break;
+    start.x = previous.x;
+    start.y = previous.y;
+  }
+  while (scanned < MAX_HYPERLINK_RANGE_CELLS) {
+    const next =
+      end.x + 1 < options.cols
+        ? { x: end.x + 1, y: end.y }
+        : end.y + 1 < options.rows && options.rowData[end.y]?.wrapsToNext
+          ? { x: 0, y: end.y + 1 }
+          : null;
+    if (!next) break;
+    scanned += 1;
+    if (!options.hasSameHyperlink(next.x, next.y)) break;
+    end.x = next.x;
+    end.y = next.y;
+  }
+  return { start, end };
+}
+
 function terminalRowText(row: GhosttySnapshot["rowData"][number], trimRight: boolean): string {
   const text = row.cells.map((cell) => cell.text || " ").join("");
   return trimRight ? text.trimEnd() : text;
@@ -1810,7 +1862,8 @@ export class GhosttyTerminalSurface {
   }
 
   private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
-    if (!this.snapshot) return null;
+    const snapshot = this.snapshot;
+    if (!snapshot) return null;
     const cell = terminalGridCellAt({
       bounds: this.canvas.getBoundingClientRect(),
       clientX,
@@ -1824,36 +1877,17 @@ export class GhosttyTerminalSurface {
     if (!cell) return null;
     const explicitHyperlink = this.core.hyperlinkAt(cell.x, cell.y);
     if (explicitHyperlink) {
-      const start = { ...cell };
-      const end = { ...cell };
-      while (true) {
-        const previous =
-          start.x > 0
-            ? { x: start.x - 1, y: start.y }
-            : start.y > 0 && this.snapshot.rowData[start.y]?.isWrapContinuation
-              ? { x: this.cols - 1, y: start.y - 1 }
-              : null;
-        if (!previous || this.core.hyperlinkAt(previous.x, previous.y) !== explicitHyperlink) break;
-        start.x = previous.x;
-        start.y = previous.y;
-      }
-      while (true) {
-        const next =
-          end.x + 1 < this.cols
-            ? { x: end.x + 1, y: end.y }
-            : end.y + 1 < this.rows && this.snapshot.rowData[end.y]?.wrapsToNext
-              ? { x: 0, y: end.y + 1 }
-              : null;
-        if (!next || this.core.hyperlinkAt(next.x, next.y) !== explicitHyperlink) break;
-        end.x = next.x;
-        end.y = next.y;
-      }
       return {
         text: explicitHyperlink,
-        range: { start, end },
+        range: terminalExplicitHyperlinkRange(cell, explicitHyperlink, {
+          cols: this.cols,
+          rows: this.rows,
+          rowData: snapshot.rowData,
+          hasSameHyperlink: (x, y) => this.core.hyperlinkAt(x, y) === explicitHyperlink,
+        }),
       };
     }
-    return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
+    return terminalLinkAtPositionWithRange(snapshot.rowData, cell.y, cell.x);
   }
 
   private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
