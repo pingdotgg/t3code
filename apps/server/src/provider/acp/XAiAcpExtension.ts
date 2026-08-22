@@ -197,6 +197,54 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
 }
 
 /**
+ * Grok session lifecycle notifications (`_x.ai/session_notification`).
+ * Manual `/compact` and auto-compact complete as `auto_compact_completed`.
+ */
+const XAiSessionNotificationUpdate = Schema.Struct({
+  sessionUpdate: Schema.String,
+  tokens_before: Schema.optional(Schema.Number),
+  tokens_after: Schema.optional(Schema.Number),
+  summary_preview: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+export const XAiSessionNotification = Schema.Struct({
+  sessionId: Schema.String,
+  update: XAiSessionNotificationUpdate,
+  _meta: Schema.optional(Schema.Unknown),
+});
+
+export type XAiSessionNotification = typeof XAiSessionNotification.Type;
+
+export interface XAiAutoCompactCompleted {
+  readonly sessionId: string;
+  readonly tokensBefore: number | undefined;
+  readonly tokensAfter: number | undefined;
+  readonly summaryPreview: string | undefined;
+  readonly raw: XAiSessionNotification;
+}
+
+function finiteNonNegative(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Returns compact details when the notification is a completed compaction; otherwise null. */
+export function extractXAiAutoCompactCompleted(
+  notification: XAiSessionNotification,
+): XAiAutoCompactCompleted | null {
+  if (notification.update.sessionUpdate !== "auto_compact_completed") {
+    return null;
+  }
+  const summaryPreview = trimmed(notification.update.summary_preview ?? undefined);
+  return {
+    sessionId: notification.sessionId,
+    tokensBefore: finiteNonNegative(notification.update.tokens_before),
+    tokensAfter: finiteNonNegative(notification.update.tokens_after),
+    summaryPreview,
+    raw: notification,
+  };
+}
+
+/**
  * Adds Grok's private prompt-completion fallback around a standards-only ACP runtime.
  * The underlying runtime remains unaware of xAI methods and metadata.
  */

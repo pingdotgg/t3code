@@ -10,10 +10,12 @@ import { describe, expect } from "vite-plus/test";
 
 import {
   extractXAiAskUserQuestions,
+  extractXAiAutoCompactCompleted,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
   XAiAskUserQuestionRequest,
+  XAiSessionNotification,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -100,6 +102,34 @@ describe("XAiAcpExtension", () => {
         ],
       },
     ]);
+  });
+
+  it("extracts auto_compact_completed session notifications", () => {
+    const notification = Schema.decodeUnknownSync(XAiSessionNotification)({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "auto_compact_completed",
+        tokens_before: 12_000,
+        tokens_after: 4_000,
+        summary_preview: null,
+      },
+    });
+    const compact = extractXAiAutoCompactCompleted(notification);
+    expect(compact).toEqual({
+      sessionId: "session-1",
+      tokensBefore: 12_000,
+      tokensAfter: 4_000,
+      summaryPreview: undefined,
+      raw: notification,
+    });
+  });
+
+  it("ignores non-compact session notifications", () => {
+    const notification = Schema.decodeUnknownSync(XAiSessionNotification)({
+      sessionId: "session-1",
+      update: { sessionUpdate: "turn_completed", tokens_before: 1, tokens_after: 1 },
+    });
+    expect(extractXAiAutoCompactCompleted(notification)).toBeNull();
   });
 
   it("treats nullable multiSelect from Grok as single-select", () => {
