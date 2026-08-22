@@ -44,6 +44,8 @@ public struct WorkspaceView: View {
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
+    @State private var commandDrawer = FeatureCommandDrawerState()
+    @State private var commandDrawerQuery = ""
     @FocusState private var isSearchFocused: Bool
 
     public init(
@@ -114,6 +116,17 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
+        FeatureCommandDrawerContainer(
+            state: $commandDrawer,
+            query: $commandDrawerQuery,
+            items: commandDrawerItems,
+            onSelect: selectCommand
+        ) {
+            workspace
+        }
+    }
+
+    private var workspace: some View {
         NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
             sidebar
                 .navigationSplitViewColumnWidth(
@@ -584,6 +597,35 @@ public struct WorkspaceView: View {
         preferredCompactColumn = .sidebar
     }
 
+    private var commandDrawerItems: [FeatureCommandDrawerItem] {
+        FeatureCommandDrawerCatalog.items(
+            projects: model.snapshot.projects,
+            threads: model.snapshot.threads,
+            selectedProjectID: selectedProjectID,
+            query: commandDrawerQuery
+        )
+    }
+
+    /// The drawer only routes into presentation the workspace already owns.
+    private func selectCommand(_ item: FeatureCommandDrawerItem) {
+        isSearchFocused = false
+        switch item {
+        case let .thread(id, _, _):
+            openThread(id)
+        case let .project(id, _):
+            selectedProjectID = id
+            closeSelectedThread()
+        case .action(.allProjects):
+            selectedProjectID = nil
+        case .action(.newTask):
+            openNewTaskOrProjectCreation()
+        case .action(.addProject):
+            showingAddProject = true
+        case .action(.settings):
+            showingSettings = true
+        }
+    }
+
     @MainActor
     private func openProjectCreation() {
         showingNewTask = false
@@ -630,6 +672,7 @@ public struct WorkspaceView: View {
     }
 
     private func dismissTransientPresentations() {
+        commandDrawer.close()
         showingNewTask = false
         showingAddProject = false
         showingEnvironments = false
