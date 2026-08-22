@@ -5,7 +5,12 @@ import {
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isHtmlPreviewFile,
+  isMarkdownPreviewFile,
+  prepareHtmlPreviewDocument,
+  setMarkdownTaskChecked,
+} from "./filePreviewMode";
 
 describe("file comment annotations", () => {
   it("normalizes and formats selected line ranges", () => {
@@ -63,6 +68,50 @@ describe("isMarkdownPreviewFile", () => {
   it("does not treat other text files as markdown", () => {
     expect(isMarkdownPreviewFile("docs/guide.txt")).toBe(false);
     expect(isMarkdownPreviewFile("docs/markdown.ts")).toBe(false);
+  });
+});
+
+describe("isHtmlPreviewFile", () => {
+  it("recognizes HTML files case-insensitively", () => {
+    expect(isHtmlPreviewFile("report.html")).toBe(true);
+    expect(isHtmlPreviewFile("artifacts/demo.HTM")).toBe(true);
+  });
+
+  it("does not treat other files as HTML", () => {
+    expect(isHtmlPreviewFile("report.html.ts")).toBe(false);
+    expect(isHtmlPreviewFile("docs/html.md")).toBe(false);
+  });
+});
+
+describe("prepareHtmlPreviewDocument", () => {
+  const assetUrl = "https://example.test/api/assets/signed-token/report.html";
+
+  it("inserts the signed asset directory at the start of an existing head", () => {
+    expect(
+      prepareHtmlPreviewDocument(
+        '<!doctype html><html><head><link href="styles.css"></head><body></body></html>',
+        assetUrl,
+      ),
+    ).toBe(
+      '<!doctype html><html><head><base href="https://example.test/api/assets/signed-token/"><link href="styles.css"></head><body></body></html>',
+    );
+  });
+
+  it("adds a head when the document omits one", () => {
+    expect(prepareHtmlPreviewDocument("<!doctype html><main>Report</main>", assetUrl)).toBe(
+      '<!doctype html><head><base href="https://example.test/api/assets/signed-token/"></head><main>Report</main>',
+    );
+  });
+
+  it("resolves an authored relative base against the signed asset directory", () => {
+    expect(
+      prepareHtmlPreviewDocument(
+        '<html><head><base target="_blank" href="assets/"></head></html>',
+        assetUrl,
+      ),
+    ).toBe(
+      '<html><head><base target="_blank" href="https://example.test/api/assets/signed-token/assets/"></head></html>',
+    );
   });
 });
 
