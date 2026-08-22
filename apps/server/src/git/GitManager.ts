@@ -610,24 +610,62 @@ export const make = Effect.gen(function* () {
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
 
+  interface RecentCommit {
+    readonly hash: string;
+    readonly subject: string;
+    readonly body: string;
+  }
+
+  const recentCommitCount = 10;
+  const commitSubjectExampleMaxChars = 120;
+  const commitBodyExampleMaxChars = 160;
+
+  const readRecentCommits = (cwd: string) =>
+    gitCore
+      .execute({
+        operation: "GitManager.readRecentCommits",
+        cwd,
+        args: ["log", "-n", String(recentCommitCount), "--pretty=format:%h%x00%s%x00%b%x00"],
+      })
+      .pipe(
+        Effect.map((result) => {
+          const fields = result.stdout.split("\0");
+          const commits: RecentCommit[] = [];
+          for (let index = 0; index + 2 < fields.length; index += 3) {
+            const hash = fields[index]?.trim() ?? "";
+            const subject = fields[index + 1]?.trim() ?? "";
+            const body = fields[index + 2]?.trim() ?? "";
+            if (hash && subject) {
+              commits.push({ hash, subject, body });
+            }
+          }
+          return commits;
+        }),
+        Effect.orElseSucceed(() => []),
+      );
+
   const readRecentCommitSubjects = (cwd: string) =>
     gitCore
       .execute({
         operation: "GitManager.readRecentCommitSubjects",
         cwd,
-        args: ["log", "-n", "20", "--no-merges", "--pretty=format:%s"],
+        args: ["log", "-n", String(recentCommitCount), "--no-merges", "--pretty=format:%s"],
       })
       .pipe(
         Effect.map((result) =>
           result.stdout
             .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0),
+            .map((subject) => subject.trim())
+            .filter(Boolean),
         ),
         Effect.orElseSucceed(() => []),
       );
 
-  const resolveStylePolicy = (cwd: string, style: SourceControlWritingStyleSettings) =>
+  const resolveStylePolicy = (
+    cwd: string,
+    style: SourceControlWritingStyleSettings,
+    consumer: "commit" | "change_request",
+  ) =>
     Effect.gen(function* () {
       switch (style.mode) {
         case "conventional_commits":
@@ -642,15 +680,37 @@ export const make = Effect.gen(function* () {
               : {},
           );
         case "repo_conventions": {
-          const subjects = yield* readRecentCommitSubjects(cwd);
-          if (subjects.length === 0) {
+          if (consumer === "change_request") {
+            const subjects = yield* readRecentCommitSubjects(cwd);
+            if (subjects.length === 0) {
+              return repositoryConventionsTextGenerationPolicy;
+            }
+            const examples = ["Recent commit subjects from this repository:", ...subjects].join(
+              "\n",
+            );
+            return {
+              ...repositoryConventionsTextGenerationPolicy,
+              changeRequestInstructions: `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\n${examples}`,
+            };
+          }
+
+          const commits = yield* readRecentCommits(cwd);
+          if (commits.length === 0) {
             return repositoryConventionsTextGenerationPolicy;
           }
-          const examples = ["Recent commit subjects from this repository:", ...subjects].join("\n");
+          const examples = [
+            "Recent commits from this repository:",
+            ...commits.map((commit) =>
+              [
+                `Commit ${commit.hash}`,
+                `Subject: ${limitContext(commit.subject, commitSubjectExampleMaxChars)}`,
+                `Body: ${commit.body ? limitContext(commit.body, commitBodyExampleMaxChars) : "(empty)"}`,
+              ].join("\n"),
+            ),
+          ].join("\n\n");
           return {
             ...repositoryConventionsTextGenerationPolicy,
             commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\n${examples}`,
-            changeRequestInstructions: `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\n${examples}`,
           };
         }
       }
@@ -1540,7 +1600,7 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const policy = yield* resolveStylePolicy(input.cwd, input.settings.style);
+      const policy = yield* resolveStylePolicy(input.cwd, input.settings.style, "commit");
 
       const generated = yield* textGeneration
         .generateCommitMessage({
@@ -1726,7 +1786,7 @@ export const make = Effect.gen(function* () {
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings.style);
+    const policy = yield* resolveStylePolicy(cwd, settings.style, "change_request");
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.kind === "github"
         ? Option.getOrUndefined(yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute))

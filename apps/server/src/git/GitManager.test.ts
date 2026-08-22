@@ -1937,6 +1937,109 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("uses structured recent commits for repository commit conventions", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "style-example"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "style.txt"), "example\n");
+      yield* runGit(repoDir, ["add", "style.txt"]);
+      yield* runGit(repoDir, [
+        "commit",
+        "-m",
+        "feat(server): add style example",
+        "-m",
+        "- Explain the reason\n- Preserve body formatting",
+      ]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, [
+        "merge",
+        "--no-ff",
+        "style-example",
+        "-m",
+        "Merge style example",
+        "-m",
+        "Keep merge body style",
+      ]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nworld\n");
+      let commitInstructions: string | undefined;
+      let changeRequestInstructions: string | undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            commitInstructions = input.policy?.commitInstructions;
+            changeRequestInstructions = input.policy?.changeRequestInstructions;
+            return Effect.succeed({ subject: "Match repository commit style", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(commitInstructions).toContain("Recent commits from this repository:");
+      expect(commitInstructions).toContain("Subject: Merge style example");
+      expect(commitInstructions).toContain("Body: Keep merge body style");
+      expect(commitInstructions).toContain("Subject: feat(server): add style example");
+      expect(commitInstructions).toContain(
+        "Body: - Explain the reason\n- Preserve body formatting",
+      );
+      expect(changeRequestInstructions).toBe(
+        "Follow the repository's established change request title and body style when examples are available.",
+      );
+    }),
+  );
+
+  it.effect("limits repository commit conventions to 10 recent commits", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      for (let index = 1; index <= 10; index += 1) {
+        yield* runGit(repoDir, [
+          "commit",
+          "--allow-empty",
+          "-m",
+          `chore: history ${index}`,
+          "-m",
+          `Explain history ${index}\n${"x".repeat(500)}`,
+        ]);
+      }
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nworld\n");
+      let commitInstructions: string | undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            commitInstructions = input.policy?.commitInstructions;
+            return Effect.succeed({ subject: "Limit commit history", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(commitInstructions?.match(/^Subject: /gm)).toHaveLength(10);
+      expect(commitInstructions).toContain("Subject: chore: history 10");
+      expect(commitInstructions).not.toContain("Subject: Initial commit");
+      expect(commitInstructions).toContain("[truncated]");
+      expect(commitInstructions?.length).toBeLessThanOrEqual(4_000);
+    }),
+  );
+
   it.effect("uses custom commit message when provided", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -2942,6 +3045,90 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("uses subjects only for repository PR conventions", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature-pr-style"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, [
+        "commit",
+        "-m",
+        "feat(server): add PR style example",
+        "-m",
+        "Commit body must not reach PR instructions",
+      ]);
+      yield* runGit(repoDir, ["checkout", "-b", "pr-style-example"]);
+      yield* runGit(repoDir, [
+        "commit",
+        "--allow-empty",
+        "-m",
+        "fix(server): preserve authored PR style",
+      ]);
+      yield* runGit(repoDir, ["checkout", "feature-pr-style"]);
+      yield* runGit(repoDir, [
+        "merge",
+        "--no-ff",
+        "pr-style-example",
+        "-m",
+        "Merge noisy PR style example",
+      ]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature-pr-style"]);
+      yield* runGit(repoDir, ["config", "branch.feature-pr-style.gh-merge-base", "main"]);
+      let commitInstructions: string | undefined;
+      let changeRequestInstructions: string | undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            commitInstructions = input.policy?.commitInstructions;
+            changeRequestInstructions = input.policy?.changeRequestInstructions;
+            return Effect.succeed({
+              title: "Match repository PR style",
+              body: "## Summary\n- Match repository PR style\n\n## Testing\n- Covered by tests",
+            });
+          },
+        },
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 89,
+                title: "Match repository PR style",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+                baseRefName: "main",
+                headRefName: "feature-pr-style",
+              },
+            ]),
+          ],
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(changeRequestInstructions).toContain("Recent commit subjects from this repository:");
+      expect(changeRequestInstructions).toContain("feat(server): add PR style example");
+      expect(changeRequestInstructions).toContain("fix(server): preserve authored PR style");
+      expect(changeRequestInstructions).not.toContain("Merge noisy PR style example");
+      expect(changeRequestInstructions).not.toContain("Commit body must not reach PR instructions");
+      expect(commitInstructions).toBe(
+        "Follow the repository's established commit message style when examples are available.",
+      );
     }),
   );
 
