@@ -17,6 +17,23 @@ function safeDecode(value: string): string {
 }
 
 /**
+ * Filesystem path of a `file:` url, or null when it isn't one we can read.
+ * The url names a file on the server, not the phone, so it must go through
+ * the signed asset flow like any other workspace path.
+ */
+function parseFileUrlPath(value: string): string | null {
+  const match = value.match(/^file:\/\/([^/]*)(\/.*)$/i);
+  const host = match?.[1] ?? "";
+  const rawPath = match?.[2];
+  if (rawPath === undefined || (host.length > 0 && host.toLowerCase() !== "localhost")) {
+    return null;
+  }
+  const path = safeDecode(rawPath.split(/[?#]/, 1)[0] ?? rawPath);
+  // The url form of a windows drive path carries a leading slash: /C:/x.png.
+  return WINDOWS_DRIVE_PATTERN.test(path.slice(1)) ? path.slice(1) : path;
+}
+
+/**
  * Workspace path for a markdown image src, or null when the src is external
  * (scheme or protocol-relative) or not an image. Relative results stay
  * workspace-relative; the server resolves them against the thread's workspace
@@ -26,10 +43,22 @@ function safeDecode(value: string): string {
 export function resolveMarkdownImageWorkspacePath(src: string, baseDir?: string): string | null {
   const trimmed = src.trim();
   if (trimmed.length === 0 || trimmed.startsWith("#") || trimmed.startsWith("//")) return null;
-  if (!WINDOWS_DRIVE_PATTERN.test(trimmed) && EXTERNAL_SCHEME_PATTERN.test(trimmed)) return null;
 
-  const path = safeDecode(trimmed.split(/[?#]/, 1)[0] ?? trimmed);
+  const fileUrlPath = /^file:/i.test(trimmed) ? parseFileUrlPath(trimmed) : null;
+  if (fileUrlPath === null && /^file:/i.test(trimmed)) return null;
+  if (
+    fileUrlPath === null &&
+    !WINDOWS_DRIVE_PATTERN.test(trimmed) &&
+    EXTERNAL_SCHEME_PATTERN.test(trimmed)
+  ) {
+    return null;
+  }
+
+  const path = fileUrlPath ?? safeDecode(trimmed.split(/[?#]/, 1)[0] ?? trimmed);
   if (path.length === 0 || !isWorkspaceImagePreviewPath(path)) return null;
+  // RN's <Image> cannot decode SVG, so a signed URL would still draw nothing;
+  // leave SVG srcs to the default renderer instead of fetching one.
+  if (path.toLowerCase().endsWith(".svg")) return null;
 
   const isAbsolute =
     path.startsWith("/") || WINDOWS_DRIVE_PATTERN.test(path) || path.startsWith("\\\\");

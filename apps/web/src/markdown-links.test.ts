@@ -85,6 +85,10 @@ describe("resolveMarkdownImagePath", () => {
     expect(resolveMarkdownImagePath("C:\\repo\\shot.png", undefined)).toBe("C:\\repo\\shot.png");
   });
 
+  it("decodes percent-encoded windows drive paths", () => {
+    expect(resolveMarkdownImagePath("C:%5Crepo%5Cshot.png", undefined)).toBe("C:\\repo\\shot.png");
+  });
+
   it("resolves file urls to their filesystem path", () => {
     expect(resolveMarkdownImagePath("file:///Users/julius/project/shot.png", undefined)).toBe(
       "/Users/julius/project/shot.png",
@@ -102,9 +106,14 @@ describe("rehypePreserveLocalImageSrc", () => {
 
   it("copies sanitizer-stripped srcs into dataLocalSrc", () => {
     const windowsImg = imgNode("C:\\repo\\shot.png");
+    const encodedWindowsImg = imgNode("C:%5Crepo%5Cshot.png");
     const fileUrlImg = imgNode("file:///repo/shot.png");
-    rehypePreserveLocalImageSrc()({ type: "root", children: [windowsImg, fileUrlImg] });
+    rehypePreserveLocalImageSrc()({
+      type: "root",
+      children: [windowsImg, encodedWindowsImg, fileUrlImg],
+    });
     expect(windowsImg.properties).toHaveProperty("dataLocalSrc", "C:\\repo\\shot.png");
+    expect(encodedWindowsImg.properties).toHaveProperty("dataLocalSrc", "C:%5Crepo%5Cshot.png");
     expect(fileUrlImg.properties).toHaveProperty("dataLocalSrc", "file:///repo/shot.png");
   });
 

@@ -234,13 +234,20 @@ interface HastNodeLike {
   children?: Array<HastNodeLike>;
 }
 
+/** `C:/...` and `C:\...` hrefs read as a "c:" scheme, so URL filters drop them. */
+export function isWindowsDrivePathHref(href: string): boolean {
+  return WINDOWS_DRIVE_PATH_PATTERN.test(href);
+}
+
 /**
  * A src the sanitizer's protocol allowlist would drop even though it names a
  * local file: a Windows drive path parses as a scheme ("c:"), and file: urls
- * are not http(s).
+ * are not http(s). Tested on the decoded form — the markdown parser percent-
+ * encodes backslashes, turning `C:\repo` into `C:%5Crepo`.
  */
 function isSanitizerStrippedImageSrc(src: string): boolean {
-  return WINDOWS_DRIVE_PATH_PATTERN.test(src) || src.toLowerCase().startsWith("file:");
+  const decoded = safeDecode(src);
+  return WINDOWS_DRIVE_PATH_PATTERN.test(decoded) || decoded.toLowerCase().startsWith("file:");
 }
 
 /**
