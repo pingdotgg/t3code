@@ -286,7 +286,7 @@ public struct SettingsView: View {
             _ = await previousSave?.value
 
             let didSave = await model.saveAppearance(appearance)
-            if !didSave {
+            if !didSave, settings.appearance == appearance {
                 settings.appearance = model.snapshot.settings.appearance
                 saveErrorMessage = model.errorMessage
                     ?? "Theme preference could not be saved."
