@@ -388,6 +388,13 @@ function ProjectGroupLabel(props: {
   );
 }
 
+// Long-press menu for archived rows, mirroring the active list's row menu so
+// Unarchive/Delete are reachable without discovering the swipe gesture.
+const ARCHIVED_ROW_MENU_ACTIONS: MenuAction[] = [
+  { id: "unarchive", title: "Unarchive", image: "arrow.uturn.backward" },
+  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+];
+
 function ArchivedThreadRow(props: {
   readonly environmentLabel: string | null;
   readonly isFirst: boolean;
@@ -401,7 +408,15 @@ function ArchivedThreadRow(props: {
   readonly onUnarchive: () => void;
   readonly thread: EnvironmentThreadShell;
 }) {
+  const { onDelete, onUnarchive } = props;
   const { width: windowWidth } = useWindowDimensions();
+  const handleMenuAction = useCallback(
+    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "unarchive") onUnarchive();
+      if (nativeEvent.event === "delete") onDelete();
+    },
+    [onDelete, onUnarchive],
+  );
   const cardColor = useThemeColor("--color-card");
   const iconColor = useThemeColor("--color-icon-subtle");
   const separatorColor = useThemeColor("--color-separator");
@@ -435,47 +450,62 @@ function ArchivedThreadRow(props: {
       threadTitle={props.thread.title}
     >
       {() => (
-        <View
-          className="flex-row items-center gap-3 bg-card px-4 py-3"
-          style={{
-            borderBottomColor: separatorColor,
-            borderBottomWidth: props.isLast ? 0 : 1,
-          }}
+        // Messages-style long-press menu, matching the active list's rows:
+        // iOS gets a native UIContextMenuInteraction, Android the token-styled
+        // dropdown (ControlPillMenu injects onLongPress into the child, so the
+        // row must be a Pressable). Swipe actions are untouched.
+        <ControlPillMenu
+          actions={ARCHIVED_ROW_MENU_ACTIONS}
+          onPressAction={handleMenuAction}
+          shouldOpenOnLongPress
         >
-          <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
-            <SymbolView name="archivebox.fill" size={15} tintColor={iconColor} type="monochrome" />
-          </View>
-
-          <View className="min-w-0 flex-1 gap-1">
-            <View className="flex-row items-center gap-2">
-              <Text
-                className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
-                numberOfLines={1}
-              >
-                {props.thread.title}
-              </Text>
-              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-                {timestamp}
-              </Text>
+          <Pressable
+            className="flex-row items-center gap-3 bg-card px-4 py-3"
+            style={{
+              borderBottomColor: separatorColor,
+              borderBottomWidth: props.isLast ? 0 : 1,
+            }}
+          >
+            <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
+              <SymbolView
+                name="archivebox.fill"
+                size={15}
+                tintColor={iconColor}
+                type="monochrome"
+              />
             </View>
-            {subtitle.length > 0 ? (
-              <View className="flex-row items-center gap-1.5">
-                <SymbolView
-                  name="arrow.triangle.branch"
-                  size={10}
-                  tintColor={iconColor}
-                  type="monochrome"
-                />
+
+            <View className="min-w-0 flex-1 gap-1">
+              <View className="flex-row items-center gap-2">
                 <Text
-                  className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
+                  className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
                   numberOfLines={1}
                 >
-                  {subtitle.join(" · ")}
+                  {props.thread.title}
+                </Text>
+                <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
+                  {timestamp}
                 </Text>
               </View>
-            ) : null}
-          </View>
-        </View>
+              {subtitle.length > 0 ? (
+                <View className="flex-row items-center gap-1.5">
+                  <SymbolView
+                    name="arrow.triangle.branch"
+                    size={10}
+                    tintColor={iconColor}
+                    type="monochrome"
+                  />
+                  <Text
+                    className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
+                    numberOfLines={1}
+                  >
+                    {subtitle.join(" · ")}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </Pressable>
+        </ControlPillMenu>
       )}
     </ThreadSwipeable>
   );
