@@ -78,6 +78,7 @@ import {
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { resolvePendingTaskInteractionMode } from "./legacy-plan-mode";
+import { isProjectThreadGitStatusSettled } from "./projectThreadCreationValidation";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
@@ -390,9 +391,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // against. Detached HEAD and non-repository projects report no ref, so this
   // stays null instead of fabricating a branch. The status family is
   // deduplicated per (environmentId, cwd) with the thread rows.
+  const hasProjectWorkspaceRoot = selectedProject !== null && selectedProject.workspaceRoot !== "";
   const projectGitStatus = useEnvironmentQuery(
     // The empty-string check also skips the stand-in project's workspaceRoot.
-    selectedProject !== null && selectedProject.workspaceRoot !== ""
+    hasProjectWorkspaceRoot
       ? vcsEnvironment.status({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot },
@@ -405,7 +407,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // the send path waits on `gitStatusSettled` instead of trusting the default.
   // A failed status read counts as settled: the send goes ahead with the
   // default and the server reports the real error instead of a silent block.
-  const gitStatusSettled = projectGitStatus.data !== null || projectGitStatus.error !== null;
+  const gitStatusSettled = isProjectThreadGitStatusSettled({
+    hasWorkspaceRoot: hasProjectWorkspaceRoot,
+    hasData: projectGitStatus.data !== null,
+    hasError: projectGitStatus.error !== null,
+  });
   const isGitRepo = projectGitStatus.data?.isRepo ?? true;
   const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
     projectSetting: selectedProject?.defaultThreadEnvMode,
