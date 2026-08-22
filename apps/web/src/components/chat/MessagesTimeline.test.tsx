@@ -1,5 +1,5 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
-import { createRef, type ReactNode, type Ref } from "react";
+import { type ComponentProps, createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
@@ -125,6 +125,19 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+vi.mock("../ui/tooltip", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ui/tooltip")>();
+
+  return {
+    ...actual,
+    TooltipScrollDismissProvider: ({
+      children,
+    }: ComponentProps<typeof actual.TooltipScrollDismissProvider>) => (
+      <div data-tooltip-scroll-dismiss="enabled">{children}</div>
+    ),
+  };
+});
+
 function matchMedia() {
   return {
     matches: false,
@@ -236,6 +249,17 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("enables tooltip scroll dismissal in the timeline", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry("[Link](https://example.com)")]}
+      />,
+    );
+
+    expect(markup).toContain('data-tooltip-scroll-dismiss="enabled"');
+  });
+
   it("renders the worked-for row at assistant response text size", () => {
     const turnId = TurnId.make("turn-with-fold");
     const assistantEntry = buildAssistantTimelineEntry("Done.");

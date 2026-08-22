@@ -1,15 +1,83 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
+import { createContext, type ReactNode, useCallback, useContext, useRef } from "react";
 
 import { cn } from "~/lib/utils";
+import type { HoveredTooltip } from "./tooltipScrollDismiss";
 
 const TooltipCreateHandle = TooltipPrimitive.createHandle;
 
+type TooltipScrollDismissContextValue = ((tooltip: HoveredTooltip | null) => void) | null;
+
+const TooltipScrollDismissContext = createContext<TooltipScrollDismissContextValue>(null);
+const TooltipDismissContext = createContext<(() => void) | null>(null);
+
+function TooltipScrollDismissProvider({
+  children,
+  onTriggerHoverChange,
+}: {
+  children: ReactNode;
+  onTriggerHoverChange: (tooltip: HoveredTooltip | null) => void;
+}) {
+  return (
+    <TooltipScrollDismissContext value={onTriggerHoverChange}>
+      {children}
+    </TooltipScrollDismissContext>
+  );
+}
+
 const TooltipProvider = TooltipPrimitive.Provider;
 
-const Tooltip = TooltipPrimitive.Root;
+function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
+  const onTriggerHoverChange = useContext(TooltipScrollDismissContext);
 
-function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+  if (!onTriggerHoverChange) {
+    return <TooltipPrimitive.Root {...props} />;
+  }
+
+  return <TrackedTooltip {...props} />;
+}
+
+function TrackedTooltip<Payload>({ actionsRef, ...props }: TooltipPrimitive.Root.Props<Payload>) {
+  const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
+  const resolvedActionsRef = actionsRef ?? localActionsRef;
+  const dismiss = useCallback(() => resolvedActionsRef.current?.close(), [resolvedActionsRef]);
+
+  return (
+    <TooltipDismissContext value={dismiss}>
+      <TooltipPrimitive.Root actionsRef={resolvedActionsRef} {...props} />
+    </TooltipDismissContext>
+  );
+}
+
+function TooltipTrigger({ onMouseEnter, onMouseLeave, ...props }: TooltipPrimitive.Trigger.Props) {
+  const onTriggerHoverChange = useContext(TooltipScrollDismissContext);
+  const dismiss = useContext(TooltipDismissContext);
+
+  if (!onTriggerHoverChange || !dismiss) {
+    return (
+      <TooltipPrimitive.Trigger
+        data-slot="tooltip-trigger"
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        {...props}
+      />
+    );
+  }
+
+  return (
+    <TooltipPrimitive.Trigger
+      data-slot="tooltip-trigger"
+      onMouseEnter={(event) => {
+        onTriggerHoverChange({ trigger: event.currentTarget, dismiss });
+        onMouseEnter?.(event);
+      }}
+      onMouseLeave={(event) => {
+        onTriggerHoverChange(null);
+        onMouseLeave?.(event);
+      }}
+      {...props}
+    />
+  );
 }
 
 function TooltipPopup({
@@ -61,4 +129,11 @@ function TooltipPopup({
   );
 }
 
-export { TooltipCreateHandle, TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup };
+export {
+  TooltipCreateHandle,
+  TooltipScrollDismissProvider,
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+};
