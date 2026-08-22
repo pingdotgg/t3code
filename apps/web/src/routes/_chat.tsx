@@ -2,7 +2,7 @@ import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -182,12 +182,18 @@ function ChatRouteGlobalShortcuts() {
           (activeThreadShell.worktreePath === null || snapshot.branch === activeThreadShell.branch)
             ? snapshot.pr
             : null;
-        // Pinned threads never classify as settled in the sidebar partition,
-        // so toggling a pinned thread always settles it rather than un-settling.
+        // Match Sidebar partition ordering: snoozed outranks settled, pinned
+        // never counts as settled. Without this, a snoozed thread that also
+        // satisfies effectiveSettled would be treated as settled and unsettled.
+        const nowIso = new Date().toISOString();
+        const isSnoozed =
+          serverConfigs.get(routeThreadRef.environmentId)?.environment.capabilities.threadSnooze ===
+            true && effectiveSnoozed(activeThreadShell, { now: nowIso });
         const isSettled =
+          !isSnoozed &&
           activeThreadShell.pinnedAt == null &&
           effectiveSettled(activeThreadShell, {
-            now: `${new Date().toISOString().slice(0, 16)}:00.000Z`,
+            now: `${nowIso.slice(0, 16)}:00.000Z`,
             autoSettleAfterDays,
             autoSettleOnMerge,
             changeRequest,
