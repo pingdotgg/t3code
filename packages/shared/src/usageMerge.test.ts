@@ -272,6 +272,44 @@ describe("mergeUsage", () => {
     ]);
   });
 
+  it("chooses one environment when Kimi store winners would otherwise split", () => {
+    const tui = {
+      provider: "kimi" as const,
+      hostId: "mac",
+      homePath: "/a/.kimi-code/sessions",
+      volumeId: "tui-volume",
+    };
+    const desktop = {
+      provider: "kimi" as const,
+      hostId: "mac",
+      homePath: "/a/kimi-desktop/sessions",
+      volumeId: "desktop-volume",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 3 })],
+            [tui, { ...desktop, status: "partial" }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 7 })],
+            [{ ...tui, status: "partial" }, desktop],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(3);
+    expect(merged.contributingEnvironments).toEqual(["env-a"]);
+    expect(merged.providers.find((provider) => provider.provider === "kimi")?.sessions).toBe(2);
+  });
+
   it("prefers a complete Kimi Code duplicate without a false coverage gap", () => {
     const shared = {
       provider: "kimi" as const,
