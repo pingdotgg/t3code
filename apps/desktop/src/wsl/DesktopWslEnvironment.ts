@@ -23,6 +23,7 @@ const PROBE_TIMEOUT = Duration.seconds(10);
 const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
+const DISTRO_IP_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
@@ -72,12 +73,9 @@ export class DesktopWslEnvironment extends Context.Service<
     // Resolves the user's Linux home dir inside the chosen distro (e.g.
     // "/home/josh"). Used by the folder picker to expand `~` correctly.
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
-    // Resolves the WSL distro's IPv4 address on the WSL vEthernet adapter
-    // (e.g. "172.x.x.x"). The orchestrator uses this for the WSL backend's
-    // httpBaseUrl so the renderer can reach it without relying on wslhost's
-    // localhost→WSL automatic forwarding, which is flaky in practice
-    // (the backend can be listening for 30+ seconds before wslhost starts
-    // forwarding 127.0.0.1:port to WSL-side localhost).
+    // Resolves the preferred source address for the WSL distro's IPv4 route.
+    // The orchestrator uses a NAT address directly, or maps an address shared
+    // with the Windows host to localhost in mirrored networking mode.
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     readonly ensureNodePty: (
       distro: string | null,
@@ -684,39 +682,72 @@ const windowsToWslPathImpl = (
   );
 };
 
-const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+const ROUTE_PROBE_ADDRESS = "1.1.1.1";
 
-const getDistroIpImpl = (
+const isIpv4Address = (candidate: string): boolean => {
+  const octets = candidate.split(".");
+  return (
+    octets.length === 4 && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+  );
+};
+
+export const parseWslRouteSource = (stdout: string): Option.Option<string> => {
+  const parts = stdout.trim().split(/\s+/);
+  const sourceIndex = parts.indexOf("src");
+  if (sourceIndex === -1) return Option.none<string>();
+  const candidate = parts[sourceIndex + 1];
+  return candidate !== undefined && isIpv4Address(candidate)
+    ? Option.some(candidate)
+    : Option.none<string>();
+};
+
+export const parseSingleWslHostnameAddress = (stdout: string): Option.Option<string> => {
+  const candidates = stdout.trim().split(/\s+/).filter(isIpv4Address);
+  const candidate = candidates[0];
+  return candidates.length === 1 && candidate !== undefined
+    ? Option.some(candidate)
+    : Option.none<string>();
+};
+
+export const getDistroIpImpl = (
   distro: string | null,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // `hostname -I` prints a space-separated list of all non-loopback
-      // IPs the distro has bound. The first entry on the WSL2 default
-      // network is always the eth0 vEthernet address Windows can reach
-      // directly (no wslhost forwarding required).
-      const command = ChildProcess.make(
-        "wsl.exe",
-        [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
-        {
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "ignore",
-          killSignal: "SIGTERM",
-          forceKillAfter: PROCESS_TERMINATE_GRACE,
-        },
-      );
-      const handle = yield* spawner.spawn(command);
-      const stdoutBytes = yield* Stream.runCollect(handle.stdout);
-      const exitCode = yield* handle.exitCode;
-      if ((exitCode as unknown as number) !== 0) return Option.none<string>();
-      const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = raw.split(/\s+/).find((part) => IPV4_PATTERN.test(part));
-      return candidate ? Option.some(candidate) : Option.none<string>();
+
+      const runWslCommand = (args: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          const command = ChildProcess.make(
+            "wsl.exe",
+            [...buildDistroArgs(distro), "--", ...args],
+            {
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "ignore",
+              killSignal: "SIGTERM",
+              forceKillAfter: PROCESS_TERMINATE_GRACE,
+            },
+          );
+          const handle = yield* spawner.spawn(command);
+          const stdoutBytes = yield* Stream.runCollect(handle.stdout);
+          const exitCode = yield* handle.exitCode;
+          if ((exitCode as unknown as number) !== 0) return Option.none<string>();
+          return Option.some(decodeUtf8(concatChunks(stdoutBytes)));
+        }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+      // `ip route get` asks the kernel which route and source address it would
+      // use without sending a packet. This avoids depending on interface order
+      // when Docker bridges also appear in `hostname -I`.
+      const routeOutput = yield* runWslCommand(["ip", "-4", "route", "get", ROUTE_PROBE_ADDRESS]);
+      const routeSource = Option.flatMap(routeOutput, parseWslRouteSource);
+      if (Option.isSome(routeSource)) return routeSource;
+
+      const hostnameOutput = yield* runWslCommand(["hostname", "-I"]);
+      return Option.flatMap(hostnameOutput, parseSingleWslHostnameAddress);
     }),
   ).pipe(
-    Effect.timeoutOption(USER_HOME_TIMEOUT),
+    Effect.timeoutOption(DISTRO_IP_TIMEOUT),
     Effect.map(Option.flatten),
     Effect.orElseSucceed(() => Option.none<string>()),
   );
