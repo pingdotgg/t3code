@@ -123,6 +123,9 @@ interface MakeInstanceInput {
   readonly onPreflightFailed?: (
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
+  readonly onCrashLoop?: (
+    failure: DesktopBackendManager.BackendCrashLoopFailure,
+  ) => Effect.Effect<boolean>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
   readonly configResolve?: Effect.Effect<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -176,6 +179,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onReady ? { onReady: () => input.onReady! } : {}),
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
+    ...(input.onCrashLoop ? { onCrashLoop: input.onCrashLoop } : {}),
   });
 
   return instance.pipe(Effect.provide(servicesLayer));
@@ -1172,6 +1176,234 @@ describe("DesktopBackendManager", () => {
         assert.equal(yield* Queue.size(starts), 0);
         yield* TestClock.adjust(Duration.millis(1));
         assert.equal(yield* Queue.take(starts), 3);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("stops and names the port conflict when the backend keeps dying before readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const failures = yield* Queue.unbounded<string>();
+        const crashLoops = yield* Queue.unbounded<DesktopBackendManager.BackendCrashLoopFailure>();
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.sync(() => {
+              startCount += 1;
+              return makeProcess({
+                stderr: Stream.make(
+                  new TextEncoder().encode(
+                    "[15:37:22.129] ERROR (#5): ServeError: listen EADDRINUSE: address already in use 0.0.0.0:3773\n",
+                  ),
+                ),
+                exitCode: Queue.offer(starts, startCount).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(1)),
+                ),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
+          onCrashLoop: (failure) => Queue.offer(crashLoops, failure).pipe(Effect.as(false)),
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+        assert.equal(yield* Queue.take(failures), "pid=123 code=1");
+        assert.equal(yield* Queue.size(crashLoops), 0);
+
+        // Four backed-off restarts (500ms, 1s, 2s, 4s) reach the fifth crash.
+        for (const delayMs of [500, 1000, 2000, 4000]) {
+          yield* TestClock.adjust(Duration.millis(delayMs));
+          yield* Queue.take(starts);
+          yield* Queue.take(failures);
+        }
+
+        const failure = yield* Queue.take(crashLoops);
+        assert.equal(failure.attempts, 5);
+        assert.equal(
+          failure.reason,
+          'Port 3773 is already in use, so the backend could not start. Another program is listening on it, often a "t3" server started from a terminal or installed as a background service. Stop it, then start T3 Code again.',
+        );
+
+        const stopped = yield* instance.snapshot;
+        assert.isFalse(stopped.desiredRunning);
+        assert.isFalse(stopped.restartScheduled);
+
+        yield* TestClock.adjust(Duration.minutes(5));
+        assert.equal(startCount, 5);
+        assert.equal(yield* Queue.size(crashLoops), 0);
+
+        // The way back out: an explicit start gets a fresh allowance.
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 6);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("reports the exit reason and the child's last output for an unrecognized crash", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const failures = yield* Queue.unbounded<string>();
+        const crashLoops = yield* Queue.unbounded<DesktopBackendManager.BackendCrashLoopFailure>();
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.sync(() =>
+              makeProcess({
+                stdout: Stream.make(new TextEncoder().encode("loading bundle\n")),
+                stderr: Stream.make(
+                  new TextEncoder().encode("Error: Cannot find module 'better-sqlite3'\n"),
+                ),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+              }),
+            ),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
+          onCrashLoop: (failure) => Queue.offer(crashLoops, failure).pipe(Effect.as(false)),
+        });
+
+        yield* instance.start;
+        yield* Queue.take(failures);
+        for (const delayMs of [500, 1000, 2000, 4000]) {
+          yield* TestClock.adjust(Duration.millis(delayMs));
+          yield* Queue.take(failures);
+        }
+
+        const failure = yield* Queue.take(crashLoops);
+        assert.equal(
+          failure.reason,
+          "The backend exited 5 times in a row before it was ready (code=1).\n\nLast output:\nloading bundle\nError: Cannot find module 'better-sqlite3'",
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("counts crashes when another listener on the port answers the readiness probe", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const readies = yield* Queue.unbounded<void>();
+        const exitGate = yield* Queue.unbounded<void>();
+        const failures = yield* Queue.unbounded<string>();
+        const crashLoops = yield* Queue.unbounded<DesktopBackendManager.BackendCrashLoopFailure>();
+
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              return makeProcess({
+                stderr: Stream.make(
+                  new TextEncoder().encode(
+                    "ERROR: ServeError: listen EADDRINUSE: address already in use 0.0.0.0:3773\n",
+                  ),
+                ),
+                exitCode: Queue.take(exitGate).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
+              });
+            }),
+          ),
+        );
+
+        // Default healthy client: the readiness probe is a plain GET against
+        // the port, so whatever already holds it answers 200 for us.
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
+          onReady: Queue.offer(readies, undefined).pipe(Effect.asVoid),
+          onCrashLoop: (failure) => Queue.offer(crashLoops, failure).pipe(Effect.as(false)),
+        });
+
+        yield* instance.start;
+
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+          assert.equal(yield* Queue.take(starts), attempt);
+          // The occupant answers before our child gets to die on the port.
+          yield* Queue.take(readies);
+          yield* Queue.offer(exitGate, undefined);
+          yield* Queue.take(failures);
+          if (attempt < 5) {
+            // The spoofed readiness resets restartAttempt, so every restart
+            // waits the initial delay rather than backing off.
+            yield* TestClock.adjust(Duration.millis(500));
+          }
+        }
+
+        const failure = yield* Queue.take(crashLoops);
+        assert.equal(failure.attempts, 5);
+        assert.include(failure.reason, "Port 3773 is already in use");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("keeps restarting a backend that crashed after it had been ready", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const readies = yield* Queue.unbounded<void>();
+        const exitGate = yield* Queue.unbounded<void>();
+        const failures = yield* Queue.unbounded<string>();
+        const crashLoops = yield* Queue.unbounded<DesktopBackendManager.BackendCrashLoopFailure>();
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              return makeProcess({
+                exitCode: Queue.take(exitGate).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
+          onReady: Queue.offer(readies, undefined).pipe(Effect.asVoid),
+          onCrashLoop: (failure) => Queue.offer(crashLoops, failure).pipe(Effect.as(false)),
+        });
+
+        yield* instance.start;
+
+        // Well past the crash cap: readiness resets the streak every cycle, so
+        // the self-healing restart loop stays in charge.
+        for (let attempt = 1; attempt <= 8; attempt += 1) {
+          assert.equal(yield* Queue.take(starts), attempt);
+          yield* Queue.take(readies);
+          yield* Queue.offer(exitGate, undefined);
+          yield* Queue.take(failures);
+          yield* TestClock.adjust(Duration.millis(500));
+        }
+
+        assert.equal(yield* Queue.size(crashLoops), 0);
+        assert.isTrue((yield* instance.snapshot).desiredRunning);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

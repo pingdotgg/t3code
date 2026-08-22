@@ -275,6 +275,22 @@ export const layer = Layer.effect(
       },
     );
 
+    // The primary spawned fine and then died before ever serving, over and
+    // over. There is no configuration to fall back to here — the reason is
+    // outside the app (a busy port, a backend that cannot boot) — so say what
+    // happened and let the manager stop instead of restarting forever behind a
+    // window that never loads.
+    const handlePrimaryCrashLoop = Effect.fn("desktop.backendPool.primaryCrashLoop")(function* (
+      failure: DesktopBackendManager.BackendCrashLoopFailure,
+    ) {
+      yield* logBackendPoolWarning("primary backend kept exiting before readiness", {
+        reason: failure.reason,
+        attempts: failure.attempts,
+      });
+      yield* electronDialog.showErrorBox("T3 Code's backend keeps stopping", failure.reason);
+      return false;
+    });
+
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Keep this lazy. The pool layer is initialized before startup loads
@@ -299,6 +315,7 @@ export const layer = Layer.effect(
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
+      onCrashLoop: handlePrimaryCrashLoop,
     });
 
     const instancesRef = yield* SynchronizedRef.make<

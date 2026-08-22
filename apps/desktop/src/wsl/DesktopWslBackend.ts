@@ -107,9 +107,10 @@ export const layer = Layer.effect(
     // with different distros, leaving the loser stranded.
     const reconcileMutex = yield* Semaphore.make(1);
 
-    // Last fatal preflight failure from the dual-mode WSL *secondary*, surfaced
-    // inline in Connections settings. The primary's failure is handled by the
-    // pool (dialog + Windows fallback) instead; here the app stays usable on
+    // Last reason the dual-mode WSL *secondary* gave up — a fatal preflight or a
+    // child that kept crashing before it served — surfaced inline in Connections
+    // settings. The primary's failures are handled by the pool (dialog, plus a
+    // Windows fallback for preflight) instead; here the app stays usable on
     // Windows, so we record the reason rather than interrupting. Cleared on any
     // reconcile state change so it reflects the current attempt.
     const preflightErrorRef = yield* Ref.make(Option.none<string>());
@@ -167,6 +168,12 @@ export const layer = Layer.effect(
           // settings can show why the WSL backend never appeared. No dialog or
           // fallback — Windows is the primary and keeps working.
           onPreflightFailed: (failure) =>
+            Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),
+          // Same row, same silence problem: a secondary that spawns and dies
+          // before serving used to restart forever with nothing to show for
+          // it. Stopping leaves the instance idle, which reconcile picks up as
+          // retryable.
+          onCrashLoop: (failure) =>
             Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),
           onReady: () => Ref.set(preflightErrorRef, Option.none()),
         })
