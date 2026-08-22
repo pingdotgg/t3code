@@ -418,33 +418,47 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
     }),
   );
 
-  it.effect("OPENCODE_DISABLE_EXTERNAL_SKILLS skips every disk-scanned root", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
-      const homeDir = path.join(tempDir, "home");
-      const workspace = path.join(tempDir, "workspace");
-      yield* fs.makeDirectory(workspace, { recursive: true });
+  it.effect(
+    "OPENCODE_DISABLE_EXTERNAL_SKILLS skips .claude and .agents roots but keeps native roots",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+        const homeDir = path.join(tempDir, "home");
+        const workspace = path.join(tempDir, "workspace");
 
-      yield* writeSkill(
-        path.join(homeDir, ".opencode", "skills"),
-        "user-skill",
-        ["---", "name: user-skill", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".opencode", "skills"),
-        "project-skill",
-        ["---", "name: project-skill", "---"].join("\n"),
-      );
+        yield* writeSkill(
+          path.join(homeDir, ".claude", "skills"),
+          "user-claude-skill",
+          ["---", "name: user-claude-skill", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(homeDir, ".agents", "skills"),
+          "user-agents-skill",
+          ["---", "name: user-agents-skill", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(homeDir, ".opencode", "skills"),
+          "user-skill",
+          ["---", "name: user-skill", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(workspace, ".opencode", "skills"),
+          "project-skill",
+          ["---", "name: project-skill", "---"].join("\n"),
+        );
 
-      const skills = yield* discoverOpenCodeSkills(workspace, {
-        HOME: homeDir,
-        OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
-      });
+        const skills = yield* discoverOpenCodeSkills(workspace, {
+          HOME: homeDir,
+          OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
+        });
 
-      assert.deepEqual(skills, []);
-    }),
+        assert.deepEqual(
+          skills.map((skill) => skill.name),
+          ["project-skill", "user-skill"],
+        );
+      }),
   );
 
   it.effect(
@@ -534,6 +548,34 @@ it.layer(NodeServices.layer)("discoverOpenCodeSkills", (it) => {
       );
 
       for (const value of ["0", "false", ""]) {
+        const skills = yield* discoverOpenCodeSkills(undefined, {
+          HOME: homeDir,
+          OPENCODE_DISABLE_EXTERNAL_SKILLS: value,
+          OPENCODE_DISABLE_CLAUDE_CODE: value,
+          OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: value,
+        });
+        assert.deepEqual(
+          skills.map((skill) => skill.name),
+          ["claude-skill"],
+        );
+      }
+    }),
+  );
+
+  it.effect("truthy-but-unrecognized values like yes or on keep discovery enabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-skills-" });
+      const homeDir = path.join(tempDir, "home");
+
+      yield* writeSkill(
+        path.join(homeDir, ".claude", "skills"),
+        "claude-skill",
+        ["---", "name: claude-skill", "---"].join("\n"),
+      );
+
+      for (const value of ["yes", "on", "enabled"]) {
         const skills = yield* discoverOpenCodeSkills(undefined, {
           HOME: homeDir,
           OPENCODE_DISABLE_EXTERNAL_SKILLS: value,

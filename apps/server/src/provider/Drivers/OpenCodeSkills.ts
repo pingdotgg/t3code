@@ -10,9 +10,11 @@
  * `.opencode` wins over `.agents` and `.claude`.
  *
  * OpenCode's own disable flags are honored so discovery matches what OpenCode
- * actually loads: OPENCODE_DISABLE_EXTERNAL_SKILLS skips every disk-scanned root,
- * and OPENCODE_DISABLE_CLAUDE_CODE / OPENCODE_DISABLE_CLAUDE_CODE_SKILLS skip
- * .claude/skills roots (user and project).
+ * actually loads: OPENCODE_DISABLE_EXTERNAL_SKILLS skips .claude/skills and
+ * .agents/skills roots, and OPENCODE_DISABLE_CLAUDE_CODE /
+ * OPENCODE_DISABLE_CLAUDE_CODE_SKILLS skip .claude/skills roots. Native
+ * OpenCode roots (.opencode, config dirs) always load. Flags enable only for
+ * "1" and "true", matching OpenCode's strict parsing.
  *
  * @module provider/Drivers/OpenCodeSkills
  */
@@ -33,11 +35,10 @@ type SkillFrontmatter =
   | { readonly kind: "malformed" }
   | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
 
+// Matches OpenCode's strict flag parsing: only "1" and "true" enable a flag.
 function isDisableFlagSet(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
-  return (
-    normalized !== undefined && normalized !== "" && normalized !== "0" && normalized !== "false"
-  );
+  return normalized === "1" || normalized === "true";
 }
 
 function parseSkillFrontmatter(contents: string): SkillFrontmatter {
@@ -73,9 +74,10 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
  * On name collisions, later roots win: project beats user, `.agents` beats `.claude`,
  * and `.opencode` beats `.agents`.
  *
- * Matches OpenCode's own gating: `OPENCODE_DISABLE_EXTERNAL_SKILLS` skips all
- * disk-scanned roots, and `OPENCODE_DISABLE_CLAUDE_CODE` /
- * `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` skip `.claude/skills` roots.
+ * Matches OpenCode's own gating: `OPENCODE_DISABLE_EXTERNAL_SKILLS` skips
+ * `.claude/skills` and `.agents/skills` roots, `OPENCODE_DISABLE_CLAUDE_CODE` /
+ * `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` skip `.claude/skills` roots, and native
+ * OpenCode roots always load.
  */
 export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(function* (
   cwd?: string,
@@ -85,10 +87,13 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
   const path = yield* Path.Path;
   const env = environment ?? process.env;
 
-  if (isDisableFlagSet(env.OPENCODE_DISABLE_EXTERNAL_SKILLS)) {
-    return [];
-  }
+  const externalSkillsDisabled = isDisableFlagSet(env.OPENCODE_DISABLE_EXTERNAL_SKILLS);
+  // Matches upstream: the external flag drops both .claude and .agents roots,
+  // while OPENCODE_DISABLE_CLAUDE_CODE / _SKILLS drop only .claude roots.
+  // Native OpenCode roots (.opencode, config dirs) always load.
+  const agentsSkillsDisabled = externalSkillsDisabled;
   const claudeSkillsDisabled =
+    externalSkillsDisabled ||
     isDisableFlagSet(env.OPENCODE_DISABLE_CLAUDE_CODE) ||
     isDisableFlagSet(env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS);
 
@@ -106,7 +111,7 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
 
   const userRoots: ReadonlyArray<string> = [
     ...(claudeSkillsDisabled ? [] : [path.join(homeDir, ".claude", "skills")]),
-    path.join(homeDir, ".agents", "skills"),
+    ...(agentsSkillsDisabled ? [] : [path.join(homeDir, ".agents", "skills")]),
     path.join(defaultConfigDir, "skills"),
     path.join(homeDir, ".opencode", "skills"),
     ...(resolvedCustomConfigDir ? [path.join(resolvedCustomConfigDir, "skills")] : []),
@@ -141,7 +146,9 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
       ...(claudeSkillsDisabled
         ? []
         : [{ directory: path.join(dir, ".claude", "skills"), scope: "project" as const }]),
-      { directory: path.join(dir, ".agents", "skills"), scope: "project" as const },
+      ...(agentsSkillsDisabled
+        ? []
+        : [{ directory: path.join(dir, ".agents", "skills"), scope: "project" as const }]),
       { directory: path.join(dir, ".opencode", "skills"), scope: "project" as const },
     ]),
   ];
