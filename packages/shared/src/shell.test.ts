@@ -473,6 +473,8 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
         ),
       ).toEqual({
         PATH: [
+          "C:\\Shell\\Bin",
+          "C:\\Windows\\System32",
           "C:\\Users\\testuser\\AppData\\Roaming\\npm",
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
@@ -480,8 +482,6 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
-          "C:\\Shell\\Bin",
-          "C:\\Windows\\System32",
         ].join(";"),
       });
       expect(readEnvironment).toHaveBeenCalledTimes(1);
@@ -522,6 +522,7 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
         PATH: [
           "C:\\Profile\\Node",
           "C:\\Windows\\System32",
+          "C:\\Shell\\Bin",
           "C:\\Users\\testuser\\AppData\\Roaming\\npm",
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
@@ -529,7 +530,6 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
-          "C:\\Shell\\Bin",
         ].join(";"),
         FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
         FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
@@ -566,15 +566,42 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
         ),
       ).toEqual({
         PATH: [
+          "C:\\Windows\\System32",
           "C:\\Users\\testuser\\AppData\\Roaming\\npm",
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
-          "C:\\Windows\\System32",
         ].join(";"),
         FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
       });
       expect(commandAvailable).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("keeps existing PATH entries ahead of known CLI fallbacks like %APPDATA%\\npm", () =>
+    Effect.gen(function* () {
+      const readEnvironment = vi.fn(
+        (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+          options?.loadProfile
+            ? { PATH: "C:\\Profile\\Bin" }
+            : { PATH: "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin" },
+      );
+      const commandAvailable = vi.fn(() => Effect.succeed(true));
+
+      const resolved = yield* withWindowsEnvironmentMocks(
+        resolveWindowsEnvironment({
+          PATH: "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin;C:\\Windows\\System32",
+          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+        }),
+        readEnvironment,
+        commandAvailable,
+      );
+      const pathEntries = resolved.PATH?.split(";") ?? [];
+
+      expect(pathEntries[0]).toBe(
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
+      );
+      expect(pathEntries.indexOf("C:\\Users\\testuser\\AppData\\Roaming\\npm")).toBeGreaterThan(0);
     }),
   );
 });
