@@ -642,6 +642,79 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("resolveWsl keeps WSL retryable when the mounted fallback fails transiently", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const archiveHash = "f".repeat(64);
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(archivePath, "archive");
+      yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
+
+      const stagedAppRoot = "/home/test/.t3/runtime/cache";
+      const invalidatedRuntimeIds: string[] = [];
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+        const failure = Option.getOrThrow(config.preflightFailure);
+
+        // The /mnt probe timing out rules nothing out. Reporting the staged
+        // fatal verdict here would cap the attempts and persist Windows mode
+        // instead of letting the slow mount path answer on a later try.
+        assert.isFalse(failure.fatal);
+        assert.equal(failure.retryLimit, 12);
+        assert.include(failure.reason, "timed out");
+        assert.deepEqual(invalidatedRuntimeIds, []);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslServerTree.layerTest({
+                result: { ok: true, root: path.join(baseDir, "app.asar.unpacked") },
+              }),
+            ),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
+                prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
+                invalidateRuntime: (_distro, runtimeId) =>
+                  Effect.sync(() => {
+                    invalidatedRuntimeIds.push(runtimeId);
+                  }),
+                ensureNodePty: (_distro, root) =>
+                  root === stagedAppRoot
+                    ? { ok: false, reason: "pty.node could not be loaded", fatal: true }
+                    : {
+                        ok: false,
+                        reason: "WSL backend preflight timed out while probing for Node.js.",
+                        fatal: false,
+                      },
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resolveWsl retries the staged runtime after a transient probe failure", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

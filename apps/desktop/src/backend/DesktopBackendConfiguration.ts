@@ -351,8 +351,10 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
 
   // Set once a staged runtime has been ruled out by the probe, and carried
   // through the mounted attempt: if the mounted tree works the cache is the
-  // broken part and gets invalidated, and if it doesn't the cached verdict is
-  // the one worth reporting, since the fallback can only ever add information.
+  // broken part and gets invalidated, and if the mounted tree returns its own
+  // fatal verdict the cached reason is the more actionable one to report.
+  // A transient mounted failure is neither — it rules nothing out, so it stays
+  // retryable and the staged verdict waits for an attempt that can answer.
   let stagedFailure:
     | { readonly runtimeId: string; readonly nodePty: FailedNodePtyResult }
     | undefined;
@@ -395,7 +397,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
 
   const mounted = yield* resolveMountedAppRoot;
   if (!mounted.ok) {
-    return stagedFailure
+    return stagedFailure && mounted.fatal
       ? failedNodePty(stagedFailure.nodePty)
       : ({ _tag: "Failed", reason: mounted.reason, fatal: mounted.fatal } as const);
   }
@@ -406,7 +408,13 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     nodePtyOptions,
   );
   if (!nodePtyResult.ok) {
-    return failedNodePty(stagedFailure ? stagedFailure.nodePty : nodePtyResult);
+    // Substituting the staged verdict for a transient mounted failure would
+    // turn a retryable failure into a fatal one, ending the WSL attempt (and,
+    // in wsl-only mode, persisting Windows) before the slow /mnt path had a
+    // chance to answer and clear the bad cache.
+    return failedNodePty(
+      stagedFailure && nodePtyResult.fatal ? stagedFailure.nodePty : nodePtyResult,
+    );
   }
 
   // The mounted tree runs what the cache could not, so the cache is the broken
