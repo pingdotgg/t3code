@@ -7,6 +7,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useParams,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -51,7 +52,13 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useThreadShell,
+} from "../state/entities";
+import { resolveThreadRouteRef } from "../threadRoutes";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -195,6 +202,12 @@ function FontAppearanceSync() {
 }
 
 function DocumentTitleSync() {
+  const threadRef = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteRef(params),
+  });
+  const sessionStatus = useThreadShell(threadRef)?.session?.status;
+  const isActive = sessionStatus === "starting" || sessionStatus === "running";
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
   const title = resolveServerBackedAppDisplayName({
@@ -206,7 +219,19 @@ function DocumentTitleSync() {
 
   useEffect(() => {
     document.title = title;
-  }, [title]);
+    if (!isActive) return;
+
+    const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+    let frame = 0;
+    document.title = `${frames[frame++ % frames.length]} ${title}`;
+    const timer = window.setInterval(() => {
+      document.title = `${frames[frame++ % frames.length]} ${title}`;
+    }, 500);
+    return () => {
+      window.clearInterval(timer);
+      document.title = title;
+    };
+  }, [isActive, title]);
 
   return null;
 }
