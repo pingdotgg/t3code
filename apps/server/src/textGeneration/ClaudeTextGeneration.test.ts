@@ -234,7 +234,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             body: "",
           },
         }),
-        argsMustContain: '--settings {"alwaysThinkingEnabled":false}',
+        argsMustContain: '--settings {"verbose":false,"alwaysThinkingEnabled":false}',
         argsMustNotContain: "--effort",
       },
       (textGeneration) =>
@@ -266,7 +266,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             body: "Body",
           },
         }),
-        argsMustContain: '--effort max --settings {"fastMode":true}',
+        argsMustContain: '--effort max --settings {"verbose":false,"fastMode":true}',
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -374,6 +374,70 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           });
 
           expect(generated.title).toBe("New thread");
+        }),
+    ),
+  );
+
+  it.effect("pins verbose output off even without other Claude settings", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Reconnect failures after restart",
+          },
+        }),
+        argsMustContain: '--settings {"verbose":false}',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Please investigate reconnect failures after restarting the session.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.title).toBe(sanitizeThreadTitle("Reconnect failures after restart"));
+        }),
+    ),
+  );
+
+  // Guards the assumption behind `verbose: false`: should the CLI ever stream
+  // events despite the pinned setting, this fails loudly instead of silently.
+  it.effect("fails when the CLI streams events instead of the envelope", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify([
+          { type: "system", subtype: "init", session_id: "abc" },
+          { type: "assistant", message: { role: "assistant", content: [] } },
+          { type: "user", message: { role: "user", content: [] } },
+          { type: "rate_limit_event", rate_limit: { status: "allowed" } },
+          {
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            result: '{"title":"Reconnect failures after restart"}',
+            structured_output: { title: "Reconnect failures after restart" },
+          },
+        ]),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread.",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: "claude-sonnet-4-6",
+              },
+            }),
+          );
+
+          expect(error._tag).toBe("TextGenerationError");
+          expect(error.detail).toContain("unexpected output format");
         }),
     ),
   );
