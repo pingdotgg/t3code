@@ -1781,8 +1781,9 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      // No explicit model/effort on the launch input: the task inherits the
-      // session's selection.
+      // No explicit model on the launch: leave it unlabeled. Effort still
+      // inherits the session selection. Inventing the session model here is
+      // what mislabeled nested Agent-tool children (#6026).
       harness.query.emit({
         type: "system",
         subtype: "task_started",
@@ -1819,7 +1820,7 @@ describe("ClaudeAdapterLive", () => {
       const started = taskEvents[0];
       assert.equal(started?.type, "task.started");
       if (started?.type === "task.started") {
-        assert.equal(started.payload.model, "claude-opus-4-6");
+        assert.equal(started.payload.model, undefined);
         assert.equal(started.payload.effort, "max");
       }
       const progress = taskEvents[1];
@@ -1827,6 +1828,175 @@ describe("ClaudeAdapterLive", () => {
       if (progress?.type === "task.progress") {
         assert.equal(progress.payload.model, "claude-sonnet-5[1m]");
         assert.equal(progress.payload.effort, "max");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("depth-2 nested agent uses the child model, never the session default", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // parent start + omitted start/progress + named start
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-fable-5",
+          [{ id: "effort", value: "high" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn nested agents",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-parent",
+        description: "codex-sol",
+        task_type: "local_agent",
+        subagent_type: "codex-sol",
+        tool_use_id: "toolu_parent",
+        uuid: "task-parent-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      // Depth-2 Agent tool: no model on the spawn input (frontmatter pin
+      // lives on the agent definition, not the tool call).
+      harness.query.emit({
+        type: "stream_event",
+        parent_tool_use_id: "toolu_parent",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_nested_omitted",
+            name: "Agent",
+            input: {
+              description: "Explore the repo",
+              prompt: "Find auth usage",
+              subagent_type: "Explore",
+            },
+          },
+        },
+        uuid: "stream-nested-omitted",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-nested-omitted",
+        description: "Explore the repo",
+        task_type: "local_agent",
+        subagent_type: "Explore",
+        tool_use_id: "toolu_nested_omitted",
+        uuid: "task-nested-omitted-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_nested_omitted",
+        message: {
+          model: "gpt-5.6-sol",
+          content: [],
+        },
+        uuid: "nested-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-nested-omitted",
+        description: "Explore the repo",
+        usage: { total_tokens: 40, tool_uses: 1, duration_ms: 8 },
+        uuid: "task-nested-omitted-progress",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      // Sibling spawn whose SDK task record names the child model.
+      harness.query.emit({
+        type: "stream_event",
+        parent_tool_use_id: "toolu_parent",
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_nested_named",
+            name: "Agent",
+            input: {
+              description: "Explore tests",
+              prompt: "Scan tests",
+              subagent_type: "Explore",
+              model: "gpt-5.6-sol",
+            },
+          },
+        },
+        uuid: "stream-nested-named",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-nested-named",
+        description: "Explore tests",
+        task_type: "local_agent",
+        subagent_type: "Explore",
+        tool_use_id: "toolu_nested_named",
+        model: "gpt-5.6-sol",
+        uuid: "task-nested-named-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const omittedStarted = taskEvents.find(
+        (event) =>
+          event.type === "task.started" &&
+          (event.payload as { taskId?: string }).taskId === "task-nested-omitted",
+      );
+      assert.equal(omittedStarted?.type, "task.started");
+      if (omittedStarted?.type === "task.started") {
+        assert.equal(omittedStarted.payload.model, undefined);
+        assert.equal(omittedStarted.payload.agentId, "task-parent");
+        assert.equal(omittedStarted.payload.role, "Explore");
+        assert.notEqual(omittedStarted.payload.model, "claude-fable-5");
+      }
+      const omittedProgress = taskEvents.find(
+        (event) =>
+          event.type === "task.progress" &&
+          (event.payload as { taskId?: string }).taskId === "task-nested-omitted",
+      );
+      assert.equal(omittedProgress?.type, "task.progress");
+      if (omittedProgress?.type === "task.progress") {
+        assert.equal(omittedProgress.payload.model, "gpt-5.6-sol");
+        assert.notEqual(omittedProgress.payload.model, "claude-fable-5");
+      }
+
+      const namedStarted = taskEvents.find(
+        (event) =>
+          event.type === "task.started" &&
+          (event.payload as { taskId?: string }).taskId === "task-nested-named",
+      );
+      assert.equal(namedStarted?.type, "task.started");
+      if (namedStarted?.type === "task.started") {
+        assert.equal(namedStarted.payload.model, "gpt-5.6-sol");
+        assert.equal(namedStarted.payload.agentId, "task-parent");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
