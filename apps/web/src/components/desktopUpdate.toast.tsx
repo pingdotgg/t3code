@@ -2,12 +2,14 @@ import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ArrowRightIcon } from "lucide-react";
 
 import {
+  getDesktopUpdateActionError,
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
+  shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
-type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
+type DesktopUpdateShell = Pick<DesktopBridge, "installUpdate" | "openExternal">;
 
 function ReleaseNotesLink({
   shell,
@@ -18,7 +20,7 @@ function ReleaseNotesLink({
 }) {
   return (
     <button
-      className="ml-2 inline cursor-pointer text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+      className="inline cursor-pointer text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
       onClick={() => {
         void (async () => {
           try {
@@ -51,9 +53,43 @@ export function showDesktopUpdateDownloadedToast(
     title: "Update downloaded",
     description: (
       <>
-        Restart the app from the update button to install it.
-        {releaseUrl ? <ReleaseNotesLink releaseUrl={releaseUrl} shell={shell} /> : null}
+        Restart the app to install it.
+        {releaseUrl ? (
+          <>
+            {" "}
+            <ReleaseNotesLink releaseUrl={releaseUrl} shell={shell} />
+          </>
+        ) : null}
       </>
     ),
+    actionProps: {
+      children: "Restart",
+      onClick: () => {
+        void shell
+          .installUpdate()
+          .then((result) => {
+            if (!shouldToastDesktopUpdateActionResult(result)) return;
+            const actionError = getDesktopUpdateActionError(result);
+            if (!actionError) return;
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not install update",
+                description: actionError,
+              }),
+            );
+          })
+          .catch((error) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not install update",
+                description:
+                  error instanceof Error ? error.message : "An unexpected error occurred.",
+              }),
+            );
+          });
+      },
+    },
   });
 }

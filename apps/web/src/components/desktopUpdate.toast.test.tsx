@@ -67,7 +67,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
   it("opens the downloaded version's release notes", async () => {
     const openExternal = vi.fn().mockResolvedValue(true);
 
-    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
+    showDesktopUpdateDownloadedToast({ installUpdate: vi.fn(), openExternal }, downloadedState());
     const link = findReleaseNotesLink(getDescription());
     link?.props.onClick?.();
     await vi.waitFor(() => {
@@ -83,7 +83,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
 
     // The `update-downloaded` event can land after the download RPC resolves.
     showDesktopUpdateDownloadedToast(
-      { openExternal },
+      { installUpdate: vi.fn(), openExternal },
       downloadedState({ downloadedVersion: null }),
     );
     findReleaseNotesLink(getDescription())?.props.onClick?.();
@@ -97,7 +97,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
 
   it("omits the link when the updater reports no version at all", () => {
     showDesktopUpdateDownloadedToast(
-      { openExternal: vi.fn() },
+      { installUpdate: vi.fn(), openExternal: vi.fn() },
       downloadedState({ availableVersion: null, downloadedVersion: null }),
     );
 
@@ -108,7 +108,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     ["returns false", vi.fn().mockResolvedValue(false)],
     ["rejects", vi.fn().mockRejectedValue(new Error("open failed"))],
   ])("shows an error when opening release notes %s", async (_description, openExternal) => {
-    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
+    showDesktopUpdateDownloadedToast({ installUpdate: vi.fn(), openExternal }, downloadedState());
     findReleaseNotesLink(getDescription())?.props.onClick?.();
 
     await vi.waitFor(() => {
