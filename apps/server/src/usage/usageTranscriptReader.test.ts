@@ -6,7 +6,12 @@ import * as NodeSqlite from "node:sqlite";
 
 import { describe, expect, it } from "@effect/vitest";
 
-import { readTranscriptRecords, statSqliteUsageStore } from "./usageTranscriptReader.ts";
+import {
+  hasMcodeUsageTable,
+  listTranscriptFiles,
+  readTranscriptRecords,
+  statSqliteUsageStore,
+} from "./usageTranscriptReader.ts";
 
 interface McodeRow {
   readonly id: number;
@@ -116,6 +121,18 @@ describe("readTranscriptRecords for mcode", () => {
     }
   });
 
+  it("detects which compatibility database has canonical usage accounting", async () => {
+    const { dbPath, cleanup } = createMcodeDb([]);
+    const emptyPath = NodePath.join(NodePath.dirname(dbPath), "empty.sqlite");
+    new NodeSqlite.DatabaseSync(emptyPath).close();
+    try {
+      expect(await hasMcodeUsageTable(dbPath)).toBe(true);
+      expect(await hasMcodeUsageTable(emptyPath)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("does not turn transient failures into cacheable empty usage", async () => {
     expect(
       await readTranscriptRecords(
@@ -167,5 +184,13 @@ describe("readTranscriptRecords for mcode", () => {
         0,
       ),
     ).toBeNull();
+  });
+
+  it("reports a transcript root that disappears before the walk", async () => {
+    const missingRoot = NodePath.join(NodeOS.tmpdir(), "t3-usage-missing-transcript-root");
+    expect(await listTranscriptFiles(missingRoot, 0)).toEqual({
+      files: [],
+      failedEntries: 1,
+    });
   });
 });

@@ -285,6 +285,23 @@ describe("parseMcodeUsageRow", () => {
       })?.model,
     ).toBe("unknown");
   });
+
+  it("keeps positive reported cost even when token counters are zero", () => {
+    expect(
+      parseMcodeUsageRow({
+        id: 19,
+        session_id: "session-c",
+        model: "minimax/MiniMax-M3",
+        ts: 1_786_000_002_000,
+        input_tokens: 0,
+        output_tokens: 0,
+        reasoning_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        cost_usd: 0.5,
+      })?.reportedCostUsd,
+    ).toBe(0.5);
+  });
 });
 
 describe("totalTokens", () => {

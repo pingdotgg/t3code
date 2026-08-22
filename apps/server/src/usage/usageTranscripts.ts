@@ -327,11 +327,12 @@ export function parseMcodeUsageRow(row: Record<string, unknown>): UsageRecord | 
     outputTokens,
     reasoningTokens: Math.min(outputTokens, int(row["reasoning_tokens"])),
   };
-  if (totalTokens(totals) === 0) return null;
-
   const rawModel = typeof row["model"] === "string" ? row["model"].trim() : "";
   const rowId = row["id"];
   const cost = row["cost_usd"];
+  const reportedCostUsd =
+    typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null;
+  if (totalTokens(totals) === 0 && reportedCostUsd === null) return null;
 
   return {
     provider: "mcode",
@@ -341,7 +342,7 @@ export function parseMcodeUsageRow(row: Record<string, unknown>): UsageRecord | 
     totals,
     // Subscription-backed MCode records commonly store zero here. Let the
     // rate table price those rather than claiming they had no API-equivalent cost.
-    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+    reportedCostUsd,
     dedupeKey:
       (typeof rowId === "number" && Number.isFinite(rowId)) ||
       (typeof rowId === "string" && rowId.length > 0)

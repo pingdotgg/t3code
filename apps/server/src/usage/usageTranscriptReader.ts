@@ -36,6 +36,17 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
+export interface TranscriptListing {
+  readonly files: readonly TranscriptFile[];
+  readonly failedEntries: number;
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { readonly code?: unknown }).code)
+    : undefined;
+}
+
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
@@ -46,14 +57,19 @@ export interface TranscriptFile {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-): Promise<readonly TranscriptFile[]> {
+): Promise<TranscriptListing> {
   const found: TranscriptFile[] = [];
+  let failedEntries = 0;
 
-  const walk = async (dir: string): Promise<void> => {
+  const walk = async (dir: string, isRoot = false): Promise<void> => {
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      // A nested entry may rotate away between its parent readdir and this
+      // walk. The root disappearing after the caller's existence check is a
+      // real source failure, as is any permission or I/O error.
+      if (isRoot || errorCode(error) !== "ENOENT") failedEntries += 1;
       return;
     }
     for (const entry of entries) {
@@ -68,14 +84,16 @@ export async function listTranscriptFiles(
         if (stats.mtimeMs >= sinceMs) {
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
-      } catch {
-        // Vanished between readdir and stat.
+      } catch (error) {
+        // Vanishing between readdir and stat is benign rotation; other errors
+        // mean coverage is partial.
+        if (errorCode(error) !== "ENOENT") failedEntries += 1;
       }
     }
   };
 
-  await walk(root);
-  return found;
+  await walk(root, true);
+  return { files: found, failedEntries };
 }
 
 /**
@@ -94,6 +112,26 @@ export async function statSqliteUsageStore(
     return mtimeMs >= sinceMs ? [{ path: filePath, size, mtimeMs }] : [];
   } catch {
     return null;
+  }
+}
+
+/** Whether a candidate MCode database contains the canonical accounting table. */
+export async function hasMcodeUsageTable(filePath: string): Promise<boolean> {
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(filePath, {
+      readOnly: true,
+      timeout: MCODE_BUSY_TIMEOUT_MS,
+    });
+    return (
+      db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+        .get("local_runtime_token_usage") !== undefined
+    );
+  } catch {
+    return false;
+  } finally {
+    db?.close();
   }
 }
 

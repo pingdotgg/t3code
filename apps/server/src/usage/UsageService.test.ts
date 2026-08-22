@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  chooseMcodeUsageStore,
   negotiateUsageContractVersion,
   resolveMcodeDataDir,
   summarizeSourceReadFailures,
@@ -18,6 +19,20 @@ describe("resolveMcodeDataDir", () => {
 
   it("uses the shared TUI and desktop directory by default", () => {
     expect(resolveMcodeDataDir({}, "/home/user/.minimax")).toBe("/home/user/.minimax");
+  });
+});
+
+describe("chooseMcodeUsageStore", () => {
+  it("uses the alternate when the primary is only an empty compatibility stub", () => {
+    expect(chooseMcodeUsageStore("primary.sqlite", false, "alternate.sqlite", true)).toBe(
+      "alternate.sqlite",
+    );
+  });
+
+  it("keeps the canonical primary when both stores have accounting", () => {
+    expect(chooseMcodeUsageStore("primary.sqlite", true, "alternate.sqlite", true)).toBe(
+      "primary.sqlite",
+    );
   });
 });
 

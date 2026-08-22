@@ -40,6 +40,7 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
+  hasMcodeUsageTable,
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
@@ -113,6 +114,15 @@ export function resolveMcodeDataDir(
     environment["MAVIS_DATA_DIR"]?.trim() ||
     defaultDataDir
   );
+}
+
+export function chooseMcodeUsageStore(
+  primaryPath: string,
+  primaryHasUsage: boolean,
+  alternatePath: string,
+  alternateHasUsage: boolean,
+): string {
+  return primaryHasUsage || !alternateHasUsage ? primaryPath : alternatePath;
 }
 
 export function negotiateUsageContractVersion(
@@ -263,13 +273,15 @@ export const make = Effect.gen(function* () {
     const mcodeDataDir = resolveMcodeDataDir(process.env, path.join(NodeOS.homedir(), ".minimax"));
     const primaryMcodeDb = path.join(mcodeDataDir, "v2", "sqlite", "runtime-state.sqlite");
     const alternateMcodeDb = path.join(mcodeDataDir, "v2", "chats", "local-runtime.sqlite");
-    const primaryExists = yield* fileSystem
-      .exists(primaryMcodeDb)
-      .pipe(Effect.catchCause(() => Effect.succeed(false)));
-    const alternateExists = yield* fileSystem
-      .exists(alternateMcodeDb)
-      .pipe(Effect.catchCause(() => Effect.succeed(false)));
-    const mcodeDb = primaryExists || !alternateExists ? primaryMcodeDb : alternateMcodeDb;
+    const [primaryHasUsage, alternateHasUsage] = yield* Effect.promise(() =>
+      Promise.all([hasMcodeUsageTable(primaryMcodeDb), hasMcodeUsageTable(alternateMcodeDb)]),
+    );
+    const mcodeDb = chooseMcodeUsageStore(
+      primaryMcodeDb,
+      primaryHasUsage,
+      alternateMcodeDb,
+      alternateHasUsage,
+    );
 
     const sources: readonly TranscriptSource[] = [
       { provider: "claude", dir: claudeDir },
@@ -442,17 +454,18 @@ export const make = Effect.gen(function* () {
         continue;
       }
 
-      walkedRoots.push(dir);
-      const listedFiles = yield* Effect.promise(() =>
-        source.file === undefined
-          ? listTranscriptFiles(dir, windowStartMs)
-          : statSqliteUsageStore(source.file, windowStartMs),
-      );
-      const listingFailed = listedFiles === null;
-      const files = listedFiles ?? [];
+      const listing = yield* Effect.promise(async () => {
+        if (source.file === undefined) return listTranscriptFiles(dir, windowStartMs);
+        const files = await statSqliteUsageStore(source.file, windowStartMs);
+        return files === null ? { files: [], failedEntries: 1 } : { files, failedEntries: 0 };
+      });
+      const files = listing.files;
+      // Only a complete listing proves that an absent cached path was deleted.
+      // Any failure keeps the warm cache available for the next retry.
+      if (listing.failedEntries === 0) walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
-      let failedFiles = listingFailed ? 1 : 0;
+      let failedFiles = listing.failedEntries;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
@@ -485,7 +498,7 @@ export const make = Effect.gen(function* () {
       }
 
       const readHealth = summarizeSourceReadFailures(
-        files.length + (listingFailed ? 1 : 0),
+        files.length + listing.failedEntries,
         failedFiles,
       );
       sources.push({
