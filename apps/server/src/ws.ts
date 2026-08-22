@@ -989,12 +989,21 @@ const makeWsRpcLayer = (
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   remoteName: "origin",
                 });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
+                // A base branch that was never pushed has no
+                // `refs/remotes/origin/<branch>`, so resolving it exits non-zero.
+                // Fall back to the local base branch instead of failing the whole
+                // bootstrap: that rollback soft-deletes the just-created thread and
+                // permanently burns its id, so the client's retry can never succeed.
+                const resolvedRemoteBase = yield* gitWorkflow
+                  .resolveRemoteTrackingCommit({
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    refName: bootstrap.prepareWorktree.baseBranch,
+                    fallbackRemoteName: "origin",
+                  })
+                  .pipe(Effect.option);
+                if (Option.isSome(resolvedRemoteBase)) {
+                  worktreeBaseRef = resolvedRemoteBase.value.commitSha;
+                }
               }
               const worktree = yield* gitWorkflow.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
