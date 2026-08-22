@@ -14,7 +14,8 @@
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
@@ -203,3 +204,103 @@ export class UsageReadError extends Schema.TaggedErrorClass<UsageReadError>()("U
     return `Usage read failed (${this.reason}): ${this.detail}`;
   }
 }
+
+/**
+ * Provider-native subscription allowance reporting. This is deliberately
+ * separate from {@link UsageSummary}: transcript history and live allowance
+ * snapshots have different sources, freshness, and failure semantics.
+ */
+export const SubscriptionAllowanceProviderKind = Schema.Literals(["claude", "codex"]);
+export type SubscriptionAllowanceProviderKind = typeof SubscriptionAllowanceProviderKind.Type;
+
+export const SubscriptionAllowanceStatus = Schema.Literals(["available", "unavailable"]);
+export type SubscriptionAllowanceStatus = typeof SubscriptionAllowanceStatus.Type;
+
+/** Whether the provider observation is current or only retained after a failed refresh. */
+export const SubscriptionAllowanceFreshness = Schema.Literals(["fresh", "stale"]);
+export type SubscriptionAllowanceFreshness = typeof SubscriptionAllowanceFreshness.Type;
+
+/** Whether an allowance record contains a complete provider observation. */
+export const SubscriptionAllowanceCompleteness = Schema.Literals(["complete", "partial"]);
+export type SubscriptionAllowanceCompleteness = typeof SubscriptionAllowanceCompleteness.Type;
+
+/** The provider observation that supplied the allowance facts. */
+export const SubscriptionAllowanceObservationSource = Schema.Literals(["snapshot", "liveUpdate"]);
+export type SubscriptionAllowanceObservationSource =
+  typeof SubscriptionAllowanceObservationSource.Type;
+
+/** Whether the current client delivery came directly from the environment or its cache. */
+export const SubscriptionAllowanceDeliverySource = Schema.Literals(["live", "cache"]);
+export type SubscriptionAllowanceDeliverySource = typeof SubscriptionAllowanceDeliverySource.Type;
+
+/**
+ * Provider-native allowance bucket identifiers. Codex currently uses the
+ * generic primary/secondary names; Claude supplies names such as
+ * `five_hour` and `seven_day_opus`. Keeping the identifier opaque prevents
+ * the shared contract from collapsing provider-specific windows.
+ */
+export const SubscriptionAllowanceWindowScope = TrimmedNonEmptyString;
+export type SubscriptionAllowanceWindowScope = typeof SubscriptionAllowanceWindowScope.Type;
+
+export const SubscriptionAllowanceWindow = Schema.Struct({
+  scope: SubscriptionAllowanceWindowScope,
+  usedPercent: Schema.optionalKey(Schema.Union([Schema.Number, Schema.Null])),
+  windowDurationMins: Schema.optionalKey(Schema.Union([NonNegativeInt, Schema.Null])),
+  resetsAt: Schema.optionalKey(Schema.Union([IsoDateTime, Schema.Null])),
+});
+export type SubscriptionAllowanceWindow = typeof SubscriptionAllowanceWindow.Type;
+
+/** Claude's provider-native extra-usage spending fields, when supplied. */
+export const SubscriptionAllowanceExtraUsage = Schema.Struct({
+  isEnabled: Schema.Boolean,
+  monthlyLimit: Schema.Union([Schema.Number, Schema.Null]),
+  usedCredits: Schema.Union([Schema.Number, Schema.Null]),
+  utilization: Schema.Union([Schema.Number, Schema.Null]),
+  currency: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+});
+export type SubscriptionAllowanceExtraUsage = typeof SubscriptionAllowanceExtraUsage.Type;
+
+export const SubscriptionAllowanceCredits = Schema.Struct({
+  balance: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+});
+export type SubscriptionAllowanceCredits = typeof SubscriptionAllowanceCredits.Type;
+
+export const SubscriptionAllowanceSpendingControl = Schema.Struct({
+  reached: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  limit: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  remainingPercent: Schema.optionalKey(Schema.Union([Schema.Number, Schema.Null])),
+  resetsAt: Schema.optionalKey(Schema.Union([IsoDateTime, Schema.Null])),
+  used: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+});
+export type SubscriptionAllowanceSpendingControl = typeof SubscriptionAllowanceSpendingControl.Type;
+
+export const SubscriptionAllowance = Schema.Struct({
+  provider: SubscriptionAllowanceProviderKind,
+  instanceId: ProviderInstanceId,
+  status: SubscriptionAllowanceStatus,
+  freshness: Schema.optional(SubscriptionAllowanceFreshness),
+  completeness: Schema.optional(SubscriptionAllowanceCompleteness),
+  observationSource: Schema.optional(SubscriptionAllowanceObservationSource),
+  deliverySource: Schema.optional(SubscriptionAllowanceDeliverySource),
+  /** Equality-only provider identity; clients must never render or log it. */
+  verifiedAccountId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Provider-reported privacy-safe descriptor, when available. */
+  maskedAccountLabel: Schema.optionalKey(TrimmedNonEmptyString),
+  updatedAt: Schema.optional(IsoDateTime),
+  windows: Schema.Array(SubscriptionAllowanceWindow),
+  credits: Schema.optionalKey(Schema.Union([SubscriptionAllowanceCredits, Schema.Null])),
+  spendingControl: Schema.optionalKey(
+    Schema.Union([SubscriptionAllowanceSpendingControl, Schema.Null]),
+  ),
+  extraUsage: Schema.optionalKey(Schema.Union([SubscriptionAllowanceExtraUsage, Schema.Null])),
+  message: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type SubscriptionAllowance = typeof SubscriptionAllowance.Type;
+
+export const SubscriptionAllowanceSnapshot = Schema.Struct({
+  readAt: IsoDateTime,
+  allowances: Schema.Array(SubscriptionAllowance),
+});
+export type SubscriptionAllowanceSnapshot = typeof SubscriptionAllowanceSnapshot.Type;

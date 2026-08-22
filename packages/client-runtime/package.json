@@ -111,6 +111,10 @@
       "types": "./src/state/server.ts",
       "default": "./src/state/server.ts"
     },
+    "./state/subscription-allowance": {
+      "types": "./src/state/subscriptionAllowance.ts",
+      "default": "./src/state/subscriptionAllowance.ts"
+    },
     "./state/session": {
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"

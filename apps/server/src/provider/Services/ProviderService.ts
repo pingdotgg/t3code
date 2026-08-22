@@ -33,6 +33,13 @@ import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
+ * Internal-only source marker for canonical runtime events. It is a symbol so
+ * it never enters the wire shape or persisted JSON, while consumers that need
+ * generation safety can reject events from a replaced adapter instance.
+ */
+export const PROVIDER_RUNTIME_EVENT_SOURCE = Symbol("t3/provider-runtime-event-source");
+
+/**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
  */
 export interface ProviderServiceShape {

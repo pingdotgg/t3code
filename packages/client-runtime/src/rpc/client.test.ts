@@ -25,7 +25,13 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { EnvironmentRpcRequestObserver, request, runStream, subscribe } from "./client.ts";
+import {
+  EnvironmentRpcRequestObserver,
+  isRpcMethodNotFoundError,
+  request,
+  runStream,
+  subscribe,
+} from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -228,6 +234,36 @@ describe("environment RPC", () => {
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect("surfaces an additive method-not-found as a compatibility failure when requested", () =>
+    Effect.gen(function* () {
+      const client = {
+        [WS_METHODS.subscribeSubscriptionAllowance]: () =>
+          Stream.fail(
+            new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: `Unknown request tag: ${WS_METHODS.subscribeSubscriptionAllowance}`,
+                cause: new Error("method is not implemented by this server"),
+              }),
+            }),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const error = yield* subscribe(
+        WS_METHODS.subscribeSubscriptionAllowance,
+        {},
+        { failOnMethodNotFound: true },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+
+      expect(isRpcMethodNotFoundError(error)).toBe(true);
     }),
   );
 

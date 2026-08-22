@@ -33,6 +33,7 @@ import type * as Scope from "effect/Scope";
 import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
+import type { ProviderAllowanceReader } from "./Services/ProviderAllowanceReader.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 /**
@@ -56,7 +57,7 @@ export interface ProviderDriverMetadata {
  * One materialized provider instance. Held by the registry, looked up by
  * `instanceId`, torn down by closing the scope it was created in.
  *
- * The three "shape" fields are captured closures owned by this instance —
+ * The four "shape" fields are captured closures owned by this instance —
  * stopping one instance cannot affect another, and starting a second
  * instance of the same driver does not reach into the first instance's
  * state.
@@ -70,6 +71,7 @@ export interface ProviderInstance {
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
+  readonly allowanceReader?: ProviderAllowanceReader;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
 }
 

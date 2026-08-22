@@ -29,6 +29,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
+import { makeClaudeAllowanceReader } from "../Layers/ClaudeAllowanceReader.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
@@ -131,6 +132,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         instanceId,
       });
       const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      const allowanceReader = yield* makeClaudeAllowanceReader({
+        instanceId,
+        binaryPath: effectiveConfig.binaryPath,
+        homePath: effectiveConfig.homePath,
+        environment: processEnv,
+        cwd,
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -215,6 +223,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         enabled,
         snapshot,
         adapter,
+        allowanceReader,
         textGeneration,
       } satisfies ProviderInstance;
     }),

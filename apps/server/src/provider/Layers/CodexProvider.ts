@@ -50,6 +50,19 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
+export interface CodexAppServerClientInput {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
+export interface CodexAppServerConnection {
+  readonly client: CodexClient.CodexAppServerClient["Service"];
+  readonly initialize: CodexSchema.V1InitializeResponse;
+}
+
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",
@@ -325,14 +338,16 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
-const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
-  readonly binaryPath: string;
-  readonly homePath?: string;
-  readonly launchArgs?: string;
-  readonly cwd: string;
-  readonly customModels?: ReadonlyArray<string>;
-  readonly environment?: NodeJS.ProcessEnv;
-}) {
+/**
+ * Starts a short-lived Codex app-server, performs the shared handshake, and
+ * lets a provider-specific reader make one authenticated request. The caller
+ * owns the surrounding Scope so the child process and protocol client are
+ * always released when the read finishes.
+ */
+export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(function* <A>(
+  input: CodexAppServerClientInput,
+  use: (connection: CodexAppServerConnection) => Effect.Effect<A, CodexErrors.CodexAppServerError>,
+) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
@@ -375,50 +390,56 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     Effect.provide(clientContext),
   );
 
-  const initialize = yield* client.request("initialize", {
-    clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
-      version: "0.1.0",
-    },
-    capabilities: {
-      experimentalApi: true,
-    },
-  });
+  const initialize = yield* client.request("initialize", buildCodexInitializeParams());
   yield* client.notify("initialized", undefined);
 
-  // Extract the version string after the first '/' in userAgent, up to the next space or the end
-  const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
-  const version = versionMatch ? versionMatch[1] : undefined;
+  return yield* use({ client, initialize });
+});
 
-  const accountResponse = yield* client.request("account/read", {});
-  if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
-    return {
-      account: accountResponse,
-      version,
-      models: appendCustomCodexModels([], input.customModels ?? []),
-      skills: [],
-    } satisfies CodexAppServerProviderSnapshot;
-  }
+const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly customModels?: ReadonlyArray<string>;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  return yield* withCodexAppServerClient(input, ({ client, initialize }) =>
+    Effect.gen(function* () {
+      // Extract the version string after the first '/' in userAgent, up to the next space or the end
+      const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
+      const version = versionMatch ? versionMatch[1] : undefined;
 
-  const [skillsResponse, models] = yield* Effect.all(
-    [
-      client.request("skills/list", {
-        cwds: [input.cwd],
-      }),
-      requestAllCodexModels(client),
-    ],
-    { concurrency: "unbounded" },
+      const accountResponse = yield* client.request("account/read", {});
+      if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
+        return {
+          account: accountResponse,
+          version,
+          models: appendCustomCodexModels([], input.customModels ?? []),
+          skills: [],
+        } satisfies CodexAppServerProviderSnapshot;
+      }
+
+      const [skillsResponse, models] = yield* Effect.all(
+        [
+          client.request("skills/list", {
+            cwds: [input.cwd],
+          }),
+          requestAllCodexModels(client),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      return {
+        account: accountResponse,
+        version,
+        models: applyPreferredCodexDefaultModel(
+          appendCustomCodexModels(models, input.customModels ?? []),
+        ),
+        skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+      } satisfies CodexAppServerProviderSnapshot;
+    }),
   );
-
-  return {
-    account: accountResponse,
-    version,
-    models: applyPreferredCodexDefaultModel(
-      appendCustomCodexModels(models, input.customModels ?? []),
-    ),
-    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
-  } satisfies CodexAppServerProviderSnapshot;
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {

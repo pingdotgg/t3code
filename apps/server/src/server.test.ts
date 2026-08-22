@@ -151,6 +151,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as SubscriptionAllowanceService from "./usage/SubscriptionAllowanceService.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Data from "effect/Data";
 
@@ -388,6 +389,9 @@ const buildAppUnderTest = (options?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+    subscriptionAllowance?: Partial<
+      SubscriptionAllowanceService.SubscriptionAllowanceService["Service"]
+    >;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
@@ -835,6 +839,20 @@ const buildAppUnderTest = (options?: {
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(UsageService.layerTest),
+      Layer.provide(
+        Layer.mock(SubscriptionAllowanceService.SubscriptionAllowanceService)({
+          subscribe: Effect.succeed({
+            latest: { readAt: "1970-01-01T00:00:00.000Z", allowances: [] },
+            hasCompletedRefresh: true,
+            changes: Stream.empty,
+          }),
+          refresh: Effect.succeed({
+            readAt: "1970-01-01T00:00:00.000Z",
+            allowances: [],
+          }),
+          ...options?.layers?.subscriptionAllowance,
+        }),
+      ),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
           record: () => Effect.void,
@@ -4026,6 +4044,73 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("requires orchestration read scope for server.refreshSubscriptionAllowance", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response: tokenResponse, body: tokenBody } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "access:write" },
+      );
+      assert.equal(tokenResponse.status, 200);
+      assert.isDefined(tokenBody.access_token);
+
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      assert.equal(wsTicketResponse.status, 200);
+
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+      const rpcError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverRefreshSubscriptionAllowance]({}),
+          ),
+        ),
+      );
+
+      assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
+      if (rpcError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(rpcError.requiredScope, "orchestration:read");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes authenticated websocket rpc server.refreshSubscriptionAllowance", () =>
+    Effect.gen(function* () {
+      const snapshot = {
+        readAt: "2026-08-11T12:00:00.000Z",
+        allowances: [
+          {
+            provider: "codex" as const,
+            instanceId: ProviderInstanceId.make("codex"),
+            status: "available" as const,
+            freshness: "fresh" as const,
+            updatedAt: "2026-08-11T12:00:00.000Z",
+            windows: [{ scope: "primary" as const, usedPercent: 24 }],
+          },
+        ],
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          subscriptionAllowance: { refresh: Effect.succeed(snapshot) },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverRefreshSubscriptionAllowance]({}),
+        ),
+      );
+
+      assert.deepEqual(response, snapshot);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("does not block server config when editor discovery never resolves", () =>
     Effect.gen(function* () {
       const discoveryInterrupted = yield* Deferred.make<void>();
@@ -4612,6 +4697,80 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(Option.isSome(snapshot));
       assert.equal(snapshot.value.processes.length, 0);
       assert.equal(snapshot.value.groups.backend.processCount, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket subscription allowance snapshots through the subscription", () =>
+    Effect.gen(function* () {
+      const snapshot = {
+        readAt: "2026-08-11T12:00:00.000Z",
+        allowances: [
+          {
+            provider: "codex" as const,
+            instanceId: ProviderInstanceId.make("codex"),
+            status: "available" as const,
+            freshness: "fresh" as const,
+            updatedAt: "2026-08-11T12:00:00.000Z",
+            windows: [{ scope: "primary" as const, usedPercent: 24 }],
+          },
+        ],
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          subscriptionAllowance: {
+            subscribe: Effect.succeed({
+              latest: snapshot,
+              hasCompletedRefresh: true,
+              changes: Stream.empty,
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeSubscriptionAllowance]({}).pipe(Stream.runHead),
+        ),
+      );
+
+      assertTrue(Option.isSome(response));
+      assert.deepEqual(response.value, snapshot);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires orchestration read scope for subscribeSubscriptionAllowance", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response: tokenResponse, body: tokenBody } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "access:write" },
+      );
+      assert.equal(tokenResponse.status, 200);
+      assert.isDefined(tokenBody.access_token);
+
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
+        },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      assert.equal(wsTicketResponse.status, 200);
+
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+      const rpcError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeSubscriptionAllowance]({}).pipe(Stream.runHead),
+          ),
+        ),
+      );
+
+      assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
+      if (rpcError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(rpcError.requiredScope, "orchestration:read");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -282,7 +282,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
 
-  const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+  type CanonicalProviderRuntimeEvent = ProviderRuntimeEvent & {
+    readonly [ProviderService.PROVIDER_RUNTIME_EVENT_SOURCE]?: unknown;
+  };
+
+  const publishRuntimeEvent = (event: CanonicalProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
       Effect.tap((canonicalEvent) =>
         canonicalEventLogger
@@ -340,6 +344,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     source: {
       readonly instanceId: ProviderInstanceId;
       readonly provider: ProviderDriverKind;
+      readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
     },
     event: ProviderRuntimeEvent,
   ): Effect.Effect<void> =>
@@ -348,7 +353,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(
+            publishRuntimeEvent({
+              ...canonicalEvent,
+              [ProviderService.PROVIDER_RUNTIME_EVENT_SOURCE]: source.adapter,
+            }),
+          ),
+        ),
       ),
     );
 
@@ -391,6 +403,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             {
               instanceId: id,
               provider: adapter.provider,
+              adapter,
             },
             event,
           ),

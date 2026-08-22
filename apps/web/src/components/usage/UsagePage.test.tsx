@@ -1,5 +1,10 @@
+import {
+  DEFAULT_USAGE_VIEW,
+  type UsageView,
+} from "@t3tools/client-runtime/state/subscription-allowance";
 import { USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
+import { Children, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -24,15 +29,30 @@ vi.mock("react", async (importOriginal) => {
               untilTime: "2026-08-11T12:37:00.000Z",
             },
           }
-        : initial === "model"
-          ? "time"
-          : initial,
+        : initial === "subscription"
+          ? "historical"
+          : initial === "model"
+            ? "time"
+            : initial,
       vi.fn(),
     ]),
   };
 });
 
 vi.mock("../../env", () => ({ isElectron: false }));
+vi.mock("../../hooks/useNowMinute", () => ({
+  useNowMinute: () => "2026-08-11T12:37",
+}));
+vi.mock("../../state/subscriptionAllowance", () => ({
+  useSubscriptionAllowance: () => ({
+    groups: [],
+    environments: [],
+    isPending: false,
+    isPartial: false,
+    isRefreshing: false,
+    refresh: vi.fn(),
+  }),
+}));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
@@ -45,6 +65,11 @@ vi.mock("../ui/select", () => ({
 }));
 vi.mock("../ui/sidebar", () => ({ SidebarInset: "div" }));
 vi.mock("../ui/toggle-group", () => ({ Toggle: "button", ToggleGroup: "div" }));
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: "div",
+  TooltipPopup: "div",
+  TooltipTrigger: "div",
+}));
 vi.mock("../WorkspaceBreadcrumb", () => ({
   WorkspaceBreadcrumb: "div",
   WorkspaceBreadcrumbItem: "div",
@@ -61,7 +86,8 @@ vi.mock("./usageProviders", () => ({
   },
 }));
 
-import { UsagePage } from "./UsagePage";
+import { UsagePage, UsageSkeleton, UsageViewTabs } from "./UsagePage";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const providerTotals = (codex: number, claude: number) =>
   new Map([
@@ -94,6 +120,51 @@ beforeEach(() => {
     isPending: false,
     isPartial: false,
     refresh: vi.fn(),
+  });
+});
+
+describe("UsagePage defaults", () => {
+  it("opens on the Subscription view", () => {
+    expect(DEFAULT_USAGE_VIEW).toBe("subscription");
+  });
+});
+
+describe("UsageViewTabs", () => {
+  it("exposes an accessible Subscription/Historical segmented control", () => {
+    const selected: UsageView[] = [];
+    const output = UsageViewTabs({
+      value: "subscription",
+      onChange: (view) => selected.push(view),
+    }) as ReactElement<{
+      readonly children: ReactNode;
+      readonly onValueChange: (value: readonly string[]) => void;
+      readonly value: readonly string[];
+      readonly variant: string;
+    }>;
+    const toggles = Children.toArray(output.props.children) as ReactElement<{
+      readonly children: string;
+      readonly value: string;
+    }>[];
+
+    expect(output.type).toBe(ToggleGroup);
+    expect(output.props.variant).toBe("segmented");
+    expect(output.props.value).toEqual(["subscription"]);
+    expect(toggles.map((toggle) => toggle.type)).toEqual([Toggle, Toggle]);
+    expect(toggles.map((toggle) => toggle.props.children)).toEqual(["Subscription", "Historical"]);
+    expect(toggles.map((toggle) => toggle.props.value)).toEqual(["subscription", "historical"]);
+
+    output.props.onValueChange(["historical"]);
+    expect(selected).toEqual(["historical"]);
+  });
+});
+
+describe("UsageSkeleton", () => {
+  it("matches the chart resolution and metric while historical usage is loading", () => {
+    const hourlyMarkup = renderToStaticMarkup(<UsageSkeleton resolution="hour" metric="cost" />);
+    const dailyMarkup = renderToStaticMarkup(<UsageSkeleton resolution="day" metric="tokens" />);
+
+    expect(hourlyMarkup).toContain("Hourly cost");
+    expect(dailyMarkup).toContain("Daily processed tokens");
   });
 });
 

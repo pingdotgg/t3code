@@ -622,6 +622,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
     readonly label: string;
     readonly tag: TTag;
     readonly idleTtlMs?: number;
+    readonly failOnMethodNotFound?: boolean;
     readonly transform?: (
       stream: Stream.Stream<
         EnvironmentRpcStreamValue<TTag>,
@@ -635,7 +636,12 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
     label: options.label,
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
     subscribe: (input: EnvironmentRpcInput<TTag>) => {
-      const stream = subscribe(options.tag, input);
+      const stream =
+        options.failOnMethodNotFound === undefined
+          ? subscribe(options.tag, input)
+          : subscribe(options.tag, input, {
+              failOnMethodNotFound: options.failOnMethodNotFound,
+            });
       return options.transform === undefined
         ? (stream as Stream.Stream<B, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor | R>)
         : options.transform(stream);
