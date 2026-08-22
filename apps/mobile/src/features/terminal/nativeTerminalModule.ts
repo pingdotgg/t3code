@@ -1,16 +1,9 @@
-import type { ComponentType } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
-import { requireNativeView, requireOptionalNativeModule } from "expo";
+import { requireOptionalNativeModule } from "expo";
 
-import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
+import { createNativeViewResolver } from "../../native/resolveNativeView";
 
 const NATIVE_TERMINAL_MODULE_NAME = "T3TerminalSurface";
-
-interface ExpoGlobalWithViewConfig {
-  readonly expo?: {
-    getViewConfig?: (moduleName: string, viewName?: string) => unknown;
-  };
-}
 
 interface TerminalInputEvent {
   readonly data: string;
@@ -36,45 +29,8 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly onResize?: (event: NativeSyntheticEvent<TerminalResizeEvent>) => void;
 }
 
-let cachedNativeTerminalSurfaceView: ComponentType<NativeTerminalSurfaceProps> | undefined;
-let nativeTerminalSurfaceViewResolutionFailed = false;
-
-function getExpoViewConfig(moduleName: string) {
-  return (globalThis as typeof globalThis & ExpoGlobalWithViewConfig).expo?.getViewConfig?.(
-    moduleName,
-  );
-}
-
-export function resolveNativeTerminalSurfaceView(): ComponentType<NativeTerminalSurfaceProps> | null {
-  if (cachedNativeTerminalSurfaceView) {
-    return cachedNativeTerminalSurfaceView;
-  }
-
-  if (nativeTerminalSurfaceViewResolutionFailed) {
-    return null;
-  }
-
-  if (getExpoViewConfig(NATIVE_TERMINAL_MODULE_NAME) == null) {
-    return null;
-  }
-
-  try {
-    cachedNativeTerminalSurfaceView = requireNativeView<NativeTerminalSurfaceProps>(
-      NATIVE_TERMINAL_MODULE_NAME,
-    );
-  } catch (cause) {
-    nativeTerminalSurfaceViewResolutionFailed = true;
-    console.error(
-      new NativeViewResolutionError({
-        nativeModuleName: NATIVE_TERMINAL_MODULE_NAME,
-        cause,
-      }),
-    );
-    return null;
-  }
-
-  return cachedNativeTerminalSurfaceView ?? null;
-}
+export const resolveNativeTerminalSurfaceView =
+  createNativeViewResolver<NativeTerminalSurfaceProps>(NATIVE_TERMINAL_MODULE_NAME);
 
 /**
  * Revision of the native hardware-keyboard handling compiled into the installed binary,

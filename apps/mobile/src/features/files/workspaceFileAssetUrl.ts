@@ -1,7 +1,7 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useAssetUrl } from "../../state/assets";
+import { useAssetUrlState, type AssetUrlState } from "../../state/assets";
 import { resolveWorkspaceFilePath } from "./filePath";
 
 export function useWorkspaceFileAssetUrl(props: {
@@ -9,7 +9,7 @@ export function useWorkspaceFileAssetUrl(props: {
   readonly environmentId: EnvironmentId | null;
   readonly relativePath: string | null;
   readonly threadId: ThreadId | null;
-}) {
+}): AssetUrlState {
   const absolutePath = useMemo(
     () =>
       props.cwd !== null && props.relativePath !== null
@@ -17,15 +17,17 @@ export function useWorkspaceFileAssetUrl(props: {
         : null,
     [props.cwd, props.relativePath],
   );
-
-  return useAssetUrl(
-    props.environmentId,
-    absolutePath !== null && props.threadId !== null
-      ? {
-          _tag: "workspace-file",
-          threadId: props.threadId,
-          path: absolutePath,
-        }
-      : null,
+  const resource = useMemo<AssetResource | null>(
+    () =>
+      absolutePath !== null && props.threadId !== null
+        ? {
+            _tag: "workspace-file",
+            threadId: props.threadId,
+            path: absolutePath,
+          }
+        : null,
+    [absolutePath, props.threadId],
   );
+
+  return useAssetUrlState(props.environmentId, resource);
 }

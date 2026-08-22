@@ -1,5 +1,6 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,7 +12,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
+import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -39,21 +41,30 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { hasNativeGlbViewer } from "./nativeGlbViewer";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
+import { WorkspaceFileGlbPreview } from "./WorkspaceFileGlbPreview";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
   basename,
   isBrowserPreviewFile,
+  isGlbPreviewFile,
   isImagePreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
+  shouldReadWorkspaceFileContents,
 } from "./filePath";
 import { useWorkspaceFileAssetUrl } from "./workspaceFileAssetUrl";
 
 type FileViewMode = "preview" | "source";
+
+const ANDROID_GLB_FILE_MENU_ACTIONS = [
+  { id: "copy-path", title: "Copy path", image: "doc.on.doc" },
+  { id: "refresh", title: "Refresh", image: "arrow.clockwise" },
+] satisfies readonly MenuAction[];
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -79,25 +90,84 @@ function normalizeRouteLine(value: string | null): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+/** GLB rendering needs the native viewer, which only ships in Android binaries that registered it. */
+function canPreviewGlb(path: string): boolean {
+  return isGlbPreviewFile(path) && hasNativeGlbViewer();
+}
+
 function defaultViewMode(path: string | null): FileViewMode {
-  return path !== null && (isBrowserPreviewFile(path) || isImagePreviewFile(path))
+  return path !== null &&
+    (isBrowserPreviewFile(path) || isImagePreviewFile(path) || canPreviewGlb(path))
     ? "preview"
     : "source";
+}
+
+/**
+ * Leaves a file route for its thread, preferring real back navigation so a deep link that opened the
+ * file directly still lands on the thread instead of a dead end.
+ */
+function useReturnToThread(environmentId: EnvironmentId | null, threadId: ThreadId | null) {
+  const navigation = useNavigation();
+  return useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    if (environmentId !== null && threadId !== null) {
+      navigation.dispatch(
+        StackActions.replace("Thread", {
+          environmentId: String(environmentId),
+          threadId: String(threadId),
+        }),
+      );
+    }
+  }, [environmentId, navigation, threadId]);
 }
 
 function FileContent(props: {
   readonly activeMode: FileViewMode;
   readonly previewUri: string | null;
+  readonly previewError: string | null;
+  readonly previewIsPending: boolean;
+  readonly environmentId: EnvironmentId | null;
   readonly fileContents: string | null;
   readonly fileError: string | null;
   readonly relativePath: string;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly onRetryPreview: () => void;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
   const isBrowserFile = isBrowserPreviewFile(props.relativePath);
+  const isGlbFile = canPreviewGlb(props.relativePath);
   const isImageFile = isImagePreviewFile(props.relativePath);
+
+  if (props.activeMode === "preview" && isGlbFile) {
+    return (
+      <WorkspaceFileGlbPreview
+        accessibilityLabel={basename(props.relativePath)}
+        environmentId={props.environmentId}
+        error={props.previewError}
+        isPending={props.previewIsPending}
+        onRetry={props.onRetryPreview}
+        uri={props.previewUri}
+      />
+    );
+  }
+
+  // A GLB without the native viewer has no useful source text, so say why instead of falling
+  // through to the generic binary-file error.
+  if (isGlbPreviewFile(props.relativePath)) {
+    return (
+      <View className="flex-1 items-center justify-center bg-sheet px-6">
+        <EmptyState
+          title="3D preview unavailable"
+          detail="Interactive GLB previews are available on Android."
+        />
+      </View>
+    );
+  }
 
   if (props.activeMode === "preview" && isImageFile) {
     if (isSvgImagePreviewFile(props.relativePath)) {
@@ -260,20 +330,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       : null,
   );
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
-  const handleReturnToThread = useCallback(() => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-    if (environmentId !== null && threadId !== null) {
-      navigation.dispatch(
-        StackActions.replace("Thread", {
-          environmentId: String(environmentId),
-          threadId: String(threadId),
-        }),
-      );
-    }
-  }, [environmentId, navigation, threadId]);
+  const handleReturnToThread = useReturnToThread(environmentId, threadId);
 
   const handleSelectFile = useCallback(
     (path: string) => {
@@ -480,28 +537,32 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   } | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
   const isBrowserFile = relativePath !== null && isBrowserPreviewFile(relativePath);
+  const isGlbFile = relativePath !== null && canPreviewGlb(relativePath);
   const isImageFile = relativePath !== null && isImagePreviewFile(relativePath);
+  // The GLB preview hosts a SurfaceView, which cannot composite under the native stack header.
+  const previewHostsNativeSurface = isGlbFile;
+  const usesAssetPreviewMode = isBrowserFile || isGlbFile || isImageFile;
   const canPreview =
-    relativePath !== null && (isMarkdownPreviewFile(relativePath) || isBrowserFile || isImageFile);
+    relativePath !== null && (isMarkdownPreviewFile(relativePath) || usesAssetPreviewMode);
   const activeMode =
     relativePath !== null && modeOverride?.path === relativePath
       ? modeOverride.mode
       : defaultViewMode(relativePath);
   const resolvedActiveMode = canPreview ? activeMode : "source";
-  const assetPreviewPath = isBrowserFile || isImageFile ? relativePath : null;
-  const assetPreviewUri = useWorkspaceFileAssetUrl({
+  const assetPreviewPath = usesAssetPreviewMode ? relativePath : null;
+  const assetPreview = useWorkspaceFileAssetUrl({
     cwd,
     environmentId,
     relativePath: assetPreviewPath,
     threadId,
   });
+  const assetPreviewUri = assetPreview.error === null ? assetPreview.url : null;
   const previewUri =
     assetPreviewUri === null || previewRevision === 0
       ? assetPreviewUri
       : `${assetPreviewUri}${assetPreviewUri.includes("?") ? "&" : "?"}revision=${previewRevision}`;
   const needsFileContents =
-    relativePath !== null &&
-    (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
+    relativePath !== null && shouldReadWorkspaceFileContents(relativePath, resolvedActiveMode);
   const fileQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
       ? projectEnvironment.readFile({
@@ -511,7 +572,32 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  const handleRefreshPreview = useCallback(() => {
+    if (assetPreviewUri === null) {
+      assetPreview.refresh();
+      return;
+    }
+    setPreviewRevision((current) => current + 1);
+  }, [assetPreview.refresh, assetPreviewUri]);
+  const handleRetryPreview = useCallback(() => {
+    assetPreview.refresh();
+  }, [assetPreview.refresh]);
+  const handleReturnFromFile = useReturnToThread(environmentId, threadId);
 
+  const handleAndroidGlbFileMenuAction = useCallback(
+    (event: { readonly nativeEvent: { readonly event: string } }) => {
+      if (relativePath === null) return;
+      switch (event.nativeEvent.event) {
+        case "copy-path":
+          void copyTextWithHaptic(relativePath);
+          break;
+        case "refresh":
+          handleRefreshPreview();
+          break;
+      }
+    },
+    [handleRefreshPreview, relativePath],
+  );
   const handleSelectFile = useCallback(
     (path: string) => {
       navigation.navigate("ThreadFile", {
@@ -578,12 +664,43 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             // sheet-colored header — this route's content scrolls internally, so
             // there is nothing for glass to sample). Only dynamic values here.
             headerTintColor: iconColor,
+            headerShown: !previewHostsNativeSurface,
             headerTitle: basename(relativePath),
             title: basename(relativePath),
             unstable_headerSubtitle:
               Platform.OS === "ios" && headerSubtitle.length > 0 ? headerSubtitle : undefined,
           }}
         />
+        {previewHostsNativeSurface ? (
+          <View className="z-10" collapsable={false} style={{ elevation: 1 }}>
+            <AndroidScreenHeader
+              title={basename(relativePath)}
+              subtitle={headerSubtitle}
+              onBack={handleReturnFromFile}
+              actions={
+                fileInspector.supported
+                  ? [
+                      {
+                        accessibilityLabel: panes.auxiliaryPaneVisible
+                          ? "Hide file navigator"
+                          : "Show file navigator",
+                        icon: "sidebar.right",
+                        onPress: toggleAuxiliaryPane,
+                      },
+                    ]
+                  : undefined
+              }
+              trailing={
+                <AndroidAnchoredMenu
+                  actions={ANDROID_GLB_FILE_MENU_ACTIONS}
+                  onPressAction={handleAndroidGlbFileMenuAction}
+                >
+                  <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
+                </AndroidAnchoredMenu>
+              }
+            />
+          </View>
+        ) : null}
         <WorkspaceSidebarToolbar>
           {fileInspector.supported ? (
             <NativeHeaderToolbar.Button
@@ -612,7 +729,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             />
           ) : null}
           <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
-            {canPreview && !isImageFile ? (
+            {canPreview && !isImageFile && !isGlbFile ? (
               <NativeHeaderToolbar.Menu inline>
                 <NativeHeaderToolbar.MenuAction
                   icon="eye"
@@ -646,13 +763,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
                 Open in Safari
               </NativeHeaderToolbar.MenuAction>
             ) : null}
-            {resolvedActiveMode === "preview" && (isBrowserFile || isImageFile) ? (
-              <NativeHeaderToolbar.MenuAction
-                icon="arrow.clockwise"
-                onPress={() => {
-                  setPreviewRevision((current) => current + 1);
-                }}
-              >
+            {resolvedActiveMode === "preview" && usesAssetPreviewMode ? (
+              <NativeHeaderToolbar.MenuAction icon="arrow.clockwise" onPress={handleRefreshPreview}>
                 Refresh
               </NativeHeaderToolbar.MenuAction>
             ) : null}
@@ -660,12 +772,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         </NativeHeaderToolbar>
         <FileContent
           activeMode={resolvedActiveMode}
+          environmentId={environmentId}
           previewUri={previewUri}
+          previewError={assetPreview.error}
+          previewIsPending={assetPreview.isPending}
           fileContents={fileData?.contents ?? null}
           fileError={fileQuery.error}
           initialLine={targetLine}
           relativePath={relativePath}
           truncated={fileData?.truncated ?? false}
+          onRetryPreview={handleRetryPreview}
           onRefresh={() => fileQuery.refresh()}
         />
       </View>

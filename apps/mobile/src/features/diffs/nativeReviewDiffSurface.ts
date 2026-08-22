@@ -7,18 +7,11 @@ import {
   type Ref,
 } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
-import { requireNativeView } from "expo";
 
-import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
+import { createNativeViewResolver } from "../../native/resolveNativeView";
 
 const NATIVE_REVIEW_DIFF_MODULE_NAME = "T3ReviewDiffSurface";
 const NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES = 60;
-
-interface ExpoGlobalWithViewConfig {
-  readonly expo?: {
-    getViewConfig?: (moduleName: string, viewName?: string) => unknown;
-  };
-}
 
 export interface NativeReviewDiffRow {
   readonly kind: "file" | "hunk" | "line" | "notice" | "comment";
@@ -168,8 +161,9 @@ type NativeReviewDiffRawViewProps = Omit<
   readonly ref?: Ref<NativeReviewDiffViewRef>;
 };
 
-let cachedNativeReviewDiffRawView: ComponentType<NativeReviewDiffRawViewProps> | undefined;
-let nativeReviewDiffViewResolutionFailed = false;
+const resolveNativeReviewDiffRawView = createNativeViewResolver<NativeReviewDiffRawViewProps>(
+  NATIVE_REVIEW_DIFF_MODULE_NAME,
+);
 
 type NativeReviewDiffPayloadMethod = "setRowsJson" | "setTokensJson" | "setTokensPatchJson";
 
@@ -238,12 +232,6 @@ function useNativeReviewDiffPayload(
   }, [method, nativeRef, payload]);
 }
 
-function getExpoViewConfig(moduleName: string) {
-  return (globalThis as typeof globalThis & ExpoGlobalWithViewConfig).expo?.getViewConfig?.(
-    moduleName,
-  );
-}
-
 function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
   const { nativeViewRef, rowsJson, tokensJson, tokensPatchJson, ...nativeProps } = props;
   const nativeRef = useRef<NativeReviewDiffViewRef>(null);
@@ -263,8 +251,8 @@ function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
     [],
   );
 
-  const RawNativeView = cachedNativeReviewDiffRawView;
-  if (!RawNativeView) {
+  const RawNativeView = resolveNativeReviewDiffRawView();
+  if (RawNativeView === null) {
     return null;
   }
 
@@ -272,32 +260,5 @@ function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
 }
 
 export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffViewProps> | null {
-  if (cachedNativeReviewDiffRawView) {
-    return NativeReviewDiffView;
-  }
-
-  if (nativeReviewDiffViewResolutionFailed) {
-    return null;
-  }
-
-  if (getExpoViewConfig(NATIVE_REVIEW_DIFF_MODULE_NAME) == null) {
-    return null;
-  }
-
-  try {
-    cachedNativeReviewDiffRawView = requireNativeView<NativeReviewDiffRawViewProps>(
-      NATIVE_REVIEW_DIFF_MODULE_NAME,
-    );
-  } catch (cause) {
-    nativeReviewDiffViewResolutionFailed = true;
-    console.error(
-      new NativeViewResolutionError({
-        nativeModuleName: NATIVE_REVIEW_DIFF_MODULE_NAME,
-        cause,
-      }),
-    );
-    return null;
-  }
-
-  return cachedNativeReviewDiffRawView ? NativeReviewDiffView : null;
+  return resolveNativeReviewDiffRawView() === null ? null : NativeReviewDiffView;
 }

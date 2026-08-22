@@ -1,6 +1,8 @@
 import {
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
+  isWorkspaceModelPreviewPath,
+  isWorkspacePreviewEntryPath,
 } from "@t3tools/shared/filePreview";
 
 export interface FileBreadcrumb {
@@ -95,12 +97,29 @@ export function isImagePreviewFile(path: string): boolean {
   return isWorkspaceImagePreviewPath(path);
 }
 
+export function isGlbPreviewFile(path: string): boolean {
+  return isWorkspaceModelPreviewPath(path);
+}
+
+/** Files that never have useful source text, so preloading their contents is wasted work. */
+export function isPreviewEntryFile(path: string): boolean {
+  return isWorkspacePreviewEntryPath(path);
+}
+
 export function isSvgImagePreviewFile(path: string): boolean {
   return /\.svg$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 }
 
 export function isMarkdownPreviewFile(path: string): boolean {
   return /\.(?:md|mdx)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+}
+
+/** Binary GLBs never have useful source text, including on platforms without the native viewer. */
+export function shouldReadWorkspaceFileContents(path: string, mode: "preview" | "source"): boolean {
+  if (isGlbPreviewFile(path)) {
+    return false;
+  }
+  return mode === "source" || isMarkdownPreviewFile(path);
 }
 
 export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
