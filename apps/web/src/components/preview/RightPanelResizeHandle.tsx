@@ -20,7 +20,9 @@ export function RightPanelResizeHandle({ handlers, className }: Props) {
       role="separator"
       aria-orientation="vertical"
       className={cn(
-        "group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize select-none",
+        // ew-resize maps to the OS-outlined SIZEWE cursor on Windows; Chromium's
+        // bundled col-resize bitmap has no dark outline and vanishes on light themes.
+        "group absolute inset-y-0 -left-1 z-20 w-2 cursor-ew-resize select-none",
         className,
       )}
       {...handlers}

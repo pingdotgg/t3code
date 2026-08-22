@@ -454,7 +454,7 @@ function SidebarRail({
       };
       wrapper.style.setProperty("--sidebar-width", `${initialWidth}px`);
       event.currentTarget.setPointerCapture(event.pointerId);
-      document.body.style.cursor = "col-resize";
+      document.body.style.cursor = "ew-resize";
       document.body.style.userSelect = "none";
     },
     [onPointerDown, open, resolvedResizable, sidebarInstance?.side],

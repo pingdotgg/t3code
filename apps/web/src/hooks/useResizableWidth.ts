@@ -101,7 +101,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       } catch {
         return;
       }
-      document.body.style.cursor = "col-resize";
+      document.body.style.cursor = "ew-resize";
       document.body.style.userSelect = "none";
       dragStateRef.current = {
         pointerId: event.pointerId,
