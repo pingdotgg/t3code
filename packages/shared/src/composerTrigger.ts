@@ -104,6 +104,23 @@ export function detectComposerTrigger(
   const tokenStart = tokenIdx + 1;
 
   const token = text.slice(tokenStart, cursor);
+  if (token.startsWith("/")) {
+    const commandQuery = token.slice(1);
+    if (commandQuery.toLowerCase() === "model") {
+      return {
+        kind: "slash-model",
+        query: "",
+        rangeStart: tokenStart,
+        rangeEnd: cursor,
+      };
+    }
+    return {
+      kind: "slash-command",
+      query: commandQuery,
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
   if (token.startsWith("$")) {
     return {
       kind: "skill",

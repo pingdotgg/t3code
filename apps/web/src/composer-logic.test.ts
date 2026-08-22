@@ -137,6 +137,40 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects slash command trigger in the middle of existing text", () => {
+    const text = "Fix the tests /rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "Fix the tests ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects a bare slash mid-text as an empty slash command query", () => {
+    const text = "Fix the tests /";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "",
+      rangeStart: "Fix the tests ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("ignores slashes inside a word", () => {
+    const text = "check src/components";
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
+  it("ignores slashes inside URLs", () => {
+    const text = "see https://example.com/docs";
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
   it("detects $skill trigger at cursor", () => {
     const text = "Use $gh-fi";
     const trigger = detectComposerTrigger(text, text.length);

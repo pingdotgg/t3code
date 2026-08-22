@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeComposerFileLink, serializeComposerMentionPath } from "./composerTrigger.ts";
+import {
+  detectComposerTrigger,
+  serializeComposerFileLink,
+  serializeComposerMentionPath,
+} from "./composerTrigger.ts";
 
 describe("serializeComposerMentionPath", () => {
   it("keeps simple mention paths unquoted", () => {
@@ -13,6 +17,48 @@ describe("serializeComposerMentionPath", () => {
 
   it("escapes quoted mention path content", () => {
     expect(serializeComposerMentionPath('docs/My "File".md')).toBe('"docs/My \\"File\\".md"');
+  });
+});
+
+describe("detectComposerTrigger", () => {
+  it("detects a slash command at the start of the message", () => {
+    const text = "/rev";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects a slash command trigger in the middle of existing text", () => {
+    const text = "Fix the tests /rev";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "Fix the tests ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /model mid-text as the model trigger", () => {
+    const text = "switch it up /model";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-model",
+      query: "",
+      rangeStart: "switch it up ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("ignores slashes inside a word", () => {
+    const text = "check src/components";
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
+  it("ignores slashes inside URLs", () => {
+    const text = "see https://example.com/docs";
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
   });
 });
 
