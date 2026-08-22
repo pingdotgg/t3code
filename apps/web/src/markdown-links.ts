@@ -77,6 +77,10 @@ function normalizeWindowsDrivePath(path: string): string {
   return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
 }
 
+function decodeFileUrlPath(path: string, decodePath: boolean | undefined): string {
+  return decodePath === false ? path : safeDecode(path);
+}
+
 function parseFileUrlHref(
   href: string,
   options?: { readonly decodePath?: boolean },
@@ -88,11 +92,23 @@ function parseFileUrlHref(
     const rawPath = parsed.pathname;
     if (rawPath.length === 0) return null;
 
+    const hostname = parsed.hostname;
+    if (hostname && hostname.toLowerCase() !== "localhost") {
+      const uncTail = decodeFileUrlPath(rawPath, options?.decodePath).replaceAll("/", "\\");
+      return { path: `\\\\${hostname}${uncTail}`, hash: parsed.hash };
+    }
+
+    const decodedPath = decodeFileUrlPath(rawPath, options?.decodePath);
+    // file://///server/share/file.txt → pathname "//server/share/file.txt"
+    if (decodedPath.startsWith("//")) {
+      return { path: decodedPath.replaceAll("/", "\\"), hash: parsed.hash };
+    }
+
     // Browser URL parser encodes "C:/foo" as "/C:/foo" for file URLs.
-    const normalizedPath = normalizeWindowsDrivePath(rawPath);
+    const normalizedPath = normalizeWindowsDrivePath(decodedPath);
 
     return {
-      path: options?.decodePath === false ? normalizedPath : safeDecode(normalizedPath),
+      path: normalizedPath,
       hash: parsed.hash,
     };
   } catch {
@@ -104,8 +120,221 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   if (!href) return null;
   const normalizedHref = normalizeMarkdownLinkDestination(href);
   const target = parseFileUrlHref(normalizedHref, { decodePath: false });
-  if (!target) return null;
-  return `${target.path}${target.hash}`;
+  if (target) return `${target.path}${target.hash}`;
+  // Leftover `D:/...` / UNC hrefs never became file: URLs. Keep them so
+  // react-markdown's urlTransform does not treat the drive letter as a protocol.
+  if (
+    WINDOWS_DRIVE_PATH_PATTERN.test(normalizedHref) ||
+    WINDOWS_UNC_PATH_PATTERN.test(normalizedHref)
+  ) {
+    return normalizedHref;
+  }
+  return null;
+}
+
+const HAS_WINDOWS_FILESYSTEM_PATH_PATTERN = /[A-Za-z]:[\\/]|\\\\/;
+const INLINE_MARKDOWN_LINK_PATTERN =
+  /(!?\[[^\]]*])\(([ \t]*)(?:<([^>\n]*)>|([^ \t\n)]+))((?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?)([ \t]*)\)/g;
+const MARKDOWN_LINK_DEFINITION_PATTERN =
+  /^([ \t]{0,3}\[[^\]]+\]:[ \t]+)(?:<([^>\n]*)>|(\S+))((?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?)([ \t]*)$/gm;
+const ANGLE_AUTOLINK_PATTERN = /<([^<>\n]+)>/g;
+const PROTECTED_MARKDOWN_SPAN_PATTERN = /!?\[[^\]]*]\([^)]*\)|!?\[[^\]]*]\[[^\]]*]|<[^>\n]+>/g;
+const BARE_WINDOWS_PATH_PATTERN =
+  /(?<![A-Za-z0-9_/])(?:[A-Za-z]:[\\/][^\s<>[\]()`*]+|\\\\[^\s<>[\]()`*\\/]+(?:[\\/][^\s<>[\]()`*]+)+)/g;
+const AUTOLINK_TRAILING_PUNCTUATION_PATTERN = /[.,;:!?')\]}"]+$/;
+
+/**
+ * Rewrites Windows drive/UNC markdown destinations and bare paths to `file://`
+ * URLs so rehype-sanitize does not treat `D:` as an unknown protocol.
+ * Leaves fenced code, indented code, inline code, and non-file links alone.
+ */
+export function normalizeWindowsMarkdownFileLinks(markdown: string): string {
+  if (markdown.length === 0 || !HAS_WINDOWS_FILESYSTEM_PATH_PATTERN.test(markdown)) {
+    return markdown;
+  }
+  return mapMarkdownOutsideCode(markdown, rewriteWindowsMarkdownInText);
+}
+
+function windowsFilesystemPathToFileUrl(path: string): string | null {
+  const value = unwrapMarkdownLinkDestination(path.trim());
+  if (value.length === 0) return null;
+
+  const { path: pathOnly, hash } = stripSearchAndHash(value);
+
+  if (WINDOWS_DRIVE_PATH_PATTERN.test(pathOnly)) {
+    if (!/[^\s\\/]/.test(pathOnly.slice(3))) return null;
+    return `file:///${pathOnly.replaceAll("\\", "/")}${hash}`;
+  }
+
+  if (WINDOWS_UNC_PATH_PATTERN.test(pathOnly)) {
+    const parts = pathOnly
+      .slice(2)
+      .split(/[\\/]/)
+      .filter((part) => part.length > 0);
+    if (parts.length < 2) return null;
+    return `file://${parts.join("/")}${hash}`;
+  }
+
+  return null;
+}
+
+function rewriteInlineWindowsLinkDestinations(text: string): string {
+  return text.replace(
+    INLINE_MARKDOWN_LINK_PATTERN,
+    (
+      match,
+      label: string,
+      ws: string,
+      angleDest: string | undefined,
+      bareDest: string | undefined,
+      title: string,
+      trailWs: string,
+    ) => {
+      const fileUrl = windowsFilesystemPathToFileUrl(angleDest ?? bareDest ?? "");
+      if (!fileUrl) return match;
+      const dest = angleDest !== undefined ? `<${fileUrl}>` : fileUrl;
+      return `${label}(${ws}${dest}${title}${trailWs})`;
+    },
+  );
+}
+
+function rewriteWindowsLinkDefinitions(text: string): string {
+  return text.replace(
+    MARKDOWN_LINK_DEFINITION_PATTERN,
+    (
+      match,
+      prefix: string,
+      angleDest: string | undefined,
+      bareDest: string | undefined,
+      title: string,
+      trailWs: string,
+    ) => {
+      const fileUrl = windowsFilesystemPathToFileUrl(angleDest ?? bareDest ?? "");
+      if (!fileUrl) return match;
+      const dest = angleDest !== undefined ? `<${fileUrl}>` : fileUrl;
+      return `${prefix}${dest}${title}${trailWs}`;
+    },
+  );
+}
+
+function rewriteWindowsAngleAutolinks(text: string): string {
+  return text.replace(ANGLE_AUTOLINK_PATTERN, (match, dest: string) => {
+    const fileUrl = windowsFilesystemPathToFileUrl(dest);
+    return fileUrl ? `<${fileUrl}>` : match;
+  });
+}
+
+function splitAutolinkWindowsPath(raw: string): { path: string; trailing: string } {
+  if (POSITION_SUFFIX_PATTERN.test(raw)) return { path: raw, trailing: "" };
+  const trimmed = raw.replace(AUTOLINK_TRAILING_PUNCTUATION_PATTERN, "");
+  if (trimmed.length === 0 || trimmed === raw) return { path: raw, trailing: "" };
+  if (!windowsFilesystemPathToFileUrl(trimmed)) return { path: raw, trailing: "" };
+  return { path: trimmed, trailing: raw.slice(trimmed.length) };
+}
+
+function autolinkBareWindowsPaths(text: string): string {
+  const slots: string[] = [];
+  const withSlots = text.replace(PROTECTED_MARKDOWN_SPAN_PATTERN, (match) => {
+    const token = `\0${slots.length}\0`;
+    slots.push(match);
+    return token;
+  });
+
+  const linked = withSlots.replace(BARE_WINDOWS_PATH_PATTERN, (raw) => {
+    const { path, trailing } = splitAutolinkWindowsPath(raw);
+    const fileUrl = windowsFilesystemPathToFileUrl(path);
+    if (!fileUrl) return raw;
+    return `[${path}](${fileUrl})${trailing}`;
+  });
+
+  if (slots.length === 0) return linked;
+  return linked.replace(/\0(\d+)\0/g, (_, index: string) => slots[Number(index)] ?? "");
+}
+
+function rewriteWindowsMarkdownInText(text: string): string {
+  const withDestinations = rewriteWindowsLinkDefinitions(
+    rewriteInlineWindowsLinkDestinations(text),
+  );
+  return autolinkBareWindowsPaths(rewriteWindowsAngleAutolinks(withDestinations));
+}
+
+const INLINE_CODE_SEGMENT_PATTERN = /(`[^`\n]+`)/;
+// Optional CommonMark container prefixes so `> ```js` and `1. ```js` still
+// open a fence. Mid-line backticks are not fences.
+const OPEN_FENCE_PATTERN = /^(?: {0,3}(?:>[ \t]?|[*+-][ \t]|\d{1,9}[.)][ \t])*)(`{3,}|~{3,})(.*)$/;
+const CLOSE_FENCE_PATTERN = /^(?: {0,3}(?:>[ \t]?|[*+-][ \t]|\d{1,9}[.)][ \t])*)(`{3,}|~{3,})[ \t]*$/;
+
+function mapOutsideInlineCode(text: string, transform: (chunk: string) => string): string {
+  return text
+    .split(INLINE_CODE_SEGMENT_PATTERN)
+    .map((segment, index) => (index % 2 === 1 ? segment : transform(segment)))
+    .join("");
+}
+
+function lineWithoutCarriageReturn(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+function openingFenceMarker(line: string): string | null {
+  const match = OPEN_FENCE_PATTERN.exec(line);
+  const marker = match?.[1];
+  if (!marker) return null;
+  const info = match[2] ?? "";
+  if (marker.startsWith("`") && info.includes("`")) return null;
+  return marker;
+}
+
+function isClosingFenceLine(line: string, openMarker: string): boolean {
+  const match = CLOSE_FENCE_PATTERN.exec(line);
+  const marker = match?.[1];
+  if (!marker) return false;
+  return marker[0] === openMarker[0] && marker.length >= openMarker.length;
+}
+
+function isIndentedCodeLine(line: string): boolean {
+  return line.startsWith("    ") || line.startsWith("\t");
+}
+
+function mapMarkdownOutsideCode(markdown: string, transform: (text: string) => string): string {
+  let output = "";
+  let index = 0;
+  let openFence: string | null = null;
+
+  while (index < markdown.length) {
+    const lineEnd = markdown.indexOf("\n", index);
+    const lineLimit = lineEnd === -1 ? markdown.length : lineEnd;
+    const line = markdown.slice(index, lineLimit);
+    const newline = lineEnd === -1 ? "" : "\n";
+    const matchLine = lineWithoutCarriageReturn(line);
+
+    if (openFence !== null) {
+      output += line + newline;
+      if (isClosingFenceLine(matchLine, openFence)) {
+        openFence = null;
+      }
+      index = lineLimit + newline.length;
+      continue;
+    }
+
+    const fence = openingFenceMarker(matchLine);
+    if (fence !== null) {
+      openFence = fence;
+      output += line + newline;
+      index = lineLimit + newline.length;
+      continue;
+    }
+
+    if (isIndentedCodeLine(matchLine)) {
+      output += line + newline;
+      index = lineLimit + newline.length;
+      continue;
+    }
+
+    output += mapOutsideInlineCode(line, transform) + newline;
+    index = lineLimit + newline.length;
+  }
+
+  return output;
 }
 
 function looksLikePosixFilesystemPath(path: string): boolean {
