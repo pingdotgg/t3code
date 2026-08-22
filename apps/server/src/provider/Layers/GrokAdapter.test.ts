@@ -1643,4 +1643,68 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("projects live _x.ai/session/update extras onto existing runtime events", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-session-extras");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_SESSION_EXTRAS: "1",
+          T3_ACP_XAI_SESSION_METHOD: "_x.ai/session/update",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const compacted = yield* Deferred.make<ProviderRuntimeEvent>();
+      const hookStarted = yield* Deferred.make<ProviderRuntimeEvent>();
+      const recap = yield* Deferred.make<ProviderRuntimeEvent>();
+      const background = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (event.type === "thread.state.changed" && event.payload.state === "compacted") {
+            yield* Deferred.succeed(compacted, event).pipe(Effect.ignore);
+          }
+          if (event.type === "hook.started") {
+            yield* Deferred.succeed(hookStarted, event).pipe(Effect.ignore);
+          }
+          if (event.type === "thread.metadata.updated" && event.payload.metadata?.recap) {
+            yield* Deferred.succeed(recap, event).pipe(Effect.ignore);
+          }
+          if (event.type === "task.started" && event.payload.taskType === "local_bash") {
+            yield* Deferred.succeed(background, event).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "continue", attachments: [] });
+
+      const compactEvent = yield* Deferred.await(compacted);
+      const hookEvent = yield* Deferred.await(hookStarted);
+      const recapEvent = yield* Deferred.await(recap);
+      const backgroundEvent = yield* Deferred.await(background);
+
+      assert.equal(compactEvent.type, "thread.state.changed");
+      if (hookEvent.type === "hook.started") {
+        assert.equal(hookEvent.payload.hookEvent, "user_prompt_submit");
+      }
+      if (recapEvent.type === "thread.metadata.updated") {
+        assert.equal(
+          recapEvent.payload.metadata?.recap,
+          "Mapped Grok extras onto T3 runtime events.",
+        );
+      }
+      if (backgroundEvent.type === "task.started") {
+        assert.equal(backgroundEvent.payload.taskType, "local_bash");
+      }
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

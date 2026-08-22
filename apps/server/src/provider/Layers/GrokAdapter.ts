@@ -98,6 +98,20 @@ import {
   parseXAiWorkflowUpdated,
   type GrokWorkflowTrackState,
 } from "../acp/GrokAcpWorkflow.ts";
+import {
+  GROK_SESSION_NOTIFICATION_METHODS,
+  grokAutoCompactEvents,
+  grokBackgroundTaskEvents,
+  grokHookEvents,
+  grokSessionRecapEvents,
+  parseXAiAutoCompact,
+  parseXAiBackgroundTask,
+  parseXAiHookExecution,
+  parseXAiSessionRecap,
+  parseXAiTurnCompletedUsage,
+  type GrokExtraEventSpec,
+  type GrokSessionNotificationMethod,
+} from "../acp/GrokAcpSessionExtras.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -154,6 +168,7 @@ interface GrokSessionContext {
   maxTokensByModel: Map<string, number>;
   maxTokens: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
+  lastCompleteCostUsd: number | undefined;
   availableModelIds: ReadonlyArray<string>;
   workflowTrack: GrokWorkflowTrackState;
   readonly toolUpdateGates: Map<string, GrokToolUpdateGate>;
@@ -328,7 +343,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       readonly method: string;
       readonly payload: unknown;
       readonly specs: ReadonlyArray<{
-        readonly type: "task.started" | "task.progress" | "task.completed";
+        readonly type: "task.started" | "task.progress" | "task.completed" | "task.updated";
         readonly payload: Record<string, unknown>;
       }>;
     }) =>
@@ -350,6 +365,49 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ...spec.payload,
                 taskId: RuntimeTaskId.make(taskIdValue),
               },
+              raw: {
+                source: "acp.grok.extension",
+                method: input.method,
+                payload: input.payload,
+              },
+            } as ProviderRuntimeEvent);
+          }),
+        { discard: true },
+      );
+
+    const emitGrokExtraSpecs = (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId | undefined;
+      readonly method: string;
+      readonly payload: unknown;
+      readonly specs: ReadonlyArray<GrokExtraEventSpec>;
+    }) =>
+      Effect.forEach(
+        input.specs,
+        (spec) =>
+          Effect.gen(function* () {
+            if (
+              spec.type === "task.started" ||
+              spec.type === "task.progress" ||
+              spec.type === "task.completed" ||
+              spec.type === "task.updated"
+            ) {
+              yield* emitGrokTaskSpecs({
+                threadId: input.threadId,
+                turnId: input.turnId,
+                method: input.method,
+                payload: input.payload,
+                specs: [spec],
+              });
+              return;
+            }
+            yield* offerRuntimeEvent({
+              type: spec.type,
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId: input.turnId,
+              payload: spec.payload,
               raw: {
                 source: "acp.grok.extension",
                 method: input.method,
@@ -438,8 +496,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 payload: {
                   state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
                   stopReason: options.completedStopReason ?? null,
+                  ...(liveCtx.lastCompleteCostUsd !== undefined
+                    ? { totalCostUsd: liveCtx.lastCompleteCostUsd }
+                    : {}),
                 },
               });
+              liveCtx.lastCompleteCostUsd = undefined;
             }
           }
           return;
@@ -514,8 +576,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             payload: {
               state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
               stopReason: options.completedStopReason ?? null,
+              ...(liveCtx.lastCompleteCostUsd !== undefined
+                ? { totalCostUsd: liveCtx.lastCompleteCostUsd }
+                : {}),
             },
           });
+          liveCtx.lastCompleteCostUsd = undefined;
         }
       });
 
@@ -722,14 +788,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ),
           );
           const pendingSessionNotifications: Array<{
-            readonly method: "x.ai/session_notification" | "_x.ai/session_notification";
+            readonly method: GrokSessionNotificationMethod;
             readonly params: unknown;
           }> = [];
           let sessionNotificationsReady = false;
           const sessionNotificationLock = yield* Semaphore.make(1);
           const applySessionNotification = (
             ctx: GrokSessionContext,
-            method: "x.ai/session_notification" | "_x.ai/session_notification",
+            method: GrokSessionNotificationMethod,
             params: unknown,
           ) =>
             Effect.gen(function* () {
@@ -748,17 +814,92 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 return;
               }
               const subagent = parseXAiSubagentUpdate(params);
-              if (!subagent) {
+              if (subagent) {
+                const applied = applyGrokSubagentUpdate(ctx.workflowTrack, subagent);
+                ctx.workflowTrack = applied.state;
+                yield* emitGrokTaskSpecs({
+                  threadId: input.threadId,
+                  turnId,
+                  method,
+                  payload: params,
+                  specs: applied.events,
+                });
                 return;
               }
-              const applied = applyGrokSubagentUpdate(ctx.workflowTrack, subagent);
-              ctx.workflowTrack = applied.state;
-              yield* emitGrokTaskSpecs({
+              const hook = parseXAiHookExecution(params);
+              if (hook) {
+                yield* emitGrokExtraSpecs({
+                  threadId: input.threadId,
+                  turnId,
+                  method,
+                  payload: params,
+                  specs: grokHookEvents(hook),
+                });
+                return;
+              }
+              const compact = parseXAiAutoCompact(params);
+              if (compact) {
+                const specs = grokAutoCompactEvents(compact, ctx.lastKnownTokenUsage);
+                const usageEvent = specs.find((spec) => spec.type === "thread.token-usage.updated");
+                if (usageEvent?.type === "thread.token-usage.updated") {
+                  ctx.lastKnownTokenUsage = usageEvent.payload.usage;
+                }
+                yield* emitGrokExtraSpecs({
+                  threadId: input.threadId,
+                  turnId,
+                  method,
+                  payload: params,
+                  specs,
+                });
+                return;
+              }
+              const recap = parseXAiSessionRecap(params);
+              if (recap) {
+                yield* emitGrokExtraSpecs({
+                  threadId: input.threadId,
+                  turnId,
+                  method,
+                  payload: params,
+                  specs: grokSessionRecapEvents(recap),
+                });
+                return;
+              }
+              const turnCompleted = parseXAiTurnCompletedUsage(params, ctx.maxTokens);
+              if (turnCompleted) {
+                ctx.lastKnownTokenUsage = {
+                  ...turnCompleted.usage,
+                  ...(ctx.lastKnownTokenUsage?.compactsAutomatically
+                    ? { compactsAutomatically: true }
+                    : {}),
+                };
+                if (turnCompleted.costUsd !== undefined) {
+                  ctx.lastCompleteCostUsd = turnCompleted.costUsd;
+                }
+                yield* offerRuntimeEvent({
+                  type: "thread.token-usage.updated",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId,
+                  payload: { usage: ctx.lastKnownTokenUsage },
+                  raw: {
+                    source: "acp.grok.extension",
+                    method,
+                    payload: params,
+                  },
+                });
+                return;
+              }
+              const background = parseXAiBackgroundTask(params);
+              if (!background) {
+                return;
+              }
+              yield* emitGrokExtraSpecs({
                 threadId: input.threadId,
                 turnId,
                 method,
                 payload: params,
-                specs: applied.events,
+                specs: grokBackgroundTaskEvents(background),
               });
             });
           const started = yield* Effect.gen(function* () {
@@ -820,7 +961,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // onto task.*; Codex maps collabAgent/* the same way. Keep that
             // seam: parse here, emit canonical events, never a third UI shape.
             yield* Effect.forEach(
-              ["x.ai/session_notification", "_x.ai/session_notification"] as const,
+              GROK_SESSION_NOTIFICATION_METHODS,
               (method) =>
                 acp.handleExtNotification(method, XAiSessionNotification, (params) =>
                   mapAcpCallbackFailure(
@@ -982,6 +1123,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               (boundModelId ? maxTokensByModel.get(boundModelId) : undefined) ??
               currentGrokMaxTokensFromSessionSetup(started.sessionSetupResult),
             lastKnownTokenUsage: undefined,
+            lastCompleteCostUsd: undefined,
             availableModelIds,
             workflowTrack: emptyGrokWorkflowTrackState(),
             toolUpdateGates: new Map(),
@@ -1451,8 +1593,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   payload: {
                     state: result.stopReason === "cancelled" ? "cancelled" : "completed",
                     stopReason: completedStopReason,
+                    ...(ctx.lastCompleteCostUsd !== undefined
+                      ? { totalCostUsd: ctx.lastCompleteCostUsd }
+                      : {}),
                   },
                 });
+                ctx.lastCompleteCostUsd = undefined;
                 ctx.interruptedTurnIds.delete(prepared.turnId);
                 yield* Ref.set(promptSettled, true);
               } else if (remainingPrompts > 0) {

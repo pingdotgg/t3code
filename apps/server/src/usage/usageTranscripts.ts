@@ -306,7 +306,8 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 /** Grok PromptUsage: 1e10 ticks = $1. Incomplete bills must not become $0. */
 export const GROK_COST_USD_TICKS_PER_DOLLAR = 10_000_000_000;
 
-function grokReportedCostUsd(usage: Record<string, unknown>): number | null {
+/** Complete PromptUsage only. Incomplete bills must not become $0. */
+export function grokCompleteCostUsd(usage: Record<string, unknown>): number | null {
   if (
     usage.usageIsIncomplete === true ||
     usage.usage_is_incomplete === true ||
@@ -417,7 +418,7 @@ export function parseGrokLine(line: string): UsageRecord | null {
     model: grokModelId(usage),
     sessionId,
     totals,
-    reportedCostUsd: grokReportedCostUsd(usage),
+    reportedCostUsd: grokCompleteCostUsd(usage),
     dedupeKey: promptId.length > 0 ? `${sessionId}:${promptId}` : sessionId || null,
   };
 }

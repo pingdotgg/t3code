@@ -60,6 +60,14 @@ Codex transcripts. Complete PromptUsage rows contribute token totals and, when
 `costUsdTicks` is present and the bill is not marked incomplete, a dollar amount
 (1e10 ticks = $1). Incomplete bills stay on the token side and never become $0.
 
+Live turns do the same: a complete `turn_completed` PromptUsage row updates the
+context window and, when the bill is complete, attaches `totalCostUsd` to the
+turn. Auto-compact notifications fill the context-window meter
+(`compactsAutomatically`) and mark the thread compacted, matching Claude's
+compact boundary. Session recap lands on thread metadata, not the title.
+Hook runs and background shells use the same `hook.*` and `local_bash` task
+events as Claude.
+
 ## Rewind
 
 Conversation rollback uses Grok's `_x.ai/rewind` extension. T3 maps "undo N turns" onto rewind
@@ -73,7 +81,7 @@ Settings when ACP login fails.
 
 ## What T3 still does not surface
 
-Grok Build's ACP session channel also carries plan mode, goals, queue, hooks, plugins,
-marketplace updates, auto-compact, monitors, and scheduled tasks. Those notifications are
-accepted and ignored until a later change maps them. The Grok CLI TUI remains the source of
-truth for `/workflows`, `/plan`, and `/usage`.
+Grok Build's ACP session channel also carries plan mode, goals, queued prompts, plugins,
+and marketplace updates. Those notifications are accepted and ignored until a later change
+maps them. The Grok CLI TUI remains the source of truth for `/workflows`, `/plan`, and
+`/usage`.

@@ -19,6 +19,9 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const xAiSessionNotificationMethod =
+  process.env.T3_ACP_XAI_SESSION_METHOD ?? "x.ai/session_notification";
+const emitSessionExtras = process.env.T3_ACP_EMIT_SESSION_EXTRAS === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
@@ -920,7 +923,7 @@ const program = Effect.gen(function* () {
       }
 
       if (emitSubagent) {
-        writeJsonRpcNotification("x.ai/session_notification", {
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "subagent_spawned",
@@ -933,7 +936,7 @@ const program = Effect.gen(function* () {
       }
 
       if (emitWorkflow) {
-        writeJsonRpcNotification("x.ai/session_notification", {
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "workflow_updated",
@@ -960,6 +963,72 @@ const program = Effect.gen(function* () {
                 duration_ms: 800,
               },
             ],
+          },
+        });
+      }
+
+      if (emitSessionExtras) {
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "hook_execution",
+            event_name: "user_prompt_submit",
+            runs: [
+              {
+                name: "global/settings:user_prompt_submit[0].hooks[0]",
+                status: { status: "success", elapsed_ms: 12 },
+              },
+            ],
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "auto_compact_started",
+            tokens_used: 402_072,
+            context_window: 500_000,
+            percentage: 80,
+            reason: "Context window 80% full",
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "auto_compact_completed",
+            tokens_before: 402_072,
+            tokens_after: 42_380,
+            elapsed_ms: 80,
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "session_recap",
+            summary: "Mapped Grok extras onto T3 runtime events.",
+            auto: true,
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: "prompt-extras-1",
+            stop_reason: "end_turn",
+            usage: {
+              inputTokens: 100,
+              outputTokens: 20,
+              costUsdTicks: 1_626_488_800,
+            },
+          },
+        });
+        writeJsonRpcNotification(xAiSessionNotificationMethod, {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "task_backgrounded",
+            task_id: "call-bg-1",
+            command: "sleep 1",
+            description: "Background wait",
+            output_file: "/tmp/grok-bg.log",
           },
         });
       }
