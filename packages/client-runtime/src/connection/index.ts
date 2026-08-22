@@ -24,9 +24,11 @@ export {
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
 export {
+  ConnectionRouteNotRegisteredError,
   EnvironmentNotRegisteredError,
   EnvironmentRegistry,
   PlatformEnvironmentRemovalError,
+  PlatformEnvironmentRouteSelectionError,
 } from "./registry.ts";
 export { ConnectionResolver } from "./resolver.ts";
 export { EnvironmentSupervisor, type EnvironmentSupervisorOptions } from "./supervisor.ts";

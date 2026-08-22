@@ -39,6 +39,7 @@ import {
   type ConnectionTarget,
   type PreparedConnection,
   type SupervisorConnectionState,
+  connectionRouteId,
 } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -105,6 +106,10 @@ const SSH_CONNECTION = new SshConnectionTarget({
   label: "SSH environment",
   connectionId: "ssh-connection",
 });
+const SSH_RELAY_TARGET = new RelayConnectionTarget({
+  environmentId: SSH_CONNECTION.environmentId,
+  label: SSH_CONNECTION.label,
+});
 const SSH_PROFILE = new SshConnectionProfile({
   connectionId: SSH_CONNECTION.connectionId,
   environmentId: SSH_CONNECTION.environmentId,
@@ -128,6 +133,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   initialProfiles: ReadonlyArray<ConnectionProfile> = [],
   initialCredentials: ReadonlyArray<readonly [string, ConnectionCredential]> = [],
   options?: {
+    readonly initialRoutes?: ReadonlyArray<ConnectionTarget>;
+    readonly prepareRoute?: (
+      target: ConnectionTarget,
+    ) => Effect.Effect<PreparedConnection, ConnectionTransientError>;
     readonly beforeSessionConnect?: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly beforeRegistrationRegister?: (
       registration: ConnectionRegistration,
@@ -139,6 +148,14 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
 ) {
   const storedTargets = yield* Ref.make(
     new Map(initialTargets.map((target) => [target.environmentId, target])),
+  );
+  const storedRoutes = yield* Ref.make(
+    new Map(
+      (options?.initialRoutes ?? initialTargets).map((target) => [
+        connectionRouteId(target),
+        target,
+      ]),
+    ),
   );
   const shellCache = yield* Ref.make(new Map([[TARGET.environmentId, CACHED_SNAPSHOT]]));
   const cacheClears = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
@@ -173,6 +190,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
 
   const targetStore = Persistence.ConnectionTargetStore.of({
     list: Ref.get(storedTargets).pipe(Effect.map((targets) => [...targets.values()])),
+    listRoutes: Ref.get(storedRoutes).pipe(Effect.map((routes) => [...routes.values()])),
   });
   const registrationStore = Persistence.ConnectionRegistrationStore.of({
     register: (registration) =>
@@ -181,6 +199,11 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         yield* Ref.update(storedTargets, (current) => {
           const next = new Map(current);
           next.set(registration.target.environmentId, registration.target);
+          return next;
+        });
+        yield* Ref.update(storedRoutes, (current) => {
+          const next = new Map(current);
+          next.set(connectionRouteId(registration.target), registration.target);
           return next;
         });
         switch (registration._tag) {
@@ -204,28 +227,83 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               next.set(registration.profile.connectionId, registration.profile);
               return next;
             });
+            if (registration.credential !== undefined) {
+              yield* Ref.update(storedCredentials, (current) => {
+                const next = new Map(current);
+                next.set(registration.target.connectionId, registration.credential!);
+                return next;
+              });
+            }
+        }
+      }),
+    select: (target) =>
+      Ref.update(storedTargets, (current) => {
+        const next = new Map(current);
+        next.set(target.environmentId, target);
+        return next;
+      }),
+    removeRoute: (target, fallback) =>
+      Effect.gen(function* () {
+        yield* options?.beforeRegistrationRemove?.(target) ?? Effect.void;
+        yield* Ref.update(storedTargets, (current) => {
+          const next = new Map(current);
+          if (
+            connectionRouteId(next.get(target.environmentId) ?? fallback) ===
+            connectionRouteId(target)
+          ) {
+            next.set(target.environmentId, fallback);
+          }
+          return next;
+        });
+        yield* Ref.update(storedRoutes, (current) => {
+          const next = new Map(current);
+          next.delete(connectionRouteId(target));
+          return next;
+        });
+        if (target._tag === "RelayConnectionTarget") {
+          yield* Ref.update(storedRemoteTokens, (current) => {
+            const next = new Map(current);
+            next.delete(target.environmentId);
+            return next;
+          });
         }
       }),
     remove: (target) =>
       Effect.gen(function* () {
         yield* options?.beforeRegistrationRemove?.(target) ?? Effect.void;
+        const removedConnectionIds = new Set(
+          [...(yield* Ref.get(storedRoutes)).values()]
+            .filter((route) => route.environmentId === target.environmentId)
+            .flatMap((route) =>
+              route._tag === "BearerConnectionTarget" || route._tag === "SshConnectionTarget"
+                ? [route.connectionId]
+                : [],
+            ),
+        );
         yield* Ref.update(storedTargets, (current) => {
           const next = new Map(current);
           next.delete(target.environmentId);
           return next;
         });
-        if (target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget") {
-          yield* Ref.update(storedProfiles, (current) => {
-            const next = new Map(current);
-            next.delete(target.connectionId);
-            return next;
-          });
-          yield* Ref.update(storedCredentials, (current) => {
-            const next = new Map(current);
-            next.delete(target.connectionId);
-            return next;
-          });
-        }
+        yield* Ref.update(storedRoutes, (current) => {
+          const next = new Map(current);
+          for (const [routeId, route] of next) {
+            if (route.environmentId === target.environmentId) {
+              next.delete(routeId);
+            }
+          }
+          return next;
+        });
+        yield* Ref.update(storedProfiles, (current) => {
+          const next = new Map(current);
+          for (const connectionId of removedConnectionIds) next.delete(connectionId);
+          return next;
+        });
+        yield* Ref.update(storedCredentials, (current) => {
+          const next = new Map(current);
+          for (const connectionId of removedConnectionIds) next.delete(connectionId);
+          return next;
+        });
         yield* Ref.update(storedRemoteTokens, (current) => {
           const next = new Map(current);
           next.delete(target.environmentId);
@@ -334,6 +412,14 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     disconnect: (target) => Ref.update(disconnectedSshTargets, (current) => [...current, target]),
   });
   const driver = ConnectionDriver.ConnectionDriver.of({
+    prepare: (entry) =>
+      options?.prepareRoute?.(entry.target) ??
+      Effect.succeed({
+        ...PREPARED,
+        environmentId: entry.target.environmentId,
+        label: entry.target.label,
+        target: entry.target,
+      }),
     connect: (entry, reportProgress) =>
       Effect.gen(function* () {
         const target = entry.target;
@@ -389,6 +475,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   return {
     layer,
     storedTargets,
+    storedRoutes,
     shellCache,
     cacheClears,
     ownedDataClears,
@@ -597,6 +684,95 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("prepares and verifies a route before replacing the active session", () =>
+    Effect.gen(function* () {
+      const prepareStarted = yield* Deferred.make<void>();
+      const releasePreparation = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([SSH_RELAY_TARGET], [SSH_PROFILE], [], {
+        initialRoutes: [SSH_RELAY_TARGET, SSH_CONNECTION],
+        prepareRoute: (target) =>
+          Deferred.succeed(prepareStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releasePreparation)),
+            Effect.as({
+              ...PREPARED,
+              environmentId: target.environmentId,
+              label: target.label,
+              target,
+            }),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          SSH_RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const selection = yield* Effect.forkChild(
+          registry.selectRoute(SSH_RELAY_TARGET.environmentId, connectionRouteId(SSH_CONNECTION)),
+        );
+        yield* Deferred.await(prepareStarted);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+        yield* Deferred.succeed(releasePreparation, undefined);
+        yield* Fiber.join(selection);
+        yield* awaitConnectionState(
+          registry,
+          SSH_CONNECTION.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        expect((yield* Ref.get(harness.storedTargets)).get(SSH_CONNECTION.environmentId)).toEqual(
+          SSH_CONNECTION,
+        );
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)?.target,
+        ).toEqual(SSH_CONNECTION);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps the active route when candidate preparation fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([SSH_RELAY_TARGET], [SSH_PROFILE], [], {
+        initialRoutes: [SSH_RELAY_TARGET, SSH_CONNECTION],
+        prepareRoute: () =>
+          Effect.fail(
+            new ConnectionTransientError({
+              reason: "remote-unavailable",
+              detail: "SSH is unavailable.",
+            }),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          SSH_RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const failure = yield* Effect.flip(
+          registry.selectRoute(SSH_RELAY_TARGET.environmentId, connectionRouteId(SSH_CONNECTION)),
+        );
+
+        expect(failure).toBeInstanceOf(ConnectionTransientError);
+        expect((yield* Ref.get(harness.storedTargets)).get(SSH_CONNECTION.environmentId)).toEqual(
+          SSH_RELAY_TARGET,
+        );
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)?.target,
+        ).toEqual(SSH_RELAY_TARGET);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("moves durable streams to a replacement supervisor", () =>
     Effect.gen(function* () {
       const replacement = new RelayConnectionTarget({
@@ -693,6 +869,64 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("removes a remembered relay route without disconnecting the selected SSH route", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [SSH_CONNECTION],
+        [SSH_PROFILE],
+        [[SSH_CONNECTION.connectionId, BEARER_CREDENTIAL]],
+        { initialRoutes: [SSH_RELAY_TARGET, SSH_CONNECTION] },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.removeRelayEnvironments();
+
+        expect((yield* Ref.get(harness.storedTargets)).get(SSH_CONNECTION.environmentId)).toEqual(
+          SSH_CONNECTION,
+        );
+        expect([...(yield* Ref.get(harness.storedRoutes)).values()]).toEqual([SSH_CONNECTION]);
+        expect((yield* Ref.get(harness.storedProfiles)).has(SSH_CONNECTION.connectionId)).toBe(
+          true,
+        );
+        expect((yield* Ref.get(harness.storedCredentials)).has(SSH_CONNECTION.connectionId)).toBe(
+          true,
+        );
+        expect((yield* Ref.get(harness.storedRemoteTokens)).has(SSH_CONNECTION.environmentId)).toBe(
+          false,
+        );
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+        expect(yield* Ref.get(harness.disconnectedSshTargets)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("falls back to SSH when signing out while the relay route is selected", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [SSH_RELAY_TARGET],
+        [SSH_PROFILE],
+        [[SSH_CONNECTION.connectionId, BEARER_CREDENTIAL]],
+        { initialRoutes: [SSH_RELAY_TARGET, SSH_CONNECTION] },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.removeRelayEnvironments();
+
+        expect((yield* Ref.get(harness.storedTargets)).get(SSH_CONNECTION.environmentId)).toEqual(
+          SSH_CONNECTION,
+        );
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId)?.target,
+        ).toEqual(SSH_CONNECTION);
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("keeps the runtime registered when durable removal fails", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([RELAY_TARGET], [], [], {
@@ -775,6 +1009,12 @@ describe("EnvironmentRegistry", () => {
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId)?.target,
         ).toEqual(TARGET);
+
+        const routeError = yield* Effect.flip(
+          registry.selectRoute(TARGET.environmentId, connectionRouteId(TARGET)),
+        );
+        expect(routeError._tag).toBe("PlatformEnvironmentRouteSelectionError");
+        expect(routeError.message).toContain("cannot be selected");
 
         const error = yield* Effect.flip(registry.remove(TARGET.environmentId));
         expect(error._tag).toBe("PlatformEnvironmentRemovalError");
@@ -916,7 +1156,7 @@ describe("EnvironmentRegistry", () => {
   it.effect("removes all owned SSH state only on explicit removal", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(
-        [SSH_CONNECTION],
+        [SSH_RELAY_TARGET],
         [SSH_PROFILE],
         [
           [
@@ -924,6 +1164,7 @@ describe("EnvironmentRegistry", () => {
             new BearerConnectionCredential({ token: "temporary-token" }),
           ],
         ],
+        { initialRoutes: [SSH_RELAY_TARGET, SSH_CONNECTION] },
       );
 
       yield* Effect.gen(function* () {

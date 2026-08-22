@@ -20,6 +20,7 @@ import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
+  SshConnectionTarget,
   type ConnectionAttemptError,
   type ConnectionTarget,
   type NetworkStatus,
@@ -49,6 +50,15 @@ const TARGET_ENTRY: ConnectionCatalogEntry = {
 
 const RELAY_ENTRY: ConnectionCatalogEntry = {
   target: RELAY_TARGET,
+  profile: Option.none(),
+};
+
+const SSH_ENTRY: ConnectionCatalogEntry = {
+  target: new SshConnectionTarget({
+    environmentId: TARGET.environmentId,
+    label: TARGET.label,
+    connectionId: "ssh:test-environment",
+  }),
   profile: Option.none(),
 };
 
@@ -188,7 +198,10 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     ),
     Layer.succeed(
       ConnectionDriver.ConnectionDriver,
-      ConnectionDriver.ConnectionDriver.of({ connect }),
+      ConnectionDriver.ConnectionDriver.of({
+        prepare: (entry) => prepare(entry.target),
+        connect,
+      }),
     ),
   );
 
@@ -462,6 +475,31 @@ describe("EnvironmentSupervisor", () => {
           message: "Test environment did not respond during connection setup.",
         },
       });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("allows SSH launch longer than the standard setup timeout", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.never,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.stage === "preparing",
+      );
+      yield* TestClock.adjust("119 seconds");
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connecting");
+
+      yield* TestClock.adjust("1 second");
+      const retrying = yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      expect(retrying.lastFailure?.reason).toBe("timeout");
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

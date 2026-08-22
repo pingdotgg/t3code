@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
 import * as TokenStore from "../authorization/tokenStore.ts";
 import {
@@ -17,7 +18,10 @@ import {
 } from "../connection/model.ts";
 import {
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  ConnectionCatalogDocument,
+  connectionRoutes,
   registerConnectionInCatalog,
+  removeConnectionRouteFromCatalog,
   removeConnectionFromCatalog,
 } from "./storageDocument.ts";
 
@@ -52,6 +56,19 @@ const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
 });
 
 describe("ConnectionCatalogDocument", () => {
+  it("treats targets from a legacy catalog as its initial routes", () => {
+    const decoded = Schema.decodeUnknownSync(ConnectionCatalogDocument)({
+      schemaVersion: 1,
+      targets: [BEARER_TARGET],
+      profiles: [BEARER_PROFILE],
+      credentials: [],
+      remoteDpopTokens: [],
+    });
+
+    expect(decoded.routes).toEqual([]);
+    expect(connectionRoutes(decoded)).toEqual([BEARER_TARGET]);
+  });
+
   it("registers a bearer connection as one catalog mutation", () => {
     const document = registerConnectionInCatalog(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
@@ -63,6 +80,7 @@ describe("ConnectionCatalogDocument", () => {
     );
 
     expect(document.targets).toEqual([BEARER_TARGET]);
+    expect(document.routes).toEqual([BEARER_TARGET]);
     expect(document.profiles).toEqual([BEARER_PROFILE]);
     expect(document.credentials).toEqual([
       {
@@ -72,7 +90,7 @@ describe("ConnectionCatalogDocument", () => {
     ]);
   });
 
-  it("replaces obsolete connection metadata without discarding a reusable DPoP token", () => {
+  it("selects a newly registered route without discarding other routes", () => {
     const bearer = registerConnectionInCatalog(
       {
         ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
@@ -94,8 +112,14 @@ describe("ConnectionCatalogDocument", () => {
     );
 
     expect(relay.targets).toEqual([relayTarget]);
-    expect(relay.profiles).toEqual([]);
-    expect(relay.credentials).toEqual([]);
+    expect(relay.routes).toEqual([BEARER_TARGET, relayTarget]);
+    expect(relay.profiles).toEqual([BEARER_PROFILE]);
+    expect(relay.credentials).toEqual([
+      {
+        connectionId: BEARER_TARGET.connectionId,
+        credential: BEARER_CREDENTIAL,
+      },
+    ]);
     expect(relay.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
   });
 
@@ -115,6 +139,34 @@ describe("ConnectionCatalogDocument", () => {
     expect(removeConnectionFromCatalog(registered, BEARER_TARGET)).toEqual(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
     );
+  });
+
+  it("removes a relay route without discarding another route for the environment", () => {
+    const relayTarget = new RelayConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote",
+    });
+    const registered = registerConnectionInCatalog(
+      registerConnectionInCatalog(
+        {
+          ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+          remoteDpopTokens: [REMOTE_TOKEN],
+        },
+        new BearerConnectionRegistration({
+          target: BEARER_TARGET,
+          profile: BEARER_PROFILE,
+          credential: BEARER_CREDENTIAL,
+        }),
+      ),
+      new RelayConnectionRegistration({ target: relayTarget }),
+    );
+
+    expect(removeConnectionRouteFromCatalog(registered, relayTarget, BEARER_TARGET)).toEqual({
+      ...registered,
+      targets: [BEARER_TARGET],
+      routes: [BEARER_TARGET],
+      remoteDpopTokens: [],
+    });
   });
 
   it("persists the normalized SSH profile beside its target", () => {
@@ -140,7 +192,65 @@ describe("ConnectionCatalogDocument", () => {
     );
 
     expect(document.targets).toEqual([target]);
+    expect(document.routes).toEqual([target]);
     expect(document.profiles).toEqual([profile]);
     expect(document.credentials).toEqual([]);
+  });
+
+  it("persists an SSH bearer credential when provisioning supplies one", () => {
+    const target = new SshConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "SSH",
+      connectionId: "ssh-1",
+    });
+    const profile = new SshConnectionProfile({
+      connectionId: target.connectionId,
+      environmentId: target.environmentId,
+      label: target.label,
+      target: {
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "developer",
+        port: 22,
+      },
+    });
+    const credential = new BearerConnectionCredential({ token: "ssh-bearer" });
+    const document = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new SshConnectionRegistration({ target, profile, credential }),
+    );
+
+    expect(document.credentials).toEqual([{ connectionId: target.connectionId, credential }]);
+  });
+
+  it("preserves an SSH bearer credential when re-registration supplies no replacement", () => {
+    const target = new SshConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "SSH",
+      connectionId: "ssh-1",
+    });
+    const profile = new SshConnectionProfile({
+      connectionId: target.connectionId,
+      environmentId: target.environmentId,
+      label: target.label,
+      target: {
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "developer",
+        port: 22,
+      },
+    });
+    const credential = new BearerConnectionCredential({ token: "ssh-bearer" });
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new SshConnectionRegistration({ target, profile, credential }),
+    );
+
+    const reRegistered = registerConnectionInCatalog(
+      registered,
+      new SshConnectionRegistration({ target, profile }),
+    );
+
+    expect(reRegistered.credentials).toEqual([{ connectionId: target.connectionId, credential }]);
   });
 });

@@ -251,6 +251,10 @@ describe("connection onboarding", () => {
           connectionId: "ssh:environment-ssh",
           target,
         },
+        credential: {
+          _tag: "BearerConnectionCredential",
+          token: "bearer-token",
+        },
       });
     }),
   );
