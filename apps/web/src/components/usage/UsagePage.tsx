@@ -2,7 +2,7 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+import type { DailyTotals, HourlyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
@@ -207,6 +207,7 @@ export function UsagePage() {
                 <UsageCoverageNotice
                   environments={environments}
                   duplicateSources={merged.duplicateSources}
+                  incompleteSources={merged.incompleteSources}
                   staleEnvironments={merged.staleEnvironments}
                 />
 
@@ -390,7 +391,10 @@ export function UsagePage() {
                       <tbody>
                         {breakdownPeriods.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                            <td
+                              colSpan={PROVIDER_ORDER.length + 3}
+                              className="py-6 text-center text-muted-foreground"
+                            >
                               No activity in this window.
                             </td>
                           </tr>
@@ -457,25 +461,32 @@ function Metric({ label, value }: { readonly label: string; readonly value: stri
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are incomplete: an environment or provider
+ * source failed, or another environment already reported the same transcripts.
+ * Environments that are still answering never reach this notice; the page
+ * shows the loading skeleton until every one is terminal.
  */
 function UsageCoverageNotice({
   environments,
   duplicateSources,
+  incompleteSources,
   staleEnvironments,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
+  readonly incompleteSources: MergedUsage["incompleteSources"];
   readonly staleEnvironments: readonly string[];
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    incompleteSources.length === 0
+  ) {
     return null;
   }
 
@@ -487,6 +498,12 @@ function UsageCoverageNotice({
       {stale.map((environment) => (
         <span key={environment.label}>
           {environment.label} runs an older server version and is excluded from totals.
+        </span>
+      ))}
+      {incompleteSources.map((source) => (
+        <span key={`${source.environmentId}:${source.provider}`}>
+          {source.environmentLabel}&apos;s {PROVIDER_PRESENTATION[source.provider].label} usage{" "}
+          {source.status === "failed" ? "could not be read." : "is incomplete."}
         </span>
       ))}
       {duplicateSources.length > 0 ? (

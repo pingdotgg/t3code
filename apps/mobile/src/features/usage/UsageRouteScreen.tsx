@@ -463,10 +463,12 @@ function UsageCoverageNotice(props: {
     props.merged.staleEnvironments.includes(environment.environmentId),
   );
   const duplicateSources = props.merged.duplicateSources;
+  const incompleteSources = props.merged.incompleteSources;
   if (
     failed.length === 0 &&
     stale.length === 0 &&
     duplicateSources.length === 0 &&
+    incompleteSources.length === 0 &&
     !props.isPartial
   ) {
     return null;
@@ -487,6 +489,15 @@ function UsageCoverageNotice(props: {
       {stale.map((environment) => (
         <Text key={environment.environmentId} className="text-sm text-foreground-muted">
           {environment.label} runs an older server version and is excluded from totals.
+        </Text>
+      ))}
+      {incompleteSources.map((source) => (
+        <Text
+          key={`${source.environmentId}:${source.provider}`}
+          className="text-sm text-foreground-muted"
+        >
+          {source.environmentLabel}&apos;s {PROVIDER_LABEL[source.provider]} usage{" "}
+          {source.status === "failed" ? "could not be read." : "is incomplete."}
         </Text>
       ))}
       {duplicateSources.length > 0 ? (

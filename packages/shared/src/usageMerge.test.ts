@@ -4,6 +4,7 @@ import {
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
+  type UsageSourceStatus,
   type UsageSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -40,6 +41,8 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    status?: UsageSourceStatus;
+    message?: string | null;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -57,12 +60,12 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
-      status: "ok" as const,
+      status: source.status ?? "ok",
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
       distinctSessions: source.distinctSessions ?? 1,
-      message: null,
+      message: source.message ?? null,
     })),
     pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
     scanDurationMs: 1,
@@ -167,6 +170,95 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.staleEnvironments).toEqual(["env-b"]);
+  });
+
+  it("reports incomplete sources and excludes a fully failed provider", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ provider: "zcode", model: "glm-5.2", costUsd: 7 }),
+              bucket({ provider: "claude", costUsd: 3 }),
+            ],
+            [
+              {
+                provider: "zcode",
+                hostId: "mac",
+                homePath: "/a/.zcode/cli/db",
+                status: "failed",
+                message: "Usage files could not be read.",
+              },
+              {
+                provider: "claude",
+                hostId: "mac",
+                homePath: "/a/.claude",
+                status: "partial",
+                message: "Some usage files could not be read.",
+              },
+              {
+                provider: "codex",
+                hostId: "mac",
+                homePath: "/a/.codex",
+                status: "missing",
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(3);
+    expect(merged.incompleteSources).toEqual([
+      {
+        environmentId: "env-a",
+        environmentLabel: "env-a",
+        provider: "zcode",
+        status: "failed",
+        message: "Usage files could not be read.",
+      },
+      {
+        environmentId: "env-a",
+        environmentLabel: "env-a",
+        provider: "claude",
+        status: "partial",
+        message: "Some usage files could not be read.",
+      },
+    ]);
+  });
+
+  it("prefers a complete duplicate without reporting a false coverage gap", () => {
+    const shared = {
+      provider: "zcode" as const,
+      hostId: "mac",
+      homePath: "/a/.zcode/cli/db",
+      volumeId: "16777220:1234",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "zcode", model: "glm-5.2", costUsd: 3 })],
+            [{ ...shared, status: "partial" }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ provider: "zcode", model: "glm-5.2", costUsd: 7 })],
+            [{ ...shared, status: "ok" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(7);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
+    expect(merged.incompleteSources).toEqual([]);
   });
 
   it("derives provider shares and cost quality", () => {

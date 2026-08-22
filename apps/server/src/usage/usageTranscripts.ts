@@ -68,7 +68,16 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  switch (provider) {
+    case "claude":
+      return line.includes('"usage"');
+    case "codex":
+      return line.includes('"token_count"');
+    case "zcode":
+      // ZCode usage is read from its sqlite store, never line-parsed, so this
+      // gate is unreachable for it.
+      return false;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -294,6 +303,51 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
     dedupeKey: null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* ZCode                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Maps one row of ZCode's `model_usage` sqlite table to a usage record.
+ *
+ * Each row is one model request attempt; only `completed` attempts carried
+ * real traffic. `started_at` stamps the record so the indexed SQLite window
+ * prefilter and the aggregator use the same boundary. ZCode stores no cost, so
+ * pricing falls to the rate table.
+ */
+export function parseZcodeUsageRow(row: Record<string, unknown>): UsageRecord | null {
+  if (row["status"] !== "completed") return null;
+
+  const timestampMs = int(row["started_at"]);
+  if (timestampMs === 0) return null;
+
+  const model = typeof row["model_id"] === "string" ? row["model_id"] : "";
+  if (model.length === 0) return null;
+
+  const id = row["id"];
+  const inputTokens = int(row["input_tokens"]);
+  const cachedInputTokens = int(row["cache_read_input_tokens"]);
+  const cacheCreationTokens = int(row["cache_creation_input_tokens"]);
+
+  return {
+    provider: "zcode",
+    timestampMs,
+    model,
+    sessionId: typeof row["session_id"] === "string" ? row["session_id"] : "",
+    totals: {
+      // ZCode's input_tokens includes both cache categories.
+      uncachedInputTokens: Math.max(0, inputTokens - cachedInputTokens - cacheCreationTokens),
+      cachedInputTokens,
+      cacheCreationTokens,
+      outputTokens: int(row["output_tokens"]),
+      reasoningTokens: int(row["reasoning_tokens"]),
+    },
+    reportedCostUsd: null,
+    // The row id is unique per request attempt, so it keys de-duplication.
+    dedupeKey: typeof id === "string" && id.length > 0 ? id : null,
   };
 }
 
