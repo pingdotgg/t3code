@@ -50,6 +50,27 @@ describe("scan cache round trip", () => {
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
   });
 
+  it("round-trips a ZCode sqlite entry", () => {
+    const zcodeRecord = record({
+      provider: "zcode",
+      model: "glm-5.2",
+      sessionId: "zcode-session",
+      dedupeKey: "usage-row-1",
+    });
+    const original: ScanCache = new Map([
+      [
+        "/home/user/.zcode/cli/db/db.sqlite",
+        { size: 42, mtimeMs: 200, provider: "zcode", records: [zcodeRecord] },
+      ],
+    ]);
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
+
+    expect(restored.get("/home/user/.zcode/cli/db/db.sqlite")).toEqual(
+      original.get("/home/user/.zcode/cli/db/db.sqlite"),
+    );
+  });
+
   it("interns repeated model and session strings", () => {
     const encoded = encodeScanCache(
       cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" }), record()]]]),

@@ -1,11 +1,11 @@
 /**
  * Usage reporting contract.
  *
- * Each environment scans the provider CLIs' own on-disk session transcripts
- * (`~/.claude/projects/**\/*.jsonl`, `~/.codex/sessions/**\/*.jsonl`) rather than
- * relying on T3 Code's own orchestration projections, so usage stays complete
- * even for turns that were never driven through T3 Code. This mirrors the
- * approach `ccusage` takes.
+ * Each environment scans the provider CLIs' own on-disk usage stores
+ * (`~/.claude/projects/**\/*.jsonl`, `~/.codex/sessions/**\/*.jsonl`, ZCode's
+ * `~/.zcode/cli/db/db.sqlite`) rather than relying on T3 Code's own
+ * orchestration projections, so usage stays complete even for turns that were
+ * never driven through T3 Code. This mirrors the approach `ccusage` takes.
  *
  * Environments return pre-aggregated `(day, hourStart?, provider, model)`
  * buckets. Raw transcript records never cross the wire.
@@ -23,7 +23,7 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  */
 export const USAGE_CONTRACT_VERSION = 4 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
+export const UsageProviderKind = Schema.Literals(["claude", "codex", "zcode"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
 /**

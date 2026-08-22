@@ -43,6 +43,7 @@ import {
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  statSqliteUsageStore,
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
@@ -74,6 +75,19 @@ const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
   document: Schema.Unknown,
 });
+
+/**
+ * One provider's usage store.
+ *
+ * `dir` is stat'd for existence and the source fingerprint's volume id, and
+ * walked for `*.jsonl` transcripts — unless `file` names a single-file store
+ * (ZCode's sqlite db), which is read instead of walking.
+ */
+interface TranscriptSource {
+  readonly provider: UsageProviderKind;
+  readonly dir: string;
+  readonly file?: string;
+}
 const decodeRatesCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
 );
@@ -219,10 +233,17 @@ export const make = Effect.gen(function* () {
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+    // ZCode has no settings-driven home override; its usage store is always
+    // the app's own sqlite db. A missing install simply resolves to a dir
+    // that does not exist, which the scan reports as a missing source.
+    const zcodeDbDir = path.join(NodeOS.homedir(), ".zcode", "cli", "db");
+
+    const sources: readonly TranscriptSource[] = [
+      { provider: "claude", dir: claudeDir },
+      { provider: "codex", dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      { provider: "zcode", dir: zcodeDbDir, file: path.join(zcodeDbDir, "db.sqlite") },
     ];
+    return sources;
   });
 
   /**
@@ -353,7 +374,8 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir } of dirs) {
+    for (const source of dirs) {
+      const { provider, dir } = source;
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
@@ -373,7 +395,11 @@ export const make = Effect.gen(function* () {
       }
 
       walkedRoots.push(dir);
-      const files = yield* Effect.promise(() => listTranscriptFiles(dir, windowStartMs));
+      const files = yield* Effect.promise(() =>
+        source.file === undefined
+          ? listTranscriptFiles(dir, windowStartMs)
+          : statSqliteUsageStore(source.file, windowStartMs),
+      );
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
