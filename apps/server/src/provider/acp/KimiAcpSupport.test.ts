@@ -650,4 +650,30 @@ describe("Kimi permission request classification", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("surfaces the plan markdown as the plan-decision approval detail", () => {
+    expect(kimiPermissionRequestDetail(exitPlanModeRequest)).toBe(
+      "# Plan: Mock\n\n## Steps\n- do the thing",
+    );
+    // A plan decision without usable plan text falls back to the stripped
+    // scaffolding text rather than the raw "Plan saved to:" line.
+    expect(
+      kimiPermissionRequestDetail({
+        ...exitPlanModeRequest,
+        toolCall: {
+          toolCallId: "tool-plan-5",
+          title: "ExitPlanMode",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "Requesting approval to Presenting plan and exiting plan mode",
+              },
+            },
+          ],
+        },
+      }),
+    ).toBe("Presenting plan and exiting plan mode");
+  });
 });

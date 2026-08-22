@@ -68,8 +68,12 @@ compact composer, open **More composer controls** (`…`) and choose **Mode → 
 hidden, enable **Plan mode (legacy)** under Settings → General → Legacy features. **Auto** maps to Kimi's native auto mode,
 while **Full access** maps to Kimi's native YOLO mode.
 
-Leaving Plan restores the selected runtime mode. Approval requests that Kimi does not handle
-natively continue to appear in T3 Code.
+When Kimi finishes a plan, its exit-plan decision appears as an approval card showing the plan:
+approve it to let Kimi leave plan mode and implement in the same turn, or reject it to have Kimi
+revise the plan. Approving leaves Kimi's native plan mode for good, so switch the composer back to
+**Build** afterwards: while the composer stays on Plan after an approval, follow-up messages run
+with the selected runtime access instead of re-entering read-only planning. Approval requests that
+Kimi does not handle natively continue to appear in T3 Code.
 
 ## Thinking
 

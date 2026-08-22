@@ -417,10 +417,10 @@ function kimiPermissionContentTexts(
 }
 
 /**
- * The proposed plan markdown from an ExitPlanMode permission request, without
- * the "Plan saved to: <path>" header line. Kimi does not stream ACP plan
- * entries in plan mode, so this payload is the only plan-markdown source; a
- * request without usable text returns undefined and stays a normal approval.
+ * The plan markdown from an ExitPlanMode permission request, without the
+ * "Plan saved to: <path>" header line. Kimi does not stream ACP plan entries
+ * in plan mode, so this payload is the only plan-markdown source and becomes
+ * the approval card's detail text.
  */
 export function extractKimiProposedPlanMarkdown(
   params: EffectAcpSchema.RequestPermissionRequest,
@@ -441,12 +441,20 @@ export function extractKimiProposedPlanMarkdown(
 
 /**
  * What the approval card should say for a Kimi permission request: the actual
- * command or question text, not just the tool title. Kimi prefixes tool-gate
- * text with "Requesting approval to "; that scaffolding is stripped.
+ * command, plan, or question text, not just the tool title. Kimi prefixes
+ * tool-gate text with "Requesting approval to "; that scaffolding is stripped.
+ * A plan decision's detail is the plan markdown itself, without the
+ * "Plan saved to: <path>" header line.
  */
 export function kimiPermissionRequestDetail(
   params: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
+  if (classifyKimiPermissionRequest(params) === "plan-decision") {
+    const planMarkdown = extractKimiProposedPlanMarkdown(params);
+    if (planMarkdown !== undefined) {
+      return planMarkdown;
+    }
+  }
   const text = kimiPermissionContentTexts(params)[0];
   if (text === undefined) {
     return undefined;
@@ -468,8 +476,8 @@ export function shouldKimiAdapterAutoApprove(input: {
   }
   // Full access means T3 answers Kimi's tool-gate permission requests in
   // every native mode. Kimi's own per-mode behavior is unchanged; a stale
-  // tracked mode (e.g. plan left over from an intercepted ExitPlanMode) must
-  // not re-gate every command.
+  // tracked mode (e.g. plan left behind by a natively approved plan exit,
+  // before the next turn re-syncs it) must not re-gate every command.
   return input.runtimeMode === "full-access";
 }
 

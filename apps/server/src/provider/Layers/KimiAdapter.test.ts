@@ -53,6 +53,7 @@ const pendingClientRequests = new Map();
 let promptOrdinal = 0;
 let cancelRequested = false;
 const cancelWaiters = [];
+let planDismissals = 0;
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
@@ -131,7 +132,8 @@ function exitPlanModeToolCall() {
 
 function requestPermission(promptId, toolCall, options) {
   const id = "permission-" + String(++permissionId);
-  pendingPermissions.set(id, { promptId });
+  pendingPermissions.set(id, { promptId, planDecision: toolCall.title === "ExitPlanMode" });
+  logLine("mock/permission_request", { id, title: toolCall.title });
   send({
     jsonrpc: "2.0",
     id,
@@ -261,8 +263,13 @@ function handlePermissionResponse(message) {
   if (!pending) return;
   pendingPermissions.delete(String(message.id));
   logLine("mock/permission_response", { id: String(message.id), result: message.result });
-  const selected = message.result?.outcome?.outcome === "selected";
-  completePrompt(pending.promptId, selected ? "end_turn" : "cancelled");
+  const outcome = message.result?.outcome;
+  const selected = outcome?.outcome === "selected";
+  if (pending.planDecision) {
+    handlePlanDecisionResponse(pending.promptId, outcome, selected);
+  } else {
+    completePrompt(pending.promptId, selected ? "end_turn" : "cancelled");
+  }
   // Deterministic post-response marker: the RPC layer can unwind the prompt
   // client-side on cancel, so tests cannot use prompt settlement to observe
   // that the permission response arrived.
@@ -277,6 +284,43 @@ function handlePermissionResponse(message) {
       },
     },
   });
+}
+
+// Mirrors kimi-cli 0.37.2 observed live: a "cancelled" ExitPlanMode answer
+// reads as a dismissed approval dialog, NOT as an end-turn signal, so the
+// agent retries the request; after three dismissals it gives up, prints the
+// plan as plain text, and ends the turn. A selected plan_approve leaves plan
+// mode natively (no config_option_update is emitted) and the same turn
+// continues; plan_revise keeps plan mode and presents the plan again.
+function handlePlanDecisionResponse(promptId, outcome, selected) {
+  if (selected && outcome?.optionId === "plan_approve") {
+    currentMode = "default";
+    planDismissals = 0;
+    completePrompt(promptId, "end_turn");
+    return;
+  }
+  if (selected && outcome?.optionId === "plan_revise") {
+    planDismissals = 0;
+    requestPermission(promptId, exitPlanModeToolCall(), EXIT_PLAN_PERMISSION_OPTIONS);
+    return;
+  }
+  planDismissals += 1;
+  if (planDismissals < 3) {
+    requestPermission(promptId, exitPlanModeToolCall(), EXIT_PLAN_PERMISSION_OPTIONS);
+    return;
+  }
+  send({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "plan-printed-after-dismissals" },
+      },
+    },
+  });
+  completePrompt(promptId, "end_turn");
 }
 
 function notifyConfigOptions() {
@@ -1256,10 +1300,10 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
   );
 
   it.effect(
-    "routes ExitPlanMode through the proposed-plan flow and keeps the agent from flipping the mode",
+    "gates the plan decision on the native approval card and re-syncs the mode on the next build turn",
     () =>
       Effect.gen(function* () {
-        const threadId = ThreadId.make("kimi-plan-flow-proposed-plan");
+        const threadId = ThreadId.make("kimi-plan-flow-native-gate");
         const tempDir = yield* Effect.promise(() =>
           NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-plan-flow-")),
         );
@@ -1272,102 +1316,153 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
         );
         const adapter = yield* makeTestAdapter(wrapperPath);
         const events: ProviderRuntimeEvent[] = [];
-        const proposedPlan =
-          yield* Deferred.make<
-            Extract<ProviderRuntimeEvent, { type: "turn.proposed.completed" }>
-          >();
-        const requestOpened =
-          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
-        const firstTurnCompleted = yield* Deferred.make<void>();
-        const secondTurnCompleted = yield* Deferred.make<void>();
+        const cardDeferreds = [
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>(),
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>(),
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>(),
+        ];
+        const turnDeferreds = [
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+        ];
+        const openedCount = yield* Ref.make(0);
         const completedCount = yield* Ref.make(0);
         const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
           Effect.gen(function* () {
             events.push(event);
-            if (event.type === "turn.proposed.completed") {
-              yield* Deferred.succeed(proposedPlan, event).pipe(Effect.ignore);
-            }
             if (event.type === "request.opened") {
-              yield* Deferred.succeed(requestOpened, event).pipe(Effect.ignore);
+              const count = yield* Ref.updateAndGet(openedCount, (current) => current + 1);
+              const deferred = cardDeferreds[count - 1];
+              if (deferred) {
+                yield* Deferred.succeed(deferred, event).pipe(Effect.ignore);
+              }
             }
             if (event.type === "turn.completed") {
               const count = yield* Ref.updateAndGet(completedCount, (current) => current + 1);
-              yield* Deferred.succeed(
-                count === 1 ? firstTurnCompleted : secondTurnCompleted,
-                undefined,
-              ).pipe(Effect.ignore);
+              const deferred = turnDeferreds[count - 1];
+              if (deferred) {
+                yield* Deferred.succeed(deferred, undefined).pipe(Effect.ignore);
+              }
             }
           }),
         ).pipe(Effect.forkChild);
 
-        yield* startTestSession(adapter, threadId);
-        const planTurn = yield* adapter.sendTurn({
-          threadId,
-          input: "plan the work",
-          attachments: [],
-          interactionMode: "plan",
-        });
-        yield* Deferred.await(firstTurnCompleted).pipe(Effect.timeout("5 seconds"));
+        const modeSelectionsFromLog = async () =>
+          (await readJsonLines(requestLogPath)).flatMap((request) => {
+            if (request.method !== "session/set_config_option") {
+              return [];
+            }
+            const params = request.params as Record<string, unknown> | undefined;
+            return params?.configId === "mode" ? [String(params.value)] : [];
+          });
 
-        // The plan markdown rides T3's proposed-plan flow (without the
-        // "Plan saved to:" header), and no approval card ever opened.
-        const proposed = yield* Deferred.await(proposedPlan).pipe(Effect.timeout("5 seconds"));
+        yield* startTestSession(adapter, threadId);
+        const firstFiber = yield* adapter
+          .sendTurn({
+            threadId,
+            input: "plan the work",
+            attachments: [],
+            interactionMode: "plan",
+          })
+          .pipe(Effect.forkChild);
+
+        // The plan decision is a user decision: it parks on a normal approval
+        // card whose detail is the plan markdown, and never rides T3's
+        // proposed-plan flow.
+        const planCard = yield* Deferred.await(cardDeferreds[0]!).pipe(Effect.timeout("5 seconds"));
         assert.equal(
-          proposed.payload.planMarkdown,
+          planCard.payload.detail,
           "# Plan: Mock landing page\n\n## Steps\n- write the plan\n- ship it",
         );
-        assert.equal(String(proposed.turnId), String(planTurn.turnId));
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(String(planCard.requestId)),
+          "accept",
+        );
+        yield* Fiber.join(firstFiber).pipe(Effect.timeout("5 seconds"));
+        yield* Deferred.await(turnDeferreds[0]!).pipe(Effect.timeout("5 seconds"));
+
+        // Approving answers the native plan_approve option, so kimi-cli leaves
+        // plan mode itself and the turn completes instead of cancelling. The
+        // mock mirrors the real CLI's retry-on-dismissal, so a cancelled
+        // answer would show up here as repeated ExitPlanMode requests.
+        const planPhaseRequests = yield* Effect.promise(() => readJsonLines(requestLogPath));
         assert.lengthOf(
-          events.filter((event) => event.type === "turn.proposed.completed"),
+          planPhaseRequests.filter(
+            (request) =>
+              request.method === "mock/permission_request" &&
+              (request.params as { title?: string } | undefined)?.title === "ExitPlanMode",
+          ),
           1,
         );
-        assert.lengthOf(
-          events.filter((event) => event.type === "request.opened"),
-          0,
-        );
-        assert.deepEqual(
-          terminalEvents(events, threadId).map((event) => event.payload.state),
-          ["cancelled"],
-        );
-
-        // Kimi received the cancel outcome, so its native mode stays plan.
-        const planPhaseRequests = yield* Effect.promise(() => readJsonLines(requestLogPath));
         const planResponse = planPhaseRequests.find(
           (request) => request.method === "mock/permission_response",
         );
         const planResponseParams = planResponse?.params as
-          | { result?: { outcome?: { outcome?: string } } }
+          | { result?: { outcome?: { outcome?: string; optionId?: string } } }
           | undefined;
-        assert.equal(planResponseParams?.result?.outcome?.outcome, "cancelled");
+        assert.deepEqual(planResponseParams?.result?.outcome, {
+          outcome: "selected",
+          optionId: "plan_approve",
+        });
+        assert.lengthOf(
+          events.filter((event) => event.type === "turn.proposed.completed"),
+          0,
+        );
+        assert.deepEqual(
+          terminalEvents(events, threadId).map((event) => event.payload.state),
+          ["completed"],
+        );
 
-        // The follow-up turn surfaces a normal approval card with the real
-        // command text, and the tracked mode flips plan -> default from the
-        // T3 side, not from the agent.
+        // The CLI left plan mode natively and silently while the composer
+        // still says Plan. Re-pushing plan is swallowed by the shared ACP
+        // runtime's own tracked mode, so this follow-up runs in the post-exit
+        // mode without any mode RPC (documented limitation; the next build
+        // turn re-syncs).
         const secondFiber = yield* adapter
-          .sendTurn({ threadId, input: "implement it", attachments: [] })
+          .sendTurn({
+            threadId,
+            input: "plan the follow-up",
+            attachments: [],
+            interactionMode: "plan",
+          })
           .pipe(Effect.forkChild);
-        const opened = yield* Deferred.await(requestOpened).pipe(Effect.timeout("5 seconds"));
-        assert.include(opened.payload.detail, "echo mock-approved-command");
+        const toolCard = yield* Deferred.await(cardDeferreds[1]!).pipe(Effect.timeout("5 seconds"));
+        assert.include(toolCard.payload.detail, "echo mock-approved-command");
         yield* adapter.respondToRequest(
           threadId,
-          ApprovalRequestId.make(String(opened.requestId)),
+          ApprovalRequestId.make(String(toolCard.requestId)),
           "accept",
         );
         yield* Fiber.join(secondFiber).pipe(Effect.timeout("5 seconds"));
-        yield* Deferred.await(secondTurnCompleted).pipe(Effect.timeout("5 seconds"));
+        yield* Deferred.await(turnDeferreds[1]!).pipe(Effect.timeout("5 seconds"));
+        assert.deepEqual(yield* Effect.promise(modeSelectionsFromLog), ["plan"]);
 
-        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
-        const modeSelections = requests.flatMap((request) => {
-          if (request.method !== "session/set_config_option") {
-            return [];
-          }
-          const params = request.params as Record<string, unknown> | undefined;
-          return params?.configId === "mode" ? [String(params.value)] : [];
-        });
-        assert.deepEqual(modeSelections, ["plan", "default"]);
+        // A build turn pushes the runtime-derived mode again, which re-syncs
+        // the tracked mode with the CLI's actual post-exit state.
+        const thirdFiber = yield* adapter
+          .sendTurn({ threadId, input: "keep building", attachments: [] })
+          .pipe(Effect.forkChild);
+        const buildCard = yield* Deferred.await(cardDeferreds[2]!).pipe(
+          Effect.timeout("5 seconds"),
+        );
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(String(buildCard.requestId)),
+          "accept",
+        );
+        yield* Fiber.join(thirdFiber).pipe(Effect.timeout("5 seconds"));
+        yield* Deferred.await(turnDeferreds[2]!).pipe(Effect.timeout("5 seconds"));
+
+        assert.deepEqual(yield* Effect.promise(modeSelectionsFromLog), ["plan", "default"]);
+        assert.lengthOf(
+          events.filter((event) => event.type === "turn.proposed.completed"),
+          0,
+        );
         assert.deepEqual(
           terminalEvents(events, threadId).map((event) => event.payload.state),
-          ["cancelled", "completed"],
+          ["completed", "completed", "completed"],
         );
 
         yield* Fiber.interrupt(eventsFiber);
@@ -1390,15 +1485,16 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
       const events: ProviderRuntimeEvent[] = [];
-      const proposedPlan = yield* Deferred.make<void>();
+      const planCardOpened =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
       const firstTurnCompleted = yield* Deferred.make<void>();
       const secondTurnCompleted = yield* Deferred.make<void>();
       const completedCount = yield* Ref.make(0);
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         Effect.gen(function* () {
           events.push(event);
-          if (event.type === "turn.proposed.completed") {
-            yield* Deferred.succeed(proposedPlan, undefined).pipe(Effect.ignore);
+          if (event.type === "request.opened") {
+            yield* Deferred.succeed(planCardOpened, event).pipe(Effect.ignore);
           }
           if (event.type === "turn.completed") {
             const count = yield* Ref.updateAndGet(completedCount, (current) => current + 1);
@@ -1411,37 +1507,42 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       ).pipe(Effect.forkChild);
 
       yield* startTestSession(adapter, threadId, "full-access");
-      yield* adapter.sendTurn({
+      const firstFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "plan the work",
+          attachments: [],
+          interactionMode: "plan",
+        })
+        .pipe(Effect.forkChild);
+
+      // Even under full access the plan decision is a user decision: it parks
+      // on an approval card and is never auto-approved.
+      const planCard = yield* Deferred.await(planCardOpened).pipe(Effect.timeout("5 seconds"));
+      assert.include(planCard.payload.detail, "# Plan: Mock landing page");
+      yield* adapter.respondToRequest(
         threadId,
-        input: "plan the work",
-        attachments: [],
-        interactionMode: "plan",
-      });
+        ApprovalRequestId.make(String(planCard.requestId)),
+        "accept",
+      );
+      yield* Fiber.join(firstFiber).pipe(Effect.timeout("5 seconds"));
       yield* Deferred.await(firstTurnCompleted).pipe(Effect.timeout("5 seconds"));
 
-      // Even under full access the plan decision is a user decision: exactly
-      // one proposed-plan event, and ExitPlanMode is never auto-approved.
-      yield* Deferred.await(proposedPlan).pipe(Effect.timeout("5 seconds"));
-      assert.lengthOf(
-        events.filter((event) => event.type === "turn.proposed.completed"),
-        1,
-      );
-      assert.lengthOf(
-        events.filter((event) => event.type === "request.opened"),
-        0,
-      );
-
-      // The implementation turn auto-approves the tool gate without any card.
+      // The follow-up turn auto-approves the tool gate without any card.
       yield* adapter.sendTurn({ threadId, input: "implement it", attachments: [] });
       yield* Deferred.await(secondTurnCompleted).pipe(Effect.timeout("5 seconds"));
 
       assert.lengthOf(
         events.filter((event) => event.type === "request.opened"),
+        1,
+      );
+      assert.lengthOf(
+        events.filter((event) => event.type === "turn.proposed.completed"),
         0,
       );
       assert.deepEqual(
         terminalEvents(events, threadId).map((event) => event.payload.state),
-        ["cancelled", "completed"],
+        ["completed", "completed"],
       );
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const permissionResponses = requests
@@ -1452,8 +1553,106 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
               .result?.outcome,
         );
       assert.deepEqual(permissionResponses, [
-        { outcome: "cancelled" },
+        { outcome: "selected", optionId: "plan_approve" },
         { outcome: "selected", optionId: "approve_always" },
+      ]);
+      // Session start binds yolo, the plan turn switches to plan, and the
+      // follow-up turn re-pushes the runtime mode because the CLI left plan
+      // natively on approval.
+      const modeSelections = requests.flatMap((request) => {
+        if (request.method !== "session/set_config_option") {
+          return [];
+        }
+        const params = request.params as Record<string, unknown> | undefined;
+        return params?.configId === "mode" ? [String(params.value)] : [];
+      });
+      assert.deepEqual(modeSelections, ["yolo", "plan", "yolo"]);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("re-opens the plan card on revise, then completes on approval", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-plan-flow-revise");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-plan-revise-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_PLAN_FLOW: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const firstCardOpened =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
+      const secondCardOpened =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
+      const openedCount = yield* Ref.make(0);
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (event.type === "request.opened") {
+            const count = yield* Ref.updateAndGet(openedCount, (current) => current + 1);
+            yield* Deferred.succeed(count === 1 ? firstCardOpened : secondCardOpened, event).pipe(
+              Effect.ignore,
+            );
+          }
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* startTestSession(adapter, threadId);
+      const turnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "plan the work",
+          attachments: [],
+          interactionMode: "plan",
+        })
+        .pipe(Effect.forkChild);
+
+      // Declining picks the revise option, so the CLI stays in plan mode and
+      // presents the plan again as a fresh card.
+      const firstCard = yield* Deferred.await(firstCardOpened).pipe(Effect.timeout("5 seconds"));
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(String(firstCard.requestId)),
+        "decline",
+      );
+      const secondCard = yield* Deferred.await(secondCardOpened).pipe(Effect.timeout("5 seconds"));
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(String(secondCard.requestId)),
+        "accept",
+      );
+      yield* Fiber.join(turnFiber).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("5 seconds"));
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.lengthOf(
+        requests.filter(
+          (request) =>
+            request.method === "mock/permission_request" &&
+            (request.params as { title?: string } | undefined)?.title === "ExitPlanMode",
+        ),
+        2,
+      );
+      const permissionResponses = requests
+        .filter((request) => request.method === "mock/permission_response")
+        .map(
+          (request) =>
+            (request.params as { result?: { outcome?: { outcome?: string; optionId?: string } } })
+              .result?.outcome,
+        );
+      assert.deepEqual(permissionResponses, [
+        { outcome: "selected", optionId: "plan_revise" },
+        { outcome: "selected", optionId: "plan_approve" },
       ]);
 
       yield* Fiber.interrupt(eventsFiber);

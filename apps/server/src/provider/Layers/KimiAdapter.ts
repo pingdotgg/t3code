@@ -3,7 +3,6 @@ import {
   type KimiSettings,
   EventId,
   type ProviderApprovalDecision,
-  ProviderItemId,
   type ProviderRuntimeEvent,
   type ProviderSession,
   ProviderDriverKind,
@@ -64,7 +63,6 @@ import {
   currentKimiModeIdFromSessionSetup,
   currentKimiModelIdFromConfigOptions,
   currentKimiModelIdFromSessionSetup,
-  extractKimiProposedPlanMarkdown,
   findKimiThinkingConfigOption,
   kimiConfigOptionsFromSessionNotification,
   kimiPermissionRequestDetail,
@@ -116,9 +114,6 @@ interface KimiSessionContext {
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
-  /** Last ExitPlanMode request captured into the proposed-plan flow, so a
-   * retried request does not emit duplicate turn.proposed.completed events. */
-  lastCapturedExitPlanKey: string | undefined;
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
@@ -637,39 +632,12 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                   return { outcome: { outcome: "cancelled" as const } };
                 }
                 const requestKind = classifyKimiPermissionRequest(params);
-                if (requestKind === "plan-decision") {
-                  const planMarkdown = extractKimiProposedPlanMarkdown(params);
-                  if (planMarkdown !== undefined) {
-                    // Claude parity: capture the plan into T3's proposed-plan
-                    // flow and cancel the native exit, so Kimi stays in plan
-                    // mode and T3's plan-approval UI owns the mode flip. The
-                    // implementation turn arrives with interactionMode default
-                    // and sendTurn pushes the runtime-derived mode natively.
-                    const captureKey = `${callbackTurnId}:${params.toolCall.toolCallId}`;
-                    if (sessionCtx.lastCapturedExitPlanKey !== captureKey) {
-                      sessionCtx.lastCapturedExitPlanKey = captureKey;
-                      yield* offerRuntimeEvent({
-                        type: "turn.proposed.completed",
-                        ...(yield* makeEventStamp()),
-                        provider: PROVIDER,
-                        threadId: input.threadId,
-                        turnId: callbackTurnId,
-                        payload: { planMarkdown },
-                        providerRefs: {
-                          providerItemId: ProviderItemId.make(params.toolCall.toolCallId),
-                        },
-                        raw: {
-                          source: "acp.jsonrpc",
-                          method: "session/request_permission",
-                          payload: params,
-                        },
-                      });
-                    }
-                    return { outcome: { outcome: "cancelled" as const } };
-                  }
-                  // No plan text in the payload: fall through to the regular
-                  // approval card so the user can still decide natively.
-                }
+                // Plan decisions (ExitPlanMode) are user decisions, so they
+                // fall through to the regular approval card below: answering
+                // cancelled reads as "dialog dismissed" to kimi-cli and makes
+                // it retry ExitPlanMode in a loop, while answering
+                // plan_approve lets the CLI leave plan mode and implement in
+                // the same turn. T3's proposed-plan flow is not used for Kimi.
                 if (
                   shouldKimiAdapterAutoApprove({
                     runtimeMode: input.runtimeMode,
@@ -819,7 +787,6 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             configOptionsRef,
             turns: [],
             lastPlanFingerprint: undefined,
-            lastCapturedExitPlanKey: undefined,
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
@@ -1122,7 +1089,6 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               }
               if (steeringTurnId === undefined) {
                 ctx.lastPlanFingerprint = undefined;
-                ctx.lastCapturedExitPlanKey = undefined;
               }
               ctx.session = {
                 ...ctx.session,
