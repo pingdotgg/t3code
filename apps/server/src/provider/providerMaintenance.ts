@@ -188,10 +188,33 @@ function makeVitePlusGlobalProviderMaintenanceCapabilities(
   });
 }
 
+function homebrewFormulaBasename(formula: string): string {
+  const segments = formula.split("/");
+  return segments[segments.length - 1];
+}
+
+function resolveHomebrewFormula(
+  definition: PackageManagedProviderMaintenanceDefinition,
+  installedFormula: string | null,
+): string | null {
+  if (!installedFormula) {
+    return definition.homebrewFormula;
+  }
+  if (
+    definition.homebrewFormula &&
+    homebrewFormulaBasename(definition.homebrewFormula) === installedFormula
+  ) {
+    return definition.homebrewFormula;
+  }
+  return installedFormula;
+}
+
 function makeHomebrewProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  installedFormula?: string | null,
 ): ProviderMaintenanceCapabilities {
-  if (!definition.homebrewFormula) {
+  const formula = resolveHomebrewFormula(definition, installedFormula ?? null);
+  if (!formula) {
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName: definition.npmPackageName,
@@ -202,9 +225,15 @@ function makeHomebrewProviderMaintenanceCapabilities(
     provider: definition.provider,
     packageName: definition.npmPackageName,
     updateExecutable: "brew",
-    updateArgs: ["upgrade", definition.homebrewFormula],
+    updateArgs: ["upgrade", formula],
     updateLockKey: "homebrew",
   });
+}
+
+function extractHomebrewFormulaFromPath(commandPath: string): string | null {
+  const normalized = commandPath.replaceAll("\\", "/");
+  const match = /\/(?:cellar|caskroom)\/([^/]+)\//i.exec(normalized);
+  return match ? match[1] : null;
 }
 
 function makeNativeProviderMaintenanceCapabilities(
@@ -314,7 +343,10 @@ export function resolvePackageManagedProviderMaintenance(
       return makeNpmGlobalProviderMaintenanceCapabilities(definition);
     }
     if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
+      const installedFormula = commandPaths
+        .map(extractHomebrewFormulaFromPath)
+        .find((formula) => formula !== null);
+      return makeHomebrewProviderMaintenanceCapabilities(definition, installedFormula ?? null);
     }
   }
 
