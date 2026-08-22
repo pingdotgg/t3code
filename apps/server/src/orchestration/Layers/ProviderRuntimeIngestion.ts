@@ -49,6 +49,56 @@ import { canReplaceThreadTitle } from "../threadTitles.ts";
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
 
+// --- Reasoning stream projection -------------------------------------------
+// Reasoning arrives as `content.delta` with streamKind "reasoning_text" /
+// "reasoning_summary_text" (all adapters) and, for some adapters, as
+// item lifecycle events with itemType "reasoning". Neither previously reached
+// any activity, so no client ever rendered a thought. Reasoning is buffered
+// per (thread, item-or-turn) and projected into the existing tool activity
+// shape (tool.updated while streaming, tool.completed on flush) so every
+// client — web, desktop, mobile — renders it with zero client changes, and
+// rows sharing a toolCallId collapse exactly like streaming tool output.
+const REASONING_UPDATE_EMIT_THRESHOLD = 600;
+const REASONING_LIVE_DETAIL_LIMIT = 180;
+const REASONING_FINAL_DETAIL_LIMIT = 6_000;
+const REASONING_BUFFER_TEXT_CAP = 60_000;
+
+interface ReasoningBuffer {
+  text: string;
+  /** Buffer length at the last emitted activity; -1 before the first emit. */
+  emittedLength: number;
+  toolCallId: string;
+  turnId: TurnId | null;
+  truncated: boolean;
+}
+
+function isReasoningStreamKind(streamKind: string): boolean {
+  return streamKind === "reasoning_text" || streamKind === "reasoning_summary_text";
+}
+
+function reasoningBufferKey(event: ProviderRuntimeEvent): string {
+  return event.itemId !== undefined
+    ? String(event.itemId)
+    : `reasoning:${event.turnId ?? "session"}`;
+}
+
+/** Streaming rows show the tail: the newest thought is the informative part. */
+function reasoningLiveDetail(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > REASONING_LIVE_DETAIL_LIMIT
+    ? `...${trimmed.slice(trimmed.length - (REASONING_LIVE_DETAIL_LIMIT - 3))}`
+    : trimmed;
+}
+
+function reasoningFinalDetail(text: string, truncated: boolean): string {
+  const trimmed = text.trim();
+  const capped =
+    trimmed.length > REASONING_FINAL_DETAIL_LIMIT
+      ? `${trimmed.slice(0, REASONING_FINAL_DETAIL_LIMIT - 3)}...`
+      : trimmed;
+  return truncated ? `${capped}\n\n[reasoning truncated]` : capped;
+}
+
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
 // task.started/task.progress activities for the task are persisted with it.
@@ -895,6 +945,200 @@ const make = Effect.gen(function* () {
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
 
+  // Open reasoning buffers, keyed by thread then by item-or-turn key. Bounded
+  // by the per-buffer text cap plus flush-on-turn/session-boundary cleanup.
+  const reasoningBuffersByThread = new Map<ThreadId, Map<string, ReasoningBuffer>>();
+
+  const appendReasoningActivity = (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+    activity: OrchestrationThreadActivity,
+  ) =>
+    providerCommandId(event, "thread-activity-append-reasoning").pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId,
+          activity,
+          createdAt: activity.createdAt,
+        }),
+      ),
+    );
+
+  const reasoningActivitySequence = (event: ProviderRuntimeEvent) => {
+    const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
+    return eventWithSequence.sessionSequence !== undefined
+      ? { sequence: eventWithSequence.sessionSequence }
+      : {};
+  };
+
+  const flushReasoningBuffer = (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+    buffer: ReasoningBuffer,
+    textOverride?: string,
+  ) => {
+    const text = textOverride ?? buffer.text;
+    if (text.trim().length === 0) {
+      return Effect.void;
+    }
+    return appendReasoningActivity(event, threadId, {
+      id: EventId.make(`${event.eventId}:reasoning:${buffer.toolCallId}`),
+      createdAt: event.createdAt,
+      tone: "tool",
+      kind: "tool.completed",
+      summary: "Thought",
+      payload: {
+        toolCallId: buffer.toolCallId,
+        status: "completed",
+        title: "Thought",
+        detail: reasoningFinalDetail(text, buffer.truncated),
+      },
+      turnId: buffer.turnId ?? toTurnId(event.turnId) ?? null,
+      ...reasoningActivitySequence(event),
+    });
+  };
+
+  const handleReasoningEvent = (threadId: ThreadId, event: ProviderRuntimeEvent) =>
+    Effect.gen(function* () {
+      if (
+        event.type === "content.delta" &&
+        isReasoningStreamKind(event.payload.streamKind) &&
+        event.payload.delta.length > 0
+      ) {
+        let byKey = reasoningBuffersByThread.get(threadId);
+        if (!byKey) {
+          byKey = new Map<string, ReasoningBuffer>();
+          reasoningBuffersByThread.set(threadId, byKey);
+        }
+        const key = reasoningBufferKey(event);
+        let buffer = byKey.get(key);
+        if (!buffer) {
+          buffer = {
+            text: "",
+            emittedLength: -1,
+            toolCallId: key,
+            turnId: toTurnId(event.turnId) ?? null,
+            truncated: false,
+          };
+          byKey.set(key, buffer);
+        }
+        if (buffer.text.length >= REASONING_BUFFER_TEXT_CAP) {
+          buffer.truncated = true;
+        } else {
+          buffer.text += event.payload.delta;
+          if (buffer.text.length > REASONING_BUFFER_TEXT_CAP) {
+            buffer.text = buffer.text.slice(0, REASONING_BUFFER_TEXT_CAP);
+            buffer.truncated = true;
+          }
+        }
+        // First delta surfaces the row immediately; afterwards re-emit only
+        // per threshold so token-sized deltas do not each persist an
+        // activity (same O(N²) guard the tool item.updated path documents).
+        const shouldEmit =
+          buffer.emittedLength < 0 ||
+          buffer.text.length - buffer.emittedLength >= REASONING_UPDATE_EMIT_THRESHOLD;
+        if (!shouldEmit) {
+          return;
+        }
+        yield* appendReasoningActivity(event, threadId, {
+          id: EventId.make(`${event.eventId}:reasoning`),
+          createdAt: event.createdAt,
+          tone: "tool",
+          kind: "tool.updated",
+          summary: "Thinking",
+          payload: {
+            toolCallId: buffer.toolCallId,
+            status: "inProgress",
+            title: "Thinking",
+            detail: reasoningLiveDetail(buffer.text),
+          },
+          turnId: buffer.turnId,
+          ...reasoningActivitySequence(event),
+        });
+        // Advance only after a successful dispatch: a failed append is logged
+        // and skipped upstream, so an eager advance would suppress the retry
+        // a later delta gets for free.
+        buffer.emittedLength = buffer.text.length;
+        return;
+      }
+
+      // Adapters that close reasoning items explicitly flush that buffer;
+      // the item's own detail wins when it carries more than was streamed.
+      if (event.type === "item.completed" && event.payload.itemType === "reasoning") {
+        const byKey = reasoningBuffersByThread.get(threadId);
+        const key = reasoningBufferKey(event);
+        const buffer = byKey?.get(key);
+        const detailFromItem =
+          typeof event.payload.detail === "string" && event.payload.detail.trim().length > 0
+            ? event.payload.detail
+            : undefined;
+        if (buffer) {
+          const text =
+            detailFromItem !== undefined && detailFromItem.length > buffer.text.length
+              ? detailFromItem
+              : buffer.text;
+          // Flush before delete: a failed dispatch is logged and skipped
+          // upstream, and a still-buffered thought gets a second chance at
+          // the turn boundary instead of vanishing.
+          yield* flushReasoningBuffer(event, threadId, buffer, text);
+          byKey?.delete(key);
+        } else if (detailFromItem !== undefined) {
+          yield* flushReasoningBuffer(event, threadId, {
+            text: detailFromItem,
+            emittedLength: -1,
+            toolCallId: key,
+            turnId: toTurnId(event.turnId) ?? null,
+            truncated: false,
+          });
+        }
+        return;
+      }
+
+      // Turn boundaries flush the boundary turn's buffers, so adapters with
+      // no reasoning item lifecycle (OpenCode, Claude) still land a completed
+      // thought row. Scoped to the event's turn: a late turn.completed from a
+      // superseded turn must not flush or wipe the active turn's reasoning
+      // (review finding — plan progress in this handler makes the same
+      // distinction). A buffer with no turn attribution flushes on any turn
+      // boundary for the thread; session.exited flushes and drops everything.
+      if (
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted" ||
+        event.type === "request.opened" ||
+        event.type === "user-input.requested"
+      ) {
+        const byKey = reasoningBuffersByThread.get(threadId);
+        if (byKey) {
+          const boundaryTurnId = toTurnId(event.turnId) ?? null;
+          for (const [key, buffer] of [...byKey.entries()]) {
+            if (
+              buffer.turnId !== null &&
+              boundaryTurnId !== null &&
+              buffer.turnId !== boundaryTurnId
+            ) {
+              continue;
+            }
+            yield* flushReasoningBuffer(event, threadId, buffer);
+            byKey.delete(key);
+          }
+        }
+        return;
+      }
+
+      if (event.type === "session.exited") {
+        const byKey = reasoningBuffersByThread.get(threadId);
+        if (byKey) {
+          for (const [key, buffer] of [...byKey.entries()]) {
+            yield* flushReasoningBuffer(event, threadId, buffer);
+            byKey.delete(key);
+          }
+        }
+        reasoningBuffersByThread.delete(threadId);
+      }
+    });
+
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
     timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
@@ -1703,6 +1947,8 @@ const make = Effect.gen(function* () {
           });
         }
       }
+
+      yield* handleReasoningEvent(thread.id, event);
 
       const pauseForUserTurnId =
         event.type === "request.opened" || event.type === "user-input.requested"
