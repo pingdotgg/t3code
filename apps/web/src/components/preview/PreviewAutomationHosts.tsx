@@ -66,6 +66,7 @@ import {
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { applyPreviewLoadFailureToAutomationStatus } from "./previewAutomationStatus";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -98,9 +99,11 @@ const waitForDesktopOverlay = async (
       operation,
       requestId,
     });
-    if (state.desktopByTabId[tabId] && previewBridge) {
-      const status = await previewBridge.automation.status(runtimeTabId);
-      if (status.available) return;
+    // Attachment only. LoadFailed still has a live guest and must stay
+    // reachable so navigate/retry can recover. Page health is reported by
+    // preview_status, not this wait.
+    if (state.desktopByTabId[tabId]?.hasWebContents && previewBridge) {
+      return;
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }
@@ -220,18 +223,25 @@ const currentStatus = async (
   };
   if (runtimeTabId && tabId && previewBridge && state.desktopByTabId[tabId]) {
     const status = await previewBridge.automation.status(runtimeTabId);
-    return { ...status, tabId, visible, ...viewportStatus };
+    return applyPreviewLoadFailureToAutomationStatus(
+      { ...status, tabId, visible, ...viewportStatus },
+      snapshot?.navStatus,
+      { preferLiveAvailability: true },
+    );
   }
   const navStatus = snapshot?.navStatus;
-  return {
-    available: Boolean(previewBridge?.automation),
-    visible,
-    tabId,
-    url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
-    title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
-    loading: navStatus?._tag === "Loading",
-    ...viewportStatus,
-  };
+  return applyPreviewLoadFailureToAutomationStatus(
+    {
+      available: Boolean(previewBridge?.automation),
+      visible,
+      tabId,
+      url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
+      title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
+      loading: navStatus?._tag === "Loading",
+      ...viewportStatus,
+    },
+    navStatus,
+  );
 };
 
 const raiseAtomCommandFailure = (result: Parameters<typeof squashAtomCommandFailure>[0]): never => {

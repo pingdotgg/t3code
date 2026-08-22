@@ -14,6 +14,7 @@ import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/prev
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
+import { PreviewMiniPlayerUnreachable } from "./PreviewMiniPlayerUnreachable";
 import {
   clampPreviewMiniPlayerPosition,
   clampPreviewMiniPlayerSize,
@@ -62,8 +63,13 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     miniPlayer?.tabId === tabId && miniPlayer.size
       ? miniPlayer.size
       : PREVIEW_MINI_PLAYER_DEFAULT_SIZE;
+  const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
+  const isUnreachable = navStatus._tag === "LoadFailed";
   const close = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
+  };
+  const retry = () => {
+    if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
   };
 
   const openInPanel = () => {
@@ -282,7 +288,10 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
                       ? "Close popped-out preview"
                       : "Pop preview into separate window"
                   }
-                  disabled={!desktopOverlay?.hasWebContents}
+                  disabled={
+                    !desktopOverlay?.hasWebContents ||
+                    (isUnreachable && !desktopOverlay.pictureInPicture)
+                  }
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={toggleNativePictureInPicture}
                 />
@@ -319,7 +328,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-2xl/35" />
         <BrowserSurfaceSlot
           tabId={runtimeTabId}
-          visible={Boolean(desktopOverlay?.hasWebContents)}
+          visible={Boolean(desktopOverlay?.hasWebContents) && !isUnreachable}
           cornerRadius={12}
           fitSourceContent
           layoutVersion={
@@ -330,7 +339,14 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
           className="absolute inset-0"
         />
         <div className="pointer-events-none absolute inset-0 z-[31] rounded-xl ring-1 ring-inset ring-border/80" />
-        {!desktopOverlay?.hasWebContents ? (
+        {isUnreachable && navStatus._tag === "LoadFailed" ? (
+          <PreviewMiniPlayerUnreachable
+            url={navStatus.url}
+            description={navStatus.description}
+            onRetry={retry}
+            onClose={close}
+          />
+        ) : !desktopOverlay?.hasWebContents ? (
           <div className="pointer-events-none absolute inset-0 z-[32] flex items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground">
             Reconnecting preview…
           </div>
