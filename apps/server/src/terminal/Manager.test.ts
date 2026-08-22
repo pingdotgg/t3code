@@ -756,9 +756,9 @@ it.layer(
           if (event.type === "output") {
             yield* Deferred.succeed(outputStarted, undefined);
             yield* Deferred.await(releaseOutput);
-            yield* Ref.update(publishedEvents, (events) => [...events, "output"]);
+            yield* Ref.update(publishedEvents, (events) => events.concat("output"));
           } else if (event.type === "cleared") {
-            yield* Ref.update(publishedEvents, (events) => [...events, "cleared"]);
+            yield* Ref.update(publishedEvents, (events) => events.concat("cleared"));
           }
         }),
       );
