@@ -2040,13 +2040,17 @@ code {
 
 /* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
    ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   last marker is 3+ digits, so item 100+ isn't clipped by list-style-position:
+   widest marker is 3+ characters, so item 100+ isn't clipped by list-style-position:
    outside painting the marker past the padding box. Reset it here too so a
    nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {
   --list-gutter: 1.25rem;
   padding-left: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
+}
+
+.chat-markdown ol > li::marker {
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-markdown ul ul {
@@ -2114,7 +2118,6 @@ code {
 
 .chat-markdown section[data-footnotes] ol {
   margin: 0;
-  padding-left: 1.25rem;
 }
 
 .chat-markdown section[data-footnotes] li + li {
