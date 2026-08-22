@@ -59,7 +59,18 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
+  public readonly setMcpServersCalls: Array<Record<string, unknown>> = [];
   public closeCalls = 0;
+
+  /**
+   * Resolves on the first `setMcpServers` call. The adapter fires plugin MCP
+   * registration detached from session start, so tests await this instead of
+   * guessing at fiber scheduling.
+   */
+  private resolveFirstSetMcpServers: ((servers: Record<string, unknown>) => void) | undefined;
+  public readonly firstSetMcpServers = new Promise<Record<string, unknown>>((resolve) => {
+    this.resolveFirstSetMcpServers = resolve;
+  });
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -114,6 +125,22 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
     this.setMaxThinkingTokensCalls.push(maxThinkingTokens);
   };
+
+  /**
+   * Deliberately a prototype method reading `this`, mirroring the SDK's own
+   * `Query.setMcpServers`. A caller that passes a plain reference instead of
+   * invoking it on the query loses `this` and fails here, the way it fails
+   * against the real SDK.
+   */
+  async setMcpServers(servers: Record<string, unknown>): Promise<{
+    added: Array<string>;
+    removed: Array<string>;
+    errors: Record<string, string>;
+  }> {
+    this.setMcpServersCalls.push(servers);
+    this.resolveFirstSetMcpServers?.(servers);
+    return { added: Object.keys(servers), removed: [], errors: {} };
+  }
 
   readonly close = (): void => {
     this.closeCalls += 1;
@@ -436,6 +463,82 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "max");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("registers MCP servers declared by enabled Claude plugins", () => {
+    // The SDK loads plugins but not the MCP servers they declare, so the
+    // adapter re-applies them over the control channel after session start.
+    const configDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-plugin-mcp-"));
+    const installPath = NodePath.join(configDir, "plugins", "cache", "linear");
+    NodeFS.mkdirSync(installPath, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(installPath, ".mcp.json"),
+      JSON.stringify({ linear: { type: "http", url: "https://mcp.linear.app/mcp" } }),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(configDir, "settings.json"),
+      JSON.stringify({ enabledPlugins: { "linear@claude-plugins-official": true } }),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(configDir, "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        version: 2,
+        plugins: { "linear@claude-plugins-official": [{ scope: "user", installPath }] },
+      }),
+    );
+
+    const harness = makeHarness({ claudeConfig: { homePath: configDir } });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(configDir, { recursive: true, force: true })),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // Bounded so a registration that never fires reports itself instead of
+      // hanging until the suite-wide timeout.
+      const servers = yield* Effect.promise(() => harness.query.firstSetMcpServers).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      // The name must match what the interactive CLI uses: stored MCP OAuth
+      // tokens are keyed by server name, so anything else re-prompts for auth.
+      assert.deepEqual(servers, {
+        "plugin:linear:linear": { type: "http", url: "https://mcp.linear.app/mcp" },
+      });
+      // `t3-code` stays out of the call: the SDK merges dynamic servers, and
+      // re-sending it would tear down a connected transport.
+      assert.equal(Object.keys(servers).includes("t3-code"), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("leaves the MCP server set alone when no plugin declares one", () => {
+    const configDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-plugin-mcp-none-"));
+    const harness = makeHarness({ claudeConfig: { homePath: configDir } });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(configDir, { recursive: true, force: true })),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.deepEqual(harness.query.setMcpServersCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

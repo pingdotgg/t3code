@@ -10,6 +10,8 @@ import {
   type CanUseTool,
   query,
   type Options as ClaudeQueryOptions,
+  type McpServerConfig,
+  type McpSetServersResult,
   type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
@@ -77,6 +79,7 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { discoverClaudePluginMcpServers } from "../Drivers/ClaudePlugins.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -289,6 +292,13 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+  /**
+   * SDK Query.setMcpServers — present on real queries; optional for test
+   * doubles. Used to register plugin-contributed servers the SDK skips.
+   */
+  readonly setMcpServers?: (
+    servers: Record<string, McpServerConfig>,
+  ) => Promise<McpSetServersResult>;
   readonly close: () => void;
 }
 
@@ -4143,6 +4153,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(ultracode ? { ultracode: true } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const launchMcpServers: Record<string, McpServerConfig> = mcpSession
+        ? {
+            "t3-code": {
+              type: "http",
+              url: mcpSession.endpoint,
+              headers: {
+                Authorization: mcpSession.authorizationHeader,
+              },
+            },
+          }
+        : {};
+      // The SDK loads plugins but never registers the MCP servers they declare,
+      // so they are re-applied over the control channel once the session is up.
+      const pluginMcpServers = yield* discoverClaudePluginMcpServers(
+        claudeSettings,
+        input.cwd,
+        claudeEnvironment,
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
       // approval prompt. It is a leaf directory holding only attachment
@@ -4176,19 +4207,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         env: claudeEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
-          ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
-            }
-          : {}),
+        ...(Object.keys(launchMcpServers).length > 0 ? { mcpServers: launchMcpServers } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -4214,6 +4233,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
+        "claude.query.plugin_mcp_servers": Object.keys(pluginMcpServers),
       });
 
       const queryRuntime = yield* Effect.try({
@@ -4230,6 +4250,45 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             cause,
           }),
       });
+
+      // Registering plugin servers costs a fixed ~6s inside the CLI — the
+      // control call only resolves once every named server has connected — so
+      // it runs detached rather than delaying the turn. Their tools sit behind
+      // tool search, which reads live state, so they become callable the moment
+      // the call lands.
+      // ponytail: a turn that reaches for a plugin tool within the first few
+      // seconds of a brand-new session can still miss it; gate `sendTurn` on
+      // the registration if that shows up in practice.
+      if (Object.keys(pluginMcpServers).length > 0) {
+        // `.bind` is load-bearing: the SDK declares `setMcpServers` on the Query
+        // prototype and it reads `this`, so calling a plain reference throws.
+        const setMcpServers = queryRuntime.setMcpServers?.bind(queryRuntime);
+        if (setMcpServers !== undefined) {
+          runFork(
+            Effect.tryPromise(() =>
+              // `t3-code` is deliberately omitted: the SDK merges dynamic
+              // servers rather than replacing them, and re-sending a connected
+              // server tears its transport down and reconnects it.
+              setMcpServers(pluginMcpServers as Record<string, McpServerConfig>),
+            ).pipe(
+              Effect.flatMap((result) =>
+                Object.keys(result.errors).length > 0
+                  ? Effect.logWarning("Some Claude plugin MCP servers failed to connect.", {
+                      threadId,
+                      errors: result.errors,
+                    })
+                  : Effect.void,
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to register Claude plugin MCP servers.", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            ),
+          );
+        }
+      }
 
       const session: ProviderSession = {
         threadId,
