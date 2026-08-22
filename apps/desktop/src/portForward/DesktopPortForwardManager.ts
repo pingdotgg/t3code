@@ -22,6 +22,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as NodeNet from "node:net";
 
 const AUTHORIZATION_TIMEOUT = Duration.seconds(45);
@@ -407,6 +408,7 @@ export const make = Effect.gen(function* () {
   const pendingAuthorizations = yield* Ref.make(new Map<string, PendingAuthorization>());
   const stateListeners = yield* Ref.make(new Set<StateListener>());
   const authorizationListeners = yield* Ref.make(new Set<AuthorizationListener>());
+  const statePublicationMutex = yield* Semaphore.make(1);
 
   const snapshots = Ref.get(forwards).pipe(
     Effect.map((current) =>
@@ -415,10 +417,12 @@ export const make = Effect.gen(function* () {
         .toSorted((a, b) => a.localPort - b.localPort),
     ),
   );
-  const publishState = Effect.flatMap(snapshots, (next) =>
-    Ref.get(stateListeners).pipe(
-      Effect.flatMap((listeners) => Effect.forEach(listeners, (listener) => listener(next))),
-      Effect.asVoid,
+  const publishState = statePublicationMutex.withPermit(
+    Effect.flatMap(snapshots, (next) =>
+      Ref.get(stateListeners).pipe(
+        Effect.flatMap((listeners) => Effect.forEach(listeners, (listener) => listener(next))),
+        Effect.asVoid,
+      ),
     ),
   );
   const updateSnapshot = (
