@@ -63,6 +63,33 @@ authenticated.
 - `vp run lint:mobile`: Mobile native static analysis (`scripts/mobile-native-static-check.ts`).
 - `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...`: Inspects or seeds
   an isolated T3 SQLite database; writes create a private backup first.
+- `vp run thread:list --source <project-dir>`: Lists the projects (id, workspace root, title) and
+  live threads (id, orchestration version, project id, title) of an existing T3 state database, so
+  you can pick a `--thread-id` to export and a `--target-project-id` to import into. It accepts the
+  same directory forms and `--state dev` selection as the transfer commands. Pass `--json` for
+  structured output.
+- `vp run thread:export --source <project-dir> --thread-id <id> --output <archive.json>`: Exports
+  one v1 or Orchestrator v2 thread, including its image attachments. The source can be a workspace
+  containing `.t3`, the T3 base directory, or a direct state directory containing `state.sqlite`.
+  State defaults to `userdata`; pass `--state dev` for a main-checkout dev database. Pass
+  `--include-terminal-logs` to also export persisted terminal history. Terminal logs may contain
+  credentials or other sensitive output, so they are excluded by default.
+- `vp run thread:import --archive <archive.json> --destination <project-dir>`: Imports the thread
+  into an isolated T3 project directory, remaps it to the destination project, and backs up the
+  destination database first. Only the thread's events and files are written; the destination
+  server rebuilds the read model from them on its next start (on an Orchestrator v2 database this
+  is a full projection rebuild, so the first start after an import takes longer on large stores).
+  v1 events are checked against the running checkout's orchestration contract before anything is
+  written, so run the import from the destination's checkout. The destination accepts the same
+  directory forms and `--state dev` selection as export. Stop the destination server before
+  importing. The live `~/.t3/userdata` database is refused unless you pass
+  `--dangerous-allow-t3-directory`, which is how a thread moves from a dev checkout back into the
+  real install. Pass `--target-project-id <id>` when the destination contains more than one project
+  and its workspace path does not identify the target. Worktree paths that do not exist on the
+  destination are cleared, so the thread falls back to the project workspace. Not transferred: the
+  provider's own session (the imported thread starts a fresh provider session on its next turn)
+  and checkpoint git refs (revert and per-turn diffs need the source repository, so they are
+  unavailable for the imported thread).
 
 ## Desktop artifacts
 
