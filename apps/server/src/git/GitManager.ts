@@ -1613,53 +1613,73 @@ export const make = Effect.gen(function* () {
     });
 
     let currentHookName: string | null = null;
-    const commitProgress =
-      progressReporter && actionId
-        ? {
-            onOutputLine: ({ stream, text }: { stream: "stdout" | "stderr"; text: string }) => {
-              const sanitized = sanitizeProgressText(text);
-              if (!sanitized) {
-                return Effect.void;
-              }
-              return emit({
-                kind: "hook_output",
-                hookName: currentHookName,
-                stream,
-                text: sanitized,
-              });
-            },
-            onHookStarted: (hookName: string) => {
-              currentHookName = hookName;
-              return emit({
-                kind: "hook_started",
-                hookName,
-              });
-            },
-            onHookFinished: ({
-              hookName,
-              exitCode,
-              durationMs,
-            }: {
-              hookName: string;
-              exitCode: number | null;
-              durationMs: number | null;
-            }) => {
-              if (currentHookName === hookName) {
-                currentHookName = null;
-              }
-              return emit({
-                kind: "hook_finished",
-                hookName,
-                exitCode,
-                durationMs,
-              });
-            },
+    let failedHook: { hookName: string; exitCode: number } | null = null;
+    // Not gated on progressReporter: emit already no-ops without one, and the failure message
+    // below depends on these callbacks having run.
+    const commitProgress = {
+      onOutputLine: ({ stream, text }: { stream: "stdout" | "stderr"; text: string }) => {
+        const sanitized = sanitizeProgressText(text);
+        if (!sanitized) {
+          return Effect.void;
+        }
+        return emit({
+          kind: "hook_output",
+          hookName: currentHookName,
+          stream,
+          text: sanitized,
+        });
+      },
+      onHookStarted: (hookName: string) => {
+        currentHookName = hookName;
+        return emit({
+          kind: "hook_started",
+          hookName,
+        });
+      },
+      onHookFinished: ({
+        hookName,
+        exitCode,
+        durationMs,
+      }: {
+        hookName: string;
+        exitCode: number | null;
+        durationMs: number | null;
+      }) => {
+        if (currentHookName === hookName) {
+          currentHookName = null;
+        }
+        if (exitCode !== null && exitCode !== 0) {
+          failedHook = { hookName, exitCode };
+        }
+        return emit({
+          kind: "hook_finished",
+          hookName,
+          exitCode,
+          durationMs,
+        });
+      },
+    };
+    const { commitSha } = yield* gitCore
+      .commit(cwd, suggestion.subject, suggestion.body, {
+        timeoutMs: COMMIT_TIMEOUT_MS,
+        progress: commitProgress,
+      })
+      .pipe(
+        // The driver error only says "exited with a non-zero status" and carries no output, so a
+        // hook rejection is indistinguishable from a broken repository without naming the hook.
+        Effect.mapError((error) => {
+          const hook = failedHook;
+          if (hook === null) {
+            return error;
           }
-        : null;
-    const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-      timeoutMs: COMMIT_TIMEOUT_MS,
-      ...(commitProgress ? { progress: commitProgress } : {}),
-    });
+          return new GitManagerError({
+            operation: "runCommitStep",
+            cwd,
+            detail: `The ${hook.hookName} hook rejected the commit (exit code ${hook.exitCode}).`,
+            cause: error,
+          });
+        }),
+      );
     if (currentHookName !== null) {
       yield* emit({
         kind: "hook_finished",

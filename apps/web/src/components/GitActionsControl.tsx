@@ -1007,6 +1007,20 @@ export default function GitActionsControl({
   });
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+  // Mirrors isCommitDialogOpen so a commit that resolves after the user reopened the dialog can
+  // tell "nothing to preserve" from "the user is already typing a new draft".
+  const commitDialogOpenRef = useRef(false);
+  const [hasFailedCommitDraft, setHasFailedCommitDraft] = useState(false);
+  const setCommitDialogOpen = (open: boolean) => {
+    commitDialogOpenRef.current = open;
+    setIsCommitDialogOpen(open);
+  };
+  const discardCommitDraft = () => {
+    setDialogCommitMessage("");
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
+    setHasFailedCommitDraft(false);
+  };
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -1018,7 +1032,19 @@ export default function GitActionsControl({
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
   );
-  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
+  // ChatHeader renders this control unkeyed, so switching threads is a props-only update and the
+  // dialog state survives it. A draft kept after a rejected commit would otherwise follow the user
+  // to the next repository and re-apply its file exclusions there.
+  const commitDraftScopeRef = useRef(sourceControlScope);
+  useEffect(() => {
+    if (commitDraftScopeRef.current === sourceControlScope) {
+      return;
+    }
+    commitDraftScopeRef.current = sourceControlScope;
+    setCommitDialogOpen(false);
+    discardCommitDraft();
+  }, [sourceControlScope]);
+  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<boolean>;
 
   const updateActiveProgressToast = useCallback(() => {
     const progress = activeGitActionProgressRef.current;
@@ -1290,7 +1316,7 @@ export default function GitActionsControl({
           action !== "commit_push" &&
           action !== "commit_push_pr"
         ) {
-          return;
+          return false;
         }
         setPendingDefaultBranchAction({
           action,
@@ -1300,7 +1326,7 @@ export default function GitActionsControl({
           ...(onConfirmed ? { onConfirmed } : {}),
           ...(filePaths ? { filePaths } : {}),
         });
-        return;
+        return false;
       }
       onConfirmed?.();
 
@@ -1417,7 +1443,7 @@ export default function GitActionsControl({
       if (result._tag === "Failure") {
         if (isAtomCommandInterrupted(result)) {
           toastManager.close(resolvedProgressToastId);
-          return;
+          return false;
         }
 
         const error = squashAtomCommandFailure(result);
@@ -1430,7 +1456,7 @@ export default function GitActionsControl({
             ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
           }),
         );
-        return;
+        return false;
       }
 
       const actionResult = result.value;
@@ -1492,6 +1518,7 @@ export default function GitActionsControl({
           data: successToastData,
         });
       }
+      return true;
     },
   );
 
@@ -1522,22 +1549,27 @@ export default function GitActionsControl({
     });
   };
 
-  const runDialogActionOnNewBranch = () => {
+  const runDialogActionOnNewBranch = async () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
 
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
+    setCommitDialogOpen(false);
 
-    void runGitActionWithToast({
+    const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
+    if (!committed) {
+      setHasFailedCommitDraft(true);
+      return;
+    }
+    setHasFailedCommitDraft(false);
+    if (!commitDialogOpenRef.current) {
+      discardCommitDraft();
+    }
   };
 
   const runQuickAction = () => {
@@ -1617,23 +1649,30 @@ export default function GitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    setIsCommitDialogOpen(true);
+    if (!hasFailedCommitDraft) {
+      setExcludedFiles(new Set());
+      setIsEditingFiles(false);
+    }
+    setCommitDialogOpen(true);
   };
 
-  const runDialogAction = () => {
+  const runDialogAction = async () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    void runGitActionWithToast({
+    setCommitDialogOpen(false);
+    const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });
+    if (!committed) {
+      setHasFailedCommitDraft(true);
+      return;
+    }
+    setHasFailedCommitDraft(false);
+    if (!commitDialogOpenRef.current) {
+      discardCommitDraft();
+    }
   };
 
   const openChangedFileInEditor = useCallback(
@@ -1837,10 +1876,8 @@ export default function GitActionsControl({
         open={isCommitDialogOpen}
         onOpenChange={(open) => {
           if (!open) {
-            setIsCommitDialogOpen(false);
-            setDialogCommitMessage("");
-            setExcludedFiles(new Set());
-            setIsEditingFiles(false);
+            setCommitDialogOpen(false);
+            discardCommitDraft();
           }
         }}
       >
@@ -1976,10 +2013,8 @@ export default function GitActionsControl({
               variant="outline"
               size="sm"
               onClick={() => {
-                setIsCommitDialogOpen(false);
-                setDialogCommitMessage("");
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
+                setCommitDialogOpen(false);
+                discardCommitDraft();
               }}
             >
               Cancel
@@ -1988,11 +2023,11 @@ export default function GitActionsControl({
               variant="outline"
               size="sm"
               disabled={noneSelected}
-              onClick={runDialogActionOnNewBranch}
+              onClick={() => void runDialogActionOnNewBranch()}
             >
               Commit on new refName
             </Button>
-            <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
+            <Button size="sm" disabled={noneSelected} onClick={() => void runDialogAction()}>
               Commit
             </Button>
           </DialogFooter>
