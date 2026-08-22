@@ -74,8 +74,13 @@ const CodexUserInputAnswerObject = Schema.Struct({
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
-// TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
-// `V2TurnStartParams` schema includes `collaborationMode` directly.
+// Upstream's TurnStartParams JSON schema genuinely omits `collaborationMode`, so this
+// patch has to stay. Confirmed in the generated output itself (schema.gen.ts, produced
+// straight from the UPSTREAM_REF pin in generate.ts): `V2TurnStartParams__CollaborationMode`
+// is emitted as an orphaned definition that nothing in `V2TurnStartParams`'s properties
+// references — unlike every other nested type there (e.g. `V2TurnStartParams__ReasoningEffort`,
+// which the `effort` field does reference), and `ClientRequest__CollaborationMode` shows the
+// same orphaning elsewhere in the file. Regenerating would reproduce this gap, not close it.
 const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
