@@ -85,6 +85,30 @@ it.effect("preserves unexpected FileFinder creation failures", () =>
   }),
 );
 
+it.effect("reports native module load failures when the index is requested", () =>
+  Effect.gen(function* () {
+    const cause = Object.assign(new Error("version `GLIBC_2.32' not found"), {
+      code: "ERR_DLOPEN_FAILED",
+    });
+    const error = yield* Effect.flip(
+      Effect.scoped(
+        WorkspaceSearchIndex.make("/workspace/project", "paths", {
+          loadFileFinderModule: async () => {
+            throw cause;
+          },
+        }),
+      ),
+    );
+
+    expect(error).toMatchObject({
+      _tag: "WorkspaceSearchIndexCreateFailed",
+      cwd: "/workspace/project",
+      reason: "Failed to load the native FileFinder module.",
+      cause,
+    });
+  }),
+);
+
 it.effect("keeps returned FileFinder creation diagnostics out of the cause chain", () =>
   Effect.gen(function* () {
     vi.spyOn(FileFinder, "create").mockReturnValueOnce({

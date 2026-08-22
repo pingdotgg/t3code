@@ -1,13 +1,13 @@
-import {
-  type DirItem,
-  type DirSearchResult,
-  type FileItem,
+import type {
+  DirItem,
+  DirSearchResult,
   FileFinder,
-  type GrepCursor,
-  type MixedItem,
-  type MixedSearchResult,
-  type Result,
-  type SearchResult,
+  FileItem,
+  GrepCursor,
+  MixedItem,
+  MixedSearchResult,
+  Result,
+  SearchResult,
 } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -32,6 +32,14 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+
+type FileFinderModule = Pick<typeof import("@ff-labs/fff-node"), "FileFinder">;
+
+export interface WorkspaceSearchIndexMakeOptions {
+  readonly loadFileFinderModule?: () => Promise<FileFinderModule>;
+}
+
+const loadFileFinderModule = (): Promise<FileFinderModule> => import("@ff-labs/fff-node");
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -300,10 +308,20 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
+  loadModule: () => Promise<FileFinderModule>,
 ) {
+  const module = yield* Effect.tryPromise({
+    try: loadModule,
+    catch: (cause) =>
+      new WorkspaceSearchIndexCreateFailed({
+        cwd,
+        reason: "Failed to load the native FileFinder module.",
+        cause,
+      }),
+  });
   const result = yield* Effect.try({
     try: () =>
-      FileFinder.create({
+      module.FileFinder.create({
         basePath: cwd,
         disableMmapCache: true,
         // Content indexing costs scan CPU and memory, so only the on-demand
@@ -355,12 +373,15 @@ const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(fu
 export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
+  options: WorkspaceSearchIndexMakeOptions = {},
 ) {
-  const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
-    Effect.try({
-      try: () => finder.destroy(),
-      catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
-    }).pipe(Effect.orDie),
+  const finder = yield* Effect.acquireRelease(
+    createFinder(cwd, variant, options.loadFileFinderModule ?? loadFileFinderModule),
+    (finder) =>
+      Effect.try({
+        try: () => finder.destroy(),
+        catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
+      }).pipe(Effect.orDie),
   );
   yield* waitForIndexReady(
     cwd,
