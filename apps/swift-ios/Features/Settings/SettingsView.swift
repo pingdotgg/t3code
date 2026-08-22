@@ -300,11 +300,7 @@ public struct SettingsView: View {
         let pendingAppearanceSave = appearanceSaveTask
         isSaving = true
         Task {
-            if let pendingAppearanceSave, await pendingAppearanceSave.value == false {
-                isSaving = false
-                return
-            }
-
+            _ = await pendingAppearanceSave?.value
             let didSave = await model.saveSettings(settings)
             isSaving = false
             if didSave {
