@@ -101,9 +101,11 @@ export function useNewThreadHandler() {
       const currentRouteTarget = getCurrentRouteTarget();
       // A new thread carries the user's *working mode* from the thread being
       // viewed: model (including options like reasoning effort and context
-      // window), permission mode, and interaction mode. Branch, worktree, and
-      // env mode never carry implicitly — those come from the configured
-      // defaults unless the caller passes them explicitly.
+      // window), permission mode, and interaction mode. The target project's
+      // configured default model, when set, outranks the carried model (see
+      // modelSelectionOverride below). Branch, worktree, and env mode never
+      // carry implicitly — those come from the configured defaults unless the
+      // caller passes them explicitly.
       const carrySourceShell =
         currentRouteTarget?.kind === "server"
           ? readThreadShell(currentRouteTarget.threadRef)
@@ -161,6 +163,12 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      // A project default model is a pin: new threads in that project start
+      // on it, beating both the globally sticky pick and the selection
+      // carried from the viewed thread. That keeps a project bound to its
+      // configured provider instance (subscription) no matter where the user
+      // just worked. Projects without a pin keep sticky + carry behavior.
+      const modelSelectionOverride = project?.defaultModelSelection ?? carryModelSelection;
       // The shared resolver owns the priority order. The t3.json read is
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
@@ -276,11 +284,11 @@ export function useNewThreadHandler() {
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
-            if (carryModelSelection) {
-              // The carried selection is a complete snapshot of the viewed
-              // thread's model state: absent options mean "no options", not
-              // "keep the stale draft's options".
-              setModelSelection(emptyStoredDraftThread.draftId, carryModelSelection, {
+            if (modelSelectionOverride) {
+              // The selection is a complete snapshot of the pinned or viewed
+              // model state: absent options mean "no options", not "keep the
+              // stale draft's options".
+              setModelSelection(emptyStoredDraftThread.draftId, modelSelectionOverride, {
                 replaceOptions: true,
               });
             }
@@ -348,6 +356,14 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        if (modelSelectionOverride) {
+          // Reusing the viewed draft is still a new-thread request, so it
+          // resets to the project pin when one is set. Without a pin the
+          // override is this draft's own selection and the write no-ops.
+          setModelSelection(currentRouteTarget.draftId, modelSelectionOverride, {
+            replaceOptions: true,
+          });
+        }
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -412,13 +428,13 @@ export function useNewThreadHandler() {
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
-        if (carryModelSelection) {
-          // After sticky state so the viewed thread's exact selection
-          // (model + options like effort and context window) wins over the
-          // globally sticky one. replaceOptions: the carried selection is a
-          // complete snapshot — absent options mean "no options", not "keep
-          // whatever sticky state just wrote".
-          setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
+        if (modelSelectionOverride) {
+          // After sticky state so the pin (or, without one, the viewed
+          // thread's exact selection with options like effort and context
+          // window) wins over the globally sticky one. replaceOptions: the
+          // override is a complete snapshot, absent options mean "no
+          // options", not "keep whatever sticky state just wrote".
+          setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
         carryComposerContentTo(draftId);
 
