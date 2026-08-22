@@ -6,21 +6,13 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-const isEnvironmentNotRegisteredError = Schema.is(EnvironmentNotRegisteredError);
-const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
+export const isMissingPortForwardEnvironment = Schema.is(EnvironmentNotRegisteredError);
+export const isRejectedPortForwardAuthorization = Schema.is(EnvironmentAuthInvalidError);
 const isEnvironmentScopeRequiredError = Schema.is(EnvironmentScopeRequiredError);
 const isEnvironmentInternalError = Schema.is(EnvironmentInternalError);
 
-export function isMissingPortForwardEnvironment(cause: unknown): boolean {
-  return isEnvironmentNotRegisteredError(cause);
-}
-
-export function isRejectedPortForwardAuthorization(cause: unknown): boolean {
-  return isEnvironmentAuthInvalidError(cause);
-}
-
 export function portForwardAuthorizationErrorMessage(cause: unknown): string {
-  if (isEnvironmentAuthInvalidError(cause)) {
+  if (isRejectedPortForwardAuthorization(cause)) {
     return "The environment authorization expired or was rejected after reconnecting.";
   }
   if (isEnvironmentScopeRequiredError(cause)) {
