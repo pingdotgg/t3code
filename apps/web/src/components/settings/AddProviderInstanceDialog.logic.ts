@@ -1,10 +1,53 @@
+import {
+  defaultLaunchForFeaturedAgent,
+  featuredAgentById,
+  formatAcpLaunchArgs,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
+
 export type WizardNavigation =
   | { readonly kind: "navigate"; readonly step: number }
   | { readonly kind: "blocked"; readonly step: number; readonly error: string };
 
 const IDENTITY_STEP = 1;
+export const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
+export const ACP_PICKER_PREFIX = "acp:";
 
 export const ADD_PROVIDER_WIZARD_STEPS = ["Driver", "Identity", "Config"] as const;
+
+export function acpPickerValue(catalogId: string): string {
+  return `${ACP_PICKER_PREFIX}${catalogId}`;
+}
+
+export function parseAddProviderPickerValue(value: string): {
+  readonly driver: ProviderDriverKind;
+  readonly catalogId: string | undefined;
+} {
+  if (value.startsWith(ACP_PICKER_PREFIX)) {
+    return {
+      driver: ACP_REGISTRY_DRIVER,
+      catalogId: value.slice(ACP_PICKER_PREFIX.length),
+    };
+  }
+  return { driver: ProviderDriverKind.make(value), catalogId: undefined };
+}
+
+export function configDraftForFeaturedAgent(catalogId: string): Record<string, unknown> {
+  const agent = featuredAgentById(catalogId);
+  if (!agent || agent.id === "custom") {
+    return {};
+  }
+  const launch = defaultLaunchForFeaturedAgent(agent);
+  return {
+    catalogId: agent.id,
+    ...(launch
+      ? {
+          command: launch.command,
+          launchArgs: formatAcpLaunchArgs(launch.args),
+        }
+      : {}),
+  };
+}
 
 /**
  * Resolve navigation within the add-provider wizard.

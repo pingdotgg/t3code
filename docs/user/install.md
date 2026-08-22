@@ -61,6 +61,7 @@ to use, then authenticate it.
 | Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| ACP        | Any ACP-speaking CLI (Gemini, Copilot, Pi, …)         | your command   | follow that CLI       |
 
 Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
@@ -86,6 +87,7 @@ authenticated shows its status in **Settings** and fails at session start with t
 to run.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
+For Gemini, Copilot, Pi, and other ACP CLIs, see [ACP providers](./providers-acp.md).
 
 ## Next Steps
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveWizardNavigation } from "./AddProviderInstanceDialog.logic";
+import {
+  acpPickerValue,
+  configDraftForFeaturedAgent,
+  parseAddProviderPickerValue,
+  resolveWizardNavigation,
+} from "./AddProviderInstanceDialog.logic";
 
 describe("resolveWizardNavigation", () => {
   const invalidId = { instanceIdError: "Instance ID is required." };
@@ -40,5 +45,28 @@ describe("resolveWizardNavigation", () => {
   it("clamps requested steps to the wizard bounds", () => {
     expect(resolveWizardNavigation(2, 8, 3, validId)).toEqual({ kind: "navigate", step: 2 });
     expect(resolveWizardNavigation(0, -1, 3, invalidId)).toEqual({ kind: "navigate", step: 0 });
+  });
+});
+
+describe("ACP catalog picker", () => {
+  it("parses featured ACP picker values onto the registry driver", () => {
+    expect(acpPickerValue("gemini")).toBe("acp:gemini");
+    expect(parseAddProviderPickerValue("acp:gemini")).toEqual({
+      driver: "acpRegistry",
+      catalogId: "gemini",
+    });
+    expect(parseAddProviderPickerValue("codex")).toEqual({
+      driver: "codex",
+      catalogId: undefined,
+    });
+  });
+
+  it("prefills Gemini launch config without downloading a binary", () => {
+    expect(configDraftForFeaturedAgent("gemini")).toEqual({
+      catalogId: "gemini",
+      command: "gemini",
+      launchArgs: "--acp",
+    });
+    expect(configDraftForFeaturedAgent("custom")).toEqual({});
   });
 });

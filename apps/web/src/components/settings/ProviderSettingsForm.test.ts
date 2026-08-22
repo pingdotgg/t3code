@@ -129,4 +129,15 @@ describe("ProviderSettingsForm helpers", () => {
   it("reads missing boolean config values from the supplied default", () => {
     expect(readProviderConfigBoolean({}, "experimental", true)).toBe(true);
   });
+
+  it("derives ACP registry launch fields from the client definition schema", () => {
+    const acpRegistry = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("acpRegistry")];
+
+    expect(acpRegistry).toBeDefined();
+    expect(deriveProviderSettingsFields(acpRegistry!).map((field) => field.key)).toEqual([
+      "command",
+      "launchArgs",
+      "authMethodId",
+    ]);
+  });
 });

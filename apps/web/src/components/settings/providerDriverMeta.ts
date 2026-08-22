@@ -1,4 +1,5 @@
 import {
+  AcpRegistrySettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
@@ -7,7 +8,15 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ACPRegistryIcon,
+  ClaudeAI,
+  CursorIcon,
+  GrokIcon,
+  type Icon,
+  OpenAI,
+  OpenCodeIcon,
+} from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -67,6 +76,13 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
   },
+  {
+    value: ProviderDriverKind.make("acpRegistry"),
+    label: "ACP",
+    icon: ACPRegistryIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: AcpRegistrySettings,
+  },
 ];
 
 export const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
@@ -76,6 +92,9 @@ export const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
 );
 
 export const DRIVER_OPTIONS = PROVIDER_CLIENT_DEFINITIONS;
+export const NATIVE_DRIVER_OPTIONS = PROVIDER_CLIENT_DEFINITIONS.filter(
+  (definition) => definition.value !== ProviderDriverKind.make("acpRegistry"),
+);
 export const DRIVER_OPTION_BY_VALUE = PROVIDER_CLIENT_DEFINITION_BY_VALUE;
 export type DriverOption = ProviderClientDefinition;
 
