@@ -16,3 +16,45 @@ export type ConnectOnboardingOptOutState = typeof ConnectOnboardingOptOutSchema.
 export const EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE: ConnectOnboardingOptOutState = {
   optOutAccounts: [],
 };
+
+export function shouldSyncOnboardingToggleFromLinkState(input: {
+  readonly touched: boolean;
+  readonly openForAccount: string | null;
+  readonly linked: boolean;
+  readonly cloudUserId: string | null;
+}): boolean {
+  return (
+    !input.touched &&
+    input.openForAccount !== null &&
+    input.linked &&
+    input.cloudUserId === input.openForAccount
+  );
+}
+
+// controller.managedTunnelActive is environment-global. After an account
+// switch the cached link can still belong to the previous user — only treat
+// it as this wizard's tunnel when the linked user matches.
+export function resolveOnboardingManagedTunnelActive(input: {
+  readonly managedTunnelActive: boolean;
+  readonly cloudUserId: string | null | undefined;
+  readonly openForAccount: string | null;
+}): boolean {
+  return input.cloudUserId === input.openForAccount ? input.managedTunnelActive : false;
+}
+
+// The wizard only ever enables. Both toggles off means skip — do not unlink,
+// downgrade, or rewrite publish. A stale expose=false after startup
+// reconcile must also not submit publish_only and tear the tunnel down.
+export function resolveOnboardingReconcileDesired(input: {
+  readonly exposeEnvironment: boolean;
+  readonly publishAgentActivity: boolean;
+  readonly managedTunnelActive: boolean;
+}): { readonly managedTunnel: boolean; readonly publish: boolean } | null {
+  if (!input.exposeEnvironment && !input.publishAgentActivity) {
+    return null;
+  }
+  return {
+    managedTunnel: input.exposeEnvironment || input.managedTunnelActive,
+    publish: input.publishAgentActivity,
+  };
+}

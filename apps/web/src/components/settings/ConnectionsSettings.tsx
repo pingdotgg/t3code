@@ -6,7 +6,7 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
+import { type ReactNode, memo, useCallback, useEffect, useId, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -42,6 +42,7 @@ import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestam
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
   applyWslEnableSelection,
+  isInitialCloudLinkStatePending,
   isQrShareableEndpoint,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
@@ -104,6 +105,10 @@ import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
 } from "~/versionSkew";
+import {
+  CONNECTIONS_CLOUD_LINK_RETRY_INTERVAL_MS,
+  shouldContinueConnectionsCloudLinkRetry,
+} from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
@@ -1617,6 +1622,31 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     operationError,
     reconcileCloudState,
   } = useCloudLinkController();
+  // Opening Connections can race startup reconcile: the shared SWR atom may
+  // still hold managedTunnelActive: false from a pre-reconcile read. Refresh
+  // on open, then retry on a short budget while a linked tunnel still looks
+  // inactive and this page stays mounted.
+  const linked = primaryCloudLinkState.data?.linked ?? false;
+  useEffect(() => {
+    primaryCloudLinkState.refresh();
+  }, [primaryCloudLinkState.refresh]);
+  useEffect(() => {
+    if (managedTunnelActive || !linked) {
+      return;
+    }
+    const startedAt = Date.now();
+    const intervalId = window.setInterval(() => {
+      const elapsedMs = Date.now() - startedAt;
+      if (!shouldContinueConnectionsCloudLinkRetry(elapsedMs, managedTunnelActive)) {
+        window.clearInterval(intervalId);
+        return;
+      }
+      primaryCloudLinkState.refresh();
+    }, CONNECTIONS_CLOUD_LINK_RETRY_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [linked, managedTunnelActive, primaryCloudLinkState.refresh]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -1626,6 +1656,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
+  const isInitialLinkStatePending = isInitialCloudLinkStatePending(primaryCloudLinkState);
 
   const updateManagedTunnel = async (enabled: boolean) => {
     setIsUpdating(true);
@@ -1679,7 +1710,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           control={
             <CloudLinkSwitch
               checked={managedTunnelActive}
-              disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
+              disabled={!canManageRelay || !isSignedIn || isInitialLinkStatePending || isBusy}
               disabledReason={disabledReason}
               onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
             />
@@ -1693,7 +1724,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           <CloudLinkSwitch
             ariaLabel="Publish agent activity to mobile clients"
             checked={publishAgentActivity}
-            disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
+            disabled={!canManageRelay || !isSignedIn || isInitialLinkStatePending || isBusy}
             disabledReason={disabledReason}
             onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
           />

@@ -7,7 +7,11 @@ import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
+  resolveOnboardingManagedTunnelActive,
+  resolveOnboardingReconcileDesired,
+  shouldSyncOnboardingToggleFromLinkState,
 } from "~/cloud/connectOnboarding";
+import { resolveManagedTunnelActive } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { usePrimarySessionState } from "~/environments/primary";
@@ -86,7 +90,8 @@ function ConfiguredConnectOnboardingDialog() {
   const [publishAgentActivity, setPublishAgentActivity] = useState(true);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const prefilledFromLinkStateRef = useRef(false);
+  const exposeTouchedRef = useRef(false);
+  const publishTouchedRef = useRef(false);
   const observedAccountRef = useRef<string | null | undefined>(undefined);
 
   const optOutAccounts = optOutState.optOutAccounts;
@@ -125,7 +130,8 @@ function ConfiguredConnectOnboardingDialog() {
     }
     if (!sessionScopesKnown || !publishStepDecided) return;
     setRequestedAccount(null);
-    prefilledFromLinkStateRef.current = false;
+    exposeTouchedRef.current = false;
+    publishTouchedRef.current = false;
     setExposeEnvironment(true);
     setPublishAgentActivity(true);
     setDontShowAgain(false);
@@ -154,17 +160,29 @@ function ConfiguredConnectOnboardingDialog() {
 
   // Toggles default on, but an environment that is already linked should show
   // its actual configuration instead of silently proposing to rewrite it.
+  // Keep resyncing from link state until the user touches a control — a
+  // startup-stale inactive snapshot must not stick after reconcile.
   // Only when the link belongs to the account being onboarded, though — after
   // an account switch the cached link state can still describe the previous
   // account's setup.
   const linkStateData = controller.linkState.data;
   useEffect(() => {
-    if (openForAccount === null || prefilledFromLinkStateRef.current || linkStateData === null) {
+    if (openForAccount === null || linkStateData === null) {
       return;
     }
-    prefilledFromLinkStateRef.current = true;
-    if (linkStateData.linked && linkStateData.cloudUserId === openForAccount) {
-      setExposeEnvironment(linkStateData.managedTunnelActive ?? linkStateData.linked);
+    const syncInput = {
+      openForAccount,
+      linked: linkStateData.linked,
+      cloudUserId: linkStateData.cloudUserId,
+    };
+    if (
+      shouldSyncOnboardingToggleFromLinkState({ ...syncInput, touched: exposeTouchedRef.current })
+    ) {
+      setExposeEnvironment(resolveManagedTunnelActive(linkStateData));
+    }
+    if (
+      shouldSyncOnboardingToggleFromLinkState({ ...syncInput, touched: publishTouchedRef.current })
+    ) {
       setPublishAgentActivity(linkStateData.publishAgentActivity);
     }
   }, [linkStateData, openForAccount]);
@@ -186,22 +204,29 @@ function ConfiguredConnectOnboardingDialog() {
 
   const applyPublishSelection = async () => {
     // The wizard only ever enables — with both toggles off there is nothing to
-    // apply, and an existing link must not be torn down from onboarding.
-    if (!exposeEnvironment && !publishAgentActivity) {
+    // apply, and an existing managed tunnel must not be torn down from
+    // onboarding if a later link-state refresh showed it active.
+    const desired = resolveOnboardingReconcileDesired({
+      exposeEnvironment,
+      publishAgentActivity,
+      managedTunnelActive: resolveOnboardingManagedTunnelActive({
+        managedTunnelActive: controller.managedTunnelActive,
+        cloudUserId: linkStateData?.cloudUserId,
+        openForAccount,
+      }),
+    });
+    if (desired === null) {
       setStep("devices");
       return;
     }
     setIsApplying(true);
-    const ok = await controller.reconcileCloudState({
-      managedTunnel: exposeEnvironment,
-      publish: publishAgentActivity,
-    });
+    const ok = await controller.reconcileCloudState(desired);
     setIsApplying(false);
     if (!ok) return;
     toastManager.add({
       type: "success",
       title: "T3 Connect enabled",
-      description: exposeEnvironment
+      description: desired.managedTunnel
         ? "This environment is available to your other devices through T3 Connect."
         : "This environment publishes agent activity to your mobile clients.",
     });
@@ -240,8 +265,14 @@ function ConfiguredConnectOnboardingDialog() {
               publishAgentActivity={publishAgentActivity}
               disabled={isApplying}
               operationError={controller.operationError}
-              onExposeEnvironmentChange={setExposeEnvironment}
-              onPublishAgentActivityChange={setPublishAgentActivity}
+              onExposeEnvironmentChange={(enabled) => {
+                exposeTouchedRef.current = true;
+                setExposeEnvironment(enabled);
+              }}
+              onPublishAgentActivityChange={(enabled) => {
+                publishTouchedRef.current = true;
+                setPublishAgentActivity(enabled);
+              }}
             />
           ) : (
             <DevicesStep />

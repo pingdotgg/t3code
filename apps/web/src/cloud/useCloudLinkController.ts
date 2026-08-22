@@ -15,7 +15,7 @@ import {
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
   updatePrimaryEnvironmentPreferences as updatePrimaryEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
-import { usePrimaryCloudLinkState } from "./primaryCloudLinkState";
+import { resolveManagedTunnelActive, usePrimaryCloudLinkState } from "./primaryCloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 
 export interface CloudLinkDesiredState {
@@ -70,10 +70,7 @@ export function useCloudLinkController() {
     });
   };
 
-  // Older environment servers predate the managedTunnelActive field; for them a
-  // link always implies a managed tunnel, so fall back to `linked`.
-  const managedTunnelActive =
-    primaryCloudLinkState.data?.managedTunnelActive ?? primaryCloudLinkState.data?.linked ?? false;
+  const managedTunnelActive = resolveManagedTunnelActive(primaryCloudLinkState.data);
   const publishAgentActivity = primaryCloudLinkState.data?.publishAgentActivity ?? false;
   const linked = primaryCloudLinkState.data?.linked ?? false;
 

@@ -2,6 +2,15 @@ import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tool
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
 
+// SWR `waiting` is true on every refresh. Disable the T3 Connect switches
+// only for the first load, not while a cached value is being revalidated.
+export function isInitialCloudLinkStatePending(input: {
+  readonly isPending: boolean;
+  readonly data: unknown;
+}): boolean {
+  return input.isPending && input.data === null;
+}
+
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so
  * loopback endpoints stay copyable from the endpoint menu but are never
