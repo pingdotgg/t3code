@@ -106,6 +106,36 @@ From there, connect from another device in either of these ways:
 
 Use `t3 serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
 
+#### Docker
+
+The repository includes a multi-stage Dockerfile that installs the published T3 server during the
+image build. The default package version is `latest`; pass an exact version for reproducible builds
+and reliable Docker cache invalidation when upgrading:
+
+```bash
+docker build --build-arg T3_VERSION=0.0.33 -t t3-code-server:0.0.33 .
+```
+
+Run the server with persistent T3 data and a project mounted as the container workspace:
+
+```bash
+docker run --rm -it \
+  --name t3-code-server \
+  -p 3773:3773 \
+  -v t3-code-data:/data \
+  -v "$PWD:/workspace" \
+  t3-code-server:0.0.33
+```
+
+The image contains T3 Code, Git, and the SSH client. Provider CLIs and their credentials are not
+included. Install the provider you use in a derived image and make its credentials available to the
+container's `node` user. The container registers `/workspace` as a project on first startup and
+trusts that exact path for Git operations, including bind mounts owned by a different host user.
+
+The server runs as UID/GID `1000:1000`. On native Linux hosts, make sure that user can write to the
+bind-mounted workspace. Git can read the trusted repository regardless of its owner, but agents
+still need normal filesystem permissions to edit its files.
+
 For hosted web pairing over Tailscale HTTPS, opt in to Tailscale Serve:
 
 ```bash

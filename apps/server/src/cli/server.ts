@@ -9,7 +9,6 @@ export const runServerCommand = (
   flags: CliServerFlags,
   options?: {
     readonly startupPresentation?: StartupPresentation;
-    readonly forceAutoBootstrapProjectFromCwd?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -27,10 +26,5 @@ export const serveCommand = Command.make("serve", { ...sharedServerCommandFlags 
   Command.withDescription(
     "Run the T3 Code server without opening a browser and print headless pairing details.",
   ),
-  Command.withHandler((flags) =>
-    runServerCommand(flags, {
-      startupPresentation: "headless",
-      forceAutoBootstrapProjectFromCwd: false,
-    }),
-  ),
+  Command.withHandler((flags) => runServerCommand(flags, { startupPresentation: "headless" })),
 );
