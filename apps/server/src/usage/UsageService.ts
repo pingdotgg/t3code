@@ -79,9 +79,9 @@ const RatesCacheFile = Schema.Struct({
 /**
  * One provider's usage store.
  *
- * `dir` is stat'd for existence and the source fingerprint's volume id, and
- * walked for `*.jsonl` transcripts — unless `file` names a single-file store
- * (ZCode's sqlite db), which is read instead of walking.
+ * `dir` supplies the source fingerprint's volume id and is walked for
+ * `*.jsonl` transcripts — unless `file` names a single-file store (ZCode's
+ * sqlite db), which is checked for existence and read instead.
  */
 interface TranscriptSource {
   readonly provider: UsageProviderKind;
@@ -389,7 +389,7 @@ export const make = Effect.gen(function* () {
       const { provider, dir } = source;
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
-        .exists(dir)
+        .exists(source.file ?? dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
 
       if (!exists) {
@@ -400,7 +400,10 @@ export const make = Effect.gen(function* () {
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+          message:
+            source.file === undefined
+              ? "No transcript directory on this environment."
+              : "No usage store on this environment.",
         });
         continue;
       }
