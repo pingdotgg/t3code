@@ -150,65 +150,65 @@ export const make = Effect.gen(function* () {
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
 
   /**
-   * Resolve a workspace-relative path to a real path proven to sit inside the
+   * Resolve one absolute path with `realpath` and prove it sits inside the
    * workspace root. Lexical containment is not enough: a symlink inside the
-   * workspace can point anywhere, so both ends are resolved with `realpath`
-   * and compared physically. Every operation that touches a workspace path
-   * goes through here so the checks cannot drift apart.
+   * workspace can point anywhere, so both ends are resolved physically and
+   * compared. Callers pick what they need contained — `readFile` contains the
+   * file it opens, `watchFile` the directory it watches.
    */
-  const resolveContainedRealPath = Effect.fn("WorkspaceFileSystem.resolveContainedRealPath")(
-    function* (input: ProjectReadFileInput) {
-      const target = yield* workspacePaths.resolveRelativePathWithinRoot({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-      });
-
-      const realWorkspaceRoot = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(input.cwd),
-        catch: (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: input.cwd,
-            operation: "realpath-workspace-root",
-            cause,
-          }),
-      });
-      const realTargetPath = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(target.absolutePath),
-        catch: (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: target.absolutePath,
-            operation: "realpath-target",
-            cause,
-          }),
-      });
-      const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
-      if (
-        relativeRealPath.startsWith(`..${path.sep}`) ||
-        relativeRealPath === ".." ||
-        path.isAbsolute(relativeRealPath)
-      ) {
-        return yield* new WorkspaceFilePathEscapeError({
+  const realPathWithinRoot = Effect.fn("WorkspaceFileSystem.realPathWithinRoot")(function* (
+    input: ProjectReadFileInput,
+    absolutePath: string,
+  ) {
+    const realWorkspaceRoot = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(input.cwd),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
-          resolvedWorkspaceRoot: realWorkspaceRoot,
-          resolvedPath: realTargetPath,
-        });
-      }
+          resolvedPath: absolutePath,
+          operationPath: input.cwd,
+          operation: "realpath-workspace-root",
+          cause,
+        }),
+    });
+    const realPath = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(absolutePath),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: absolutePath,
+          operationPath: absolutePath,
+          operation: "realpath-target",
+          cause,
+        }),
+    });
+    const relativeRealPath = path.relative(realWorkspaceRoot, realPath);
+    if (
+      relativeRealPath.startsWith(`..${path.sep}`) ||
+      relativeRealPath === ".." ||
+      path.isAbsolute(relativeRealPath)
+    ) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realPath,
+      });
+    }
 
-      return { target, realTargetPath };
-    },
-  );
+    return realPath;
+  });
 
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
-    const { target, realTargetPath } = yield* resolveContainedRealPath(input);
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+    const realTargetPath = yield* realPathWithinRoot(input, target.absolutePath);
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -337,18 +337,25 @@ export const make = Effect.gen(function* () {
   const watchFile: WorkspaceFileSystem["Service"]["watchFile"] = (input) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        // Physical containment, not just lexical: a symlink inside the
-        // workspace must not get a watcher pointed at an external directory.
-        const { target, realTargetPath } = yield* resolveContainedRealPath(input);
-        const directory = path.dirname(realTargetPath);
-        const fileName = path.basename(realTargetPath);
+        const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+        });
+        // Contain the directory rather than the file: the directory is what
+        // gets watched, and requiring the leaf to resolve would refuse to watch
+        // a path that is momentarily absent — mid atomic-replace, or not yet
+        // created. A symlinked leaf stays safe because the re-read still goes
+        // through `readFile`, which contains the file it opens.
+        const directory = yield* realPathWithinRoot(input, path.dirname(target.absolutePath));
+        const fileName = path.basename(target.absolutePath);
+        const watchedPath = path.join(directory, fileName);
 
         return fileSystem.watch(directory).pipe(
           Stream.filter(
             (event) =>
               event.path === fileName ||
-              event.path === realTargetPath ||
-              path.resolve(directory, event.path) === realTargetPath,
+              event.path === watchedPath ||
+              path.resolve(directory, event.path) === watchedPath,
           ),
           // Debounce so the file is fully written before subscribers re-read it.
           Stream.debounce(Duration.millis(100)),
@@ -358,7 +365,7 @@ export const make = Effect.gen(function* () {
               new WorkspaceFileSystemOperationError({
                 workspaceRoot: input.cwd,
                 relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
+                resolvedPath: watchedPath,
                 operationPath: directory,
                 operation: "watch",
                 cause,

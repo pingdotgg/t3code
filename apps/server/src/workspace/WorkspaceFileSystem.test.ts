@@ -335,6 +335,21 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reports a file that does not exist yet when it appears", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        // No file at this path: the watcher must still attach, so a tab whose
+        // file is momentarily absent keeps its live refresh.
+        const event = yield* awaitFirstChange(
+          cwd,
+          "later.txt",
+          writeTextFile(cwd, "later.txt", "created\n"),
+        );
+
+        expect(event).toEqual(Option.some({ relativePath: "later.txt" }));
+      }),
+    );
+
     it.effect("rejects a watch that escapes the workspace through a symlink", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
