@@ -244,11 +244,27 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   useEffect(() => {
     setKeyboardStateSuspect(false);
   }, [isKeyboardVisible, liveKeyboardHeight]);
+  // Editor focus is reported by the native input directly, so it stays
+  // correct when the JS keyboard show events are missed (app launch with a
+  // restored first responder, event delivery during a busy JS thread) and
+  // isVisible would strand the composer under an open keyboard. The bridge
+  // only covers missed or in-flight shows: a confirmed hide clears it, so a
+  // focused-but-dismissed IME (Android back button) cannot pin a stale
+  // keyboard translation on the composer.
+  const [focusBridgeActive, setFocusBridgeActive] = useState(false);
   const handleOwnedInputFocusChange = useCallback((focused: boolean) => {
+    setFocusBridgeActive(focused);
     if (focused) {
       setKeyboardStateSuspect(false);
     }
   }, []);
+  const wasKeyboardVisible = useRef(false);
+  useEffect(() => {
+    if (wasKeyboardVisible.current && !isKeyboardVisible) {
+      setFocusBridgeActive(false);
+    }
+    wasKeyboardVisible.current = isKeyboardVisible;
+  }, [isKeyboardVisible]);
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + IOS_NAV_BAR_HEIGHT;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -642,7 +658,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           // The animated keyboard height can remain stale after a dismissed
           // IME on both platforms. Visibility is the authoritative closed
           // state, so disable the translation rather than stranding the pill.
-          enabled={isKeyboardVisible && !keyboardStateSuspect}
+          // Focus on an owned input also enables it: the keyboard is open (or
+          // opening) whenever one is focused, even when the show event that
+          // drives isVisible was missed. A confirmed hide wins over focus.
+          enabled={(isKeyboardVisible || focusBridgeActive) && !keyboardStateSuspect}
           style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
           offset={{ closed: 0, opened: 0 }}
         >

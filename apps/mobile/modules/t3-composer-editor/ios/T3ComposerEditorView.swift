@@ -101,7 +101,14 @@ private final class ComposerTextView: UITextView {
       $0.canLoadObject(ofClass: UIImage.self)
     }
     if !imageProviders.isEmpty {
-      loadImages(from: imageProviders)
+      // Providers can claim image support but fail to load (stale cross-app
+      // pasteboard items); fall back to the system paste so text is never
+      // silently swallowed.
+      loadImages(from: imageProviders) { [weak self] handled in
+        if !handled {
+          self?.performSystemPaste(sender)
+        }
+      }
       return
     }
 
@@ -113,6 +120,10 @@ private final class ComposerTextView: UITextView {
         return
       }
     }
+    super.paste(sender)
+  }
+
+  private func performSystemPaste(_ sender: Any?) {
     super.paste(sender)
   }
 
@@ -141,7 +152,7 @@ private final class ComposerTextView: UITextView {
     replace(textRange, withText: "")
   }
 
-  func loadImages(from providers: [NSItemProvider]) {
+  func loadImages(from providers: [NSItemProvider], completion: ((Bool) -> Void)? = nil) {
     let group = DispatchGroup()
     let lock = NSLock()
     var images = [UIImage?](repeating: nil, count: providers.count)
@@ -164,6 +175,7 @@ private final class ComposerTextView: UITextView {
       if !urls.isEmpty {
         self?.onPasteImages?(urls)
       }
+      completion?(!urls.isEmpty)
     }
   }
 
