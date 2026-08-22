@@ -929,8 +929,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/tailscale
       agent-app-benchmark:
-        specifier: github:kyashrathore/agent-app-benchmark#78aa27c
-        version: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de
+        specifier: github:kyashrathore/agent-app-benchmark#d804dbc
+        version: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
@@ -5190,10 +5190,12 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@yuuang/ffi-rs-android-arm64@1.3.2':
     resolution: {integrity: sha512-eDYLT0kVBkp7e2BwdRDmt6N1rkeDPUHDefk3ZX0/nok+GLsqfy1WBoSL3Yg7HVXN1EyW8OBVc2uK8Zq8HbmaSA==}
@@ -5292,8 +5294,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de:
-    resolution: {gitHosted: true, integrity: sha512-7Bf4tdSIM1N0XojRqbmpDO7MGRLhKFab/4tn0n+IxoeQwPGuuxMs1IEqXxz8SgtEro2G9TjOIaFBJBecziHOiQ==, tarball: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de}
+  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20:
+    resolution: {gitHosted: true, integrity: sha512-M9rNY9tZJaFHNL2F7ia4Md5KSeUTYV1Q25oDShIjyKcp1pETQoTgZBxTPpCPpRpJdLp25akdc3WQuLmCN2Ia2g==, tarball: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20}
     version: 0.1.0
     engines: {node: '>=22'}
     hasBin: true
@@ -15417,7 +15419,7 @@ snapshots:
 
   acorn@8.16.0: {}
 
-  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/78aa27c834da341a04aecc3aee617c950dc184de:
+  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20:
     dependencies:
       ajv: 8.20.0
 
