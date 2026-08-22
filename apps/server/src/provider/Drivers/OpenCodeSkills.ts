@@ -9,6 +9,11 @@
  * override user skills, deeper child workspaces override ancestor directories, and
  * `.opencode` wins over `.agents` and `.claude`.
  *
+ * OpenCode's own disable flags are honored so discovery matches what OpenCode
+ * actually loads: OPENCODE_DISABLE_EXTERNAL_SKILLS skips every disk-scanned root,
+ * and OPENCODE_DISABLE_CLAUDE_CODE / OPENCODE_DISABLE_CLAUDE_CODE_SKILLS skip
+ * .claude/skills roots (user and project).
+ *
  * @module provider/Drivers/OpenCodeSkills
  */
 import * as NodeOS from "node:os";
@@ -27,6 +32,13 @@ type SkillFrontmatter =
   | { readonly kind: "missing" }
   | { readonly kind: "malformed" }
   | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
+
+function isDisableFlagSet(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    normalized !== undefined && normalized !== "" && normalized !== "0" && normalized !== "false"
+  );
+}
 
 function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
@@ -60,6 +72,10 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
  * Discovery is best-effort: unreadable roots and malformed skill entries are skipped.
  * On name collisions, later roots win: project beats user, `.agents` beats `.claude`,
  * and `.opencode` beats `.agents`.
+ *
+ * Matches OpenCode's own gating: `OPENCODE_DISABLE_EXTERNAL_SKILLS` skips all
+ * disk-scanned roots, and `OPENCODE_DISABLE_CLAUDE_CODE` /
+ * `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` skip `.claude/skills` roots.
  */
 export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(function* (
   cwd?: string,
@@ -68,6 +84,13 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const env = environment ?? process.env;
+
+  if (isDisableFlagSet(env.OPENCODE_DISABLE_EXTERNAL_SKILLS)) {
+    return [];
+  }
+  const claudeSkillsDisabled =
+    isDisableFlagSet(env.OPENCODE_DISABLE_CLAUDE_CODE) ||
+    isDisableFlagSet(env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS);
 
   const homeDir = env.HOME?.trim() || env.USERPROFILE?.trim() || NodeOS.homedir();
   const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
@@ -82,7 +105,7 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
     : undefined;
 
   const userRoots: ReadonlyArray<string> = [
-    path.join(homeDir, ".claude", "skills"),
+    ...(claudeSkillsDisabled ? [] : [path.join(homeDir, ".claude", "skills")]),
     path.join(homeDir, ".agents", "skills"),
     path.join(defaultConfigDir, "skills"),
     path.join(homeDir, ".opencode", "skills"),
@@ -115,7 +138,9 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
   const roots: ReadonlyArray<{ directory: string; scope: SkillScope }> = [
     ...userRoots.map((directory) => ({ directory, scope: "user" as const })),
     ...projectDirs.flatMap((dir) => [
-      { directory: path.join(dir, ".claude", "skills"), scope: "project" as const },
+      ...(claudeSkillsDisabled
+        ? []
+        : [{ directory: path.join(dir, ".claude", "skills"), scope: "project" as const }]),
       { directory: path.join(dir, ".agents", "skills"), scope: "project" as const },
       { directory: path.join(dir, ".opencode", "skills"), scope: "project" as const },
     ]),
