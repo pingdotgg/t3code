@@ -50,6 +50,11 @@ If the PR makes anything resembling a UI change, include clear before/after imag
 
 If the change depends on motion, timing, transitions, or interaction details, include a short video.
 
+If the change makes agent-app performance claims, use the versioned
+[performance benchmark](docs/internals/agent-app-performance-benchmark.md). Include the raw samples,
+coverage and environment disclosures, failed/invalid counts, and metric-specific uncertainty. Do not
+publish a composite score or compare profiles whose capability validation failed.
+
 If we have to guess what changed, we are much less likely to review it.
 
 ## Discuss Changes First
