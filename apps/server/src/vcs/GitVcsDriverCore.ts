@@ -1,4 +1,3 @@
-import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
@@ -50,7 +49,6 @@ const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
-const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
@@ -2113,54 +2111,246 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
-  const readUntrackedReviewDiffs = Effect.fn("readUntrackedReviewDiffs")(function* (cwd: string) {
-    const untrackedResult = yield* executeGit(
-      "GitVcsDriver.readUntrackedReviewDiffs.list",
+  const readWorkingTreeReviewDiff = Effect.fn("readWorkingTreeReviewDiff")(function* (
+    cwd: string,
+    ignoreWhitespace: boolean | undefined,
+  ) {
+    const tempDirectory = yield* fileSystem
+      .makeTempDirectory({ prefix: "t3code-review-index-" })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.readWorkingTreeReviewDiff.createTempIndex",
+              command: "git diff",
+              cwd,
+              detail: "Failed to create a temporary Git index for the review diff.",
+              cause,
+            }),
+        ),
+      );
+    const indexPath = path.join(tempDirectory, "index");
+    const env = { GIT_INDEX_FILE: indexPath } satisfies NodeJS.ProcessEnv;
+
+    return yield* Effect.gen(function* () {
+      const headResult = yield* executeGit(
+        "GitVcsDriver.readWorkingTreeReviewDiff.resolveHead",
+        cwd,
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+        { allowNonZeroExit: true },
+      );
+      const hasHead = headResult.exitCode === 0;
+      const baseline = hasHead
+        ? "HEAD"
+        : (yield* executeGit(
+            "GitVcsDriver.readWorkingTreeReviewDiff.resolveEmptyTree",
+            cwd,
+            ["hash-object", "-t", "tree", "--stdin"],
+            { stdin: "" },
+          )).stdout.trim();
+      const gitIndexResult = yield* executeGit(
+        "GitVcsDriver.readWorkingTreeReviewDiff.resolveIndex",
+        cwd,
+        ["rev-parse", "--git-path", "index"],
+      );
+      const gitIndexPath = path.isAbsolute(gitIndexResult.stdout.trim())
+        ? gitIndexResult.stdout.trim()
+        : path.resolve(cwd, gitIndexResult.stdout.trim());
+
+      const gitIndexExists = yield* fileSystem.exists(gitIndexPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.readWorkingTreeReviewDiff.checkIndex",
+              command: "git diff",
+              cwd,
+              detail: "Failed to inspect the Git index for the review diff.",
+              cause,
+            }),
+        ),
+      );
+
+      if (gitIndexExists) {
+        yield* fileSystem.copyFile(gitIndexPath, indexPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                operation: "GitVcsDriver.readWorkingTreeReviewDiff.copyIndex",
+                command: "git diff",
+                cwd,
+                detail: "Failed to copy the Git index for the review diff.",
+                cause,
+              }),
+          ),
+        );
+
+        const sharedIndexResult = yield* executeGit(
+          "GitVcsDriver.readWorkingTreeReviewDiff.resolveSharedIndex",
+          cwd,
+          ["rev-parse", "--shared-index-path"],
+          { allowNonZeroExit: true },
+        );
+        const sharedIndexValue = sharedIndexResult.stdout.trim();
+        if (sharedIndexResult.exitCode === 0 && sharedIndexValue.length > 0) {
+          const sharedIndexPath = path.isAbsolute(sharedIndexValue)
+            ? sharedIndexValue
+            : path.resolve(cwd, sharedIndexValue);
+          yield* fileSystem
+            .copyFile(sharedIndexPath, path.join(tempDirectory, path.basename(sharedIndexPath)))
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    operation: "GitVcsDriver.readWorkingTreeReviewDiff.copySharedIndex",
+                    command: "git diff",
+                    cwd,
+                    detail: "Failed to copy the shared Git index for the review diff.",
+                    cause,
+                  }),
+              ),
+            );
+          yield* executeGit(
+            "GitVcsDriver.readWorkingTreeReviewDiff.expandSplitIndex",
+            cwd,
+            ["update-index", "--no-split-index"],
+            { env },
+          );
+        }
+      } else {
+        yield* executeGit(
+          "GitVcsDriver.readWorkingTreeReviewDiff.readEmptyTree",
+          cwd,
+          ["read-tree", "--empty"],
+          { env },
+        );
+      }
+
+      const stagedDeletionResult = hasHead
+        ? yield* executeGit(
+            "GitVcsDriver.readWorkingTreeReviewDiff.stagedDeletions",
+            cwd,
+            ["diff", "--cached", "--name-only", "--diff-filter=D", "-z", "HEAD", "--"],
+            {
+              maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+              appendTruncationMarker: true,
+            },
+          )
+        : null;
+      const stagedDeletions = new Set(
+        stagedDeletionResult ? splitNullSeparatedGitStdoutPaths(stagedDeletionResult) : [],
+      );
+      const untrackedResult = yield* executeGit(
+        "GitVcsDriver.readWorkingTreeReviewDiff.untracked",
+        cwd,
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        {
+          maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+          appendTruncationMarker: true,
+        },
+      );
+      const untrackedPaths = splitNullSeparatedGitStdoutPaths(untrackedResult);
+      const intentToAddPaths =
+        stagedDeletionResult?.stdoutTruncated === true
+          ? yield* Effect.filter(
+              untrackedPaths,
+              (relativePath) =>
+                executeGit(
+                  "GitVcsDriver.readWorkingTreeReviewDiff.checkStagedDeletion",
+                  cwd,
+                  ["diff", "--cached", "--quiet", "--diff-filter=D", "HEAD", "--", relativePath],
+                  { allowNonZeroExit: true },
+                ).pipe(Effect.map((result) => result.exitCode === 0)),
+              { concurrency: 1 },
+            )
+          : untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
+      yield* Effect.forEach(
+        intentToAddPaths,
+        (relativePath) =>
+          executeGit(
+            "GitVcsDriver.readWorkingTreeReviewDiff.addIntentToAdd",
+            cwd,
+            ["add", "--intent-to-add", "--", relativePath],
+            { env, allowNonZeroExit: true },
+          ),
+        { concurrency: 1, discard: true },
+      );
+
+      const result = yield* executeGit(
+        "GitVcsDriver.readWorkingTreeReviewDiff.diff",
+        cwd,
+        [
+          "diff",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--minimal",
+          "--find-renames",
+          ...(ignoreWhitespace ? ["--ignore-all-space"] : []),
+          baseline,
+          "--",
+        ],
+        {
+          env,
+          maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+          appendTruncationMarker: true,
+        },
+      );
+      return {
+        ...result,
+        stdoutTruncated:
+          result.stdoutTruncated ||
+          stagedDeletionResult?.stdoutTruncated === true ||
+          untrackedResult.stdoutTruncated,
+      };
+    }).pipe(
+      Effect.ensuring(
+        fileSystem.remove(tempDirectory, { recursive: true, force: true }).pipe(Effect.ignore),
+      ),
+    );
+  });
+
+  const readTrackedWorkingTreeReviewDiff = Effect.fn("readTrackedWorkingTreeReviewDiff")(function* (
+    cwd: string,
+    ignoreWhitespace: boolean | undefined,
+  ) {
+    const headResult = yield* executeGit(
+      "GitVcsDriver.readTrackedWorkingTreeReviewDiff.resolveHead",
       cwd,
-      ["ls-files", "--others", "--exclude-standard", "-z"],
+      ["rev-parse", "--verify", "--quiet", "HEAD"],
+      { allowNonZeroExit: true },
+    );
+    const baseline =
+      headResult.exitCode === 0
+        ? "HEAD"
+        : (yield* executeGit(
+            "GitVcsDriver.readTrackedWorkingTreeReviewDiff.resolveEmptyTree",
+            cwd,
+            ["hash-object", "-t", "tree", "--stdin"],
+            { stdin: "" },
+          )).stdout.trim();
+
+    return yield* executeGit(
+      "GitVcsDriver.readTrackedWorkingTreeReviewDiff.diff",
+      cwd,
+      [
+        "diff",
+        "--patch",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--minimal",
+        "--find-renames",
+        ...(ignoreWhitespace ? ["--ignore-all-space"] : []),
+        baseline,
+        "--",
+      ],
       {
-        maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        allowNonZeroExit: true,
+        maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
         appendTruncationMarker: true,
       },
     );
-    const untrackedPaths = splitNullSeparatedGitStdoutPaths(untrackedResult);
-    if (untrackedPaths.length === 0) {
-      return { diff: "", truncated: untrackedResult.stdoutTruncated };
-    }
-
-    const diffs = yield* Effect.forEach(
-      untrackedPaths,
-      (relativePath) =>
-        executeGit(
-          "GitVcsDriver.readUntrackedReviewDiffs.diff",
-          cwd,
-          [
-            "diff",
-            "--no-index",
-            "--patch",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--minimal",
-            "--",
-            "/dev/null",
-            relativePath,
-          ],
-          {
-            allowNonZeroExit: true,
-            maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
-            appendTruncationMarker: true,
-          },
-        ),
-      { concurrency: 4 },
-    );
-
-    return {
-      diff: Arr.filterMap(diffs, (result) =>
-        result.stdout.trim().length > 0 ? Result.succeed(result.stdout) : Result.failVoid,
-      ).join("\n"),
-      truncated: untrackedResult.stdoutTruncated || diffs.some((result) => result.stdoutTruncated),
-    };
   });
 
   const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
@@ -2184,25 +2374,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null);
 
-    const dirtyTrackedResult = yield* executeGit(
-      "GitVcsDriver.getReviewDiffPreview.dirtyTracked",
-      input.cwd,
-      [
-        "diff",
-        "--patch",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--minimal",
-        ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
-        "HEAD",
-        "--",
-      ],
-      {
-        maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
-        appendTruncationMarker: true,
-      },
-    ).pipe(
+    const dirtyResult = yield* readWorkingTreeReviewDiff(input.cwd, input.ignoreWhitespace).pipe(
+      Effect.catchTags({
+        GitCommandError: () => readTrackedWorkingTreeReviewDiff(input.cwd, input.ignoreWhitespace),
+      }),
       Effect.orElseSucceed(() => ({
         exitCode: 0,
         stdout: "",
@@ -2211,12 +2386,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         stderrTruncated: false,
       })),
     );
-    const dirtyUntracked = yield* readUntrackedReviewDiffs(input.cwd).pipe(
-      Effect.orElseSucceed(() => ({ diff: "", truncated: false })),
-    );
-    const dirtyDiff = [dirtyTrackedResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
-      .filter((diff) => diff.length > 0)
-      .join("\n");
+    const dirtyDiff = dirtyResult.stdout;
 
     const baseResult =
       baseRef && branch
@@ -2230,6 +2400,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "--no-ext-diff",
               "--no-textconv",
               "--minimal",
+              "--find-renames",
               ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
               `${baseRef}...HEAD`,
             ],
@@ -2276,7 +2447,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         headRef: null,
         diff: dirtyDiff,
         diffHash: dirtyDiffHash,
-        truncated: dirtyTrackedResult.stdoutTruncated || dirtyUntracked.truncated,
+        truncated: dirtyResult.stdoutTruncated,
       },
       {
         id: "branch-range",
