@@ -143,11 +143,24 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
   // Windows filesystems are case-insensitive, so path prefix checks there
   // must case fold.
   const foldWorktreeCase = (yield* HostProcessPlatform) === "win32";
   const hostEnvironment = yield* HostProcessEnvironment;
+  const excludedProjectRoots = new Set(
+    [NodeOS.homedir(), NodeOS.tmpdir()].map((directory) =>
+      normalizeProjectPathForComparison(path.resolve(directory)),
+    ),
+  );
+
+  const isExcludedProjectPath = (candidatePath: string) =>
+    excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
+    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
+    ) ||
+    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -374,7 +387,7 @@ export const make = Effect.gen(function* () {
 
     for (const candidate of raw) {
       const resolved = path.resolve(expandHomePath(candidate.cwd.trim()));
-      if (isT3ManagedWorktree(resolved, worktreesDir, foldWorktreeCase)) continue;
+      if (isExcludedProjectPath(resolved)) continue;
       let key = realPathKeys.get(resolved);
       if (key === undefined) {
         const stats = yield* statOption(resolved);
@@ -386,7 +399,7 @@ export const make = Effect.gen(function* () {
         key = yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
         // A symlink can point into the worktrees directory even when its own
         // spelling doesn't; check again with links resolved.
-        if (isT3ManagedWorktree(key, worktreesDir, foldWorktreeCase)) {
+        if (isExcludedProjectPath(key)) {
           key = "";
         }
         realPathKeys.set(resolved, key);

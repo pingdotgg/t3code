@@ -1,15 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
+import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
+import { resolveFirstRunDecision, type FirstRunDecision } from "../../onboarding/firstRun.logic";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
   useThreadShells,
 } from "../../state/entities";
 import { primaryServerConfigAtom } from "../../state/server";
+import { environmentShell, environmentShellSummaryAtom } from "../../state/shell";
 
 /**
  * Holds back the authenticated app tree until the first-run decision is known,
@@ -27,7 +30,13 @@ import { primaryServerConfigAtom } from "../../state/server";
 
 const FIRST_RUN_DECISION_TIMEOUT_MS = 4_000;
 
-type FirstRunDecision = "pending" | "app" | "wizard";
+const primaryShellLiveAtom = Atom.make((get) => {
+  const serverConfig = get(primaryServerConfigAtom);
+  return (
+    serverConfig !== null &&
+    get(environmentShell.stateValueAtom(serverConfig.environment.environmentId)).status === "live"
+  );
+}).pipe(Atom.withLabel("web-onboarding-primary-shell-live"));
 
 export function FirstRunGate({
   enabled,
@@ -49,6 +58,8 @@ export function FirstRunGate({
   const projects = useProjects();
   const threads = useThreadShells();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const primaryShellLive = useAtomValue(primaryShellLiveAtom);
+  const shellSummary = useAtomValue(environmentShellSummaryAtom);
   // Within a session settings stay hydrated, so remounts (e.g. returning from
   // the wizard) resolve synchronously instead of blanking a frame.
   const [decision, setDecision] = useState<FirstRunDecision>(() =>
@@ -73,48 +84,36 @@ export function FirstRunGate({
     threads.length <= 1 &&
     threads.every((thread) => thread.environmentId === primaryEnvironmentId);
 
-  useEffect(() => {
-    if (decision !== "pending" || !hydrated) return;
-    if (!enabled || onboardingCompletedAt !== null) {
-      setDecision("app");
-      return;
-    }
-    // Anything beyond the single cwd-bootstrap project/thread is provably
-    // real user state, so resolve immediately instead of holding the app
-    // behind the full bootstrap signal. Every install that predates the flag
-    // decodes it as `null`; backfilling here means only their first
-    // post-update load evaluates the workspace at all.
-    if (projects.length > 1 || threads.length > 1) {
-      completeOnboarding();
-      setDecision("app");
-      return;
-    }
-    // Both shells AND the server config must be in before the workspace can
-    // be judged: shells bootstrap and config load independently, and a
-    // disconnected environment reports bootstrapped with empty projections.
-    // Without the config a fresh cwd-bootstrapped install would read as
-    // non-fresh (projects but no cwd yet), and an offline existing install
-    // would read as fresh (nothing at all). Config never arriving means the
-    // timeout below falls back to the app — without backfilling, so a fresh
-    // install on a slow start still gets the wizard on its next load.
-    if (!bootstrapped || serverConfig === null) return;
-    if (workspaceFresh) {
-      setDecision("wizard");
-      return;
-    }
-    completeOnboarding();
-    setDecision("app");
-  }, [
-    bootstrapped,
-    completeOnboarding,
-    decision,
+  const { decision: nextDecision, persistCompletion } = resolveFirstRunDecision({
     enabled,
     hydrated,
-    onboardingCompletedAt,
-    projects.length,
-    serverConfig,
-    threads.length,
+    completed: onboardingCompletedAt !== null,
+    bootstrapped,
+    authoritative:
+      primaryShellLive && !shellSummary.hasCachedShell && !shellSummary.hasSynchronizingShell,
+    serverConfigAvailable: serverConfig !== null,
     workspaceFresh,
+    projectCount: projects.length,
+    threadCount: threads.length,
+  });
+
+  useEffect(() => {
+    if (decision === "wizard" || !hydrated) return;
+
+    if (persistCompletion && onboardingCompletedAt === null) {
+      completeOnboarding();
+    }
+
+    if (decision === "pending" && nextDecision !== "pending") {
+      setDecision(nextDecision);
+    }
+  }, [
+    completeOnboarding,
+    decision,
+    hydrated,
+    nextDecision,
+    onboardingCompletedAt,
+    persistCompletion,
   ]);
 
   // The fallback only guards a stalled *server* read. It must not start

@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import { type OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -270,6 +271,33 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({ claudeHomePath, codexHomePath });
 
         expect(result.candidates).toEqual([]);
+      }),
+    );
+
+    it.effect("excludes the home directory, temporary root, and T3 data directory", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        for (const [index, cwd] of [
+          NodeOS.homedir(),
+          NodeOS.tmpdir(),
+          configBaseDir,
+          workspace,
+        ].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "session.jsonl"),
+            contents: claudeSessionLine(cwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z") + index,
+          });
+        }
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
       }),
     );
 
