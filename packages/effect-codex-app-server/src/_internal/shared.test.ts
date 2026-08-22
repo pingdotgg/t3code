@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as CodexError from "../errors.ts";
+import * as CodexSchema from "../schema.ts";
 import * as Shared from "./shared.ts";
 
 const decodeNestedNumberPayload = Schema.decodeUnknownEffect(
@@ -132,6 +133,47 @@ it.effect("passes request errors through without adding a wrapper", () =>
     ).pipe(Effect.flip);
 
     assert.strictEqual(error, source);
+  }),
+);
+
+it.effect("normalizes unrecognized plan types to unknown before decoding", () =>
+  Effect.gen(function* () {
+    const account = yield* Shared.decodeOptionalPayload(
+      "account/read",
+      CodexSchema.V2GetAccountResponse,
+      {
+        account: {
+          type: "chatgpt",
+          email: "edu@example.com",
+          planType: "edu_plus",
+        },
+        requiresOpenaiAuth: false,
+      },
+    );
+
+    assert.deepEqual(account.account, {
+      type: "chatgpt",
+      email: "edu@example.com",
+      planType: "unknown",
+    });
+
+    const knownPlan = yield* Shared.decodeOptionalPayload(
+      "account/read",
+      CodexSchema.V2GetAccountResponse,
+      {
+        account: {
+          type: "chatgpt",
+          email: "plus@example.com",
+          planType: "plus",
+        },
+        requiresOpenaiAuth: false,
+      },
+    );
+
+    assert.equal(knownPlan.account?.type, "chatgpt");
+    if (knownPlan.account?.type === "chatgpt") {
+      assert.equal(knownPlan.account.planType, "plus");
+    }
   }),
 );
 

@@ -17,6 +17,42 @@ export const JsonRpcResponseEnvelope = Schema.Struct({
   error: Schema.optional(JsonRpcError),
 });
 
+// Plan types emitted by the running codex binary can be newer than the pinned
+// protocol schema (e.g. "edu_plus"). Upstream maps unrecognized plans to
+// "unknown" via #[serde(other)]; mirror that so account payloads still decode.
+const KNOWN_PLAN_TYPES = new Set([
+  "free",
+  "go",
+  "plus",
+  "pro",
+  "prolite",
+  "team",
+  "self_serve_business_usage_based",
+  "business",
+  "enterprise_cbp_usage_based",
+  "enterprise",
+  "edu",
+  "unknown",
+]);
+
+export const normalizeUnknownPlanTypes = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(normalizeUnknownPlanTypes);
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      key === "planType" && typeof child === "string" && !KNOWN_PLAN_TYPES.has(child)
+        ? "unknown"
+        : normalizeUnknownPlanTypes(child),
+    ]),
+  );
+};
+
 export const decodeOptionalPayload = <A, I>(
   method: string,
   schema: Schema.Codec<A, I> | undefined,
@@ -31,7 +67,9 @@ export const decodeOptionalPayload = <A, I>(
     );
   }
 
-  return Schema.decodeUnknownEffect(schema)(raw).pipe(
+  return Schema.decodeUnknownEffect(schema)(
+    typeof raw === "object" && raw !== null ? normalizeUnknownPlanTypes(raw) : raw,
+  ).pipe(
     Effect.mapError((error) =>
       CodexError.CodexAppServerRequestError.invalidPayload(method, "decode-payload", error),
     ),
