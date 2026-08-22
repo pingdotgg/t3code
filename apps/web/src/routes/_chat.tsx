@@ -253,7 +253,7 @@ function ChatRouteGlobalShortcuts() {
     changeRequestSnapshotByKey,
     clearSelection,
     handleNewThread,
-    gitStatusQuery,
+    gitStatusQuery.data,
     keybindings,
     defaultProjectRef,
     previewOpen,
