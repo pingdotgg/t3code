@@ -11,6 +11,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
+- [Instance hooks](#instance-hooks)
 
 ## Concepts
 
@@ -139,6 +140,16 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 #### Turn diff
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
+
+### Instance hooks
+
+#### Start hook
+
+A management-solution HTTP endpoint, stored as `startHookUrl` in server settings, that a client POSTs before connecting so the managing service can boot the instance first. The client polls until the instance reports ready, optionally after collecting user input through a component form. See [instance-hooks.md](./instance-hooks.md).
+
+#### Stop hook
+
+A management-solution HTTP endpoint, stored as `stopHookUrl` in server settings, that the server DELETEs when the user clicks Stop on a connected environment. A 404 clears the setting so clients drop the control. See [instance-hooks.md](./instance-hooks.md).
 
 ## Practical Shortcuts
 

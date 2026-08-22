@@ -756,6 +756,14 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    runStopHook: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-stop-hook",
+      tag: WS_METHODS.serverRunStopHook,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

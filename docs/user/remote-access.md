@@ -206,6 +206,21 @@ Do not use hosted pairing for plain HTTP LAN URLs such as `http://192.168.x.y:37
 
 Hosted pairing does not proxy traffic through T3 Code. The browser still connects directly to the backend URL in the pairing link.
 
+## Starting and Stopping a Managed Instance
+
+If your server runs on a VM managed by a service that supports T3 Code instance hooks, you can
+start and stop the machine from **Settings** → **Connections** without opening the management app.
+
+- **Start.** Clicking **Connect** on the saved environment first asks the management service to
+  boot the instance, waits until it reports ready, then connects as usual. The service may ask a
+  few questions first — for example the instance size — in a short form.
+- **Stop.** Connected environments show a **Stop** button when the management service offers one.
+  Click it when work is done and the service shuts the instance down. Your saved environment stays
+  paired; the next **Connect** starts the instance again.
+
+The management service configures this by setting `startHookUrl` and `stopHookUrl` in the server's
+settings. If you don't use a managed VM, nothing changes.
+
 ## Managing Access Later
 
 Use `t3 auth` to manage access after the initial pairing flow.

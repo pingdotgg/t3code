@@ -6,7 +6,16 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -27,6 +36,7 @@ import {
   type DesktopServerExposureState,
   type DesktopWslState,
   type EnvironmentId,
+  type StartHookForm,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import {
@@ -40,6 +50,13 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import { StartHookFormDialog } from "./StartHookFormDialog";
+import {
+  type StartHookStep,
+  pollStartHookUntilReady,
+  requestStartHook,
+  submitStartHookForm,
+} from "./startHook";
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
@@ -1348,23 +1365,48 @@ function NetworkAccessDescription({
   );
 }
 
+type StartHookRunState = {
+  environmentId: EnvironmentId;
+  url: string;
+  label: string;
+  phase: "requesting" | "form" | "starting" | "connecting";
+  form: StartHookForm | null;
+  submitting: boolean;
+};
+
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   removingEnvironmentId: EnvironmentId | null;
+  /** Set while the start hook is cancellable: requesting, form, or polling. */
+  startingEnvironmentId: EnvironmentId | null;
+  /** Set while a completed start hook hands off to the connect flow. */
+  startHookConnectingEnvironmentId: EnvironmentId | null;
+  stoppingEnvironmentIds: ReadonlySet<EnvironmentId>;
   onConnect: (environmentId: EnvironmentId) => void;
+  onCancelStart: (environmentId: EnvironmentId) => void;
+  onStop: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
 };
 
 function SavedBackendListRow({
   environment,
   removingEnvironmentId,
+  startingEnvironmentId,
+  startHookConnectingEnvironmentId,
+  stoppingEnvironmentIds,
   onConnect,
+  onCancelStart,
+  onStop,
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
   const connectionState = environment.connection.phase;
   const isConnected = connectionState === "connected";
   const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
+  const isStarting = startingEnvironmentId === environmentId;
+  const isHandingOffToConnect = startHookConnectingEnvironmentId === environmentId;
+  const isStopping = stoppingEnvironmentIds.has(environmentId);
+  const stopHookConfigured = environment.serverConfig?.settings.stopHookUrl != null;
   const stateDotClassName =
     connectionState === "connected"
       ? "bg-success"
@@ -1507,28 +1549,56 @@ function SavedBackendListRow({
                 <Button
                   size="xs"
                   variant="outline"
-                  disabled={removingEnvironmentId === environmentId}
+                  disabled={removingEnvironmentId === environmentId || isStarting}
                   onClick={() => void onRemove(environmentId)}
                 >
                   {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
                 </Button>
               ) : null}
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={isConnecting || removingEnvironmentId === environmentId}
-                onClick={() =>
-                  void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
-                }
-              >
-                {isConnected
-                  ? removingEnvironmentId === environmentId
-                    ? "Disconnecting…"
-                    : "Disconnect"
-                  : isConnecting
-                    ? "Connecting…"
-                    : "Connect"}
-              </Button>
+              {isConnected && stopHookConfigured ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="xs"
+                        variant="destructive-outline"
+                        disabled={isStopping}
+                        onClick={() => void onStop(environmentId)}
+                      >
+                        {isStopping ? "Stopping…" : "Stop"}
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+                    Ask the service managing this environment to stop the instance.
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {isStarting ? (
+                <Button size="xs" variant="outline" onClick={() => onCancelStart(environmentId)}>
+                  <Spinner className="size-3" />
+                  Cancel start
+                </Button>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={
+                    isConnecting || isHandingOffToConnect || removingEnvironmentId === environmentId
+                  }
+                  onClick={() =>
+                    void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
+                  }
+                >
+                  {isConnected
+                    ? removingEnvironmentId === environmentId
+                      ? "Disconnecting…"
+                      : "Disconnect"
+                    : isConnecting || isHandingOffToConnect
+                      ? "Connecting…"
+                      : "Connect"}
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -1753,6 +1823,9 @@ export function ConnectionsSettings() {
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const runStopHookCommand = useAtomCommand(serverEnvironment.runStopHook, {
+    reportFailure: false,
+  });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -1830,6 +1903,13 @@ export function ConnectionsSettings() {
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
+  // Stops run per environment and can overlap, so track a set rather than a
+  // single slot that one finishing stop would clear for all the others.
+  const [stoppingSavedEnvironmentIds, setStoppingSavedEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(() => new Set());
+  const [startHookRun, setStartHookRun] = useState<StartHookRunState | null>(null);
+  const startHookAbortRef = useRef<AbortController | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
   const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
@@ -2245,7 +2325,7 @@ export function ConnectionsSettings() {
     savedBackendSshUsername,
   ]);
 
-  const handleConnectSavedBackend = useCallback(
+  const connectSavedBackendNow = useCallback(
     async (environmentId: EnvironmentId) => {
       setSavedBackendError(null);
       const result = await retryEnvironment(environmentId);
@@ -2263,6 +2343,160 @@ export function ConnectionsSettings() {
       }
     },
     [retryEnvironment],
+  );
+
+  // Every state write below is guarded by controller identity: a run that was
+  // superseded by a newer Connect click or cancelled must not clear or
+  // overwrite the newer run's state when its in-flight promise settles.
+  const isCurrentStartHook = useCallback(
+    (controller: AbortController) => startHookAbortRef.current === controller,
+    [],
+  );
+
+  const failStartHook = useCallback(
+    (controller: AbortController, error: unknown) => {
+      if (!isCurrentStartHook(controller)) return;
+      startHookAbortRef.current = null;
+      setStartHookRun(null);
+      const message = error instanceof Error ? error.message : "Failed to start the instance.";
+      setSavedBackendError(message);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not start instance",
+          description: message,
+        }),
+      );
+    },
+    [isCurrentStartHook],
+  );
+
+  const settleStartHookStep = useCallback(
+    async (
+      run: Pick<StartHookRunState, "environmentId" | "url" | "label">,
+      step: StartHookStep,
+      controller: AbortController,
+    ) => {
+      if (!isCurrentStartHook(controller)) return;
+      if (step.kind === "form") {
+        setStartHookRun({ ...run, phase: "form", form: step.form, submitting: false });
+        return;
+      }
+      if (step.kind === "poll") {
+        setStartHookRun({ ...run, phase: "starting", form: null, submitting: false });
+        await pollStartHookUntilReady(step.poll, { signal: controller.signal });
+      }
+      // Cancel and unmount both detach the controller before aborting, so this
+      // check is also what stops a connect from being started after either.
+      // Nothing can interleave between it and the call below.
+      if (!isCurrentStartHook(controller)) return;
+      // Hold the run through the connect handoff. `retryNow` only signals the
+      // supervisor, so clearing here would flash an enabled Connect button and
+      // let a second start-hook run begin under the first one.
+      setStartHookRun({ ...run, phase: "connecting", form: null, submitting: false });
+      try {
+        await connectSavedBackendNow(run.environmentId);
+      } finally {
+        if (isCurrentStartHook(controller)) {
+          startHookAbortRef.current = null;
+          setStartHookRun(null);
+        }
+      }
+    },
+    [connectSavedBackendNow, isCurrentStartHook],
+  );
+
+  const handleConnectSavedBackend = useCallback(
+    async (environmentId: EnvironmentId) => {
+      const environment = environments.find((entry) => entry.environmentId === environmentId);
+      const startHookUrl = environment?.serverConfig?.settings.startHookUrl ?? null;
+      if (startHookUrl === null) {
+        await connectSavedBackendNow(environmentId);
+        return;
+      }
+      startHookAbortRef.current?.abort();
+      const controller = new AbortController();
+      startHookAbortRef.current = controller;
+      const run = { environmentId, url: startHookUrl, label: environment?.label ?? "environment" };
+      setSavedBackendError(null);
+      setStartHookRun({ ...run, phase: "requesting", form: null, submitting: false });
+      try {
+        const step = await requestStartHook(startHookUrl, { signal: controller.signal });
+        await settleStartHookStep(run, step, controller);
+      } catch (error) {
+        failStartHook(controller, error);
+      }
+    },
+    [environments, connectSavedBackendNow, settleStartHookStep, failStartHook],
+  );
+
+  // Detach the controller before aborting so the run's pending rejection takes
+  // the superseded path instead of reporting a failure for a cancelled start.
+  const handleCancelStartHook = useCallback(() => {
+    const controller = startHookAbortRef.current;
+    startHookAbortRef.current = null;
+    setStartHookRun(null);
+    controller?.abort();
+  }, []);
+
+  // Leaving the page stops the hook request/poll and prevents a connect from
+  // being started afterwards. A connect already dispatched is the user's
+  // committed intent and is owned by the supervisor, so it is left to finish.
+  useEffect(() => handleCancelStartHook, [handleCancelStartHook]);
+
+  const handleSubmitStartHookForm = useCallback(
+    async (values: ReadonlyArray<string>) => {
+      const run = startHookRun;
+      const controller = startHookAbortRef.current;
+      if (run === null || controller === null) return;
+      setStartHookRun({ ...run, submitting: true });
+      try {
+        const step = await submitStartHookForm(run.url, values, { signal: controller.signal });
+        await settleStartHookStep(run, step, controller);
+      } catch (error) {
+        failStartHook(controller, error);
+      }
+    },
+    [startHookRun, settleStartHookStep, failStartHook],
+  );
+
+  const handleStopSavedBackend = useCallback(
+    async (environmentId: EnvironmentId) => {
+      setStoppingSavedEnvironmentIds((current) => new Set(current).add(environmentId));
+      const result = await runStopHookCommand({ environmentId, input: {} });
+      setStoppingSavedEnvironmentIds((current) => {
+        const next = new Set(current);
+        next.delete(environmentId);
+        return next;
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        const message = error instanceof Error ? error.message : "Failed to stop the instance.";
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not stop instance",
+            description: message,
+          }),
+        );
+        return;
+      }
+      toastManager.add(
+        result.value.outcome === "gone"
+          ? {
+              type: "success",
+              title: "Stop hook removed",
+              description: "The management service no longer offers this stop hook.",
+            }
+          : {
+              type: "success",
+              title: "Stop requested",
+              description: "The management service is stopping this instance.",
+            },
+      );
+    },
+    [runStopHookCommand],
   );
 
   const handleRemoveSavedBackend = useCallback(
@@ -3449,10 +3683,30 @@ export function ConnectionsSettings() {
             key={environment.environmentId}
             environment={environment}
             removingEnvironmentId={removingSavedEnvironmentId}
+            startingEnvironmentId={
+              startHookRun !== null && startHookRun.phase !== "connecting"
+                ? startHookRun.environmentId
+                : null
+            }
+            startHookConnectingEnvironmentId={
+              startHookRun?.phase === "connecting" ? startHookRun.environmentId : null
+            }
+            stoppingEnvironmentIds={stoppingSavedEnvironmentIds}
             onConnect={handleConnectSavedBackend}
+            onCancelStart={handleCancelStartHook}
+            onStop={handleStopSavedBackend}
             onRemove={handleRemoveSavedBackend}
           />
         ))}
+        {startHookRun !== null && startHookRun.phase === "form" && startHookRun.form !== null ? (
+          <StartHookFormDialog
+            environmentLabel={startHookRun.label}
+            form={startHookRun.form}
+            submitting={startHookRun.submitting}
+            onSubmit={(values) => void handleSubmitStartHookForm(values)}
+            onCancel={handleCancelStartHook}
+          />
+        ) : null}
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}

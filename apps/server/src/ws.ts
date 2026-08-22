@@ -61,7 +61,12 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+} from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -85,6 +90,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as InstanceHooks from "./instanceHooks.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -437,6 +443,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const stopHookHttpClient = yield* HttpClient.HttpClient;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1607,6 +1614,17 @@ const makeWsRpcLayer = (
             serverSettings
               .updateSettings(patch)
               .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverRunStopHook]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRunStopHook,
+            InstanceHooks.runStopHook.pipe(
+              Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+              Effect.provideService(HttpClient.HttpClient, stopHookHttpClient),
+            ),
             {
               "rpc.aggregate": "server",
             },
