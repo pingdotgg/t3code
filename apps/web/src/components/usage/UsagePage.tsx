@@ -510,22 +510,11 @@ function UsageDeviceStrip({
   readonly environments: readonly EnvironmentUsageStatus[];
 }) {
   const scanning = environments.filter(
-    (environment) => environment.summary === null && environment.error === null,
+    (environment) => environment.isPending && environment.error === null,
   );
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border border-border px-3 py-2 text-xs">
       {environments.map((environment) => {
-        if (environment.summary !== null) {
-          return (
-            <span
-              key={environment.environmentId}
-              className="flex items-center gap-1 text-foreground"
-            >
-              <CheckIcon className="size-3 text-emerald-600 dark:text-emerald-300/90" aria-hidden />
-              {environment.label}
-            </span>
-          );
-        }
         if (environment.error !== null) {
           return (
             <span
@@ -533,6 +522,17 @@ function UsageDeviceStrip({
               className="flex items-center gap-1 text-destructive"
             >
               <XIcon className="size-3" aria-hidden />
+              {environment.label}
+            </span>
+          );
+        }
+        if (!environment.isPending && environment.summary !== null) {
+          return (
+            <span
+              key={environment.environmentId}
+              className="flex items-center gap-1 text-foreground"
+            >
+              <CheckIcon className="size-3 text-emerald-600 dark:text-emerald-300/90" aria-hidden />
               {environment.label}
             </span>
           );
