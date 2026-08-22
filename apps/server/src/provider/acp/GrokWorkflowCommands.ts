@@ -112,8 +112,8 @@ function readWorkflowDir(dir: string, byName: Map<string, ServerProviderSlashCom
  * host Rhai.
  */
 export function readGrokWorkflowSlashCommands(input: {
-  readonly projectRoot?: string;
-  readonly homeDir?: string;
+  readonly projectRoot?: string | undefined;
+  readonly homeDir?: string | undefined;
 }): ReadonlyArray<ServerProviderSlashCommand> {
   const byName = new Map<string, ServerProviderSlashCommand>();
   for (const command of GROK_WORKFLOW_CONTROL_COMMANDS) {

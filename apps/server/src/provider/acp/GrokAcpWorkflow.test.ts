@@ -48,7 +48,8 @@ describe("GrokAcpWorkflow", () => {
       timelineBypass: true,
     });
     expect(memberStarted?.payload.agentId).toBeUndefined();
-    expect(first.events.some((event) => event.type === "thread.token-usage.updated")).toBe(false);
+    const eventTypes: ReadonlyArray<string> = first.events.map((event) => event.type);
+    expect(eventTypes).not.toContain("thread.token-usage.updated");
   });
 
   it("completes a run that is already terminal on the first notification", () => {

@@ -316,9 +316,9 @@ function agentCompletedStatus(state: string): "completed" | "failed" | "stopped"
 
 function mergeTypedUsageFromCounts(
   input: {
-    readonly tokensUsed?: number;
-    readonly durationMs?: number;
-    readonly toolCallCount?: number;
+    readonly tokensUsed?: number | undefined;
+    readonly durationMs?: number | undefined;
+    readonly toolCallCount?: number | undefined;
   },
   previous: GrokTypedUsageSnapshot | undefined,
 ): GrokTypedUsageSnapshot | undefined {

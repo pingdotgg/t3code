@@ -50,7 +50,7 @@ function buildGrokServerProvider(
   input: Parameters<typeof buildServerProvider>[0],
   discovery: {
     readonly environment: NodeJS.ProcessEnv;
-    readonly projectRoot?: string;
+    readonly projectRoot?: string | undefined;
   },
 ): ServerProviderDraft {
   return buildServerProvider({
@@ -80,8 +80,8 @@ const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 export function buildInitialGrokProviderSnapshot(
   grokSettings: GrokSettings,
   discovery?: {
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly projectRoot?: string;
+    readonly environment?: NodeJS.ProcessEnv | undefined;
+    readonly projectRoot?: string | undefined;
   },
 ): Effect.Effect<ServerProviderDraft> {
   return Effect.gen(function* () {
