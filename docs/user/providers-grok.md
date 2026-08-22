@@ -75,7 +75,8 @@ turn. Auto-compact notifications fill the context-window meter
 (`compactsAutomatically`) and mark the thread compacted, matching Claude's
 compact boundary. Session recap lands on thread metadata, not the title.
 Hook runs and background shells use the same `hook.*` and `local_bash` task
-events as Claude.
+events as Claude. Queued prompts (`_x.ai/queue/changed`) update session state
+and thread metadata with the queue length.
 
 ## Rewind
 
@@ -90,6 +91,6 @@ Settings when ACP login fails.
 
 ## What T3 still does not surface
 
-Grok Build's ACP session channel also carries queued prompts, plugins, and marketplace
-updates. Those notifications are accepted and ignored until a later change maps them. The
-Grok CLI TUI remains the source of truth for `/usage`.
+Grok Build's ACP session channel also carries plugins and marketplace updates. Those
+notifications are accepted and ignored until a later change maps them. The Grok CLI TUI
+remains the source of truth for `/usage`.

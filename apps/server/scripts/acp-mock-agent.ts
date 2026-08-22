@@ -22,6 +22,7 @@ const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION ===
 const xAiSessionNotificationMethod =
   process.env.T3_ACP_XAI_SESSION_METHOD ?? "x.ai/session_notification";
 const emitSessionExtras = process.env.T3_ACP_EMIT_SESSION_EXTRAS === "1";
+const emitQueueChanged = process.env.T3_ACP_EMIT_QUEUE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
@@ -1030,6 +1031,13 @@ const program = Effect.gen(function* () {
             description: "Background wait",
             output_file: "/tmp/grok-bg.log",
           },
+        });
+      }
+
+      if (emitQueueChanged) {
+        writeJsonRpcNotification("_x.ai/queue/changed", {
+          sessionId: requestedSessionId,
+          entries: [{ prompt: "follow up" }],
         });
       }
 

@@ -100,14 +100,18 @@ import {
   type GrokWorkflowTrackState,
 } from "../acp/GrokAcpWorkflow.ts";
 import {
+  GROK_QUEUE_CHANGED_METHODS,
   GROK_SESSION_NOTIFICATION_METHODS,
+  XAiQueueChangedNotification,
   grokAutoCompactEvents,
   grokBackgroundTaskEvents,
   grokHookEvents,
+  grokQueueChangedEvents,
   grokSessionRecapEvents,
   parseXAiAutoCompact,
   parseXAiBackgroundTask,
   parseXAiHookExecution,
+  parseXAiQueueChanged,
   parseXAiSessionRecap,
   parseXAiTurnCompletedUsage,
   type GrokExtraEventSpec,
@@ -170,6 +174,7 @@ interface GrokSessionContext {
   maxTokens: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastCompleteCostUsd: number | undefined;
+  lastQueueLength: number | undefined;
   availableModelIds: ReadonlyArray<string>;
   workflowTrack: GrokWorkflowTrackState;
   readonly toolUpdateGates: Map<string, GrokToolUpdateGate>;
@@ -985,6 +990,38 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ),
               { discard: true },
             );
+            yield* Effect.forEach(
+              GROK_QUEUE_CHANGED_METHODS,
+              (method) =>
+                acp.handleExtNotification(method, XAiQueueChangedNotification, (params) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      yield* logNative(input.threadId, method, params);
+                      const ctx = sessions.get(input.threadId);
+                      if (!ctx) {
+                        return;
+                      }
+                      const queue = parseXAiQueueChanged(params);
+                      if (!queue || ctx.lastQueueLength === queue.entries.length) {
+                        return;
+                      }
+                      ctx.lastQueueLength = queue.entries.length;
+                      const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                      yield* emitGrokExtraSpecs({
+                        threadId: input.threadId,
+                        turnId,
+                        method,
+                        payload: params,
+                        specs: grokQueueChangedEvents(
+                          queue,
+                          ctx.promptsInFlight > 0 || ctx.session.status === "running",
+                        ),
+                      });
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
             yield* acp.handleRequestPermission((params) =>
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
@@ -1125,6 +1162,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               currentGrokMaxTokensFromSessionSetup(started.sessionSetupResult),
             lastKnownTokenUsage: undefined,
             lastCompleteCostUsd: undefined,
+            lastQueueLength: undefined,
             availableModelIds,
             workflowTrack: emptyGrokWorkflowTrackState(),
             toolUpdateGates: new Map(),

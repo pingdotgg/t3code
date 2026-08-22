@@ -1756,4 +1756,38 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("projects Grok queue/changed onto session state", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-queue");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_QUEUE: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const waiting = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "session.state.changed" && event.payload.reason === "queue:1"
+          ? Deferred.succeed(waiting, event).pipe(Effect.ignore)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "queue me", attachments: [] });
+      const event = yield* Deferred.await(waiting);
+      assert.equal(event.type, "session.state.changed");
+      if (event.type === "session.state.changed") {
+        assert.equal(event.payload.state, "waiting");
+        assert.equal(event.payload.reason, "queue:1");
+      }
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

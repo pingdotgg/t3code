@@ -1,4 +1,5 @@
 import type { ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { extractGrokTokenUsage } from "./XAiAcpExtension.ts";
 import { grokCompleteCostUsd } from "../../usage/usageTranscripts.ts";
@@ -17,6 +18,15 @@ export const GROK_SESSION_NOTIFICATION_METHODS = [
 ] as const;
 
 export type GrokSessionNotificationMethod = (typeof GROK_SESSION_NOTIFICATION_METHODS)[number];
+
+export const GROK_QUEUE_CHANGED_METHODS = ["_x.ai/queue/changed", "x.ai/queue/changed"] as const;
+
+export const XAiQueueChangedNotification = Schema.Struct({
+  sessionId: Schema.optional(Schema.Unknown),
+  session_id: Schema.optional(Schema.Unknown),
+  entries: Schema.Array(Schema.Unknown),
+});
+export type XAiQueueChangedNotification = typeof XAiQueueChangedNotification.Type;
 
 export interface GrokHookRun {
   readonly hookId: string;
