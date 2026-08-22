@@ -204,13 +204,31 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
       },
       event: {
-        subscribe: async () => ({
-          stream: (async function* () {
-            for (const event of runtimeMock.state.subscribedEvents) {
-              yield event;
-            }
-          })(),
-        }),
+        subscribe: async (_arg: unknown, options?: { signal?: AbortSignal }) => {
+          const signal = options?.signal;
+          return {
+            stream: (async function* () {
+              // Keep the subscription open so tests can push events in
+              // batches (the adapter's event pump must not see the stream end
+              // just because the array ran dry mid-test), and stop promptly
+              // when the session scope's AbortController fires so teardown can
+              // interrupt the pump. A microtask yield (not setTimeout) is used
+              // because the Effect test harness virtualizes timer-based
+              // scheduling.
+              let index = 0;
+              while (true) {
+                if (index < runtimeMock.state.subscribedEvents.length) {
+                  yield runtimeMock.state.subscribedEvents[index];
+                  index += 1;
+                } else if (signal?.aborted) {
+                  return;
+                } else {
+                  await new Promise<void>((resolve) => queueMicrotask(resolve));
+                }
+              }
+            })(),
+          };
+        },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -1439,6 +1457,218 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions.length, 1);
       NodeAssert.equal(sessions[0]?.threadId, "thread-native-log-failure");
       NodeAssert.deepEqual(closeCallsDuringRun, []);
+    }),
+  );
+
+  it.effect("completes the running turn on the OpenCode session.idle event", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-session-idle");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "do a thing",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      const completionsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "busy" },
+          },
+        },
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "idle" } },
+        },
+      );
+
+      const completions = Array.from(
+        yield* Fiber.join(completionsFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(completions.length, 1);
+      NodeAssert.equal(completions[0]?.type, "turn.completed");
+      if (completions[0]?.type === "turn.completed") {
+        NodeAssert.equal(String(completions[0].turnId), String(turn.turnId));
+      }
+
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+    }),
+  );
+
+  it.effect("does not leave the session stuck running across a subagent busy->idle cycle", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-subagent-idle");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "delegate to a subagent",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      const completionsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // Main turn, then a background subagent continuation: each runs through
+      // its own busy->idle cycle. The first idle closes the turn; the second
+      // idle must still return the session to ready instead of leaving it
+      // "running" forever (the pre-fix behaviour).
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "busy" } },
+        },
+        { type: "session.idle", properties: { sessionID: "http://127.0.0.1:9999/session" } },
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "busy" } },
+        },
+        { type: "session.idle", properties: { sessionID: "http://127.0.0.1:9999/session" } },
+      );
+
+      const completions = Array.from(
+        yield* Fiber.join(completionsFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(completions.length, 2);
+
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+    }),
+  );
+
+  it.effect("ignores a stale paired idle that lags a sendTurn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-stale-idle");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turnOne = yield* adapter.sendTurn({
+        threadId,
+        input: "first turn",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      const firstCompletionFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // Turn one finishes; OpenCode pairs a `session.idle` with it.
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "busy" } },
+        },
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "idle" } },
+        },
+      );
+
+      const firstCompletions = Array.from(
+        yield* Fiber.join(firstCompletionFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(firstCompletions.length, 1);
+      NodeAssert.equal(String(firstCompletions[0]?.turnId), String(turnOne.turnId));
+      // A follow-up is sent between the paired idle notifications.
+      const turnTwo = yield* adapter.sendTurn({
+        threadId,
+        input: "second turn",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      NodeAssert.ok(String(turnTwo.turnId) !== String(turnOne.turnId));
+
+      const secondCompletionFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // The stale `session.idle` for turn one lands after the new turn opened.
+      runtimeMock.state.subscribedEvents.push({
+        type: "session.idle",
+        properties: { sessionID: "http://127.0.0.1:9999/session" },
+      });
+      yield* advanceTestClock(10);
+
+      // The stale idle must not tear down the fresh turn.
+      const afterStaleIdle = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(afterStaleIdle?.status, "running");
+      NodeAssert.equal(String(afterStaleIdle?.activeTurnId), String(turnTwo.turnId));
+
+      // The new turn runs its own busy->idle cycle and completes normally.
+      runtimeMock.state.subscribedEvents.push(
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "busy" } },
+        },
+        {
+          type: "session.status",
+          properties: { sessionID: "http://127.0.0.1:9999/session", status: { type: "idle" } },
+        },
+      );
+
+      const secondCompletions = Array.from(
+        yield* Fiber.join(secondCompletionFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(secondCompletions.length, 1);
+      NodeAssert.equal(String(secondCompletions[0]?.turnId), String(turnTwo.turnId));
+
+      const finalSession = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(finalSession?.status, "ready");
     }),
   );
 });
