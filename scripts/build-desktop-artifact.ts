@@ -790,6 +790,10 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  // Windows arm64 builds msgpackr-extract locally. Keep its runtime addon while
+  // excluding MSBuild intermediates that electron-builder would smart-unpack.
+  "!**/node_modules/msgpackr-extract/build/!(Release){,/**/*}",
+  "!**/node_modules/msgpackr-extract/build/Release/!(extract.node){,/**/*}",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -810,12 +814,14 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 export const WINDOWS_SERVER_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
-// platform packages are dead weight (see above), and node_modules/.bin shims
-// are never spawned at runtime (and are symlinks on POSIX build hosts, which
-// the asar extraction path deliberately does not support).
+// platform packages and native compiler intermediates are dead weight (see
+// above), and node_modules/.bin shims are never spawned at runtime (and are
+// symlinks on POSIX build hosts, which the asar extraction path does not support).
 export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
+  "**/node_modules/msgpackr-extract/build/!(Release){,/**/*}",
+  "**/node_modules/msgpackr-extract/build/Release/!(extract.node){,/**/*}",
   "**/node_modules/.bin",
   "**/node_modules/.bin/**",
 ] as const;
