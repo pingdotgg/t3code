@@ -64,6 +64,7 @@ import {
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
+import { isProviderSkillMentionable } from "@t3tools/client-runtime/providerSkills";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
@@ -419,8 +420,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ];
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
+      // Only a message-opening slash command is expanded by the provider CLI;
+      // elsewhere it arrives as literal text. Built-ins apply locally, so they
+      // are not gated the same way.
       const providerCommands: ComposerCommandItem[] = [];
-      for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
+      const expandableCommands =
+        composerTrigger.rangeStart === 0 ? (selectedProviderStatus?.slashCommands ?? []) : [];
+      for (const cmd of expandableCommands) {
         if (!cmd.name.toLowerCase().includes(q)) continue;
         providerCommands.push({
           id: `pcmd:${cmd.name}`,
@@ -445,7 +451,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
+      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter(
+        isProviderSkillMentionable,
+      );
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });

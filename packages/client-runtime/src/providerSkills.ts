@@ -25,6 +25,18 @@ export function formatProviderSkillDisplayName(
   return titleCaseWords(skill.name);
 }
 
+/**
+ * Whether a `$` mention can actually start this skill. A skill the user
+ * switched off is gone, and a user-invocation-only skill is hidden from the
+ * agent's skill tool — naming it in prose only invites the agent to guess at a
+ * neighbour, so it belongs in the slash-command menu instead.
+ */
+export function isProviderSkillMentionable(
+  skill: Pick<ServerProviderSkill, "enabled" | "userInvocationOnly">,
+): boolean {
+  return skill.enabled && skill.userInvocationOnly !== true;
+}
+
 export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {

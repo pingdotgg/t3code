@@ -287,6 +287,111 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("marks skills that only the user can invoke", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      yield* writeSkill(
+        path.join(workspace, ".claude", "skills"),
+        "re-release-version",
+        [
+          "---",
+          "name: re-release-version",
+          "description: Move the current tag forward.",
+          "disable-model-invocation: true",
+          "---",
+          "",
+          "# Body",
+        ].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspace, ".claude", "skills"),
+        "release-version",
+        ["---", "name: release-version", "description: Cut a release.", "---", "", "# Body"].join(
+          "\n",
+        ),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.equal(
+        skills.find((skill) => skill.name === "re-release-version")?.userInvocationOnly,
+        true,
+      );
+      assert.equal(
+        skills.find((skill) => skill.name === "release-version")?.userInvocationOnly,
+        undefined,
+      );
+    }),
+  );
+
+  it.effect("disables skills switched off by skillOverrides", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      for (const name of ["kept", "off-by-user", "off-by-project"]) {
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          name,
+          ["---", `name: ${name}`, "---", "", "# Body"].join("\n"),
+        );
+      }
+
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{ "skillOverrides": { "off-by-user": "off", "kept": "on" } }',
+      );
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.json"),
+        '{ "skillOverrides": { "off-by-project": "off" } }',
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.enabled]),
+        [
+          ["kept", true],
+          ["off-by-project", false],
+          ["off-by-user", false],
+        ],
+      );
+    }),
+  );
+
+  it.effect("ignores unreadable settings when resolving skillOverrides", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "kept",
+        ["---", "name: kept", "---", "", "# Body"].join("\n"),
+      );
+      yield* fs.writeFileString(path.join(configDir, "settings.json"), "{ not json");
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.enabled]),
+        [["kept", true]],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

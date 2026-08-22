@@ -48,6 +48,19 @@ describe("searchProviderSkills", () => {
     expect(searchProviderSkills(skills, "gfc").map((skill) => skill.name)).toEqual(["gh-fix-ci"]);
   });
 
+  it("omits skills only the user can invoke", () => {
+    // `$` puts the name in the prompt as prose, and the agent cannot see this
+    // skill at all — it belongs in the slash-command menu instead.
+    const skills = [
+      makeSkill({ name: "re-release-version", userInvocationOnly: true }),
+      makeSkill({ name: "release-version" }),
+    ];
+
+    expect(searchProviderSkills(skills, "release").map((skill) => skill.name)).toEqual([
+      "release-version",
+    ]);
+  });
+
   it("omits disabled skills from results", () => {
     const skills = [
       makeSkill({ name: "ui", displayName: "Ui", enabled: false }),

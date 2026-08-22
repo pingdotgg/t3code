@@ -1107,16 +1107,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ] as const)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
-        (command) => ({
-          id: `provider-slash-command:${selectedProvider}:${command.name}`,
-          type: "provider-slash-command" as const,
-          provider: selectedProvider,
-          command,
-          label: `/${command.name}`,
-          description: command.description ?? command.input?.hint ?? "Run provider command",
-        }),
-      );
+      // The provider CLI only expands a slash command when it opens the whole
+      // message; anywhere else it reaches the agent as literal text. Built-ins
+      // above are applied locally on selection, so they stay available.
+      const providerSlashCommandItems = (
+        composerTrigger.rangeStart === 0 ? (selectedProviderStatus?.slashCommands ?? []) : []
+      ).map((command) => ({
+        id: `provider-slash-command:${selectedProvider}:${command.name}`,
+        type: "provider-slash-command" as const,
+        provider: selectedProvider,
+        command,
+        label: `/${command.name}`,
+        description: command.description ?? command.input?.hint ?? "Run provider command",
+      }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = (selectedProviderStatus?.skills ?? [])
         .filter((skill) => skill.enabled)

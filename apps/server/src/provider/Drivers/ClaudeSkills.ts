@@ -17,6 +17,8 @@ import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -28,7 +30,12 @@ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 type SkillFrontmatter =
   | { readonly kind: "missing" }
   | { readonly kind: "malformed" }
-  | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
+  | {
+      readonly kind: "parsed";
+      readonly name?: string;
+      readonly description?: string;
+      readonly userInvocationOnly?: boolean;
+    };
 
 function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
@@ -53,8 +60,79 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
     kind: "parsed",
     ...(name ? { name } : {}),
     ...(description ? { description } : {}),
+    ...(record["disable-model-invocation"] === true ? { userInvocationOnly: true } : {}),
   };
 }
+
+/**
+ * Settings files Claude Code merges for `skillOverrides`, in increasing
+ * precedence. A skill the user switched off is reported disabled rather than
+ * dropped, so the picker can grey it out instead of silently losing it.
+ */
+function skillOverrideSettingsPaths(
+  path: Path.Path,
+  configDirPath: string,
+  cwd: string | undefined,
+): ReadonlyArray<string> {
+  return [
+    path.join(configDirPath, "settings.json"),
+    ...(cwd
+      ? [
+          path.join(cwd, ".claude", "settings.json"),
+          path.join(cwd, ".claude", "settings.local.json"),
+        ]
+      : []),
+  ];
+}
+
+// Lenient because these settings files are hand-edited and Claude Code itself
+// tolerates comments and trailing commas in them.
+const SkillOverrideSettings = fromLenientJson(
+  Schema.Struct({
+    skillOverrides: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  }),
+);
+const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSettings);
+
+const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
+  configDirPath: string,
+  cwd: string | undefined,
+): Effect.fn.Return<ReadonlyMap<string, boolean>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const enabledByName = new Map<string, boolean>();
+
+  for (const settingsPath of skillOverrideSettingsPaths(path, configDirPath, cwd)) {
+    const contents = yield* fileSystem
+      .readFileString(settingsPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (contents === undefined) {
+      continue;
+    }
+
+    const parsed = yield* decodeSkillOverrideSettings(contents).pipe(
+      Effect.tapError((cause) =>
+        Effect.logDebug("claude settings file is unreadable; ignoring skillOverrides", {
+          path: settingsPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const overrides = parsed?.skillOverrides;
+    if (!overrides) {
+      continue;
+    }
+
+    for (const [name, value] of Object.entries(overrides)) {
+      // Only "off" is a decision to hide. Unknown values mean a newer Claude
+      // Code grew a mode we do not model yet — leave the skill visible.
+      enabledByName.set(name, value !== "off" && value !== false);
+    }
+  }
+
+  return enabledByName;
+});
 
 /**
  * Resolve the Claude config directory the CLI would use, matching the
@@ -100,6 +178,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
+  const skillOverrides = yield* readSkillOverrides(configDirPath, cwd);
 
   const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
@@ -142,10 +221,13 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       skillsByName.set(name, {
         name,
         path: skillPath,
-        enabled: true,
+        enabled: skillOverrides.get(name) ?? true,
         scope: root.scope,
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
+          : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.userInvocationOnly
+          ? { userInvocationOnly: true }
           : {}),
       });
     }

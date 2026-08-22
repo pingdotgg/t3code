@@ -41,6 +41,21 @@ T3 Code looks for Claude skills in the Claude config directory's `skills` folder
 
 If the same skill name exists in more than one folder, the later folder wins.
 
+A skill you have switched off in Claude Code is left out of both menus.
+
+## Starting A Skill With `$` Or `/`
+
+Typing `$` lists the skills the agent can pick up, and drops the name into your
+message as a mention. Typing `/` at the very start of a message lists slash
+commands and runs the one you choose.
+
+Some skills are marked to run only when you ask for them. Those never appear in
+the `$` menu, because a mention leaves the choice to the agent and the agent
+cannot see them — pick them from the `/` menu instead.
+
+`/` only works at the start of a message. Later in a message it is ordinary
+text, so the menu stops offering commands there.
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.
