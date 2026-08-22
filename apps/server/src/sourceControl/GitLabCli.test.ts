@@ -1,4 +1,4 @@
-import { assert, it, afterEach, expect, vi } from "@effect/vitest";
+import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -386,4 +386,83 @@ layer("GitLabCli.layer", (it) => {
       assert.strictEqual(error.cause, cause);
     }),
   );
+
+  it.effect("normalizes pasted repository URLs before the projects API lookup", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              path_with_namespace: "group/sub/project",
+              web_url: "https://sourcecontrol.example.com/group/sub/project",
+              http_url_to_repo: "https://sourcecontrol.example.com/group/sub/project.git",
+              ssh_url_to_repo: "git@sourcecontrol.example.com:group/sub/project.git",
+            }),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://sourcecontrol.example.com/group/sub/project/",
+        });
+      });
+
+      assert.deepStrictEqual(result.nameWithOwner, "group/sub/project");
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", `projects/${encodeURIComponent("group/sub/project")}`],
+        }),
+      );
+    }),
+  );
+});
+
+describe("normalizeGitLabRepositoryPath", () => {
+  it("keeps bare namespace/project paths untouched", () => {
+    expect(GitLabCli.normalizeGitLabRepositoryPath("group/project")).toBe("group/project");
+    expect(GitLabCli.normalizeGitLabRepositoryPath("  group/sub/project  ")).toBe(
+      "group/sub/project",
+    );
+  });
+
+  it("extracts the project path from gitlab.com URLs", () => {
+    expect(GitLabCli.normalizeGitLabRepositoryPath("https://gitlab.com/group/project")).toBe(
+      "group/project",
+    );
+  });
+
+  it("extracts the project path from self-hosted URLs on any hostname", () => {
+    expect(
+      GitLabCli.normalizeGitLabRepositoryPath("https://sourcecontrol.example.com/group/project"),
+    ).toBe("group/project");
+  });
+
+  it("strips a .git suffix", () => {
+    expect(
+      GitLabCli.normalizeGitLabRepositoryPath(
+        "https://sourcecontrol.example.com/group/project.git",
+      ),
+    ).toBe("group/project");
+  });
+
+  it("keeps nested group segments", () => {
+    expect(
+      GitLabCli.normalizeGitLabRepositoryPath("https://gitlab.com/group/sub/team/project"),
+    ).toBe("group/sub/team/project");
+  });
+
+  it("ignores web UI sections and trailing slashes", () => {
+    expect(GitLabCli.normalizeGitLabRepositoryPath("https://gitlab.com/group/project/")).toBe(
+      "group/project",
+    );
+    expect(
+      GitLabCli.normalizeGitLabRepositoryPath("https://gitlab.com/group/project/-/tree/main"),
+    ).toBe("group/project");
+  });
 });
