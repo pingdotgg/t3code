@@ -11,6 +11,22 @@ export function shouldUseCompactComposerFooter(
   return width !== null && width < breakpoint;
 }
 
+export function shouldUseRestingComposerLayout(input: {
+  isMobileViewport: boolean;
+  isFocused: boolean;
+  hasAttachments: boolean;
+  hasExpandedChrome: boolean;
+  hasInlineAccessories: boolean;
+}): boolean {
+  return (
+    !input.isMobileViewport &&
+    !input.isFocused &&
+    !input.hasAttachments &&
+    !input.hasExpandedChrome &&
+    !input.hasInlineAccessories
+  );
+}
+
 export function shouldUseCompactComposerPrimaryActions(
   width: number | null,
   options?: { hasWideActions?: boolean },
