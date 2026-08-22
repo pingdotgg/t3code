@@ -8,6 +8,7 @@ import {
   EnvironmentCacheStore,
   registerConnectionInCatalog,
   removeCatalogValue,
+  removeConnectionRouteFromCatalog,
   removeConnectionFromCatalog,
   replaceCatalogValue,
   selectConnectionRouteInCatalog,
@@ -102,6 +103,7 @@ function persistenceError(
     | "list-routes"
     | "register-connection"
     | "select-connection-route"
+    | "remove-connection-route"
     | "remove-connection"
     | "load-shell"
     | "save-shell"
@@ -393,6 +395,10 @@ export const connectionStorageLayer = Layer.effectContext(
         catalog
           .update((document) => selectConnectionRouteInCatalog(document, target))
           .pipe(Effect.mapError((cause) => persistenceError("select-connection-route", cause))),
+      removeRoute: (target, fallback) =>
+        catalog
+          .update((document) => removeConnectionRouteFromCatalog(document, target, fallback))
+          .pipe(Effect.mapError((cause) => persistenceError("remove-connection-route", cause))),
       remove: (target) =>
         catalog
           .update((document) => removeConnectionFromCatalog(document, target))

@@ -21,6 +21,7 @@ import {
   ConnectionCatalogDocument,
   connectionRoutes,
   registerConnectionInCatalog,
+  removeConnectionRouteFromCatalog,
   removeConnectionFromCatalog,
 } from "./storageDocument.ts";
 
@@ -138,6 +139,34 @@ describe("ConnectionCatalogDocument", () => {
     expect(removeConnectionFromCatalog(registered, BEARER_TARGET)).toEqual(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
     );
+  });
+
+  it("removes a relay route without discarding another route for the environment", () => {
+    const relayTarget = new RelayConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Remote",
+    });
+    const registered = registerConnectionInCatalog(
+      registerConnectionInCatalog(
+        {
+          ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+          remoteDpopTokens: [REMOTE_TOKEN],
+        },
+        new BearerConnectionRegistration({
+          target: BEARER_TARGET,
+          profile: BEARER_PROFILE,
+          credential: BEARER_CREDENTIAL,
+        }),
+      ),
+      new RelayConnectionRegistration({ target: relayTarget }),
+    );
+
+    expect(removeConnectionRouteFromCatalog(registered, relayTarget, BEARER_TARGET)).toEqual({
+      ...registered,
+      targets: [BEARER_TARGET],
+      routes: [BEARER_TARGET],
+      remoteDpopTokens: [],
+    });
   });
 
   it("persists the normalized SSH profile beside its target", () => {

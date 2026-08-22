@@ -33,7 +33,6 @@ import {
   connectionRouteId,
   connectionStatusText,
 } from "@t3tools/client-runtime/connection";
-import type { Discovery } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1356,7 +1355,6 @@ function NetworkAccessDescription({
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   routes: ReadonlyArray<ConnectionCatalogEntry>;
-  relayEnvironment: Discovery.RelayDiscoveredEnvironment | null;
   removingEnvironmentId: EnvironmentId | null;
   switchingRouteEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
@@ -1382,7 +1380,6 @@ function connectionRouteLabel(entry: ConnectionCatalogEntry): string {
 function SavedBackendListRow({
   environment,
   routes,
-  relayEnvironment,
   removingEnvironmentId,
   switchingRouteEnvironmentId,
   onConnect,
@@ -3539,9 +3536,6 @@ export function ConnectionsSettings() {
             key={environment.environmentId}
             environment={environment}
             routes={desktopBridge ? (environmentRoutes.get(environment.environmentId) ?? []) : []}
-            relayEnvironment={
-              relayEnvironmentDiscoveryState.environments.get(environment.environmentId) ?? null
-            }
             removingEnvironmentId={removingSavedEnvironmentId}
             switchingRouteEnvironmentId={switchingRouteEnvironmentId}
             onConnect={handleConnectSavedBackend}
