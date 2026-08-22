@@ -111,4 +111,29 @@ describe("UsagePage hourly breakdown", () => {
     expect(body).toContain("$1.00");
     expect(body.indexOf("$11.00")).toBeLessThan(body.indexOf("$13.00"));
   });
+
+  it("warns when a provider source could not be read", () => {
+    testState.useUsage.mockReturnValue({
+      merged: {
+        ...mergeUsage([], USAGE_CONTRACT_VERSION),
+        incompleteSources: [
+          {
+            environmentId: "env-a",
+            environmentLabel: "Local",
+            provider: "zcode",
+            status: "failed",
+            message: "Usage files could not be read.",
+          },
+        ],
+      },
+      environments: [],
+      isPending: false,
+      isPartial: false,
+      refresh: vi.fn(),
+    });
+
+    expect(renderToStaticMarkup(<UsagePage />)).toContain(
+      "Local&#x27;s ZCode usage could not be read.",
+    );
+  });
 });
