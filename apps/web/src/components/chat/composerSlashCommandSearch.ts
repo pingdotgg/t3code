@@ -5,11 +5,20 @@ import {
 } from "@t3tools/shared/searchRanking";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
+import { scoreProviderSkill } from "../../providerSkillSearch";
 
-function scoreSlashCommandItem(
-  item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>,
-  query: string,
-): number | null {
+type SlashSearchItem = Extract<
+  ComposerCommandItem,
+  { type: "slash-command" | "provider-slash-command" | "skill" }
+>;
+
+function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {
+  if (item.type === "skill") {
+    const skillQuery =
+      query === "skill" ? "" : query.startsWith("skill:") ? query.slice("skill:".length) : query;
+    return skillQuery ? scoreProviderSkill(item.skill, skillQuery) : 0;
+  }
+
   const primaryValue =
     item.type === "slash-command" ? item.command.toLowerCase() : item.command.name.toLowerCase();
   const description = item.description.toLowerCase();
@@ -43,18 +52,16 @@ function scoreSlashCommandItem(
 }
 
 export function searchSlashCommandItems(
-  items: ReadonlyArray<
-    Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
-  >,
+  items: ReadonlyArray<SlashSearchItem>,
   query: string,
-): Array<Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>> {
+): SlashSearchItem[] {
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
   if (!normalizedQuery) {
     return [...items];
   }
 
   const ranked: Array<{
-    item: Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>;
+    item: SlashSearchItem;
     score: number;
     tieBreaker: string;
   }> = [];
@@ -73,7 +80,9 @@ export function searchSlashCommandItems(
         tieBreaker:
           item.type === "slash-command"
             ? `0\u0000${item.command}`
-            : `1\u0000${item.command.name}\u0000${item.provider}`,
+            : item.type === "provider-slash-command"
+              ? `1\u0000${item.command.name}\u0000${item.provider}`
+              : `2\u0000${item.skill.name}\u0000${item.provider}`,
       },
       Number.POSITIVE_INFINITY,
     );
