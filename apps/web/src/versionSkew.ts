@@ -1,4 +1,5 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -43,10 +44,20 @@ export function resolveVersionMismatch(
   };
 }
 
+export function isClientBehindServer(clientVersion: string, serverVersion: string): boolean {
+  return compareSemverVersions(clientVersion, serverVersion) < 0;
+}
+
 export function resolveServerConfigVersionMismatch(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
 ): VersionMismatch | null {
-  return resolveVersionMismatch(serverConfig?.environment.serverVersion);
+  const mismatch = resolveVersionMismatch(serverConfig?.environment.serverVersion);
+  // The desktop app already surfaces its own update in the sidebar. A newer
+  // server should not look like a server update, or offer a downgrade.
+  if (!mismatch || isClientBehindServer(mismatch.clientVersion, mismatch.serverVersion)) {
+    return null;
+  }
+  return mismatch;
 }
 
 /** The update path the connected server offers, or null when it only

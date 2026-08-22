@@ -7,6 +7,7 @@ import {
   buildVersionMismatchDismissalKey,
   dismissVersionMismatch,
   isVersionMismatchDismissed,
+  isClientBehindServer,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -26,7 +27,10 @@ describe("versionSkew", () => {
     });
   });
 
-  it("reads the server version from config descriptors", () => {
+  it("does not offer a server update when this client is older than the server", () => {
+    expect(
+      isClientBehindServer("0.0.34-nightly.20260814.1090", "0.0.34-nightly.20260814.1092"),
+    ).toBe(true);
     expect(
       resolveServerConfigVersionMismatch({
         environment: {
@@ -42,8 +46,27 @@ describe("versionSkew", () => {
           },
         },
       }),
+    ).toBeNull();
+  });
+
+  it("reads an older server version from config descriptors", () => {
+    expect(
+      resolveServerConfigVersionMismatch({
+        environment: {
+          environmentId: EnvironmentId.make("environment-1"),
+          label: "Remote",
+          platform: {
+            os: "darwin",
+            arch: "arm64",
+          },
+          serverVersion: "0.0.0-old",
+          capabilities: {
+            repositoryIdentity: true,
+          },
+        },
+      }),
     ).toMatchObject({
-      serverVersion: "9.9.9",
+      serverVersion: "0.0.0-old",
     });
   });
 
