@@ -27,6 +27,7 @@ import {
 } from "react-native-nitro-markdown";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Platform,
   type LayoutChangeEvent,
@@ -1404,7 +1405,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             path: relativePath.split("/").filter((segment) => segment.length > 0),
             ...(presentation.line ? { line: String(presentation.line) } : {}),
           });
+          return;
         }
+        // The link renders as a file (icon + label) but points outside the
+        // workspace, so there is nothing on-device to navigate to. Say so
+        // instead of swallowing the tap.
+        Alert.alert(
+          "Can't open this file",
+          "It lives outside the project folder, so it isn't available here.",
+        );
         return;
       }
 
