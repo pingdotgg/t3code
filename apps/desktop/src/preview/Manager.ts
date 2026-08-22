@@ -3468,6 +3468,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           },
           () => previouslyFocused.focus(),
         ).pipe(Effect.ignore);
+        yield* attempt(
+          {
+            operation: "automationPress.restoreActiveElement",
+            tabId,
+            webContentsId: previouslyFocused.id,
+          },
+          () =>
+            previouslyFocused.executeJavaScript(
+              `if (window.__t3_restoreFocus && typeof window.__t3_restoreFocus.focus === 'function') { window.__t3_restoreFocus.focus(); delete window.__t3_restoreFocus; }`,
+            ),
+        ).pipe(Effect.ignore);
       }
     });
 
@@ -3476,6 +3487,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // changing which thread is mounted in the UI. Restore the previous renderer
     // after dispatch so automation never leaves the app's input focus behind.
     yield* Effect.gen(function* () {
+      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
+        yield* attempt(
+          {
+            operation: "automationPress.saveActiveElement",
+            tabId,
+            webContentsId: previouslyFocused.id,
+          },
+          () =>
+            previouslyFocused.executeJavaScript(
+              `if (document.activeElement && document.activeElement !== document.body) { window.__t3_restoreFocus = document.activeElement; } else { delete window.__t3_restoreFocus; }`,
+            ),
+        ).pipe(Effect.ignore);
+      }
       yield* attempt(
         { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
         () => wc.focus(),
