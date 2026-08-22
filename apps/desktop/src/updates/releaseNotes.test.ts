@@ -58,9 +58,6 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
   });
 
   it("does not throw on out-of-range numeric entities and keeps the literal", () => {
-    expect(() =>
-      normalizeDesktopUpdateReleaseNotes("- Broken entity &#9999999999;", "1.0.0"),
-    ).not.toThrow();
     const notes = normalizeDesktopUpdateReleaseNotes("- Broken entity &#9999999999;", "1.0.0");
     expect(notes).toEqual([{ version: "1.0.0", items: ["Broken entity &#9999999999;"] }]);
   });
