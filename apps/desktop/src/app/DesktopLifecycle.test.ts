@@ -80,6 +80,7 @@ function makeDesktopWindowLayer(
   input: {
     readonly activate?: Effect.Effect<void>;
     readonly flushMainWindowBounds?: Effect.Effect<void>;
+    readonly prepareForQuit?: () => void;
   } = {},
 ) {
   return Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -92,6 +93,8 @@ function makeDesktopWindowLayer(
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
+    setBackgroundModeEnabled: () => undefined,
+    prepareForQuit: input.prepareForQuit ?? (() => undefined),
     dispatchMenuAction: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
@@ -102,6 +105,13 @@ describe("DesktopLifecycle", () => {
   for (const platform of ["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>) {
     it.effect(`lets the updater's quit event proceed on ${platform}`, () => {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let quitPrepared = false;
+      const desktopWindowLayer = makeDesktopWindowLayer({
+        prepareForQuit: () => {
+          quitPrepared = true;
+        },
+      });
+
       const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform,
         isDevelopment: false,
@@ -111,7 +121,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(makeElectronAppLayer(appListeners)),
         Layer.provideMerge(electronThemeLayer),
         Layer.provideMerge(makeElectronWindowLayer()),
-        Layer.provideMerge(makeDesktopWindowLayer()),
+        Layer.provideMerge(desktopWindowLayer),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
@@ -136,6 +146,7 @@ describe("DesktopLifecycle", () => {
             prevented,
             "cancelling this event prevents the updater from completing its relaunch",
           );
+          assert.isTrue(quitPrepared);
 
           const state = yield* DesktopState.DesktopState;
           assert.isTrue(yield* Ref.get(state.quitting));
