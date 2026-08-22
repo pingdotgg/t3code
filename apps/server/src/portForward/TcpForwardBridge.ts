@@ -1,4 +1,5 @@
 import {
+  AuthTerminalOperateScope,
   TCP_PORT_FORWARD_FRAME_ACK,
   TCP_PORT_FORWARD_FRAME_CLOSE,
   TCP_PORT_FORWARD_FRAME_DATA,
@@ -13,6 +14,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -34,8 +36,12 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export class TcpForwardTargetConnectError extends Schema.TaggedErrorClass<TcpForwardTargetConnectError>()(
   "TcpForwardTargetConnectError",
-  { cause: Schema.Defect() },
-) {}
+  { host: Schema.String, port: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not connect to TCP forward target ${this.host}:${this.port}.`;
+  }
+}
 
 const controlFrame = (kind: number) => Uint8Array.of(kind);
 
@@ -81,7 +87,7 @@ const connectTargetAddress = (
     const onError = (cause: Error) => {
       target.off("connect", onConnect);
       target.destroy();
-      resume(Effect.fail(new TcpForwardTargetConnectError({ cause })));
+      resume(Effect.fail(new TcpForwardTargetConnectError({ host, port, cause })));
     };
     target.once("connect", onConnect);
     target.once("error", onError);
@@ -95,26 +101,55 @@ const connectTargetAddress = (
 export const makeConnectTarget = (createConnection: CreateTargetConnection) =>
   Effect.fn("TcpForwardBridge.connectTarget")(function* (host: string, port: number) {
     return yield* connectTargetAddress(createConnection, host, port).pipe(
-      Effect.catchTag("TcpForwardTargetConnectError", (ipv4Error) => {
-        if (host !== "127.0.0.1") return Effect.fail(ipv4Error);
-        return connectTargetAddress(createConnection, "::1", port).pipe(
-          Effect.mapError(
-            (ipv6Error) =>
-              new TcpForwardTargetConnectError({
-                cause: new AggregateError(
-                  [ipv4Error.cause, ipv6Error.cause],
-                  `Could not connect to loopback target on port ${port}`,
-                ),
-              }),
-          ),
-        );
+      Effect.catchTags({
+        TcpForwardTargetConnectError: (ipv4Error) => {
+          if (host !== "127.0.0.1") return Effect.fail(ipv4Error);
+          return connectTargetAddress(createConnection, "::1", port).pipe(
+            Effect.mapError(
+              (ipv6Error) =>
+                new TcpForwardTargetConnectError({
+                  host,
+                  port,
+                  cause: new AggregateError(
+                    [ipv4Error.cause, ipv6Error.cause],
+                    `Could not connect to loopback target on port ${port}`,
+                  ),
+                }),
+            ),
+          );
+        },
       }),
     );
   });
 
 const connectTarget = makeConnectTarget((options) => NodeNet.createConnection(options));
 
-const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
+export const makeTargetResource = <E, R>(
+  connect: (host: string, port: number) => Effect.Effect<NodeNet.Socket, E, R>,
+) =>
+  Effect.fn("TcpForwardBridge.acquireTarget")(function* (host: string, port: number) {
+    return yield* Effect.acquireRelease(connect(host, port), (socket) =>
+      Effect.sync(() => socket.destroy()),
+    );
+  });
+
+const acquireTarget = makeTargetResource(connectTarget);
+
+export const subscribeAndVerifySession = Effect.fn("TcpForwardBridge.subscribeAndVerifySession")(
+  function* (
+    sessions: Pick<
+      SessionStore.SessionStore["Service"],
+      "subscribeChanges" | "verifyWebSocketToken"
+    >,
+    session: SessionStore.VerifiedSession,
+  ) {
+    const changes = yield* sessions.subscribeChanges;
+    const refreshedSession = yield* sessions.verifyWebSocketToken(session.token);
+    return { changes, session: refreshedSession };
+  },
+);
+
+export const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
   webSocket: Socket.Socket,
   target: NodeNet.Socket,
 ) {
@@ -124,8 +159,11 @@ const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
   const closed = yield* Deferred.make<void>();
   let credit = TCP_PORT_FORWARD_INITIAL_CREDIT;
   let outstanding = 0;
+  let receiveCredit = TCP_PORT_FORWARD_INITIAL_CREDIT;
   let pending: Uint8Array = new Uint8Array(0);
-  let targetEnded = false;
+  let targetReadEnded = false;
+  let targetReadEndSent = false;
+  let targetWriteEnded = false;
   let closedOnce = false;
 
   const writeWebSocket = (frame: Uint8Array | Socket.CloseEvent) => {
@@ -145,11 +183,17 @@ const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
       outstanding += size;
       writeWebSocket(dataFrame(chunk));
     }
-    if (pending.byteLength === 0 && credit > 0) {
-      target.resume();
-    } else {
-      target.pause();
+    if (pending.byteLength === 0) {
+      if (targetReadEnded && !targetReadEndSent) {
+        targetReadEndSent = true;
+        writeWebSocket(controlFrame(TCP_PORT_FORWARD_FRAME_WRITE_END));
+      }
+      if (!targetReadEnded && credit > 0) {
+        target.resume();
+        return;
+      }
     }
+    target.pause();
   };
   const onData = (chunk: Buffer) => {
     if (pending.byteLength === 0) {
@@ -163,7 +207,8 @@ const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
     flushTargetData();
   };
   const onEnd = () => {
-    writeWebSocket(controlFrame(TCP_PORT_FORWARD_FRAME_WRITE_END));
+    targetReadEnded = true;
+    flushTargetData();
   };
   const onError = (cause: Error) => {
     writeWebSocket(errorFrame(cause.message));
@@ -196,13 +241,21 @@ const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
           protocolFailure("invalid data frame");
           return;
         }
-        if (targetEnded || target.destroyed) {
+        if (targetWriteEnded || target.destroyed) {
           protocolFailure("data received after write end");
           return;
         }
+        if (payload.byteLength > receiveCredit) {
+          protocolFailure("data exceeds receive credit");
+          return;
+        }
+        receiveCredit -= payload.byteLength;
         target.write(payload, (error) => {
           if (error) onError(error);
-          else writeWebSocket(ackFrame(payload.byteLength));
+          else {
+            receiveCredit += payload.byteLength;
+            writeWebSocket(ackFrame(payload.byteLength));
+          }
         });
         return;
       }
@@ -225,11 +278,11 @@ const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
         return;
       }
       case TCP_PORT_FORWARD_FRAME_WRITE_END:
-        if (frame.byteLength !== 1 || targetEnded) {
+        if (frame.byteLength !== 1 || targetWriteEnded) {
           protocolFailure("invalid write-end frame");
           return;
         }
-        targetEnded = true;
+        targetWriteEnded = true;
         target.end();
         return;
       case TCP_PORT_FORWARD_FRAME_CLOSE:
@@ -279,51 +332,61 @@ export const tcpPortForwardWebSocketRouteLayer = Layer.unwrap(
         if (ticket === null || ticket.trim() === "") {
           return yield* failEnvironmentAuthInvalid("missing_credential");
         }
-        const authorization = yield* tickets
-          .consume(ticket)
-          .pipe(
-            Effect.catchTag("TcpForwardTicketInvalidError", () =>
-              failEnvironmentAuthInvalid("invalid_credential"),
-            ),
-          );
-        return yield* capacity.withPermit(
-          Effect.gen(function* () {
-            const target = yield* connectTarget(authorization.remoteHost, authorization.remotePort);
-            const webSocket = yield* request.upgrade;
-            const revoked = sessions.streamChanges.pipe(
-              Stream.filter(
-                (change) =>
-                  change.type === "clientRemoved" &&
-                  change.sessionId === authorization.session.sessionId,
-              ),
-              Stream.runHead,
-              Effect.asVoid,
-            );
-            const expiresAt = authorization.session.expiresAt;
-            const expired =
-              expiresAt === undefined
-                ? Effect.never
-                : DateTime.now.pipe(
-                    Effect.flatMap((now) =>
-                      Effect.sleep(
-                        Duration.millis(
-                          Math.max(0, expiresAt.epochMilliseconds - now.epochMilliseconds),
-                        ),
-                      ),
-                    ),
-                  );
-            yield* Effect.raceFirst(
-              runBridge(webSocket, target),
-              Effect.raceFirst(revoked, expired),
-            );
-            return HttpServerResponse.empty();
+        const authorization = yield* tickets.consume(ticket).pipe(
+          Effect.catchTags({
+            TcpForwardTicketInvalidError: () => failEnvironmentAuthInvalid("invalid_credential"),
           }),
         );
+        return yield* capacity.withPermit(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const sessionWatcher = yield* subscribeAndVerifySession(
+                sessions,
+                authorization.session,
+              ).pipe(Effect.catch(() => failEnvironmentAuthInvalid("invalid_credential")));
+              const refreshedSession = sessionWatcher.session;
+              if (!refreshedSession.scopes.includes(AuthTerminalOperateScope)) {
+                return yield* failEnvironmentAuthInvalid("invalid_credential");
+              }
+              const target = yield* acquireTarget(
+                authorization.remoteHost,
+                authorization.remotePort,
+              );
+              const webSocket = yield* request.upgrade;
+              const revoked = Stream.fromEffectRepeat(PubSub.take(sessionWatcher.changes)).pipe(
+                Stream.filter(
+                  (change) =>
+                    change.type === "clientRemoved" &&
+                    change.sessionId === refreshedSession.sessionId,
+                ),
+                Stream.runHead,
+                Effect.asVoid,
+              );
+              const expiresAt = refreshedSession.expiresAt;
+              const expired =
+                expiresAt === undefined
+                  ? Effect.never
+                  : DateTime.now.pipe(
+                      Effect.flatMap((now) =>
+                        Effect.sleep(
+                          Duration.millis(
+                            Math.max(0, expiresAt.epochMilliseconds - now.epochMilliseconds),
+                          ),
+                        ),
+                      ),
+                    );
+              yield* Effect.raceFirst(
+                runBridge(webSocket, target),
+                Effect.raceFirst(revoked, expired),
+              );
+              return HttpServerResponse.empty();
+            }),
+          ),
+        );
       }).pipe(
-        Effect.catchTag("TcpForwardTargetConnectError", () =>
-          Effect.succeed(HttpServerResponse.text("TCP target unavailable", { status: 502 })),
-        ),
         Effect.catchTags({
+          TcpForwardTargetConnectError: () =>
+            Effect.succeed(HttpServerResponse.text("TCP target unavailable", { status: 502 })),
           EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
         }),
       ),

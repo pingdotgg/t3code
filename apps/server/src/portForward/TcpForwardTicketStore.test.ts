@@ -42,6 +42,7 @@ it.layer(NodeServices.layer)("TcpForwardTicketStore", (it) => {
 
       const replay = yield* Effect.flip(store.consume(issued.ticket));
       expect(replay._tag).toBe("TcpForwardTicketInvalidError");
+      expect(replay.reason).toBe("unknown");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -62,6 +63,7 @@ it.layer(NodeServices.layer)("TcpForwardTicketStore", (it) => {
 
       const expired = yield* Effect.flip(store.consume(issued.ticket));
       expect(expired._tag).toBe("TcpForwardTicketInvalidError");
+      expect(expired.reason).toBe("expired");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -81,6 +83,7 @@ it.layer(NodeServices.layer)("TcpForwardTicketStore", (it) => {
 
       const rejected = yield* Effect.flip(store.consume(issued.ticket));
       expect(rejected._tag).toBe("TcpForwardTicketInvalidError");
+      expect(rejected.reason).toBe("scope-missing");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -101,6 +104,8 @@ it.layer(NodeServices.layer)("TcpForwardTicketStore", (it) => {
 
       const revoked = yield* Effect.flip(store.consume(issued.ticket));
       expect(revoked._tag).toBe("TcpForwardTicketInvalidError");
+      expect(revoked.reason).toBe("token-rejected");
+      expect(revoked.cause).toBeDefined();
     }).pipe(Effect.provide(testLayer)),
   );
 });

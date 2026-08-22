@@ -51,7 +51,20 @@ interface PendingAuthorization {
 
 export class DesktopPortForwardError extends Schema.TaggedErrorClass<DesktopPortForwardError>()(
   "DesktopPortForwardError",
-  { operation: Schema.String, cause: Schema.Defect(), detail: Schema.optionalKey(Schema.String) },
+  {
+    operation: Schema.Literals([
+      "authorize",
+      "connect-bridge",
+      "create",
+      "listen",
+      "resolve-listener-address",
+      "route-transition",
+      "stop",
+      "validate-ticket-url",
+    ]),
+    cause: Schema.optionalKey(Schema.Defect()),
+    detail: Schema.optionalKey(Schema.String),
+  },
 ) {
   override get message(): string {
     const suffix = this.detail === undefined ? "" : `: ${this.detail}`;
@@ -89,7 +102,7 @@ const listen = (server: NodeNet.Server, port: number) =>
           Effect.fail(
             new DesktopPortForwardError({
               operation: "resolve-listener-address",
-              cause: address,
+              detail: "The listener returned an unusable address.",
             }),
           ),
         );
@@ -159,7 +172,7 @@ const openWebSocket = (socketUrl: string) =>
         Effect.fail(
           new DesktopPortForwardError({
             operation: "validate-ticket-url",
-            cause: "The renderer supplied an invalid bridge URL.",
+            detail: "The renderer supplied an invalid bridge URL.",
           }),
         ),
       );
@@ -185,12 +198,18 @@ const openWebSocket = (socketUrl: string) =>
     });
   });
 
-const runConnection = (socket: NodeNet.Socket, webSocket: WebSocket): Effect.Effect<void, never> =>
+export const runConnection = (
+  socket: NodeNet.Socket,
+  webSocket: WebSocket,
+): Effect.Effect<void, never> =>
   Effect.callback<void>((resume) => {
     let credit = TCP_PORT_FORWARD_INITIAL_CREDIT;
     let outstanding = 0;
+    let receiveCredit = TCP_PORT_FORWARD_INITIAL_CREDIT;
     let pending: Uint8Array = new Uint8Array(0);
-    let socketEnded = false;
+    let socketReadEnded = false;
+    let socketReadEndSent = false;
+    let socketWriteEnded = false;
     let closed = false;
 
     const send = (frame: Uint8Array) => {
@@ -223,8 +242,17 @@ const runConnection = (socket: NodeNet.Socket, webSocket: WebSocket): Effect.Eff
         outstanding += size;
         send(dataFrame(chunk));
       }
-      if (pending.byteLength === 0 && credit > 0) socket.resume();
-      else socket.pause();
+      if (pending.byteLength === 0) {
+        if (socketReadEnded && !socketReadEndSent) {
+          socketReadEndSent = true;
+          send(controlFrame(TCP_PORT_FORWARD_FRAME_WRITE_END));
+        }
+        if (!socketReadEnded && credit > 0) {
+          socket.resume();
+          return;
+        }
+      }
+      socket.pause();
     };
     const onSocketData = (chunk: Buffer) => {
       if (pending.byteLength === 0) {
@@ -237,7 +265,10 @@ const runConnection = (socket: NodeNet.Socket, webSocket: WebSocket): Effect.Eff
       }
       flushSocketData();
     };
-    const onSocketEnd = () => send(controlFrame(TCP_PORT_FORWARD_FRAME_WRITE_END));
+    const onSocketEnd = () => {
+      socketReadEnded = true;
+      flushSocketData();
+    };
     const onSocketError = () => finish();
     const onSocketClose = () => {
       send(controlFrame(TCP_PORT_FORWARD_FRAME_CLOSE));
@@ -257,14 +288,19 @@ const runConnection = (socket: NodeNet.Socket, webSocket: WebSocket): Effect.Eff
           if (
             payload.byteLength === 0 ||
             payload.byteLength > TCP_PORT_FORWARD_MAX_DATA_SIZE ||
-            socketEnded
+            socketWriteEnded ||
+            payload.byteLength > receiveCredit
           ) {
             protocolFailure();
             return;
           }
+          receiveCredit -= payload.byteLength;
           socket.write(payload, (error) => {
             if (error) finish();
-            else send(ackFrame(payload.byteLength));
+            else {
+              receiveCredit += payload.byteLength;
+              send(ackFrame(payload.byteLength));
+            }
           });
           return;
         }
@@ -287,11 +323,11 @@ const runConnection = (socket: NodeNet.Socket, webSocket: WebSocket): Effect.Eff
           return;
         }
         case TCP_PORT_FORWARD_FRAME_WRITE_END:
-          if (frame.byteLength !== 1 || socketEnded) {
+          if (frame.byteLength !== 1 || socketWriteEnded) {
             protocolFailure();
             return;
           }
-          socketEnded = true;
+          socketWriteEnded = true;
           socket.end();
           return;
         case TCP_PORT_FORWARD_FRAME_CLOSE:
@@ -434,7 +470,7 @@ export const make = Effect.gen(function* () {
             Effect.fail(
               new DesktopPortForwardError({
                 operation: "authorize",
-                cause: "Timed out waiting for renderer authorization.",
+                detail: "Timed out waiting for renderer authorization.",
               }),
             ),
           onSome: Effect.succeed,
@@ -603,7 +639,7 @@ export const make = Effect.gen(function* () {
           authorization.deferred,
           new DesktopPortForwardError({
             operation: "stop",
-            cause: "The desktop port forward stopped.",
+            detail: "The desktop port forward stopped.",
           }),
         ),
       { discard: true },
@@ -692,7 +728,7 @@ export const make = Effect.gen(function* () {
               authorization.deferred,
               new DesktopPortForwardError({
                 operation: "route-transition",
-                cause: "The selected environment connection method changed.",
+                detail: "The selected environment connection method changed.",
               }),
             ),
           { discard: true },
@@ -720,8 +756,7 @@ export const make = Effect.gen(function* () {
           authorization.deferred,
           new DesktopPortForwardError({
             operation: "authorize",
-            cause: error ?? "The environment could not authorize this connection.",
-            ...(error === undefined ? {} : { detail: error }),
+            detail: error ?? "The environment could not authorize this connection.",
           }),
         );
       } else {

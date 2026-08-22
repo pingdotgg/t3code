@@ -346,9 +346,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               remotePort: args.payload.remotePort,
             });
           },
-          Effect.catchTag("TcpForwardTicketIssueError", (error) =>
-            failEnvironmentInternal("tcp_forward_ticket_issuance_failed", error),
-          ),
+          Effect.catchTags({
+            TcpForwardTicketIssueError: (error) =>
+              failEnvironmentInternal("tcp_forward_ticket_issuance_failed", error),
+          }),
         ),
       )
       .handle(
