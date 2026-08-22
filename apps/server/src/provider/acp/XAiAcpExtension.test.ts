@@ -299,6 +299,27 @@ describe("XAiAcpExtension", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("fails a hung standard prompt from an xAI rate-limit completion", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePromptCompletionRuntime({
+        T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG: "1",
+      });
+      yield* runtime.start();
+
+      const error = yield* Effect.flip(
+        runtime.prompt({
+          prompt: [{ type: "text", text: "hi" }],
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "AcpRequestError",
+        code: -32003,
+        errorMessage: "Grok usage limit reached. Try again later.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("ignores stale xAI completion from an already settled prompt", () =>
     Effect.gen(function* () {
       const runtime = yield* makePromptCompletionRuntime({

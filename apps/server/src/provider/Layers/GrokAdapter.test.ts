@@ -943,6 +943,64 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("surfaces Grok usage limits without clearing the selected model", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-usage-limit-error");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+
+      const error = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "hit the usage limit",
+          attachments: [],
+        }),
+      );
+      const readySessions = yield* adapter.listSessions();
+      const readySession = readySessions.find((session) => session.threadId === threadId);
+      const terminalEvents = runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && event.threadId === threadId,
+      );
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.include(error.message, "Grok usage limit reached. Try again later.");
+      assert.equal(readySession?.status, "ready");
+      assert.equal(readySession?.model, "grok-build");
+      assert.isUndefined(readySession?.activeTurnId);
+      assert.lengthOf(terminalEvents, 1);
+      const [terminalEvent] = terminalEvents;
+      assert.equal(terminalEvent?.type, "turn.completed");
+      if (terminalEvent?.type === "turn.completed") {
+        assert.equal(terminalEvent.payload.state, "failed");
+        assert.include(
+          terminalEvent.payload.errorMessage ?? "",
+          "Grok usage limit reached. Try again later.",
+        );
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("ignores replayed session/load updates when resuming a Grok session", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-load-replay-filter");
