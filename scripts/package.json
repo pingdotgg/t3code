@@ -13,6 +13,7 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
+    "playwright-core": "1.60.0",
     "pngjs": "7.0.0",
     "yaml": "catalog:"
   },
