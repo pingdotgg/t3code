@@ -136,4 +136,19 @@ describe("UsagePage hourly breakdown", () => {
       "Local&#x27;s ZCode usage could not be read.",
     );
   });
+
+  it("spans the empty time table across every provider column", () => {
+    testState.useUsage.mockReturnValue({
+      merged: mergeUsage([], USAGE_CONTRACT_VERSION),
+      environments: [],
+      isPending: false,
+      isPartial: false,
+      refresh: vi.fn(),
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    expect(markup).toMatch(
+      /<td colSpan="6" class="py-6 text-center text-muted-foreground">No activity in this window\.<\/td>/,
+    );
+  });
 });
