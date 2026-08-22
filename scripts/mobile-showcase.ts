@@ -29,6 +29,7 @@ import {
   SHOWCASE_TERMINAL_ID,
   SHOWCASE_THREAD_ID,
   seedShowcaseEnvironment,
+  seedShowcaseUsageFixture,
 } from "./mobile-showcase-environment.ts";
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
@@ -1339,6 +1340,7 @@ async function main(): Promise<void> {
       const workspaceRoot = NodePath.join(baseDir, "workspace", project.directory);
       const port = await reserveAvailablePort();
       await NodeFSP.mkdir(workspaceRoot, { recursive: true });
+      await seedShowcaseUsageFixture({ baseDir });
       const shellPath = await createShowcaseShell(baseDir);
       const labelProbeDirectory = await createShowcaseLabelProbe(baseDir, environment.label);
       const server = startShowcaseServer(

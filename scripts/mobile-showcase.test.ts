@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - Tests verify disposable showcase fixtures on disk.
 import { assert, it } from "@effect/vitest";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { PNG } from "pngjs";
 
 import showcaseConfig, {
@@ -12,6 +16,7 @@ import {
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
   SHOWCASE_THREADS,
+  seedShowcaseUsageFixture,
 } from "./mobile-showcase-environment.ts";
 import {
   encodeAndroidPairingUrls,
@@ -344,6 +349,43 @@ it("seeds a playful multi-environment project spectrum", () => {
     SHOWCASE_PROJECTS.every((project) => project.favicon.includes("<svg")),
     true,
   );
+});
+
+it("keeps showcase usage transcripts inside the disposable environment", async () => {
+  const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-showcase-usage-test-"));
+  try {
+    await seedShowcaseUsageFixture({ baseDir, now: Date.parse("2026-08-11T18:00:00.000Z") });
+
+    const settings = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "settings.json"), "utf8"),
+    ) as {
+      readonly providers: {
+        readonly codex: { readonly homePath: string };
+        readonly claudeAgent: { readonly homePath: string };
+      };
+    };
+    assert.equal(settings.providers.codex.homePath.startsWith(baseDir), true);
+    assert.equal(settings.providers.claudeAgent.homePath.startsWith(baseDir), true);
+
+    const codexTranscript = await NodeFSP.readFile(
+      NodePath.join(settings.providers.codex.homePath, "sessions", "showcase", "usage.jsonl"),
+      "utf8",
+    );
+    const claudeTranscript = await NodeFSP.readFile(
+      NodePath.join(
+        settings.providers.claudeAgent.homePath,
+        ".claude",
+        "projects",
+        "showcase",
+        "usage.jsonl",
+      ),
+      "utf8",
+    );
+    assert.equal(codexTranscript.match(/"token_count"/gu)?.length, 10);
+    assert.equal(claudeTranscript.match(/"costUSD"/gu)?.length, 10);
+  } finally {
+    await NodeFSP.rm(baseDir, { recursive: true, force: true });
+  }
 });
 
 it("reads multiline JSON from the pairing CLI", () => {

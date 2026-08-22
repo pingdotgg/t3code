@@ -1,44 +1,90 @@
 import { useMemo } from "react";
-import { View } from "react-native";
+import Svg, { Line, Path } from "react-native-svg";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
+import {
+  buildUsageChartGeometry,
+  USAGE_CHART_PLOT_TOP,
+  USAGE_CHART_TICK_COUNT,
+  USAGE_CHART_VIEW_HEIGHT,
+  USAGE_CHART_VIEW_WIDTH,
+  type UsageChartMetric,
+} from "@t3tools/shared/usageChart";
 
-import { buildChartDays, type UsageChartMetric } from "./usageChartData";
-import { useProviderColors } from "./usageProviders";
+import { useThemeColor } from "../../lib/useThemeColor";
+import { PROVIDER_ORDER, useProviderColors } from "./usageProviders";
 
 export interface UsageDailyChartProps {
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly metric: UsageChartMetric;
   readonly height: number;
+  readonly resolution: "day" | "hour";
 }
 
-/**
- * Stacked daily bars drawn with plain views. Android and any platform without
- * Swift Charts land here; iOS resolves `UsageDailyChart.ios.tsx` instead.
- */
-export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
+/** The same layered provider paths as desktop, rendered natively on both platforms. */
+export function UsageDailyChart({ days, daily, metric, height, resolution }: UsageDailyChartProps) {
   const colors = useProviderColors();
-  const chartDays = useMemo(() => buildChartDays(days, daily, metric), [days, daily, metric]);
-  const max = chartDays.reduce((peak, day) => Math.max(peak, day.total), 0);
+  const borderColor = useThemeColor("--color-border");
+  const { layers, ticks, toY } = useMemo(
+    () =>
+      buildUsageChartGeometry({
+        days,
+        daily,
+        metric,
+        providers: PROVIDER_ORDER,
+        width: USAGE_CHART_VIEW_WIDTH,
+        height: USAGE_CHART_VIEW_HEIGHT,
+        plotTop: USAGE_CHART_PLOT_TOP,
+        tickCount: USAGE_CHART_TICK_COUNT,
+      }),
+    [daily, days, metric],
+  );
 
   return (
-    <View style={{ height }} className="flex-row items-end gap-px">
-      {/* column-reverse stacks the bottom-first provider values upward
-          without reversing the array (Hermes lacks Array#toReversed). */}
-      {chartDays.map((day) => (
-        <View key={day.day} className="h-full flex-1 flex-col-reverse overflow-hidden rounded-sm">
-          {day.values.map((entry) => (
-            <View
-              key={entry.provider}
-              style={{
-                height: max === 0 ? 0 : (entry.value / max) * height,
-                backgroundColor: colors[entry.provider],
-              }}
-            />
-          ))}
-        </View>
-      ))}
-    </View>
+    <Svg
+      width="100%"
+      height={height}
+      viewBox={`0 0 ${USAGE_CHART_VIEW_WIDTH} ${USAGE_CHART_VIEW_HEIGHT}`}
+      preserveAspectRatio="none"
+      accessibilityRole="image"
+      accessibilityLabel={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+    >
+      {ticks.map((tick) => {
+        const y = toY(tick);
+        return (
+          <Line
+            key={tick}
+            x1={0}
+            x2={USAGE_CHART_VIEW_WIDTH}
+            y1={y}
+            y2={y}
+            stroke={String(borderColor)}
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+
+      {layers.map((layer) =>
+        layer.kind === "fill" ? (
+          <Path
+            key={`fill-${layer.provider}`}
+            d={layer.path}
+            fill={colors[layer.provider]}
+            fillOpacity={layer.opacity}
+          />
+        ) : (
+          <Path
+            key={`stroke-${layer.provider}`}
+            d={layer.path}
+            fill="none"
+            stroke={colors[layer.provider]}
+            strokeWidth={layer.width}
+            vectorEffect="non-scaling-stroke"
+          />
+        ),
+      )}
+    </Svg>
   );
 }
