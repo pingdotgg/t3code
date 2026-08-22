@@ -41,6 +41,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
+import { fixPath } from "../../os-jank.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
@@ -470,6 +471,7 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
+      yield* fixPath();
       if (provider === undefined) {
         return yield* refreshAll();
       }
@@ -488,6 +490,7 @@ export const ProviderRegistryLive = Layer.effect(
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
+      yield* fixPath();
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
