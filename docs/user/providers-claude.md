@@ -102,6 +102,18 @@ This is different from the recommended Codex setup. Claude Code keeps account an
 multiple files under its config directory, so T3 Code keeps separate config directories isolated
 instead of trying to share part of the state.
 
+## Why Did Claude Stop Halfway Through A Turn?
+
+If your Claude subscription runs out of usage mid-turn, the thread shows a row like:
+
+```text
+Claude usage limit reached. This turn is paused until the 5-hour limit resets in 4h 20m.
+```
+
+Claude Code holds the turn until that window reopens, so the thread keeps showing as working. You
+can wait for the reset, or stop the turn and pick the work back up later. The row counts from when
+it appeared, so its own timestamp tells you when the wait started.
+
 ## I Want To Use OpenRouter
 
 Use this when you want Claude Code to talk to OpenRouter directly, without running a local router.
