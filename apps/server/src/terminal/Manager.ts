@@ -2526,7 +2526,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     const shouldDeliver = (event: TerminalEvent): boolean => {
       if (sessionClosed) {
-        if (event.type !== "started") {
+        if (event.type !== "started" && event.type !== "restarted") {
           return false;
         }
         sessionClosed = false;

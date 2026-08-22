@@ -332,7 +332,7 @@ it.layer(
     }),
   );
 
-  it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
+  it.effect("keeps attach streams live when a terminal id is closed and recreated", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
@@ -347,13 +347,27 @@ it.layer(
         deleteHistory: true,
       });
       yield* manager.open(openInput());
+      yield* manager.close({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        deleteHistory: true,
+      });
+      yield* manager.restart(restartInput());
 
       const events = yield* Ref.get(attachEvents);
-      expect(events.map((event) => event.type)).toEqual(["snapshot", "closed", "snapshot"]);
+      expect(events.map((event) => event.type)).toEqual([
+        "snapshot",
+        "closed",
+        "snapshot",
+        "closed",
+        "restarted",
+      ]);
       expect(
-        events.filter((event) => event.type === "snapshot").map((event) => event.snapshot.status),
-      ).toEqual(["running", "running"]);
-      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        events
+          .filter((event) => event.type === "snapshot" || event.type === "restarted")
+          .map((event) => event.snapshot.status),
+      ).toEqual(["running", "running", "running"]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(3);
     }),
   );
 
