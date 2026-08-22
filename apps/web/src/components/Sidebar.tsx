@@ -2164,28 +2164,53 @@ export default function Sidebar() {
     lastSettledResetKeyRef.current = settledResetKey;
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }
+  // The open thread must never hide under "Show more": navigating into a deep
+  // settled thread (search, deep link) pulls its row into the visible tail so
+  // the highlight and the un-settle affordance stay reachable, regardless of
+  // how many rows the current page would otherwise show.
+  const settledRouteThreadIndex = useMemo(() => {
+    if (routeThreadKey === null) return -1;
+    return settledThreads.findIndex(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+  }, [routeThreadKey, settledThreads]);
   const visibleSettledThreads = useMemo(() => {
     if (settledThreads.length <= settledVisibleCount) return settledThreads;
     const visible = settledThreads.slice(0, settledVisibleCount);
-    // The open thread must never hide under "Show more": navigating into a
-    // deep settled thread (search, deep link) pulls its row into the visible
-    // tail so the highlight and the un-settle affordance stay reachable.
-    if (routeThreadKey !== null) {
-      const routeThread = settledThreads
-        .slice(settledVisibleCount)
-        .find(
-          (thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-        );
-      if (routeThread !== undefined) visible.push(routeThread);
+    if (settledRouteThreadIndex >= settledVisibleCount) {
+      visible.push(settledThreads[settledRouteThreadIndex]!);
     }
     return visible;
-  }, [routeThreadKey, settledThreads, settledVisibleCount]);
+  }, [settledRouteThreadIndex, settledThreads, settledVisibleCount]);
   const hiddenSettledCount = settledThreads.length - visibleSettledThreads.length;
   const showMoreSettled = useCallback(
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
     [],
   );
+  const showLessSettled = useCallback(() => setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT), []);
+  // How many rows would be visible at the initial page size alone — used to
+  // tell whether collapsing back to it would actually change anything. A
+  // pinned open thread beyond the initial page stays visible no matter what
+  // settledVisibleCount is, so comparing against settledVisibleCount directly
+  // (as opposed to this floor) could call a page "expanded" when "Show less"
+  // would be a no-op: the pinned row keeps rendering either way.
+  const settledFloorVisibleCount =
+    settledThreads.length <= SETTLED_TAIL_INITIAL_COUNT
+      ? settledThreads.length
+      : settledRouteThreadIndex >= SETTLED_TAIL_INITIAL_COUNT
+        ? SETTLED_TAIL_INITIAL_COUNT + 1
+        : SETTLED_TAIL_INITIAL_COUNT;
+  const settledIsExpanded = visibleSettledThreads.length > settledFloorVisibleCount;
+  // One paging row serves both directions: it offers the next page while the
+  // tail has one, and collapses back to the initial page once fully expanded.
+  // Gated on the tail still exceeding the initial page — un-settling or
+  // deleting threads can shrink the list back to (or below) that page without
+  // resetting a stale settledVisibleCount, and a "Show less" with nothing
+  // left to collapse would be an orphaned row.
+  const settledPagingVisible =
+    settledThreads.length > SETTLED_TAIL_INITIAL_COUNT &&
+    (hiddenSettledCount > 0 || settledIsExpanded);
   const [settledShelfExpanded, setSettledShelfExpanded] = useLocalStorage(
     SETTLED_SHELF_EXPANDED_KEY,
     true,
@@ -3899,16 +3924,43 @@ export default function Sidebar() {
                   }
                   return items;
                 })()}
-                {settledShelfExpanded && hiddenSettledCount > 0 ? (
-                  <li className="list-none">
-                    <button
-                      type="button"
-                      onClick={showMoreSettled}
-                      className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                    >
-                      <PlusIcon aria-hidden className="size-4 shrink-0" />
-                      Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                    </button>
+                {settledShelfExpanded && settledPagingVisible ? (
+                  <li className="group/settled-paging relative list-none">
+                    {hiddenSettledCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={showMoreSettled}
+                        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                      >
+                        <PlusIcon aria-hidden className="size-4 shrink-0" />
+                        Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={showLessSettled}
+                        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                      >
+                        <Undo2Icon aria-hidden className="mb-px size-4 shrink-0" />
+                        Show less
+                      </button>
+                    )}
+                    {/* Collapsing the tail is the secondary action while pages
+                        remain: it rides the row on hover like the un-settle
+                        rollback, so paging stays one row at any depth. The
+                        thread rows anchor that rollback inside their px-2.5
+                        content box, so offset by the same padding here to land
+                        on the shared right-hand axis. */}
+                    {hiddenSettledCount > 0 && settledIsExpanded ? (
+                      <button
+                        type="button"
+                        aria-label="Show less"
+                        onClick={showLessSettled}
+                        className="pointer-events-none absolute inset-y-0 right-2.5 -mr-1 inline-flex cursor-pointer items-center rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/settled-paging:pointer-events-auto group-hover/settled-paging:opacity-100"
+                      >
+                        <Undo2Icon aria-hidden className="mb-px size-3.5" />
+                      </button>
+                    ) : null}
                   </li>
                 ) : null}
               </ul>
