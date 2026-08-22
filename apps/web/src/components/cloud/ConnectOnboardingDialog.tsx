@@ -47,7 +47,7 @@ export function ConnectOnboardingDialog() {
 type OnboardingStep = "publish" | "devices";
 
 function ConfiguredConnectOnboardingDialog() {
-  const { isLoaded, isSignedIn, userId } = useT3ConnectAuth();
+  const { isIdentityPending, isLoaded, isSignedIn, userId } = useT3ConnectAuth();
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
     EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
@@ -94,7 +94,9 @@ function ConfiguredConnectOnboardingDialog() {
   // environments, so each new session starts with no devices to reach. A cold
   // load observes undefined → account and must not re-prompt.
   useEffect(() => {
-    if (!isLoaded) return;
+    // A legacy credential is authorized before its account id is backfilled;
+    // do not record that incomplete snapshot as a signed-out cold load.
+    if (!isLoaded || isIdentityPending) return;
     // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
     // must not be recorded as signed-out — the next render would then look
     // like a fresh sign-in on a cold load.
@@ -105,7 +107,7 @@ function ConfiguredConnectOnboardingDialog() {
     if (previousAccount !== undefined && previousAccount !== nextAccount && nextAccount !== null) {
       setRequestedAccount(nextAccount);
     }
-  }, [isLoaded, isSignedIn, userId]);
+  }, [isIdentityPending, isLoaded, isSignedIn, userId]);
 
   // A manageable session implies a primary environment, so when the scopes
   // allow publishing, wait for the connection target too — otherwise the
