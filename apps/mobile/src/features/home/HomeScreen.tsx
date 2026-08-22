@@ -427,6 +427,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ScopeProjects = useMemo(
     () =>
       sortHomeProjectScopes({
+        projects: props.projects,
         scopes: projectScopes,
         threads: props.threads,
         pendingTasks: props.pendingTasks,

@@ -247,7 +247,7 @@ describe("buildHomeThreadGroups", () => {
     });
 
     expect(
-      sortHomeProjectScopes({
+      sortHomeProjectScopes({ projects,
         scopes,
         threads: [
           makeThread({
@@ -292,7 +292,7 @@ describe("buildHomeThreadGroups", () => {
     });
 
     expect(
-      sortHomeProjectScopes({
+      sortHomeProjectScopes({ projects,
         scopes,
         threads: [],
         pendingTasks: [],
@@ -339,7 +339,7 @@ describe("buildHomeThreadGroups", () => {
     });
 
     expect(
-      sortHomeProjectScopes({
+      sortHomeProjectScopes({ projects,
         scopes,
         threads: [],
         pendingTasks: [],

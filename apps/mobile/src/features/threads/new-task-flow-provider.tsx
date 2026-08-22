@@ -198,6 +198,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projectScopes = useMemo(
     () =>
       sortHomeProjectScopes({
+        projects,
         scopes: buildHomeProjectScopes({
           projects,
           environmentId: null,
