@@ -8,6 +8,7 @@ import type {
   PullRequestListFilters,
   PullRequestListInput,
   PullRequestListResult,
+  PullRequestListStatsInput,
   PullRequestListState,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -1136,30 +1137,78 @@ function PullRequestsRouteView() {
     viewers,
   ]);
 
-  // Keyed by every row being shown — the partitions can hold rows the feed has not paged to —
-  // so scrolling further asks only about what is new. One read per environment, each asking only
-  // about its own rows: a reference names a project, and a project belongs to one machine.
-  const statsTargets = useMemo(() => {
-    const refsByEnvironment = new Map<
-      EnvironmentId,
-      Array<{ projectId: ProjectId; repository: string; number: number }>
-    >();
-    for (const group of groups) {
-      for (const entry of group.entries) {
-        const refs = refsByEnvironment.get(entry.environmentId) ?? [];
-        refs.push({
-          projectId: entry.projectId,
-          repository: entry.repository,
-          number: entry.number,
-        });
-        refsByEnvironment.set(entry.environmentId, refs);
-      }
+  // Line counts are decoration, so one shared observer asks only for rows reaching the viewport.
+  // Each intersection callback becomes an immutable batch: rows already fetched remain on their
+  // original query key instead of being resent whenever the next row appears.
+  const entriesByStatsKey = useRef<ReadonlyMap<string, EnvironmentPullRequestEntry>>(new Map());
+  entriesByStatsKey.current = new Map(
+    groups.flatMap((group) =>
+      group.entries.map((entry) => [pullRequestEntryKey(entry), entry] as const),
+    ),
+  );
+  const requestedStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
+  if (requestedStatsKeys.current.key !== filterKey) {
+    requestedStatsKeys.current = { key: filterKey, values: new Set() };
+  }
+  const [statsTargetState, setStatsTargetState] = useState<{
+    readonly key: string;
+    readonly targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>;
+  }>({ key: filterKey, targets: [] });
+  const statsTargets = statsTargetState.key === filterKey ? statsTargetState.targets : [];
+  const statsObserver = useRef<IntersectionObserver | null>(null);
+  const statsRows = useRef(new Set<HTMLButtonElement>());
+  const registerStatsRow = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null || typeof IntersectionObserver === "undefined") return;
+    statsRows.current.add(node);
+    if (statsObserver.current === null) {
+      statsObserver.current = new IntersectionObserver(
+        (observed) => {
+          const refsByEnvironment = new Map<
+            EnvironmentId,
+            Array<{ projectId: ProjectId; repository: string; number: number }>
+          >();
+          for (const item of observed) {
+            if (!item.isIntersecting) continue;
+            statsObserver.current?.unobserve(item.target);
+            const key = (item.target as HTMLElement).dataset.pullRequestStatsKey;
+            const requested = requestedStatsKeys.current;
+            if (key === undefined || requested.values.has(key)) continue;
+            const entry = entriesByStatsKey.current.get(key);
+            if (entry === undefined) continue;
+            requested.values.add(key);
+            const refs = refsByEnvironment.get(entry.environmentId) ?? [];
+            refs.push({
+              projectId: entry.projectId,
+              repository: entry.repository,
+              number: entry.number,
+            });
+            refsByEnvironment.set(entry.environmentId, refs);
+          }
+          if (refsByEnvironment.size === 0) return;
+          setStatsTargetState((current) => ({
+            key: requestedStatsKeys.current.key,
+            targets: [
+              ...(current.key === requestedStatsKeys.current.key ? current.targets : []),
+              ...[...refsByEnvironment].map(([environmentId, refs]) => ({
+                environmentId,
+                input: { refs },
+              })),
+            ],
+          }));
+        },
+        { rootMargin: "480px" },
+      );
     }
-    return [...refsByEnvironment].map(([environmentId, refs]) => ({
-      environmentId,
-      input: { refs },
-    }));
-  }, [groups]);
+    statsObserver.current.observe(node);
+    return () => {
+      statsRows.current.delete(node);
+      statsObserver.current?.unobserve(node);
+    };
+  }, []);
+  useEffect(() => {
+    for (const row of statsRows.current) statsObserver.current?.observe(row);
+  }, [filterKey]);
+
   const statsQuery = usePullRequestListStats(statsTargets);
   // Adding or removing one row keys a fresh stats query with nothing in it yet, so the counts
   // are merged into what is already held rather than rebuilt: every count on screen stays until
@@ -1367,33 +1416,38 @@ function PullRequestsRouteView() {
                   {group.label}
                 </h2>
               ) : null}
-              {group.entries.map((entry) => (
-                <PullRequestRow
-                  key={pullRequestEntryKey(entry)}
-                  // A row whose host reported its line counts keeps them; one whose host left
-                  // them for later takes whatever has arrived since, and draws without them
-                  // until it does.
-                  entry={withDiffStat(entry, statsByRow)}
-                  showProjectTitle
-                  showProvider={showProvider}
-                  {...(capableEnvironments.length > 1 &&
-                  environmentLabels.get(entry.environmentId) !== undefined
-                    ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
-                    : {})}
-                  // Ten is the floor the ranking gives a row whose own fields say nothing
-                  // about the search: the host matched something this row cannot show.
-                  matchedElsewhere={
-                    typedParsed.text.length > 0 &&
-                    scorePullRequestMatch(entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
-                  }
-                  selected={
-                    selected?.environmentId === entry.environmentId &&
-                    selected.repository === entry.repository &&
-                    selected.number === entry.number
-                  }
-                  onSelect={selectEntry}
-                />
-              ))}
+              {group.entries.map((entry) => {
+                const entryKey = pullRequestEntryKey(entry);
+                return (
+                  <PullRequestRow
+                    key={entryKey}
+                    statsKey={entryKey}
+                    statsRef={registerStatsRow}
+                    // A row whose host reported its line counts keeps them; one whose host left
+                    // them for later takes whatever has arrived since, and draws without them
+                    // until it does.
+                    entry={withDiffStat(entry, statsByRow)}
+                    showProjectTitle
+                    showProvider={showProvider}
+                    {...(capableEnvironments.length > 1 &&
+                    environmentLabels.get(entry.environmentId) !== undefined
+                      ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
+                      : {})}
+                    // Ten is the floor the ranking gives a row whose own fields say nothing
+                    // about the search: the host matched something this row cannot show.
+                    matchedElsewhere={
+                      typedParsed.text.length > 0 &&
+                      scorePullRequestMatch(entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
+                    }
+                    selected={
+                      selected?.environmentId === entry.environmentId &&
+                      selected.repository === entry.repository &&
+                      selected.number === entry.number
+                    }
+                    onSelect={selectEntry}
+                  />
+                );
+              })}
             </div>
           ))}
         </div>

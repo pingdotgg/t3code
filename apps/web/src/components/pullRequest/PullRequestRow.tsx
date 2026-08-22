@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
@@ -22,6 +22,8 @@ function PullRequestRowImpl({
   showProvider,
   environmentLabel,
   matchedElsewhere,
+  statsKey,
+  statsRef,
   onSelect,
 }: {
   entry: EnvironmentPullRequestEntry;
@@ -36,11 +38,16 @@ function PullRequestRowImpl({
    * commit message. Saying so is the difference between a result and an apparently random row.
    */
   matchedElsewhere?: boolean;
+  /** Used by the list's shared visibility observer to defer optional line-count reads. */
+  statsKey?: string;
+  statsRef?: RefCallback<HTMLButtonElement>;
   onSelect: (entry: EnvironmentPullRequestEntry) => void;
 }) {
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
   return (
     <button
+      ref={statsRef}
+      data-pull-request-stats-key={statsKey}
       type="button"
       aria-current={selected ? "true" : undefined}
       onClick={() => onSelect(entry)}
