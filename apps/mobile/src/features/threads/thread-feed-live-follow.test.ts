@@ -30,6 +30,18 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
     ).toBe("first-message");
   });
 
+  it("preserves the first-message anchor after its outbox entry drains", () => {
+    expect(
+      resolveThreadFeedSubmissionAnchor({
+        currentAnchorMessageId: "first-message",
+        submittedMessageId: "second-message",
+        hasStartedTurn: false,
+        hasUserMessage: false,
+        queuedMessageCount: 0,
+      }),
+    ).toBe("first-message");
+  });
+
   it("does not anchor a follow-up after a user message appears", () => {
     expect(
       resolveThreadFeedSubmissionAnchor({

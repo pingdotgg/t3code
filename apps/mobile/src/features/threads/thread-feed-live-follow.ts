@@ -23,7 +23,11 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
     return null;
   }
 
-  return input.queuedMessageCount > 0 ? input.currentAnchorMessageId : input.submittedMessageId;
+  if (input.currentAnchorMessageId !== null) {
+    return input.currentAnchorMessageId;
+  }
+
+  return input.queuedMessageCount > 0 ? null : input.submittedMessageId;
 }
 
 export function resolveThreadFeedLiveFollow(
