@@ -77,7 +77,7 @@ export type GlassOpacity = typeof GlassOpacity.Type;
 export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
 export const MIN_APPEARANCE_CONTRAST = 50;
-export const MAX_APPEARANCE_CONTRAST = 150;
+export const MAX_APPEARANCE_CONTRAST = 200;
 export const AppearanceContrast = Schema.Int.check(
   Schema.isBetween({ minimum: MIN_APPEARANCE_CONTRAST, maximum: MAX_APPEARANCE_CONTRAST }),
 );
