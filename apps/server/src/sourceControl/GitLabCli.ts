@@ -390,6 +390,34 @@ function toSummaryWithOptionalUpdatedAt(
   return Option.isSome(updatedAt) ? { ...summary, updatedAt } : summary;
 }
 
+/**
+ * Accept either a bare `namespace/project` path or a pasted repository URL
+ * (any host, since glab resolves against its authenticated default host) and
+ * return the project path `glab api projects/<encoded path>` expects.
+ */
+export function normalizeGitLabRepositoryPath(repository: string): string {
+  const trimmed = repository.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const segments = url.pathname.split("/").filter((segment) => segment.length > 0);
+    // Web URLs continue past the project into `/-/tree/main` style sections;
+    // everything from the `-` separator on belongs to the UI, not the project.
+    const separatorIndex = segments.indexOf("-");
+    const projectSegments = separatorIndex > 0 ? segments.slice(0, separatorIndex) : segments;
+    const last = projectSegments.at(-1)?.replace(/\.git$/i, "") ?? "";
+    if (projectSegments.length > 0) {
+      projectSegments[projectSegments.length - 1] = last;
+    }
+    return projectSegments.join("/");
+  } catch {
+    return trimmed;
+  }
+}
+
 function parseRepositoryPath(repository: string): {
   readonly namespacePath: string | null;
   readonly projectPath: string;
@@ -519,7 +547,10 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+        args: [
+          "api",
+          `projects/${encodeURIComponent(normalizeGitLabRepositoryPath(input.repository))}`,
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
