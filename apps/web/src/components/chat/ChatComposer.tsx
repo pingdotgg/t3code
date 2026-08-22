@@ -3265,7 +3265,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 )}
 
-              <div className="relative">
+              <div className={cn("relative", isComposerResting && "pr-12")}>
                 <ComposerPromptEditor
                   editorRef={composerEditorRef}
                   value={
@@ -3285,11 +3285,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className={cn(
                     showMobilePendingAnswerActions && "max-sm:pb-11",
                     isComposerResting &&
-                      "max-h-8 min-h-8 overflow-hidden whitespace-nowrap pr-12 leading-8",
+                      "max-h-8 min-h-8 overflow-hidden !whitespace-nowrap leading-8",
                   )}
                   placeholderClassName={cn(
                     isComposerResting &&
-                      "flex items-center overflow-hidden whitespace-nowrap pr-12 leading-8",
+                      "flex items-center overflow-hidden whitespace-nowrap leading-8",
                   )}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}
