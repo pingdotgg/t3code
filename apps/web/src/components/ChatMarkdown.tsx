@@ -19,7 +19,10 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import {
+  classifyMarkdownImageSource,
+  markdownImageSourceFragment,
+} from "@t3tools/client-runtime/markdown-images";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
@@ -76,7 +79,9 @@ import {
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
   extractMarkdownLinkHrefs,
+  isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
+  rehypePreserveLocalImageSrc,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -123,6 +128,11 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
+  /**
+   * Relative image sources resolve against this directory, defaulting to cwd.
+   * File previews pass the document's directory so nested READMEs find their images.
+   */
+  imageBaseDir?: string | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -181,36 +191,6 @@ export function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 1}ch` };
 }
 
-type MarkdownHtmlAstNode = {
-  type?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: MarkdownHtmlAstNode[];
-};
-
-/** Preserve Windows drive paths through the protocol allowlist in rehype-sanitize. */
-function rehypeNormalizeWindowsImageSrc() {
-  return (tree: MarkdownHtmlAstNode) => {
-    const visit = (node: MarkdownHtmlAstNode) => {
-      const src = node.properties?.src;
-      if (
-        node.type === "element" &&
-        node.tagName === "img" &&
-        typeof src === "string" &&
-        /^[A-Za-z]:[\\/]/.test(src)
-      ) {
-        node.properties = {
-          ...node.properties,
-          src: `file:///${src.replaceAll("\\", "/")}`,
-        };
-      }
-      node.children?.forEach(visit);
-    };
-
-    visit(tree);
-  };
-}
-
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
@@ -218,6 +198,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
+    img: [...(defaultSchema.attributes?.img ?? []), "dataLocalSrc"],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -245,7 +226,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
-  rehypeNormalizeWindowsImageSrc,
+  rehypePreserveLocalImageSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -987,9 +968,15 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   "my-1 block! rounded-lg border border-border/40",
 );
 
-function ChatMarkdownImageFallback(props: { readonly alt: string }) {
+function ChatMarkdownImageFallback(props: {
+  readonly alt: string;
+  readonly copyMarkdown?: string | undefined;
+}) {
   return (
-    <span className="my-1 inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+    <span
+      data-markdown-copy={props.copyMarkdown}
+      className="my-1 inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
+    >
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
       {props.alt.length > 0 ? `Image unavailable · ${props.alt}` : "Image unavailable"}
     </span>
@@ -1001,6 +988,9 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   readonly threadRef: ScopedThreadRef;
   readonly path: string;
   readonly alt: string;
+  /** The DOM src is signed or absent while loading, so copying uses the authored source. */
+  readonly copyMarkdown: string;
+  readonly srcFragment: string;
 }) {
   const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
     _tag: "workspace-file",
@@ -1010,11 +1000,12 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
-    return <ChatMarkdownImageFallback alt={props.alt} />;
+    return <ChatMarkdownImageFallback alt={props.alt} copyMarkdown={props.copyMarkdown} />;
   }
   if (assetUrl._tag !== "Success") {
     return (
       <span
+        data-markdown-copy={props.copyMarkdown}
         role="status"
         aria-label="Loading image"
         className="my-1 block aspect-video w-full max-w-[30rem] rounded-lg bg-muted/60"
@@ -1023,8 +1014,10 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   }
   return (
     <img
-      src={assetUrl.url}
+      // The signed URL replaces the authored source, so restore client-side SVG fragments.
+      src={assetUrl.url + props.srcFragment}
       alt={props.alt}
+      data-markdown-copy={props.copyMarkdown}
       loading="lazy"
       draggable={false}
       className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
@@ -1452,6 +1445,7 @@ function ChatMarkdown({
   className,
   lineBreaks = false,
   parseRawHtml = true,
+  imageBaseDir,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1505,6 +1499,8 @@ function ChatMarkdown({
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
+    // defaultUrlTransform clears drive paths because it reads the drive prefix as a scheme.
+    if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
@@ -1819,9 +1815,15 @@ function ChatMarkdown({
         );
       },
       img({ node: _node, title: _title, src, alt, ...props }) {
-        const srcString = typeof src === "string" ? normalizeMarkdownLinkDestination(src) : "";
+        // The sanitizer removes a drive-path src, so prefer its allowlisted preserved value.
+        const localSrc = (props as Record<string, unknown>)["data-local-src"];
+        const authoredSrc = typeof localSrc === "string" ? localSrc : src;
+        const srcString =
+          typeof authoredSrc === "string" ? normalizeMarkdownLinkDestination(authoredSrc) : "";
+        const classifiedSrc =
+          typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
         const altText = alt ?? "";
-        const imageSource = classifyMarkdownImageSource(srcString, cwd);
+        const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
         if (imageSource._tag === "Direct") {
           return (
             <img
@@ -1839,6 +1841,8 @@ function ChatMarkdown({
               threadRef={threadRef}
               path={imageSource.path}
               alt={altText}
+              copyMarkdown={`![${altText}](${srcString})`}
+              srcFragment={markdownImageSourceFragment(classifiedSrc)}
             />
           );
         }
@@ -1884,6 +1888,7 @@ function ChatMarkdown({
     diffThemeName,
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
+    imageBaseDir,
     isStreaming,
     markdownFileLinkMetaByHref,
     onTaskListChange,

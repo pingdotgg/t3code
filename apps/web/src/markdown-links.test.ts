@@ -5,12 +5,58 @@ import ReactMarkdown from "react-markdown";
 
 import {
   extractMarkdownLinkHrefs,
+  isWindowsDrivePathHref,
+  rehypePreserveLocalImageSrc,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
+
+describe("isWindowsDrivePathHref", () => {
+  it("recognizes plain drive paths", () => {
+    expect(isWindowsDrivePathHref("C:\\repo\\image.png")).toBe(true);
+  });
+
+  it("recognizes percent-encoded drive paths", () => {
+    expect(isWindowsDrivePathHref("C:%5Crepo%5Cimage.png")).toBe(true);
+  });
+
+  it("rejects https URLs", () => {
+    expect(isWindowsDrivePathHref("https://example.com/image.png")).toBe(false);
+  });
+});
+
+describe("rehypePreserveLocalImageSrc", () => {
+  it.each(["C:\\repo\\image.png", "C:%5Crepo%5Cimage.png"])(
+    "preserves the drive source %s",
+    (src) => {
+      const tree = {
+        type: "root",
+        children: [{ type: "element", tagName: "img", properties: { src } }],
+      };
+
+      rehypePreserveLocalImageSrc()(tree);
+
+      expect(tree.children[0]?.properties).toEqual({ src, dataLocalSrc: src });
+    },
+  );
+
+  it.each(["https://example.com/image.png", "images/image.png", "file:///C:/repo/image.png"])(
+    "does not preserve the non-drive source %s",
+    (src) => {
+      const tree = {
+        type: "root",
+        children: [{ type: "element", tagName: "img", properties: { src } }],
+      };
+
+      rehypePreserveLocalImageSrc()(tree);
+
+      expect(tree.children[0]?.properties).toEqual({ src });
+    },
+  );
+});
 
 function renderMarkdownLinkHref(markdown: string): string | undefined {
   let renderedHref: string | undefined;

@@ -79,6 +79,42 @@ function safeDecode(value: string): string {
   }
 }
 
+/** Returns whether a markdown href decodes to an absolute Windows drive path. */
+export function isWindowsDrivePathHref(href: string): boolean {
+  return WINDOWS_DRIVE_PATH_PATTERN.test(safeDecode(href));
+}
+
+type MarkdownImageHastNode = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownImageHastNode[];
+};
+
+/**
+ * Runs between rehype-raw and rehype-sanitize. Drive-path image sources parse
+ * as a scheme that the sanitizer strips, so the allowlisted `dataLocalSrc`
+ * property carries them through. The schema already allows `file:` sources.
+ */
+export function rehypePreserveLocalImageSrc() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode) => {
+      const src = node.properties?.src;
+      if (
+        node.type === "element" &&
+        node.tagName === "img" &&
+        typeof src === "string" &&
+        isWindowsDrivePathHref(src)
+      ) {
+        node.properties = { ...node.properties, dataLocalSrc: src };
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
+}
+
 function unwrapMarkdownLinkDestination(value: string): string {
   return value.startsWith("<") && value.endsWith(">") ? value.slice(1, -1) : value;
 }

@@ -20,6 +20,17 @@ function normalizeSource(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
+/**
+ * Returns the client-side fragment to append to a signed asset URL. SVG view
+ * references such as `icons.svg#logo` must survive the URL swap, while a query
+ * addressed to the original server must not.
+ */
+export function markdownImageSourceFragment(source: string): string {
+  const normalizedSource = normalizeSource(source);
+  const hashIndex = normalizedSource.indexOf("#");
+  return hashIndex >= 0 ? normalizedSource.slice(hashIndex) : "";
+}
+
 function normalizeWindowsDrivePath(value: string): string {
   return /^\/[A-Za-z]:[\\/]/.test(value) ? value.slice(1) : value;
 }
