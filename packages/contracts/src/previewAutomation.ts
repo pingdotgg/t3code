@@ -43,6 +43,7 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
   "setColorScheme",
+  "screenshot",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
@@ -562,6 +563,16 @@ export const PreviewAutomationRecordingArtifact = Schema.Struct({
   createdAt: Schema.String,
 });
 export type PreviewAutomationRecordingArtifact = typeof PreviewAutomationRecordingArtifact.Type;
+
+export const PreviewAutomationScreenshotArtifact = Schema.Struct({
+  id: Schema.String,
+  tabId: PreviewTabId,
+  path: Schema.String,
+  mimeType: Schema.Literal("image/png"),
+  sizeBytes: Schema.Int,
+  createdAt: Schema.String,
+});
+export type PreviewAutomationScreenshotArtifact = typeof PreviewAutomationScreenshotArtifact.Type;
 
 export const PreviewAutomationClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
