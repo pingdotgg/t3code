@@ -1,5 +1,6 @@
 import Constants from "expo-constants";
+import { Platform } from "react-native";
 
 export function supportsAgentAwarenessPush() {
-  return Constants.expoConfig?.extra?.iosPersonalTeamBuild !== true;
+  return Platform.OS === "ios" && Constants.expoConfig?.extra?.iosPersonalTeamBuild !== true;
 }

@@ -2,6 +2,7 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { Platform } from "react-native";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
@@ -148,8 +149,38 @@ function validLinkChallengeResponse() {
   };
 }
 
+function validCloudLinkState() {
+  return {
+    linked: true,
+    cloudUserId: "user_123",
+    relayUrl: "https://relay.example.test",
+    relayIssuer: "https://relay.example.test",
+    managedTunnelActive: true,
+    publishAgentActivity: true,
+  };
+}
+
 function requestBodyText(body: BodyInit | null | undefined): string {
   return body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body ?? "");
+}
+
+function successfulEnvironmentLinkResponse(url: string | URL) {
+  const requestUrl = String(url);
+  if (requestUrl.endsWith("/v1/client/environment-link-challenges")) {
+    return Promise.resolve(Response.json(validLinkChallengeResponse()));
+  }
+  if (requestUrl.endsWith("/api/connect/link-proof")) {
+    return Promise.resolve(Response.json(validLinkProof()));
+  }
+  if (requestUrl.endsWith("/v1/client/environment-links")) {
+    return Promise.resolve(Response.json(validLinkResponse()));
+  }
+  if (requestUrl.endsWith("/api/connect/preferences")) {
+    return Promise.resolve(Response.json(validCloudLinkState()));
+  }
+  return Promise.resolve(
+    Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+  );
 }
 
 function validDpopAccessTokenResponse(scope = "environment:status environment:connect") {
@@ -178,6 +209,7 @@ function listedEnvironment(environmentId: string) {
 describe("mobile cloud link environment client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(Platform, "OS", { value: "ios", configurable: true });
     createProofMock.mockClear();
     loadPreferences.mockClear();
   });
@@ -746,18 +778,7 @@ describe("mobile cloud link environment client", () => {
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           bodies.push(JSON.parse(requestBodyText(init.body)));
         }
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
+        return successfulEnvironmentLinkResponse(url);
       });
       vi.stubGlobal("fetch", fetchMock);
 
@@ -789,10 +810,14 @@ describe("mobile cloud link environment client", () => {
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).not.toContain(
+        "https://desktop.example.test/api/connect/preferences",
+      );
     }),
   );
 
-  it.effect("uses an explicit Live Activity preference when persisted state is unavailable", () =>
+  it.effect("enables environment activity publishing for explicit Live Activities", () =>
     Effect.gen(function* () {
       loadPreferences.mockReturnValueOnce(Effect.die("persisted preferences must not be read"));
       const bodies: Array<Record<string, unknown>> = [];
@@ -801,18 +826,7 @@ describe("mobile cloud link environment client", () => {
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           bodies.push(JSON.parse(requestBodyText(init.body)) as Record<string, unknown>);
         }
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
+        return successfulEnvironmentLinkResponse(url);
       });
       vi.stubGlobal("fetch", fetchMock);
 
@@ -828,6 +842,37 @@ describe("mobile cloud link environment client", () => {
         expect.objectContaining({ liveActivitiesEnabled: true }),
         expect.objectContaining({ liveActivitiesEnabled: true }),
       ]);
+      expect(bodies.at(-1)).toEqual({ publishAgentActivity: true });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(fetchMock.mock.calls.slice(-2).map(([url]) => String(url))).toEqual([
+        "https://desktop.example.test/api/connect/relay-config",
+        "https://desktop.example.test/api/connect/preferences",
+      ]);
+      const preferencesRequest = fetchMock.mock.calls.at(-1)?.[1];
+      expect(new Headers(preferencesRequest?.headers).get("authorization")).toBe(
+        "Bearer local-bearer",
+      );
+    }),
+  );
+
+  it.effect("does not enable environment activity publishing on Android", () =>
+    Effect.gen(function* () {
+      Object.defineProperty(Platform, "OS", { value: "android", configurable: true });
+      const fetchMock = vi.fn(successfulEnvironmentLinkResponse);
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withCloudServices(
+        linkEnvironmentToCloudWithPreference({
+          clerkToken: "clerk-token",
+          connection: savedConnection,
+          liveActivitiesEnabled: true,
+        }),
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).not.toContain(
+        "https://desktop.example.test/api/connect/preferences",
+      );
     }),
   );
 
