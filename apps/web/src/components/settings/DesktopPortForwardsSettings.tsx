@@ -188,10 +188,10 @@ export function DesktopPortForwardsSettings() {
           title={`${forward.localHost}:${forward.localPort}`}
           description={`${environmentLabels.get(forward.environmentId) ?? forward.environmentId} · ${forward.remoteHost}:${forward.remotePort}`}
           status={
-            <span className="flex flex-col items-end gap-0.5">
+            <span className="flex flex-col gap-0.5">
               <span>{portForwardConnectionSummary(forward)}</span>
               {forward.lastError === null ? null : (
-                <span className="max-w-96 text-right text-destructive">{forward.lastError}</span>
+                <span className="max-w-96 text-destructive">{forward.lastError}</span>
               )}
             </span>
           }
