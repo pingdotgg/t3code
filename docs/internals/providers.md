@@ -39,6 +39,57 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Provider skills (`$` picker)
+
+Provider status probes discover skills for every registered project root and active worktree so
+project skills are not limited to the server process cwd. Each project skill is tagged with
+`sourceCwd` on `ServerProviderSkill` in `packages/contracts`; user/global skills omit it.
+Stamps are absolute and passed through `normalizeProviderSkillWorkspacePath` so they match client
+path forms (trailing separators, `.` / `..`, mixed slashes).
+
+Grok prefers the harness over a filesystem reimplementation. `grok inspect --json` is the
+inventory Grok itself would load (bundled, user, project, plugin) and is the `$` picker
+authority when the report includes a `skills` array. ACP `available_commands_update` on
+session start is the live `/` menu: built-in features such as `compact` and `deep-research`,
+plus user-invocable skills. Filesystem scanning of `.grok/skills`, `.claude/skills`, and
+`.agents/skills` fills in when inspect is missing, including project skills from a workspace
+whose inspect probe failed.
+
+OpenCode follows the same harness-first rule for the `/` picker. Local installs resolve
+commands through `opencode debug config` per workspace cwd — the exact `.opencode/command(s)`,
+`~/.config/opencode/command(s)`, and `opencode.json` entries the harness would load — while
+configured external servers are queried through the SDK `command.list` per directory, which
+also sees MCP- and plugin-contributed commands. A command the harness reports for every
+queried workspace is global; one reported for a subset keeps that workspace's `sourceCwd` on
+`ServerProviderSlashCommand`. Built-ins (`init`, `review`) are registered in harness code, not
+config, so they merge from a constant in `Drivers/OpenCodeCommands.ts`. The `$` picker stays
+filesystem-based (`Drivers/OpenCodeSkills.ts`, covering `.opencode/skill(s)` plus compat
+roots) because the status probe deliberately avoids spawning a server and skills need their
+on-disk paths.
+
+Slash-command _execution_ differs per harness. Claude and Grok parse leading-slash prompt text
+themselves, so the composer only inserts `/name `; OpenCode's server never parses prompt text
+(the TUI routes commands to a dedicated endpoint), so `OpenCodeAdapter.sendTurn` detects a
+leading `/name args`, checks it against the session's cached `command.list`, and invokes
+`session.command` in a session-scoped fiber (the endpoint blocks until the command turn
+completes; turn progress still streams through the event pump). Unknown names and steers fall
+back to plain prompt text.
+
+Clients must not show the raw union in the `$` or `/` pickers. They filter with
+`filterProviderSkillsForWorkspace` / `filterProviderSlashCommandsForWorkspace`
+(`@t3tools/shared/providerSkills`) using the active chat's
+`worktreePath ?? project.workspaceRoot`, and may pass `projectRoot` so worktree chats still see
+project-root-tagged entries before a re-probe re-tags under the worktree path. Timeline skill chips
+may keep the full inventory so historical mentions still label correctly when the user switches
+projects.
+
+**Payload cost (accepted interim):** multi-workspace inventories grow with the number of open
+project/worktree bags and ride provider snapshots over the websocket. Prefer a later scoped
+`listSkills(cwd)` RPC if multi-project environments show measurable bloat; do not re-flatten by
+name across workspaces.
+
+See [project-scoped-skills.html](./project-scoped-skills.html).
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method

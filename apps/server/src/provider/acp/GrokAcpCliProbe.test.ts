@@ -53,6 +53,26 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("session/new advertises available commands including bundled skills", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeProbeRuntime;
+      yield* runtime.start();
+      const commands = yield* runtime.getAvailableCommands;
+      expect(commands.length).toBeGreaterThan(0);
+      expect(commands.some((command) => command.name === "compact")).toBe(true);
+      expect(
+        commands.some(
+          (command) =>
+            command.name === "create-skill" ||
+            (command._meta &&
+              typeof command._meta === "object" &&
+              "bareName" in command._meta &&
+              command._meta.bareName === "create-skill"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("session/set_model accepts a no-op switch to the current model", () =>
     Effect.gen(function* () {
       const runtime = yield* makeProbeRuntime;

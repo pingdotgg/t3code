@@ -10,7 +10,9 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -30,6 +32,12 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  discoverGrokSkills,
+  parseGrokAvailableCommands,
+  queryGrokInspectCatalog,
+  resolveGrokPickerCatalog,
+} from "../Drivers/GrokSkills.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -92,6 +100,20 @@ export function buildInitialGrokProviderSnapshot(
   });
 }
 
+function firstGrokWorkspaceCwd(cwd: string | ReadonlyArray<string>): string {
+  if (typeof cwd === "string") {
+    const trimmed = cwd.trim();
+    return trimmed.length > 0 ? trimmed : process.cwd();
+  }
+  for (const entry of cwd) {
+    const trimmed = entry.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+  return process.cwd();
+}
+
 function grokModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
@@ -126,6 +148,7 @@ function buildGrokDiscoveredModelsFromSessionModelState(
 const discoverGrokModelsViaAcp = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -133,11 +156,15 @@ const discoverGrokModelsViaAcp = (
       grokSettings,
       environment,
       childProcessSpawner,
-      cwd: process.cwd(),
+      cwd,
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
+    const availableCommands = yield* acp.getAvailableCommands;
+    return {
+      models: buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models),
+      ...parseGrokAvailableCommands(availableCommands, cwd),
+    };
   }).pipe(Effect.scoped);
 
 const runGrokVersionCommand = (
@@ -161,20 +188,28 @@ const runGrokVersionCommand = (
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  /**
+   * Workspace path(s) for project-scoped skill discovery: registered project
+   * roots, thread worktrees, and server cwd (see resolveSkillWorkspaceCwds).
+   */
+  cwd: string | ReadonlyArray<string> = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
+  const binaryPath = grokSettings.binaryPath || "grok";
 
   if (!grokSettings.enabled) {
+    const filesystemSkills = yield* discoverGrokSkills(cwd);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: false,
       checkedAt,
       models: fallbackModels,
+      skills: filesystemSkills,
       probe: {
         installed: false,
         version: null,
@@ -195,11 +230,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     yield* Effect.logWarning("Grok CLI health check failed.", {
       errorTag: error._tag,
     });
+    const filesystemSkills = yield* discoverGrokSkills(cwd);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills: filesystemSkills,
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -213,11 +250,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   if (Option.isNone(versionResult.success)) {
+    const filesystemSkills = yield* discoverGrokSkills(cwd);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills: filesystemSkills,
       probe: {
         installed: true,
         version: null,
@@ -236,11 +275,13 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       stdoutLength: versionOutput.stdout.length,
       stderrLength: versionOutput.stderr.length,
     });
+    const filesystemSkills = yield* discoverGrokSkills(cwd);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills: filesystemSkills,
       probe: {
         installed: true,
         version,
@@ -251,10 +292,26 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
-    Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
-    Effect.exit,
+  const [inspectCatalog, discoveryExit] = yield* Effect.all(
+    [
+      queryGrokInspectCatalog({
+        binaryPath,
+        cwd,
+        environment,
+      }),
+      discoverGrokModelsViaAcp(grokSettings, environment, firstGrokWorkspaceCwd(cwd)).pipe(
+        Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
+        Effect.exit,
+      ),
+    ],
+    { concurrency: 2 },
   );
+  const filesystemSkills = inspectCatalog ? [] : yield* discoverGrokSkills(cwd);
+  const inspectPicker = resolveGrokPickerCatalog({
+    filesystemSkills,
+    ...(inspectCatalog ? { inspectCatalog } : {}),
+  });
+
   if (Exit.isFailure(discoveryExit)) {
     yield* Effect.logWarning("Grok ACP model discovery failed", {
       errorTag: causeErrorTag(discoveryExit.cause),
@@ -264,6 +321,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills: inspectPicker.skills,
+      slashCommands: inspectPicker.slashCommands,
       probe: {
         installed: true,
         version,
@@ -282,6 +341,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills: inspectPicker.skills,
+      slashCommands: inspectPicker.slashCommands,
       probe: {
         installed: true,
         version,
@@ -291,10 +352,18 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       },
     });
   }
-  const discoveredModels = discoveryExit.value.value;
+  const discovery = discoveryExit.value.value;
+  const picker = resolveGrokPickerCatalog({
+    filesystemSkills,
+    ...(inspectCatalog ? { inspectCatalog } : {}),
+    acpCatalog: {
+      skills: discovery.skills,
+      slashCommands: discovery.slashCommands,
+    },
+  });
   const models =
-    discoveredModels.length > 0
-      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
+    discovery.models.length > 0
+      ? grokModelsFromSettings(grokSettings.customModels, discovery.models)
       : fallbackModels;
 
   return buildServerProvider({
@@ -302,6 +371,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     enabled: grokSettings.enabled,
     checkedAt,
     models,
+    skills: picker.skills,
+    slashCommands: picker.slashCommands,
     probe: {
       installed: true,
       version,

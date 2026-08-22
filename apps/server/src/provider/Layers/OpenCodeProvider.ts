@@ -2,12 +2,14 @@ import {
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
-  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -24,6 +26,12 @@ import {
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { discoverOpenCodeSkills } from "../Drivers/OpenCodeSkills.ts";
+import {
+  OPENCODE_BUILT_IN_SLASH_COMMANDS,
+  queryOpenCodeCommandCatalog,
+  queryOpenCodeSdkCommandCatalog,
+} from "../Drivers/OpenCodeCommands.ts";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
@@ -251,32 +259,6 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
   return models.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
-function trimOptional(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
-function flattenOpenCodeSkills(input: OpenCodeInventory): ReadonlyArray<ServerProviderSkill> {
-  const skills: ServerProviderSkill[] = [];
-  for (const skill of input.skills ?? []) {
-    const name = trimOptional(skill.name);
-    const path = trimOptional(skill.location);
-    if (!name || !path) {
-      continue;
-    }
-
-    const description = trimOptional(skill.description);
-    skills.push({
-      name,
-      path,
-      enabled: true,
-      ...(description ? { description, shortDescription: description } : {}),
-    });
-  }
-
-  return skills.toSorted((left, right) => left.name.localeCompare(right.name));
-}
-
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
 ): Effect.Effect<ServerProviderDraft> =>
@@ -324,16 +306,32 @@ export const makePendingOpenCodeProvider = (
 
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
-  cwd: string,
+  /**
+   * Workspace path(s) for skill discovery and OpenCode SDK directory (first
+   * path). Prefer registered project roots + worktrees.
+   */
+  cwd: string | ReadonlyArray<string>,
   environment?: NodeJS.ProcessEnv,
-): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  OpenCodeRuntime | FileSystem.FileSystem | Path.Path
+> {
   const openCodeRuntime = yield* OpenCodeRuntime;
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+  const skillCwds = typeof cwd === "string" ? [cwd] : [...cwd];
+  const primaryCwd = skillCwds[0] ?? process.cwd();
+  // Filesystem skills for the `$` picker (snapshot → web/mobile).
+  const skills = yield* discoverOpenCodeSkills(skillCwds);
 
-  const fallback = (cause: unknown, version: string | null = null) => {
+  const fallback = (
+    cause: unknown,
+    version: string | null = null,
+    slashCommands: ReadonlyArray<ServerProviderSlashCommand> = [],
+  ) => {
     const failure = formatOpenCodeProbeError({
       cause,
       isExternalServer,
@@ -344,6 +342,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: openCodeSettings.enabled,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      skills,
+      slashCommands,
       probe: {
         installed: failure.installed,
         version,
@@ -360,6 +360,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       enabled: false,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      skills,
       probe: {
         installed: false,
         version: null,
@@ -406,6 +407,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         enabled: openCodeSettings.enabled,
         checkedAt,
         models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+        skills,
         probe: {
           installed: true,
           version,
@@ -417,39 +419,79 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     }
   }
 
-  const inventoryExit = yield* Effect.exit(
-    (isExternalServer
-      ? Effect.scoped(
-          Effect.gen(function* () {
-            const server = yield* openCodeRuntime.connectToOpenCodeServer({
-              binaryPath: openCodeSettings.binaryPath,
-              serverUrl: openCodeSettings.serverUrl,
-              environment: resolvedEnvironment,
-            });
-            return yield* openCodeRuntime.loadOpenCodeInventory(
-              openCodeRuntime.createOpenCodeSdkClient({
-                baseUrl: server.url,
-                directory: cwd,
-                ...(openCodeSettings.serverPassword
-                  ? { serverPassword: openCodeSettings.serverPassword }
-                  : {}),
+  // Slash-command discovery for the `/` picker. Never fails the probe: a
+  // broken workspace query degrades to the harness built-ins.
+  const slashCommandsEffect = isExternalServer
+    ? Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* openCodeRuntime.connectToOpenCodeServer({
+            binaryPath: openCodeSettings.binaryPath,
+            serverUrl: openCodeSettings.serverUrl,
+            environment: resolvedEnvironment,
+          });
+          return yield* queryOpenCodeSdkCommandCatalog({
+            client: openCodeRuntime.createOpenCodeSdkClient({
+              baseUrl: server.url,
+              directory: primaryCwd,
+              ...(openCodeSettings.serverPassword
+                ? { serverPassword: openCodeSettings.serverPassword }
+                : {}),
+            }),
+            cwd: skillCwds,
+          });
+        }),
+      ).pipe(
+        Effect.catch((error) =>
+          Effect.logDebug("OpenCode slash-command discovery failed.", {
+            errorTag: error instanceof Error ? error.name : "UnknownError",
+          }).pipe(Effect.as([...OPENCODE_BUILT_IN_SLASH_COMMANDS])),
+        ),
+      )
+    : queryOpenCodeCommandCatalog({
+        binaryPath: openCodeSettings.binaryPath,
+        cwd: skillCwds,
+        environment: resolvedEnvironment,
+      });
+
+  const [slashCommands, inventoryExit] = yield* Effect.all(
+    [
+      slashCommandsEffect,
+      Effect.exit(
+        (isExternalServer
+          ? Effect.scoped(
+              Effect.gen(function* () {
+                const server = yield* openCodeRuntime.connectToOpenCodeServer({
+                  binaryPath: openCodeSettings.binaryPath,
+                  serverUrl: openCodeSettings.serverUrl,
+                  environment: resolvedEnvironment,
+                });
+                return yield* openCodeRuntime.loadOpenCodeInventory(
+                  openCodeRuntime.createOpenCodeSdkClient({
+                    baseUrl: server.url,
+                    directory: primaryCwd,
+                    ...(openCodeSettings.serverPassword
+                      ? { serverPassword: openCodeSettings.serverPassword }
+                      : {}),
+                  }),
+                );
               }),
-            );
-          }),
-        )
-      : openCodeRuntime.loadInventoryFromCli({
-          binaryPath: openCodeSettings.binaryPath,
-          cwd,
-          environment: resolvedEnvironment,
-        })
-    ).pipe(
-      Effect.mapError(
-        (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+            )
+          : openCodeRuntime.loadInventoryFromCli({
+              binaryPath: openCodeSettings.binaryPath,
+              cwd: primaryCwd,
+              environment: resolvedEnvironment,
+            })
+        ).pipe(
+          Effect.mapError(
+            (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+          ),
+        ),
       ),
-    ),
+    ],
+    { concurrency: 2 },
   );
   if (inventoryExit._tag === "Failure") {
-    return fallback(Cause.squash(inventoryExit.cause), version);
+    return fallback(Cause.squash(inventoryExit.cause), version, slashCommands);
   }
 
   const models = providerModelsFromSettings(
@@ -457,7 +499,6 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = flattenOpenCodeSkills(inventoryExit.value);
   const connectedCount = inventoryExit.value.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
@@ -465,6 +506,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     checkedAt,
     models,
     skills,
+    slashCommands,
     probe: {
       installed: true,
       version,

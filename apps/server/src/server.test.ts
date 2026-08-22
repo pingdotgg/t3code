@@ -782,6 +782,9 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          // Provider probes resolve skill workspaces through this; without a
+          // stub `Layer.mock` raises a defect the probe silently swallows.
+          getActiveWorkspaceCwds: () => Effect.succeed([]),
           getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getShellSnapshot: () =>

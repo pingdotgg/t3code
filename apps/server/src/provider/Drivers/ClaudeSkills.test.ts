@@ -60,6 +60,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
           enabled: true,
           scope: "project",
+          sourceCwd: path.resolve(workspace),
           description: "Deploy the app.",
         },
       ]);
@@ -88,13 +89,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           path: path.join(workspace, ".agents", "skills", "review", "SKILL.md"),
           enabled: true,
           scope: "project",
+          sourceCwd: path.resolve(workspace),
           description: "Review the changes.",
         },
       ]);
     }),
   );
 
-  it.effect("prefers workspace .claude skills on three-way name collisions", () =>
+  it.effect("prefers workspace .claude skills over .agents within one workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -120,52 +122,60 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
 
-      assert.deepEqual(skills, [
-        {
-          name: "deploy",
-          path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
-          enabled: true,
-          scope: "project",
-          description: "Claude deploy.",
-        },
-      ]);
+      // The project bag collapses to `.claude`; the user entry stays alongside
+      // it, and the client-side filter picks project over user.
+      assert.deepEqual(
+        skills.map((entry) => [entry.scope, entry.sourceCwd, entry.path]),
+        [
+          ["user", undefined, path.join(configDir, "skills", "deploy", "SKILL.md")],
+          [
+            "project",
+            path.resolve(workspace),
+            path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
+          ],
+        ],
+      );
     }),
   );
 
-  it.effect("prefers workspace .agents skills over user skills on name collisions", () =>
+  it.effect("tags multi-workspace project skills without leaking names across bags", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
       const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
+      const workspaceA = path.join(tempDir, "workspace-a");
+      const workspaceB = path.join(tempDir, "workspace-b");
 
       yield* writeSkill(
         path.join(configDir, "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
+        "user-tool",
+        ["---", "name: user-tool", "description: User tool.", "---"].join("\n"),
       );
       yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
+        path.join(workspaceA, ".claude", "skills"),
         "deploy",
-        ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
+        ["---", "name: deploy", "description: Deploy A.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspaceB, ".claude", "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: Deploy B.", "---"].join("\n"),
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
-
-      assert.deepEqual(skills, [
-        {
-          name: "deploy",
-          path: path.join(workspace, ".agents", "skills", "deploy", "SKILL.md"),
-          enabled: true,
-          scope: "project",
-          description: "Agents deploy.",
-        },
-      ]);
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, [workspaceA, workspaceB]);
+      assert.deepEqual(
+        skills.map((entry) => [entry.name, entry.sourceCwd, entry.description]),
+        [
+          ["deploy", path.resolve(workspaceA), "Deploy A."],
+          ["deploy", path.resolve(workspaceB), "Deploy B."],
+          ["user-tool", undefined, "User tool."],
+        ],
+      );
     }),
   );
 
-  it.effect("prefers project skills over user skills on name collisions", () =>
+  it.effect("keeps user and project skills with the same name as separate inventory entries", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -186,9 +196,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
 
-      assert.equal(skills.length, 1);
-      assert.equal(skills[0]?.scope, "project");
-      assert.equal(skills[0]?.description, "Project deploy.");
+      // Client-side filterProviderSkillsForWorkspace lets project win by name.
+      assert.deepEqual(
+        skills.map((entry) => [entry.scope, entry.sourceCwd, entry.description]),
+        [
+          ["user", undefined, "User deploy."],
+          ["project", path.resolve(workspace), "Project deploy."],
+        ],
+      );
     }),
   );
 
@@ -287,6 +302,67 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("resolves a relative CLAUDE_CONFIG_DIR for every workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const workspaceA = path.join(tempDir, "workspace-a");
+      const workspaceB = path.join(tempDir, "workspace-b");
+
+      // Each spawned CLI resolves the relative value against its own cwd, so
+      // both config dirs are real user roots — not just the first workspace's
+      // — and each is tagged so it cannot leak into the other's picker.
+      yield* writeSkill(
+        path.join(workspaceA, "relative-config", "skills"),
+        "skill-a",
+        ["---", "name: skill-a", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspaceB, "relative-config", "skills"),
+        "skill-b",
+        ["---", "name: skill-b", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: "" }, [workspaceA, workspaceB], {
+        CLAUDE_CONFIG_DIR: "relative-config",
+      });
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope, skill.sourceCwd]),
+        [
+          ["skill-a", "user", path.resolve(workspaceA)],
+          ["skill-b", "user", path.resolve(workspaceB)],
+        ],
+      );
+    }),
+  );
+
+  it.effect("leaves a shared config dir untagged so it stays global", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "shared-tool",
+        ["---", "name: shared-tool", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, [
+        path.join(tempDir, "workspace-a"),
+        path.join(tempDir, "workspace-b"),
+      ]);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.sourceCwd]),
+        [["shared-tool", undefined]],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -299,6 +375,86 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
 
       assert.deepEqual(skills, []);
+    }),
+  );
+
+  it.effect("discovers project skills from git root when cwd is nested", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const repo = path.join(tempDir, "repo");
+      const nested = path.join(repo, "packages", "app");
+      yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+      yield* fs.makeDirectory(nested, { recursive: true });
+
+      yield* writeSkill(
+        path.join(repo, ".claude", "skills"),
+        "root-skill",
+        ["---", "name: root-skill", "description: From project root.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, nested);
+      assert.ok(skills.some((skill) => skill.name === "root-skill"));
+      assert.equal(skills.find((skill) => skill.name === "root-skill")?.scope, "project");
+    }),
+  );
+
+  it.effect("prefers nearer-cwd project skill over git-root skill on name collision", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const repo = path.join(tempDir, "repo");
+      const nested = path.join(repo, "packages", "app");
+      yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+      yield* fs.makeDirectory(nested, { recursive: true });
+
+      yield* writeSkill(
+        path.join(repo, ".claude", "skills"),
+        "shared",
+        ["---", "name: shared", "description: From git root.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(nested, ".claude", "skills"),
+        "shared",
+        ["---", "name: shared", "description: From nested cwd.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, nested);
+      const shared = skills.find((skill) => skill.name === "shared");
+      assert.equal(shared?.description, "From nested cwd.");
+      assert.ok(shared?.path.includes(`${path.sep}packages${path.sep}app${path.sep}`));
+    }),
+  );
+
+  it.effect("discovers project skills across multiple workspace roots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const projectA = path.join(tempDir, "project-a");
+      const projectB = path.join(tempDir, "project-b");
+      yield* fs.makeDirectory(path.join(projectA, ".git"), { recursive: true });
+      yield* fs.makeDirectory(path.join(projectB, ".git"), { recursive: true });
+
+      yield* writeSkill(
+        path.join(projectA, ".claude", "skills"),
+        "skill-a",
+        ["---", "name: skill-a", "description: From project A.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectB, ".claude", "skills"),
+        "skill-b",
+        ["---", "name: skill-b", "description: From project B.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, [projectA, projectB]);
+      assert.ok(skills.some((skill) => skill.name === "skill-a"));
+      assert.ok(skills.some((skill) => skill.name === "skill-b"));
     }),
   );
 });

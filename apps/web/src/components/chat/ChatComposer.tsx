@@ -23,6 +23,10 @@ import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
+  filterProviderSkillsForWorkspace,
+  filterProviderSlashCommandsForWorkspace,
+} from "@t3tools/shared/providerSkills";
+import {
   memo,
   type ReactNode,
   useCallback,
@@ -595,7 +599,17 @@ export interface ChatComposerProps {
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
+  /**
+   * Effective chat checkout for project-scoped skills and git actions:
+   * `worktreePath ?? project.workspaceRoot` (see projectScriptCwd).
+   */
   gitCwd: string | null;
+  /**
+   * Project workspace root (not the worktree). Used so the `$` picker can
+   * fall back to project-root-tagged skills when the chat is on a worktree
+   * that has not been re-probed yet.
+   */
+  projectWorkspaceRoot: string | null;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -684,6 +698,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    projectWorkspaceRoot,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -885,6 +900,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
+  );
+  // Skill inventory is environment-global on the provider snapshot (every
+  // open project/worktree). Scope the `$` picker to this chat's checkout:
+  // gitCwd is already worktreePath ?? project.workspaceRoot.
+  const selectedProviderSkills = useMemo(
+    () =>
+      filterProviderSkillsForWorkspace(selectedProviderStatus?.skills ?? [], gitCwd, {
+        projectRoot: projectWorkspaceRoot,
+      }),
+    [selectedProviderStatus?.skills, gitCwd, projectWorkspaceRoot],
+  );
+  // Same scoping for the `/` picker: provider snapshots carry every open
+  // workspace's commands, so keep only this chat's global + project commands.
+  const selectedProviderSlashCommands = useMemo(
+    () =>
+      filterProviderSlashCommandsForWorkspace(selectedProviderStatus?.slashCommands ?? [], gitCwd, {
+        projectRoot: projectWorkspaceRoot,
+      }),
+    [selectedProviderStatus?.slashCommands, gitCwd, projectWorkspaceRoot],
   );
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
@@ -1107,18 +1141,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ] as const)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
-        (command) => ({
-          id: `provider-slash-command:${selectedProvider}:${command.name}`,
-          type: "provider-slash-command" as const,
-          provider: selectedProvider,
-          command,
-          label: `/${command.name}`,
-          description: command.description ?? command.input?.hint ?? "Run provider command",
-        }),
-      );
+      const providerSlashCommandItems = selectedProviderSlashCommands.map((command) => ({
+        id: `provider-slash-command:${selectedProvider}:${command.name}`,
+        type: "provider-slash-command" as const,
+        provider: selectedProvider,
+        command,
+        label: `/${command.name}`,
+        description: command.description ?? command.input?.hint ?? "Run provider command",
+      }));
       const query = composerTrigger.query.trim().toLowerCase();
-      const skillItems = (selectedProviderStatus?.skills ?? [])
+      const skillItems = selectedProviderSkills
         .filter((skill) => skill.enabled)
         .map((skill) => ({
           id: `skill:${selectedProvider}:${skill.name}`,
@@ -1139,26 +1171,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
   }, [
     composerTrigger,
     planModeUiEnabled,
     selectedProvider,
-    selectedProviderStatus,
+    selectedProviderSkills,
+    selectedProviderSlashCommands,
     workspaceEntries.entries,
   ]);
 
@@ -3227,7 +3258,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? composerTerminalContexts
                       : []
                   }
-                  skills={selectedProviderStatus?.skills ?? []}
+                  skills={selectedProviderSkills}
                   {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}

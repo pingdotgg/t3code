@@ -82,6 +82,14 @@ export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
+  /**
+   * Absolute workspace cwd this project command was discovered under.
+   * Omitted for harness built-in and user/global commands that are in scope
+   * for every chat. Clients filter the `/` picker to global commands plus
+   * commands whose `sourceCwd` matches the active thread's worktree or
+   * project root.
+   */
+  sourceCwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 
@@ -93,6 +101,13 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Absolute workspace cwd this project skill was discovered under.
+   * Omitted for user/global skills that are in scope for every chat.
+   * Clients filter the `$` picker to user skills plus skills whose
+   * `sourceCwd` matches the active thread's worktree or project root.
+   */
+  sourceCwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

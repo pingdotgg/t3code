@@ -334,11 +334,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   private fun parseColor(value: String, fallback: Int): Int =
-    try {
-      Color.parseColor(value)
-    } catch (_: Exception) {
-      fallback
-    }
+    parseComposerThemeColor(value) ?: fallback
 }
 
 private data class ComposerToken(
@@ -362,10 +358,85 @@ private data class ComposerChipTheme(
       chipBackground = Color.rgb(238, 240, 243),
       chipBorder = Color.rgb(210, 214, 220),
       chipText = Color.rgb(35, 39, 45),
-      skillBackground = Color.rgb(233, 239, 255),
-      skillBorder = Color.rgb(185, 200, 245),
-      skillText = Color.rgb(45, 72, 155),
+      // Match desktop/web skill chips: fuchsia-500 at 12%/25% + fuchsia-700 text.
+      skillBackground = Color.argb(31, 217, 70, 239),
+      skillBorder = Color.argb(64, 217, 70, 239),
+      skillText = Color.rgb(162, 28, 175),
     )
+  }
+}
+
+/**
+ * Parse theme colors from the RN bridge.
+ *
+ * Uniwind/culori emit 8-digit hex as #RRGGBBAA. Android's Color.parseColor uses
+ * #AARRGGBB, which turns fuchsia skill chips into bright green. Prefer RRGGBBAA
+ * so mobile matches the desktop fuchsia skill chip theme.
+ */
+private fun parseComposerThemeColor(value: String): Int? {
+  val trimmed = value.trim()
+  if (trimmed.isEmpty()) return null
+
+  val hexBody = when {
+    trimmed.startsWith("#") -> trimmed.substring(1)
+    trimmed.length == 6 || trimmed.length == 8 -> trimmed
+    else -> null
+  }
+  if (hexBody != null) {
+    return try {
+      when (hexBody.length) {
+        6 -> {
+          val raw = hexBody.toLong(16)
+          Color.rgb(
+            ((raw shr 16) and 0xff).toInt(),
+            ((raw shr 8) and 0xff).toInt(),
+            (raw and 0xff).toInt(),
+          )
+        }
+        8 -> {
+          val raw = hexBody.toLong(16)
+          // #RRGGBBAA (uniwind / iOS composerHex), not Android's #AARRGGBB.
+          Color.argb(
+            (raw and 0xff).toInt(),
+            ((raw shr 24) and 0xff).toInt(),
+            ((raw shr 16) and 0xff).toInt(),
+            ((raw shr 8) and 0xff).toInt(),
+          )
+        }
+        else -> null
+      }
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  val rgbaMatch =
+    Regex(
+      """^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$""",
+      RegexOption.IGNORE_CASE,
+    ).matchEntire(trimmed)
+  if (rgbaMatch != null) {
+    return try {
+      val r = rgbaMatch.groupValues[1].toFloat().toInt().coerceIn(0, 255)
+      val g = rgbaMatch.groupValues[2].toFloat().toInt().coerceIn(0, 255)
+      val b = rgbaMatch.groupValues[3].toFloat().toInt().coerceIn(0, 255)
+      val alphaToken = rgbaMatch.groupValues[4]
+      val a =
+        if (alphaToken.isNotEmpty()) {
+          (alphaToken.toFloat().coerceIn(0f, 1f) * 255f).toInt().coerceIn(0, 255)
+        } else {
+          255
+        }
+      Color.argb(a, r, g, b)
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  return try {
+    Color.parseColor(trimmed)
+  } catch (_: Exception) {
+    null
   }
 }
 

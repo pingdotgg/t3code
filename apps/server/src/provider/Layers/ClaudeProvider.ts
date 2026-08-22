@@ -810,7 +810,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings: ClaudeSettings,
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
-  cwd?: string,
+  /**
+   * Workspace path(s) for project-scoped skill discovery (project roots +
+   * worktrees). Optional; user skills still load without it.
+   */
+  cwd?: string | ReadonlyArray<string>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,

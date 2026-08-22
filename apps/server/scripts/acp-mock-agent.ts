@@ -27,6 +27,11 @@ const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANC
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
+const failFirstLoadSession = process.env.T3_ACP_FAIL_FIRST_LOAD_SESSION === "1";
+const emitAvailableCommandsBeforeLoadFailure =
+  process.env.T3_ACP_EMIT_AVAILABLE_COMMANDS_BEFORE_LOAD_FAILURE === "1";
+const emitForeignAvailableCommandsDuringLoad =
+  process.env.T3_ACP_EMIT_FOREIGN_AVAILABLE_COMMANDS_DURING_LOAD === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
@@ -54,6 +59,7 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let loadSessionCount = 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
 
@@ -310,11 +316,35 @@ const program = Effect.gen(function* () {
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      yield* agent.client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [
+            {
+              name: "compact",
+              description: "Compress conversation history to save context window",
+              input: { hint: "optional context about what to preserve" },
+            },
+            {
+              name: "create-skill",
+              description: "Create a new Grok skill",
+              _meta: {
+                scope: "bundled",
+                path: "/mock/bundled/skills/create-skill/SKILL.md",
+                bareName: "create-skill",
+              },
+            },
+          ],
+        },
+      });
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
@@ -343,7 +373,28 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
-      if (failLoadSession) {
+      loadSessionCount += 1;
+      if (emitForeignAvailableCommandsDuringLoad) {
+        yield* agent.client.sessionUpdate({
+          sessionId: "foreign-session-id",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              { name: "foreign-command", description: "Foreign session command" },
+            ],
+          },
+        });
+      }
+      if (emitAvailableCommandsBeforeLoadFailure) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "stale-command", description: "Stale command" }],
+          },
+        });
+      }
+      if (failLoadSession || (failFirstLoadSession && loadSessionCount === 1)) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }
       if (hangLoadSessionAfterReplay || delayLoadSessionAfterReplay) {

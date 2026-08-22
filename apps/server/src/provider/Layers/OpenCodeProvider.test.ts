@@ -36,6 +36,7 @@ const runtimeMock = {
     inventoryError: null as Error | null,
     inventoryCwd: null as string | null,
     closeCalls: 0,
+    debugConfigStdoutByCwd: new Map<string, string>(),
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
@@ -48,6 +49,7 @@ const runtimeMock = {
     this.state.inventoryError = null;
     this.state.inventoryCwd = null;
     this.state.closeCalls = 0;
+    this.state.debugConfigStdoutByCwd = new Map();
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
@@ -77,8 +79,18 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         external: Boolean(serverUrl),
       };
     }),
-  runOpenCodeCommand: () =>
-    runtimeMock.state.runVersionError
+  runOpenCodeCommand: (input) => {
+    if (input.args[0] === "debug") {
+      const stdout = input.cwd
+        ? runtimeMock.state.debugConfigStdoutByCwd.get(input.cwd)
+        : undefined;
+      return Effect.succeed(
+        stdout !== undefined
+          ? { stdout, stderr: "", code: 0 }
+          : { stdout: "debug config unavailable", stderr: "", code: 1 },
+      );
+    }
+    return runtimeMock.state.runVersionError
       ? Effect.fail(
           new OpenCodeRuntimeError({
             operation: "runOpenCodeCommand",
@@ -86,7 +98,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             cause: runtimeMock.state.runVersionError,
           }),
         )
-      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 });
+  },
   createOpenCodeSdkClient: () =>
     ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -213,76 +226,6 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("includes OpenCode skills in the provider snapshot", () =>
-    Effect.gen(function* () {
-      runtimeMock.state.inventory = {
-        providerList: {
-          connected: ["openai"],
-          all: [
-            {
-              id: "openai",
-              name: "OpenAI",
-              models: {
-                "gpt-5.4": {
-                  id: "gpt-5.4",
-                  name: "GPT-5.4",
-                  variants: {},
-                },
-              },
-            },
-          ],
-          default: {},
-        },
-        agents: [],
-        skills: [
-          {
-            name: "openclaw-review",
-            description: "Review OpenClaw workflow changes.",
-            location: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
-            content: "---\nname: openclaw-review\n---\n",
-          },
-          {
-            name: "openclaw-triage",
-            description: "Triage OpenClaw routing issues.",
-            location: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
-            content: "---\nname: openclaw-triage\n---\n",
-          },
-          {
-            name: "missing-location",
-            description: "This incomplete SDK row should be skipped.",
-            location: "",
-            content: "---\nname: missing-location\n---\n",
-          },
-        ],
-      };
-
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
-
-      NodeAssert.deepEqual(
-        snapshot.skills.map((skill) => ({
-          name: skill.name,
-          path: skill.path,
-          enabled: skill.enabled,
-          shortDescription: skill.shortDescription,
-        })),
-        [
-          {
-            name: "openclaw-review",
-            path: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
-            enabled: true,
-            shortDescription: "Review OpenClaw workflow changes.",
-          },
-          {
-            name: "openclaw-triage",
-            path: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
-            enabled: true,
-            shortDescription: "Triage OpenClaw routing issues.",
-          },
-        ],
-      );
-    }),
-  );
-
   it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
@@ -303,6 +246,48 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(
         snapshot.message,
         "Failed to execute OpenCode CLI health check: opencode models failed",
+      );
+    }),
+  );
+
+  it.effect("surfaces harness slash commands scoped to their workspace", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.debugConfigStdoutByCwd = new Map([
+        [
+          "/workspace/a",
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed harness-owned fixture document.
+          JSON.stringify({
+            command: {
+              "deploy-check": { description: "A deploy", template: "..." },
+              shared: { description: "Everywhere", template: "..." },
+            },
+          }),
+        ],
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed harness-owned fixture document.
+        ["/workspace/b", JSON.stringify({ command: { shared: { template: "..." } } })],
+      ]);
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), [
+        "/workspace/a",
+        "/workspace/b",
+      ]);
+
+      const byName = (name: string) =>
+        snapshot.slashCommands.find((command) => command.name === name);
+      NodeAssert.equal(byName("deploy-check")?.sourceCwd, "/workspace/a");
+      NodeAssert.equal(byName("shared")?.sourceCwd, undefined);
+      NodeAssert.ok(byName("init"));
+      NodeAssert.ok(byName("review"));
+    }),
+  );
+
+  it.effect("degrades to built-in slash commands when debug config is unavailable", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.deepEqual(
+        snapshot.slashCommands.map((command) => command.name),
+        ["init", "review"],
       );
     }),
   );

@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project-scoped provider skills</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #171717;
+        --muted: #62646b;
+        --hairline: #d8d8dd;
+        --panel: #ffffff;
+        --paper: #f5f5f2;
+        --blue: #1457d9;
+        --green: #1d7d4d;
+        --amber: #a65f00;
+        --red: #b8242c;
+        --violet: #6150b8;
+        --shadow: 0 18px 55px rgba(25, 25, 28, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(90deg, rgba(0, 0, 0, 0.035) 1px, transparent 1px),
+          linear-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px), var(--paper);
+        background-size: 34px 34px;
+        color: var(--ink);
+        font-family:
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.48;
+      }
+
+      .shell {
+        width: min(1180px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 38px 0 72px;
+      }
+
+      header {
+        border-bottom: 2px solid var(--ink);
+        padding-bottom: 24px;
+        margin-bottom: 28px;
+      }
+
+      .eyebrow {
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 980px;
+        margin: 8px 0 12px;
+        font-size: clamp(34px, 5vw, 58px);
+        line-height: 0.98;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 26px;
+        line-height: 1.08;
+      }
+
+      h3 {
+        margin: 22px 0 8px;
+        font-size: 17px;
+      }
+
+      p {
+        margin: 0 0 12px;
+      }
+
+      code,
+      .mono {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+
+      code {
+        border-radius: 4px;
+        background: #f0f0ed;
+        padding: 1px 4px;
+        font-size: 0.92em;
+      }
+
+      .lede {
+        max-width: 920px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 18px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        grid-column: span 12;
+        border: 1px solid var(--hairline);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        padding: 22px;
+      }
+
+      .half {
+        grid-column: span 6;
+      }
+
+      .third {
+        grid-column: span 4;
+      }
+
+      @media (max-width: 900px) {
+        .half,
+        .third {
+          grid-column: span 12;
+        }
+      }
+
+      .callout {
+        border-left: 5px solid var(--blue);
+        background: #eef4ff;
+        padding: 14px 16px;
+        margin-top: 14px;
+      }
+
+      .callout.warning {
+        border-left-color: var(--amber);
+        background: #fff6e6;
+      }
+
+      .callout.danger {
+        border-left-color: var(--red);
+        background: #fff0f0;
+      }
+
+      .callout.success {
+        border-left-color: var(--green);
+        background: #edf8f1;
+      }
+
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .badge {
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        background: #fff;
+        padding: 5px 9px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .badge.bad {
+        border-color: rgba(184, 36, 44, 0.35);
+        color: var(--red);
+      }
+
+      .badge.ok {
+        border-color: rgba(29, 125, 77, 0.3);
+        color: var(--green);
+      }
+
+      .badge.note {
+        border-color: rgba(20, 87, 217, 0.3);
+        color: var(--blue);
+      }
+
+      .badge.todo {
+        border-color: rgba(166, 95, 0, 0.35);
+        color: var(--amber);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--hairline);
+        padding: 11px 9px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      ul,
+      ol {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      li + li {
+        margin-top: 6px;
+      }
+
+      .flow {
+        display: grid;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .step {
+        border: 1px solid var(--hairline);
+        border-left: 5px solid var(--green);
+        border-radius: 8px;
+        background: #fff;
+        padding: 12px 14px;
+      }
+
+      .step.wrong {
+        border-left-color: var(--red);
+      }
+
+      .step.fix {
+        border-left-color: var(--blue);
+      }
+
+      .step .kicker {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+
+      pre.box {
+        margin: 12px 0 0;
+        padding: 14px 16px;
+        border: 1px solid var(--hairline);
+        border-radius: 8px;
+        background: #fbfbf8;
+        overflow-x: auto;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      @media (max-width: 800px) {
+        .compare {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .compare .card {
+        border: 1px solid var(--hairline);
+        border-radius: 8px;
+        padding: 14px;
+        background: #fff;
+      }
+
+      .compare .card h4 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+
+      .compare .card.before {
+        border-top: 4px solid var(--red);
+      }
+
+      .compare .card.after {
+        border-top: 4px solid var(--green);
+      }
+
+      .meta {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      a {
+        color: var(--blue);
+      }
+
+      .pr {
+        border: 1px solid var(--hairline);
+        border-radius: 8px;
+        padding: 14px 16px;
+        background: #fff;
+        margin-top: 10px;
+      }
+
+      .pr h4 {
+        margin: 0 0 6px;
+        font-size: 15px;
+      }
+
+      .pr .meta {
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="eyebrow">Internals · Provider skills</div>
+        <h1>Project-scoped skills for the active chat</h1>
+        <p class="lede">
+          The <code>$</code> skill picker must only show skills that are in scope for the project
+          and branch (worktree) behind the current chat — not a union of every open workspace on the
+          environment.
+        </p>
+        <div class="badge-row">
+          <span class="badge ok">Implemented (tagged sourceCwd + client filter)</span>
+          <span class="badge note">Branch: fix/project-scoped-provider-skills</span>
+          <span class="badge note">See providers.md</span>
+        </div>
+      </header>
+
+      <div class="grid">
+        <!-- STATUS -->
+        <section class="panel">
+          <h2>Current status</h2>
+          <div class="callout success">
+            <strong>Fixed via tagged inventory + client filter.</strong> The server still discovers
+            across registered projects/worktrees (so project skills are not limited to process cwd),
+            but each project skill is stamped with <code>sourceCwd</code>. Clients filter with
+            <code>filterProviderSkillsForWorkspace</code> using
+            <code>worktreePath ?? project.workspaceRoot</code>. A later scoped RPC remains optional
+            for wire-size if inventories grow large.
+          </div>
+
+          <h3>What landed already</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Commit</th>
+                <th>Intent</th>
+                <th>Effect on the bug</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code>b7c5b7e69</code> feat(server): discover project-scoped provider skills
+                </td>
+                <td>
+                  Shared filesystem discovery for Codex / Grok / OpenCode; expose skills on provider
+                  snapshots.
+                </td>
+                <td>
+                  Starts project discovery, but still binds inventory to the provider status probe
+                  cwd model.
+                </td>
+              </tr>
+              <tr>
+                <td><code>3f237321d</code> fix(server): discover skills across every project</td>
+                <td>
+                  <code>resolveSkillWorkspaceCwds</code> unions server cwd + all project
+                  <code>workspaceRoot</code>s + all thread <code>worktreePath</code>s; Cursor
+                  support; multi-cwd Codex <code>skills/list</code>.
+                </td>
+                <td>
+                  <strong>Encodes the reported bug as intended behavior.</strong> All open
+                  workspaces feed one flat skill list per provider instance.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>Why the UI bleeds skills across chats</h3>
+          <div class="flow">
+            <div class="step wrong">
+              <div class="kicker">1 · Server probe</div>
+              Provider status checks call
+              <code>resolveSkillWorkspaceCwds</code> → every project + worktree.
+            </div>
+            <div class="step wrong">
+              <div class="kicker">2 · Contract</div>
+              Results are flattened into <code>ServerProvider.skills</code> (environment-global, per
+              provider instance). No project / cwd provenance on the wire for clients to filter.
+            </div>
+            <div class="step wrong">
+              <div class="kicker">3 · Composer</div>
+              Web (and mobile chips) use
+              <code>activeProviderStatus?.skills</code> /
+              <code>selectedProviderStatus?.skills</code> for the <code>$</code> picker —
+              independent of the active project target.
+            </div>
+            <div class="step fix">
+              <div class="kicker">Meanwhile · Agent turn</div>
+              Turns already run with the thread’s effective cwd (<code
+                >worktreePath ?? workspaceRoot</code
+              >). The <em>agent</em> loads the right skills; the <em>picker</em> lies.
+            </div>
+          </div>
+        </section>
+
+        <!-- GOAL -->
+        <section class="panel half">
+          <h2>Goal</h2>
+          <p>
+            For a chat on project <strong>P</strong> with branch/worktree <strong>W</strong>, the
+            skill inventory is:
+          </p>
+          <ul>
+            <li><strong>User / global skills</strong> — always in scope for that provider.</li>
+            <li>
+              <strong>Project skills</strong> discoverable from the chat’s effective workspace cwd
+              only: <code>thread.worktreePath ?? project.workspaceRoot</code>, using each harness’s
+              normal ancestor walk to the git root.
+            </li>
+          </ul>
+          <p style="margin-top: 12px"><strong>Out of scope for that chat:</strong></p>
+          <ul>
+            <li>Other projects’ <code>workspaceRoot</code>s</li>
+            <li>Other threads’ worktrees / branches</li>
+            <li>Server process cwd, unless it is the same path as the chat’s workspace</li>
+          </ul>
+        </section>
+
+        <section class="panel half">
+          <h2>Non-goals</h2>
+          <ul>
+            <li>Changing how provider CLIs load skills at turn runtime (already cwd-correct).</li>
+            <li>A new skill authoring format — keep each harness’s existing roots.</li>
+            <li>
+              Merging skill <em>implementations</em> across providers; only the picker inventory is
+              in play.
+            </li>
+            <li>
+              Remote-only special cases — same contract for local, Tailscale, and Connect (cwd is
+              environment-local).
+            </li>
+          </ul>
+          <div class="callout" style="margin-top: 16px">
+            <strong>Branch ≈ worktree.</strong> T3 already models “this chat’s checkout” as
+            <code>thread.worktreePath</code> when present, else the project root. That is the same
+            resolution <code>useActiveProjectTarget</code> uses for file picker and content search.
+          </div>
+        </section>
+
+        <!-- BEFORE / AFTER -->
+        <section class="panel">
+          <h2>Before / after</h2>
+          <div class="compare">
+            <div class="card before">
+              <h4>Before (current branch)</h4>
+              <pre class="box">
+Environment providers[codex].skills =
+  user skills
+  + Project A skills
+  + Project A worktree skills
+  + Project B skills
+  + Project C skills
+  …
+
+Chat on Project A / branch-feature
+  $ picker → everything above</pre
+              >
+            </div>
+            <div class="card after">
+              <h4>After (this plan)</h4>
+              <pre class="box">
+User skills (provider instance)
+  + skills(cwd = worktreePath | workspaceRoot)
+
+Chat on Project A / branch-feature
+  $ picker → user + A@branch-feature only
+
+Chat on Project B / main
+  $ picker → user + B@main only</pre
+              >
+            </div>
+          </div>
+        </section>
+
+        <!-- SCOPE MODEL -->
+        <section class="panel">
+          <h2>Scope model</h2>
+          <pre class="box mono">
+effectiveSkillCwd(thread, project) =
+  thread.worktreePath?.trim()
+  ?? project.workspaceRoot.trim()
+
+inScopeSkills(providerInstance, thread, project) =
+  userSkills(providerInstance)
+  ∪ discoverProjectSkills(providerInstance, effectiveSkillCwd)
+
+// harness-specific roots under a single cwd, not a cwd list
+// examples:
+//   Claude:  ~/.claude/skills + &lt;cwd…gitRoot&gt;/.claude/skills
+//   Codex:   skills/list { cwds: [effectiveSkillCwd] }
+//   Grok:    ~/.{claude,agents,grok}/skills + project .claude/.grok
+//   Cursor:  harness project roots under that cwd
+//   OpenCode: .opencode + .agents under that hierarchy</pre
+          >
+
+          <h3>Collision rules (unchanged intent)</h3>
+          <ul>
+            <li>
+              Within one cwd hierarchy: later / more-specific roots win (existing
+              <code>discoverSkillsFromRoots</code> later-wins map).
+            </li>
+            <li>
+              User vs project: project wins when names collide (already encoded by listing user
+              roots first).
+            </li>
+            <li>
+              Cross-project collisions <strong>must not appear in the same picker list</strong> —
+              they were an artifact of the union.
+            </li>
+          </ul>
+        </section>
+
+        <!-- DESIGN -->
+        <section class="panel">
+          <h2>Recommended design</h2>
+          <p>
+            Keep provider status lean. Stop stuffing every workspace’s project skills into
+            <code>ServerProvider.skills</code>. Resolve project skills for the active chat cwd, the
+            same way file search already keys off <code>useActiveProjectTarget</code>.
+          </p>
+
+          <div class="callout success">
+            <strong>Recommended:</strong> split inventory into
+            <em>user skills on the provider snapshot</em> +
+            <em>project skills keyed by workspace cwd</em>, resolved server-side for a single cwd
+            and cached. Client composes the list when the active project target changes.
+          </div>
+
+          <h3>Why not “just filter on the client”?</h3>
+          <p>
+            A pure client filter needs reliable provenance on every skill (which workspace produced
+            it). Today names collide and paths are flattened. You could tag skills with
+            <code>sourceCwd</code> and still ship the full union on every provider snapshot — that
+            works, but it keeps paying for multi-workspace discovery and a large websocket payload
+            on every provider refresh. Per AGENTS.md performance rules, prefer not to send every
+            project’s skills to every client on every probe.
+          </p>
+
+          <h3>API shape</h3>
+          <div class="compare">
+            <div class="card after">
+              <h4>Preferred · scoped list + cache</h4>
+              <ul>
+                <li>
+                  <code>ServerProvider.skills</code> → <strong>user-scoped only</strong> (or empty
+                  for drivers that have no user skills).
+                </li>
+                <li>
+                  New RPC (or filesystem-style project method):
+                  <code>provider.listSkills</code> with <code>{ instanceId, cwd }</code> (or
+                  projectId + optional worktreePath; server resolves cwd).
+                </li>
+                <li>
+                  Server cache key:
+                  <code>(environment, instanceId, resolvedCwd, driverKind)</code>.
+                </li>
+                <li>
+                  Client: <code>userSkills ∪ projectSkills(cwd)</code> when building the
+                  <code>$</code> menu.
+                </li>
+              </ul>
+            </div>
+            <div class="card before">
+              <h4>Fallback · tagged snapshot bags</h4>
+              <ul>
+                <li>
+                  Keep one provider snapshot, but structure skills as
+                  <code>{ user, byCwd: Record&lt;cwd, skills&gt; }</code>.
+                </li>
+                <li>Client picks <code>user + byCwd[activeCwd]</code>.</li>
+                <li>
+                  Acceptable if RPC surface freeze is hard; still discover per-cwd without
+                  flattening. Heavier on the wire.
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <h3>Server changes</h3>
+          <ol>
+            <li>
+              <strong>Retire “all workspaces” as the default probe path.</strong>
+              <code>resolveSkillWorkspaceCwds</code> either becomes
+              <code>resolveSkillWorkspaceCwd(thread|project)</code> (singular) or is only used by a
+              maintenance/debug path. Provider status probes must not union all projects.
+            </li>
+            <li>
+              <strong>Single-cwd discovery entrypoints</strong> for each driver (already mostly take
+              <code>cwd: string | string[]</code> — call with one path):
+              <ul>
+                <li><code>discoverClaudeSkills(config, cwd)</code></li>
+                <li><code>discoverGrokSkills(cwd)</code></li>
+                <li><code>discoverOpenCodeSkills(cwd)</code></li>
+                <li><code>discoverCursorSkills(cwd)</code></li>
+                <li>Codex: <code>skills/list</code> with <code>cwds: [cwd]</code> only</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Split user vs project</strong> in discovery results so the provider snapshot
+              can keep user skills without project bleed. If a harness cannot separate them cleanly,
+              return the full single-cwd list from the scoped API and leave
+              <code>ServerProvider.skills</code> empty for project entries.
+            </li>
+            <li>
+              <strong>Codex merge helper.</strong>
+              <code>parseCodexSkillsListResponse</code> today flattens multi-cwd responses and lets
+              later workspaces win. Scoped path only ever passes one cwd; update tests that encode
+              multi-workspace merge as desired picker behavior.
+            </li>
+            <li>
+              <strong>Invalidation.</strong> Reuse / add skill file watchers per cwd when available
+              (Codex already documents <code>skills/*</code> invalidation). Also invalidate when a
+              worktree is created/removed or a project is deleted. Do not refetch every project on
+              every probe.
+            </li>
+          </ol>
+
+          <h3>Client changes</h3>
+          <ol>
+            <li>
+              <strong>Web composer</strong> (<code>ChatComposer</code>, <code>ChatView</code>,
+              prompt editor plugins): skills prop =
+              <code>userSkills(selectedInstance) ∪ projectSkills(activeCwd)</code>.
+            </li>
+            <li>
+              <strong>Active cwd</strong>: reuse
+              <code>useActiveProjectTarget().cwd</code>
+              (<code>worktreePath ?? workspaceRoot</code>). Draft threads and new-thread flow must
+              resolve the same way as file picker.
+            </li>
+            <li>
+              <strong>Switching chats</strong>: when environmentId / projectId / worktreePath
+              changes, swap the project skill bag (cache hit preferred; no full provider re-probe).
+            </li>
+            <li>
+              <strong>Mobile</strong>: same composition for native composer chips and any
+              <code>$</code> trigger surfaces. Hit every entry point that currently takes
+              <code>skills</code> from provider status.
+            </li>
+            <li>
+              <strong>Historical messages</strong>: chip rendering for past
+              <code>$skill</code> mentions should keep working from message text + known names; do
+              not drop labels when the user navigates to another project. Prefer name/displayName
+              maps that can fall back to the raw skill name.
+            </li>
+          </ol>
+
+          <h3>Contract notes</h3>
+          <ul>
+            <li>
+              Optional provenance field on <code>ServerProviderSkill</code> is useful either way:
+              <code>sourceCwd</code> and/or keep existing <code>scope</code> (<code>user</code> |
+              <code>project</code> | harness-specific).
+            </li>
+            <li>
+              If adding RPC: put it next to other environment filesystem / provider methods in
+              <code>packages/contracts</code> + <code>rpc.ts</code>; server handler resolves
+              instance → driver discovery with a single cwd.
+            </li>
+            <li>
+              Backward compatible decode: older clients ignore new fields; older servers without
+              scoped list leave clients with user-only or empty project skills (degrade gracefully,
+              do not show other projects’ skills).
+            </li>
+          </ul>
+        </section>
+
+        <!-- SURFACES -->
+        <section class="panel">
+          <h2>Hit every surface</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Surface</th>
+                <th>What to change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Entry points</td>
+                <td>
+                  Chat <code>$</code> picker, composer skill chips/plugins, any settings “skill
+                  inventory” if it lists project skills (should be project-filtered or labeled by
+                  project).
+                </td>
+              </tr>
+              <tr>
+                <td>Clients</td>
+                <td>
+                  Web + desktop (same bundle) + mobile. Shared composition can live in
+                  <code>packages/client-runtime</code> if both already share provider state hooks;
+                  otherwise mirror the small merge helper.
+                </td>
+              </tr>
+              <tr>
+                <td>Providers</td>
+                <td>
+                  Codex, Claude, Cursor, Grok, OpenCode — each adapter/driver discovery path must
+                  accept a single cwd decision (even if the answer is “user skills only”).
+                </td>
+              </tr>
+              <tr>
+                <td>Contracts</td>
+                <td>
+                  Optional skill provenance + optional <code>provider.listSkills</code> (or bag
+                  shape). No orchestration command changes.
+                </td>
+              </tr>
+              <tr>
+                <td>Reverse states</td>
+                <td>
+                  Leaving a project / deleting a worktree drops that bag from cache; switching back
+                  reloads. No sticky cross-project list.
+                </td>
+              </tr>
+              <tr>
+                <td>Connection modes</td>
+                <td>
+                  Local, remote/SSH, Connect: cwd is always on the environment server; clients only
+                  pass project/thread identity or absolute environment paths they already have.
+                </td>
+              </tr>
+              <tr>
+                <td>Docs</td>
+                <td>
+                  Internals: this plan + a short note in <code>docs/internals/providers.md</code>.
+                  User-facing only if we document skills in product docs later (none today).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- TESTS -->
+        <section class="panel half">
+          <h2>Verification</h2>
+          <ul>
+            <li>
+              Unit: single-cwd discovery does not read sibling project skill dirs (temp dirs A and
+              B).
+            </li>
+            <li>
+              Unit: worktree cwd sees worktree-local skills; root-only skills still visible via
+              ancestor walk when that is harness behavior.
+            </li>
+            <li>
+              Unit: Codex parse path with one cwd; remove/replace multi-workspace “merge all”
+              expectation for the picker.
+            </li>
+            <li>Unit: client merge helper — user + projectA, never projectB.</li>
+            <li>
+              Focused server tests for cache key isolation and invalidation on worktree removal.
+            </li>
+            <li>
+              Manual / integrated: two projects open, different <code>.agents/skills</code> (or
+              harness equivalent); switch threads; <code>$</code> list matches active project only.
+            </li>
+          </ul>
+          <p class="meta" style="margin-top: 12px">
+            Per repo rules: run targeted <code>vp test run</code> on touched files only — not the
+            full suite.
+          </p>
+        </section>
+
+        <section class="panel half">
+          <h2>Risks</h2>
+          <ul>
+            <li>
+              <strong>Draft threads without project</strong> — no cwd → show user skills only (or
+              empty project bag), never the global union.
+            </li>
+            <li>
+              <strong>Custom provider instances</strong> — key cache by <code>instanceId</code>, not
+              driver kind.
+            </li>
+            <li>
+              <strong>Name-only skill mentions in history</strong> — do not require the skill to
+              still be in the active bag to render a chip label.
+            </li>
+            <li>
+              <strong>Performance</strong> — N projects must not mean N× discovery on every provider
+              probe. Lazy load active cwd; optional warm cache for recently used threads.
+            </li>
+            <li>
+              <strong>Regression of “I can’t see any project skills”</strong> — first commit fixed
+              empty lists when server cwd ≠ project root; scoped design must still use the
+              <em>thread</em> cwd, not process cwd.
+            </li>
+          </ul>
+        </section>
+
+        <!-- PR PLAN -->
+        <section class="panel">
+          <h2>PR plan</h2>
+          <p class="meta">
+            One concern per PR. Conventional commits. Rebase onto latest main first.
+          </p>
+
+          <div class="pr">
+            <h4>PR 1 — Server: stop the global union</h4>
+            <div class="meta">fix(server): skill discovery uses one workspace cwd</div>
+            <ul>
+              <li>
+                Replace all-project <code>resolveSkillWorkspaceCwds</code> usage in provider probes
+                with either no project scan or a deferred/single-cwd API.
+              </li>
+              <li>
+                Keep harness discovery helpers; document they take one workspace (array only for
+                internal multi-root of the <em>same</em> checkout if ever needed).
+              </li>
+              <li>
+                Provider snapshot skills = user-only (or empty project set) so the bug is fixed even
+                before the client composes project bags.
+              </li>
+              <li>Focused tests: multi-project fixtures no longer leak into one list.</li>
+            </ul>
+          </div>
+
+          <div class="pr">
+            <h4>PR 2 — Contract + scoped list</h4>
+            <div class="meta">feat(server): list provider skills for a workspace cwd</div>
+            <ul>
+              <li>Add RPC/method + schemas; optional <code>sourceCwd</code> / clarify scope.</li>
+              <li>Cache + invalidation; wire each driver.</li>
+              <li>Server tests for cwd isolation and instance routing.</li>
+            </ul>
+          </div>
+
+          <div class="pr">
+            <h4>PR 3 — Web composer composition</h4>
+            <div class="meta">fix(web): $ picker skills follow active project and branch</div>
+            <ul>
+              <li>
+                Compose user + project skills from active project target; switch on thread change.
+              </li>
+              <li>ChatView / ChatComposer / prompt editor entry points.</li>
+              <li>Unit tests for the merge/filter helper.</li>
+            </ul>
+          </div>
+
+          <div class="pr">
+            <h4>PR 4 — Mobile parity</h4>
+            <div class="meta">fix(mobile): project-scoped skill inventory in composer</div>
+            <ul>
+              <li>Same composition for native editor skill metadata and any skill menus.</li>
+            </ul>
+          </div>
+
+          <div class="pr">
+            <h4>PR 5 — Docs (optional, small)</h4>
+            <div class="meta">docs: project-scoped skill inventory</div>
+            <ul>
+              <li>
+                Short maintainer note in <code>docs/internals/providers.md</code> linking this plan.
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- IMPLEMENTATION MAP -->
+        <section class="panel">
+          <h2>Code map (today)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>Path</th>
+                <th>Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Union cwd resolver</td>
+                <td><code>apps/server/src/provider/Drivers/SkillWorkspaceCwds.ts</code></td>
+                <td>Bug source — all projects + worktrees</td>
+              </tr>
+              <tr>
+                <td>Shared discovery</td>
+                <td><code>apps/server/src/provider/Drivers/SkillDiscovery.ts</code></td>
+                <td>Frontmatter + root walk; keep</td>
+              </tr>
+              <tr>
+                <td>Per-harness discovery</td>
+                <td>
+                  <code>ClaudeSkills.ts</code>, <code>GrokSkills.ts</code>,
+                  <code>OpenCodeSkills.ts</code>, <code>CursorSkills.ts</code>, Codex
+                  <code>skills/list</code>
+                </td>
+                <td>Pass single cwd</td>
+              </tr>
+              <tr>
+                <td>Provider probe wiring</td>
+                <td>
+                  <code>*Driver.ts</code> check status paths; <code>CodexProvider.ts</code> parse
+                  merge
+                </td>
+                <td>Stop multi-cwd union for snapshot</td>
+              </tr>
+              <tr>
+                <td>Projection helper</td>
+                <td>
+                  <code>ProjectionSnapshotQuery.getActiveWorkspaceCwds</code>
+                </td>
+                <td>Keep for other uses if needed; not for picker inventory</td>
+              </tr>
+              <tr>
+                <td>Contract</td>
+                <td>
+                  <code>packages/contracts/src/server.ts</code> → <code>ServerProviderSkill</code>
+                </td>
+                <td>Optional provenance; skills array meaning</td>
+              </tr>
+              <tr>
+                <td>Web picker</td>
+                <td>
+                  <code>ChatComposer.tsx</code>, <code>ChatView.tsx</code>,
+                  <code>providerSkillSearch.ts</code>
+                </td>
+                <td>Compose scoped list</td>
+              </tr>
+              <tr>
+                <td>Active cwd</td>
+                <td><code>apps/web/src/hooks/useActiveProjectTarget.ts</code></td>
+                <td>Already correct for project + worktree</td>
+              </tr>
+              <tr>
+                <td>Turn cwd</td>
+                <td><code>ProviderCommandReactor.ts</code> effective cwd</td>
+                <td>Already correct — leave alone</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- DECISION -->
+        <section class="panel">
+          <h2>Decision checklist</h2>
+          <ul>
+            <li>
+              [ ] Confirm product rule: user skills always visible; project skills only for active
+              chat cwd.
+            </li>
+            <li>
+              [ ] Choose wire shape: scoped RPC (recommended) vs tagged bags on provider snapshot.
+            </li>
+            <li>[ ] Confirm worktree-less threads use <code>project.workspaceRoot</code> only.</li>
+            <li>[ ] Confirm draft / no-project composer shows user skills only.</li>
+            <li>
+              [ ] Drop multi-workspace merge tests that assert the bug as a feature; replace with
+              isolation tests.
+            </li>
+          </ul>
+          <div class="callout warning" style="margin-top: 16px">
+            <strong>Do not ship</strong> the current “discover across every project” behavior as the
+            fix for “project-scoped skills.” It solves empty pickers when the server cwd is wrong by
+            over-including every workspace. The correct fix is: discover from the
+            <em>chat’s</em> workspace, not from all of them.
+          </div>
+        </section>
+      </div>
+    </div>
+  </body>
+</html>

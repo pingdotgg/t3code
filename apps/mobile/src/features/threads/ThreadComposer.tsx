@@ -60,6 +60,10 @@ import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
+  filterProviderSkillsForWorkspace,
+  filterProviderSlashCommandsForWorkspace,
+} from "@t3tools/shared/providerSkills";
+import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
@@ -355,6 +359,28 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  // Provider snapshots include every open workspace; scope the `$` picker to
+  // this thread's worktree (or project root). projectCwd is the project root
+  // so worktree chats can fall back to root-tagged skills before re-probe.
+  const skillWorkspaceCwd = props.selectedThread.worktreePath ?? props.projectCwd;
+  const selectedProviderSkills = useMemo(
+    () =>
+      filterProviderSkillsForWorkspace(selectedProviderStatus?.skills ?? [], skillWorkspaceCwd, {
+        projectRoot: props.projectCwd,
+      }),
+    [selectedProviderStatus?.skills, skillWorkspaceCwd, props.projectCwd],
+  );
+  // Scope the `/` picker the same way: provider snapshots carry every open
+  // workspace's commands; keep this thread's global + project commands.
+  const selectedProviderSlashCommands = useMemo(
+    () =>
+      filterProviderSlashCommandsForWorkspace(
+        selectedProviderStatus?.slashCommands ?? [],
+        skillWorkspaceCwd,
+        { projectRoot: props.projectCwd },
+      ),
+    [selectedProviderStatus?.slashCommands, skillWorkspaceCwd, props.projectCwd],
+  );
 
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
@@ -420,7 +446,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
       const providerCommands: ComposerCommandItem[] = [];
-      for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
+      for (const cmd of selectedProviderSlashCommands) {
         if (!cmd.name.toLowerCase().includes(q)) continue;
         providerCommands.push({
           id: `pcmd:${cmd.name}`,
@@ -431,7 +457,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         });
       }
 
-      const skillItems = (selectedProviderStatus?.skills ?? [])
+      const skillItems = selectedProviderSkills
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -445,7 +471,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
+      const enabledSkills = selectedProviderSkills.filter((s) => s.enabled);
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });
@@ -542,7 +568,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, selectedProviderSkills, selectedProviderSlashCommands]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -794,7 +820,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ref={inputRef}
               multiline
               value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
+              skills={selectedProviderSkills}
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}

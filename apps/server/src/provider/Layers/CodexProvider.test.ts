@@ -4,7 +4,82 @@ import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
   mapCodexModelCapabilities,
+  parseCodexSkillsListResponse,
 } from "./CodexProvider.ts";
+
+it("keeps repo skills tagged per workspace and user skills global", () => {
+  const skill = (name: string, description: string, path: string, scope: "repo" | "user") => ({
+    name,
+    description,
+    path,
+    scope,
+    enabled: true,
+  });
+  const skills = parseCodexSkillsListResponse(
+    {
+      data: [
+        {
+          cwd: "/workspace/a",
+          errors: [],
+          skills: [
+            skill("user-tool", "User skill", "/home/.codex/skills/user-tool/SKILL.md", "user"),
+            skill("a-only", "A only", "/workspace/a/.agents/skills/a-only/SKILL.md", "repo"),
+            skill("shared", "From A", "/workspace/a/.agents/skills/shared/SKILL.md", "repo"),
+          ],
+        },
+        {
+          cwd: "/workspace/b",
+          errors: [],
+          skills: [
+            skill("user-tool", "User skill", "/home/.codex/skills/user-tool/SKILL.md", "user"),
+            skill("b-only", "B only", "/workspace/b/.agents/skills/b-only/SKILL.md", "repo"),
+            skill("shared", "From B", "/workspace/b/.agents/skills/shared/SKILL.md", "repo"),
+          ],
+        },
+      ],
+    },
+    ["/workspace/a", "/workspace/b"],
+  );
+
+  assert.deepStrictEqual(
+    skills.map((entry) => [entry.name, entry.sourceCwd, entry.description]),
+    [
+      ["a-only", "/workspace/a", "A only"],
+      ["b-only", "/workspace/b", "B only"],
+      ["shared", "/workspace/a", "From A"],
+      ["shared", "/workspace/b", "From B"],
+      ["user-tool", undefined, "User skill"],
+    ],
+  );
+});
+
+it("matches and stamps repo skills when Codex cwd form differs from the request", () => {
+  const skill = (name: string, description: string, path: string) => ({
+    name,
+    description,
+    path,
+    scope: "repo" as const,
+    enabled: true,
+  });
+  const skills = parseCodexSkillsListResponse(
+    {
+      data: [
+        {
+          // Trailing slash / non-resolved form on the wire.
+          cwd: "/workspace/a/",
+          errors: [],
+          skills: [skill("a-only", "A only", "/workspace/a/.agents/skills/a-only/SKILL.md")],
+        },
+      ],
+    },
+    ["/workspace//a/./"],
+  );
+
+  assert.deepStrictEqual(
+    skills.map((entry) => [entry.name, entry.sourceCwd]),
+    [["a-only", "/workspace/a"]],
+  );
+});
 
 it("keeps current Codex models out of legacy models", () => {
   assert.deepStrictEqual(

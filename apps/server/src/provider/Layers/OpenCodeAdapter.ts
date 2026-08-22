@@ -29,6 +29,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { OPENCODE_BUILT_IN_SLASH_COMMANDS } from "../Drivers/OpenCodeCommands.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -221,6 +222,56 @@ function isOpenCodeDefaultTitle(title: string): boolean {
   return OPENCODE_DEFAULT_TITLE_PATTERN.test(title);
 }
 
+const OPENCODE_SLASH_COMMAND_PATTERN = /^\/(\S+)(?:\s+([\s\S]*))?$/;
+
+/**
+ * A leading `/name args` composer submission. OpenCode's server does not
+ * parse slash invocations out of prompt text (the TUI routes them to
+ * `session.command`), so the adapter detects them itself and only treats the
+ * text as a command when the harness reports the name for this session's
+ * directory. Anything else stays a plain prompt.
+ */
+function parseOpenCodeSlashCommandInvocation(
+  text: string,
+): { readonly name: string; readonly arguments: string } | undefined {
+  const match = OPENCODE_SLASH_COMMAND_PATTERN.exec(text);
+  const name = match?.[1];
+  if (!match || name === undefined || name.trim().length === 0) {
+    return undefined;
+  }
+  return { name, arguments: match[2]?.trim() ?? "" };
+}
+
+/** See `OpenCodeSessionContext.sessionCommandNames` for the caching rule. */
+const resolveOpenCodeSessionCommandNames = Effect.fn("resolveOpenCodeSessionCommandNames")(
+  function* (context: OpenCodeSessionContext) {
+    if (context.sessionCommandNames !== undefined) {
+      return context.sessionCommandNames;
+    }
+    const listed = yield* runOpenCodeSdk("command.list", () =>
+      context.client.command.list({ directory: context.directory }),
+    ).pipe(
+      Effect.map(
+        (result) =>
+          new Set([
+            ...OPENCODE_BUILT_IN_SLASH_COMMANDS.map((command) => command.name),
+            ...(result.data ?? []).map((command) => command.name),
+          ]),
+      ),
+      Effect.catch((error) =>
+        Effect.logWarning("OpenCode command.list failed; the turn is sent as a plain prompt.", {
+          detail: openCodeRuntimeErrorDetail(error),
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
+    if (listed === undefined) {
+      return new Set<string>();
+    }
+    context.sessionCommandNames = listed;
+    return listed;
+  },
+);
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -237,6 +288,13 @@ interface OpenCodeSessionContext {
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
+  /**
+   * Lazily fetched `command.list` names for this session's directory.
+   * OpenCode loads config at startup and never hot-reloads, so the inventory
+   * is stable for the session's lifetime. Only successful listings are
+   * cached; a failure falls back to plain prompts and the next turn retries.
+   */
+  sessionCommandNames: Set<string> | undefined;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
@@ -1402,6 +1460,7 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          sessionCommandNames: undefined,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
@@ -1499,50 +1558,91 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      yield* runOpenCodeSdk("session.promptAsync", () =>
-        context.client.session.promptAsync({
-          sessionID: context.openCodeSessionId,
-          model: parsedModel,
-          ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-          ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-          parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
-        }),
-      ).pipe(
-        Effect.mapError(toRequestError),
-        // On failure of a fresh turn: clear active-turn state, flip the
-        // session back to ready with lastError set, emit turn.aborted, then
-        // let the typed error propagate. We don't need to rebuild the error
-        // here — `toRequestError` already produced the right shape. A failed
-        // steer leaves the still-running original turn untouched.
-        Effect.tapError((requestError) =>
-          steeringTurnId !== undefined
-            ? Effect.void
-            : Effect.gen(function* () {
-                context.activeTurnId = undefined;
-                context.activeAgent = undefined;
-                context.activeVariant = undefined;
-                yield* updateProviderSession(
-                  context,
-                  {
-                    status: "ready",
-                    model: modelSelection?.model ?? context.session.model,
-                    lastError: requestError.detail,
-                  },
-                  { clearActiveTurnId: true },
-                );
-                yield* emit({
-                  ...(yield* buildEventBase({
-                    threadId: input.threadId,
-                    turnId,
-                  })),
-                  type: "turn.aborted",
-                  payload: {
-                    reason: requestError.detail,
-                  },
-                });
-              }),
-        ),
-      );
+      // On failure of a fresh turn: clear active-turn state, flip the
+      // session back to ready with lastError set, and emit turn.aborted.
+      const recoverFailedSubmission = (requestError: ProviderAdapterRequestError) =>
+        Effect.gen(function* () {
+          context.activeTurnId = undefined;
+          context.activeAgent = undefined;
+          context.activeVariant = undefined;
+          yield* updateProviderSession(
+            context,
+            {
+              status: "ready",
+              model: modelSelection?.model ?? context.session.model,
+              lastError: requestError.detail,
+            },
+            { clearActiveTurnId: true },
+          );
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: input.threadId,
+              turnId,
+            })),
+            type: "turn.aborted",
+            payload: {
+              reason: requestError.detail,
+            },
+          });
+        });
+
+      const slashInvocation = text ? parseOpenCodeSlashCommandInvocation(text) : undefined;
+      // Steers fall through to a plain queued prompt: session.command rejects
+      // busy sessions.
+      const slashCommandName =
+        slashInvocation !== undefined && steeringTurnId === undefined
+          ? yield* resolveOpenCodeSessionCommandNames(context).pipe(
+              Effect.map((names) =>
+                names.has(slashInvocation.name) ? slashInvocation.name : undefined,
+              ),
+            )
+          : undefined;
+
+      if (slashCommandName !== undefined && slashInvocation !== undefined) {
+        // Native command execution. session.command blocks until the command
+        // turn completes, so it runs in a session-scoped fiber; progress
+        // streams through the event pump like any prompt. The recovery guard
+        // skips turns that already transitioned (interrupt, session.error).
+        yield* runOpenCodeSdk("session.command", () =>
+          context.client.session.command({
+            sessionID: context.openCodeSessionId,
+            command: slashCommandName,
+            arguments: slashInvocation.arguments,
+            model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+            ...(agent ? { agent } : {}),
+            ...(variant ? { variant } : {}),
+            ...(fileParts.length > 0 ? { parts: fileParts } : {}),
+          }),
+        ).pipe(
+          Effect.mapError(toRequestError),
+          Effect.tapError((requestError) =>
+            context.activeTurnId === turnId
+              ? recoverFailedSubmission(requestError)
+              : Effect.logDebug("OpenCode command turn ended before the server ack.", {
+                  detail: requestError.detail,
+                }),
+          ),
+          Effect.ignore,
+          Effect.forkIn(context.sessionScope),
+        );
+      } else {
+        yield* runOpenCodeSdk("session.promptAsync", () =>
+          context.client.session.promptAsync({
+            sessionID: context.openCodeSessionId,
+            model: parsedModel,
+            ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+            ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+            parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+          }),
+        ).pipe(
+          Effect.mapError(toRequestError),
+          // The typed error propagates for a fresh turn — `toRequestError`
+          // already produced the right shape, so the recovery only runs.
+          Effect.tapError((requestError) =>
+            steeringTurnId !== undefined ? Effect.void : recoverFailedSubmission(requestError),
+          ),
+        );
+      }
 
       return {
         threadId: input.threadId,
