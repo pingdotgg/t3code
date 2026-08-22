@@ -141,13 +141,18 @@ export interface GitRenameBranchResult {
 
 export interface GitFetchPullRequestBranchInput {
   cwd: string;
-  prNumber: number;
+  /**
+   * The ref the host publishes for the pull request head on the primary remote, which is
+   * `refs/pull/<n>/head` on GitHub and `refs/merge-requests/<n>/head` on GitLab. The caller
+   * names it because only it knows the host.
+   */
+  headRef: string;
   branch: string;
 }
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
-  prNumber: number;
+  headRef: string;
 }
 
 export interface GitResolveCommitInput {
@@ -276,7 +281,7 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
-    /** Fetches `refs/pull/<n>/head` without writing a branch, for heads that exist nowhere else. */
+    /** Fetches the pull request head ref without writing a branch, for heads that exist nowhere else. */
     readonly fetchPullRequestHeadCommit: (
       input: GitFetchPullRequestHeadCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;

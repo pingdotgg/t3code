@@ -79,6 +79,35 @@ export function sourceControlRefFromInput(input: {
   return input.source ?? parseSourceControlOwnerRef(input.headSelector);
 }
 
+/**
+ * The ref a host publishes on the repository itself for a change request's head, which is the
+ * only thing that names that head when it lives in a fork or on a branch that has since been
+ * deleted. Each host has its own namespace, and not every host has one:
+ *
+ * - GitHub publishes `refs/pull/<n>/head`.
+ * - GitLab publishes `refs/merge-requests/<iid>/head`.
+ * - Azure DevOps publishes only `refs/pull/<id>/merge`, the merge result rather than the head.
+ * - Bitbucket publishes nothing of the kind.
+ *
+ * Null for those last two, so callers reach for the head branch on the remote instead of
+ * fetching a ref that cannot exist.
+ */
+export function changeRequestHeadRef(
+  provider: SourceControlProviderKind,
+  changeRequestNumber: number,
+): string | null {
+  switch (provider) {
+    case "github":
+      return `refs/pull/${changeRequestNumber}/head`;
+    case "gitlab":
+      return `refs/merge-requests/${changeRequestNumber}/head`;
+    case "azure-devops":
+    case "bitbucket":
+    case "unknown":
+      return null;
+  }
+}
+
 export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {

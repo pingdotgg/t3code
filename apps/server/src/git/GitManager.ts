@@ -59,6 +59,7 @@ import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as SourceControlProvider from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
@@ -772,15 +773,39 @@ export const make = Effect.gen(function* () {
     function* (
       cwd: string,
       pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+      headRef: string | null,
       localBranch = pullRequest.headBranch,
     ) {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
       if (repositoryNameWithOwner.length === 0) {
-        yield* gitCore.fetchPullRequestBranch({
+        if (headRef !== null) {
+          yield* gitCore.fetchPullRequestBranch({
+            cwd,
+            headRef,
+            branch: localBranch,
+          });
+          return;
+        }
+
+        // A host that publishes no change-request ref leaves the head branch on the primary
+        // remote as the only thing that names the head. A cross-repository head is not on it,
+        // and a branch there that merely shares its name is somebody else's work.
+        if (pullRequest.isCrossRepository === true) {
+          return yield* new GitManagerError({
+            operation: "materializePullRequestHeadBranch",
+            cwd,
+            detail:
+              "This host publishes no ref for the change request head, and the repository it was opened from could not be resolved.",
+          });
+        }
+
+        const primaryRemoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
+        yield* gitCore.fetchRemoteBranch({
           cwd,
-          prNumber: pullRequest.number,
-          branch: localBranch,
+          remoteName: primaryRemoteName,
+          remoteBranch: pullRequest.headBranch,
+          localBranch,
         });
         return;
       }
@@ -819,35 +844,41 @@ export const make = Effect.gen(function* () {
   const materializePullRequestHeadBranch = (
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    headRef: string | null,
     localBranch = pullRequest.headBranch,
-  ) =>
-    materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch).pipe(
+  ) => {
+    const materializationError = (cause: unknown) =>
+      new GitPullRequestMaterializationError({
+        cwd,
+        pullRequestNumber: pullRequest.number,
+        headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
+        headBranch: pullRequest.headBranch,
+        localBranch,
+        cause,
+      });
+
+    return materializePullRequestHeadBranchBase(cwd, pullRequest, headRef, localBranch).pipe(
       Effect.catch((primaryCause) =>
-        gitCore
-          .fetchPullRequestBranch({
-            cwd,
-            prNumber: pullRequest.number,
-            branch: localBranch,
-          })
-          .pipe(
-            Effect.mapError(
-              (fallbackCause) =>
-                new GitPullRequestMaterializationError({
-                  cwd,
-                  pullRequestNumber: pullRequest.number,
-                  headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
-                  headBranch: pullRequest.headBranch,
-                  localBranch,
-                  cause: new AggregateError(
-                    [primaryCause, fallbackCause],
-                    `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
-                    { cause: primaryCause },
+        headRef === null
+          ? // Nothing to fall back on where the host publishes no change-request ref: the
+            // primary attempt already read the only thing that names the head there.
+            Effect.fail(materializationError(primaryCause))
+          : gitCore
+              .fetchPullRequestBranch({ cwd, headRef, branch: localBranch })
+              .pipe(
+                Effect.mapError((fallbackCause) =>
+                  materializationError(
+                    new AggregateError(
+                      [primaryCause, fallbackCause],
+                      `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
+                      { cause: primaryCause },
+                    ),
                   ),
-                }),
-            ),
-          ),
+                ),
+              ),
       ),
     );
+  };
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -1880,6 +1911,12 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
+      // Which ref names this head is the host's business, and each host has its own namespace
+      // for it — GitHub's `refs/pull/<n>/head` is not GitLab's `refs/merge-requests/<n>/head`.
+      const pullRequestHeadRef = SourceControlProvider.changeRequestHeadRef(
+        pullRequestSummary.provider,
+        pullRequest.number,
+      );
 
       if (input.mode === "local") {
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
@@ -1959,53 +1996,57 @@ export const make = Effect.gen(function* () {
 
         yield* ensureExistingWorktreeUpstream(worktreePath);
 
-        const refreshed = yield* gitCore
-          // The pull request's own ref, because it is the only thing that certainly names its
-          // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
-          // from `origin/main` whose head branch has since been deleted still resolves — and
-          // following it would move the checkout onto main and call that the pull request.
-          .fetchPullRequestHeadCommit({ cwd: worktreePath, prNumber: pullRequest.number })
-          .pipe(
-            // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
-            // taken only where it is the head branch's own rather than whatever the checkout
-            // happened to be cut from.
-            Effect.catch(() =>
-              Effect.gen(function* () {
-                const details = yield* gitCore.statusDetails(worktreePath);
-                if (
-                  details.upstreamRef === null ||
-                  !details.upstreamRef.endsWith(`/${pullRequest.headBranch}`)
-                ) {
-                  return yield* new GitManagerError({
-                    operation: "preparePullRequestThread",
-                    cwd: worktreePath,
-                    detail: "The pull request head could not be resolved for this checkout.",
-                  });
-                }
-                return yield* gitCore.resolveCommit({
-                  cwd: worktreePath,
-                  revision: details.upstreamRef,
-                });
-              }),
-            ),
-            Effect.flatMap((target) =>
-              gitCore.refreshCheckedOutBranch({
-                cwd: worktreePath,
-                targetCommit: target.commitSha,
-                resetWhenHeadCommit: upstreamCommitBeforeFetch,
-              }),
-            ),
-            Effect.catch((error) =>
-              Effect.logWarning(
-                "GitManager.preparePullRequestThread reused worktree refresh failed",
-                {
-                  worktreePath,
-                  localBranch: localPullRequestBranch,
-                  cause: error,
-                },
-              ).pipe(Effect.as({ moved: false, onTarget: false })),
-            ),
-          );
+        // A host that publishes no change-request ref leaves the remote-tracking branch, taken
+        // only where it is the head branch's own rather than whatever the checkout happened to
+        // be cut from.
+        const headCommitFromUpstream = Effect.gen(function* () {
+          const details = yield* gitCore.statusDetails(worktreePath);
+          if (
+            details.upstreamRef === null ||
+            !details.upstreamRef.endsWith(`/${pullRequest.headBranch}`)
+          ) {
+            return yield* new GitManagerError({
+              operation: "preparePullRequestThread",
+              cwd: worktreePath,
+              detail: "The pull request head could not be resolved for this checkout.",
+            });
+          }
+          return yield* gitCore.resolveCommit({
+            cwd: worktreePath,
+            revision: details.upstreamRef,
+          });
+        });
+
+        const refreshed = yield* (
+          pullRequestHeadRef === null
+            ? headCommitFromUpstream
+            : gitCore
+                // The pull request's own ref, because it is the only thing that certainly names
+                // its head. The branch's upstream does not: configuring it is best-effort, so a
+                // branch cut from `origin/main` whose head branch has since been deleted still
+                // resolves — and following it would move the checkout onto main and call that
+                // the pull request.
+                .fetchPullRequestHeadCommit({ cwd: worktreePath, headRef: pullRequestHeadRef })
+                .pipe(Effect.catch(() => headCommitFromUpstream))
+        ).pipe(
+          Effect.flatMap((target) =>
+            gitCore.refreshCheckedOutBranch({
+              cwd: worktreePath,
+              targetCommit: target.commitSha,
+              resetWhenHeadCommit: upstreamCommitBeforeFetch,
+            }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "GitManager.preparePullRequestThread reused worktree refresh failed",
+              {
+                worktreePath,
+                localBranch: localPullRequestBranch,
+                cause: error,
+              },
+            ).pipe(Effect.as({ moved: false, onTarget: false })),
+          ),
+        );
 
         // Only when the checkout actually moved: another thread may be running in this worktree,
         // and re-running the setup script under it buys nothing when the code did not change.
@@ -2072,6 +2113,7 @@ export const make = Effect.gen(function* () {
       yield* materializePullRequestHeadBranch(
         input.cwd,
         pullRequestWithRemoteInfo,
+        pullRequestHeadRef,
         localPullRequestBranch,
       );
 
