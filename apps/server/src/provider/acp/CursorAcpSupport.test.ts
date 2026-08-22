@@ -74,6 +74,42 @@ describe("buildCursorAcpSpawnInput", () => {
       cwd: "/tmp/project",
     });
   });
+
+  it("adds --force in full-access runtime mode so the CLI allowlist does not gate tool calls", () => {
+    expect(buildCursorAcpSpawnInput(undefined, "/tmp/project", undefined, "full-access")).toEqual({
+      command: "cursor-agent",
+      args: ["--force", "acp"],
+      cwd: "/tmp/project",
+    });
+  });
+
+  it("omits --force outside full-access runtime mode", () => {
+    for (const runtimeMode of ["approval-required", "auto-accept-edits", "auto"] as const) {
+      expect(buildCursorAcpSpawnInput(undefined, "/tmp/project", undefined, runtimeMode)).toEqual({
+        command: "cursor-agent",
+        args: ["acp"],
+        cwd: "/tmp/project",
+      });
+    }
+  });
+
+  it("keeps --force among the root options, before the acp subcommand", () => {
+    expect(
+      buildCursorAcpSpawnInput(
+        {
+          binaryPath: "/usr/local/bin/agent",
+          apiEndpoint: "http://localhost:3000",
+        },
+        "/tmp/project",
+        undefined,
+        "full-access",
+      ),
+    ).toEqual({
+      command: "/usr/local/bin/agent",
+      args: ["-e", "http://localhost:3000", "--force", "acp"],
+      cwd: "/tmp/project",
+    });
+  });
 });
 
 describe("applyCursorAcpModelSelection", () => {

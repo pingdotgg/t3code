@@ -824,6 +824,52 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }),
   );
 
+  it.effect(
+    "spawns cursor-agent with --force in full-access mode, and without it in approval-required mode",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CursorAdapter;
+        const serverSettings = yield* ServerSettingsService;
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const argvLogPath = NodePath.join(tempDir, "argv.txt");
+        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+        const wrapperPath = yield* Effect.promise(() =>
+          makeProbeWrapper(requestLogPath, argvLogPath),
+        );
+        yield* serverSettings.updateSettings({
+          providers: { cursor: { binaryPath: wrapperPath } },
+        });
+
+        const fullAccessThreadId = ThreadId.make("cursor-force-flag-full-access");
+        yield* adapter.startSession({
+          threadId: fullAccessThreadId,
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        });
+        yield* adapter.stopSession(fullAccessThreadId);
+
+        const approvalRequiredThreadId = ThreadId.make("cursor-force-flag-approval-required");
+        yield* adapter.startSession({
+          threadId: approvalRequiredThreadId,
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        });
+        yield* adapter.stopSession(approvalRequiredThreadId);
+
+        const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
+        assert.lengthOf(argvRuns, 2);
+        assert.deepStrictEqual(argvRuns[0], ["--force", "acp"]);
+        assert.deepStrictEqual(argvRuns[1], ["acp"]);
+      }),
+  );
+
   it.effect("segments assistant messages around ACP tool activity in full-access mode", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -1260,7 +1306,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
       assert.lengthOf(argvRuns, 1, "session should not restart — only one spawn");
-      assert.deepStrictEqual(argvRuns[0], ["acp"]);
+      assert.deepStrictEqual(argvRuns[0], ["--force", "acp"]);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const setConfigRequests = requests.filter(

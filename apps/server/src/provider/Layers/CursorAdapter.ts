@@ -535,6 +535,7 @@ export function makeCursorAdapter(
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
+            runtimeMode: input.runtimeMode,
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),

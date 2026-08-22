@@ -1,4 +1,8 @@
-import { type CursorSettings, type ProviderOptionSelection } from "@t3tools/contracts";
+import {
+  type CursorSettings,
+  type ProviderOptionSelection,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +26,7 @@ export interface CursorAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly cursorSettings: CursorAcpRuntimeCursorSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly runtimeMode?: RuntimeMode;
 }
 
 export interface CursorAcpModelSelectionErrorContext {
@@ -34,11 +39,19 @@ export function buildCursorAcpSpawnInput(
   cursorSettings: CursorAcpRuntimeCursorSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  runtimeMode?: RuntimeMode,
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: cursorSettings?.binaryPath || "cursor-agent",
     args: [
       ...(cursorSettings?.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
+      // Without `--force` ("allow commands unless explicitly denied"),
+      // cursor-agent keeps gating tool calls on the user's own CLI allowlist
+      // in `~/.cursor/cli-config.json` and emits `session/request_permission`
+      // for anything missing from it, which surfaces as approval cards even
+      // in full access. Like the endpoint flag, it is a root option and has
+      // to precede the `acp` subcommand.
+      ...(runtimeMode === "full-access" ? (["--force"] as const) : []),
       "acp",
     ],
     cwd,
@@ -57,7 +70,12 @@ export const makeCursorAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildCursorAcpSpawnInput(input.cursorSettings, input.cwd, input.environment),
+        spawn: buildCursorAcpSpawnInput(
+          input.cursorSettings,
+          input.cwd,
+          input.environment,
+          input.runtimeMode,
+        ),
         authMethodId: "cursor_login",
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(
