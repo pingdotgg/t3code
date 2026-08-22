@@ -83,11 +83,19 @@ function elapsedBetween(startedAt: string, endIso: string | null): string {
 /**
  * Elapsed time for the current activation. Live agents self-tick via DOM
  * writes (zero React commits per tick); settled agents freeze at completedAt.
+ * Idle is resumable, so nothing stamps completedAt for it and updatedAt is the
+ * closest end signal we have. Deliberate approximation: a trailing usage-only
+ * task.progress row can push updatedAt past the idle transition, so the label
+ * can overshoot by that gap. It stays bounded by real activity — falling back
+ * to the current time instead grew without limit on every render. An exact
+ * value would need the idle transition stamped in the projection.
  */
 function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
+  const settledEnd = agent.status === "idle" ? agent.updatedAt : agent.completedAt;
+  const endedAt = live ? null : settledEnd;
 
   useEffect(() => {
     if (!live || !startedAt) {
@@ -108,7 +116,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   }
   return (
     <span ref={textRef} className="tabular-nums">
-      {elapsedBetween(startedAt, live ? null : agent.completedAt)}
+      {elapsedBetween(startedAt, endedAt)}
     </span>
   );
 }
