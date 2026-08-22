@@ -43,6 +43,10 @@ const ProviderRequestId = TrimmedNonEmptyStringSchema;
 export type ProviderRequestId = typeof ProviderRequestId.Type;
 
 const ProviderRefs = Schema.Struct({
+  /** Provider-native session identifier, including nested child sessions. */
+  providerSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** Provider-native parent session identifier for nested child sessions. */
+  providerParentSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
   providerTurnId: Schema.optional(TrimmedNonEmptyStringSchema),
   providerItemId: Schema.optional(ProviderItemId),
   providerRequestId: Schema.optional(ProviderRequestId),

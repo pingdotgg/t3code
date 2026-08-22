@@ -2466,6 +2466,7 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   }
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupSummaryIconName(action);
+  if (workEntry.requestKind === "unknown") return "circle-alert";
 
   switch (workEntry.itemType) {
     case "mcp_tool_call":

@@ -22,7 +22,13 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         Approval needed
       </Text>
       <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
-        {props.approval.requestKind}
+        {props.approval.requestKind === "command"
+          ? "Command approval"
+          : props.approval.requestKind === "file-read"
+            ? "File-read approval"
+            : props.approval.requestKind === "file-change"
+              ? "File-change approval"
+              : "Permission approval"}
       </Text>
       {props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-neutral-600 dark:text-neutral-400">

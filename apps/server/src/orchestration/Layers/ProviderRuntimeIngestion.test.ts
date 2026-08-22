@@ -2651,6 +2651,26 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-request-opened-unknown"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      requestId: ApprovalRequestId.make("req-external-directory"),
+      providerRefs: {
+        providerSessionId: "ses_child",
+      },
+      payload: {
+        requestType: "unknown",
+        detail: "Permission: external_directory\n\nPatterns:\n/another/project/*",
+        args: {
+          permission: "external_directory",
+          sessionID: "ses_child",
+        },
+      },
+    });
+
     await waitForThread(
       harness.readModel,
       (entry) =>
@@ -2659,6 +2679,9 @@ describe("ProviderRuntimeIngestion", () => {
         ) &&
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "approval.resolved",
+        ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.id === "evt-request-opened-unknown",
         ),
     );
 
@@ -2675,6 +2698,21 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(requestedPayload?.requestKind).toBe("command");
     expect(requestedPayload?.requestType).toBe("command_execution_approval");
+
+    const unknownRequested = thread?.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-request-opened-unknown",
+    );
+    const unknownPayload =
+      unknownRequested?.payload && typeof unknownRequested.payload === "object"
+        ? (unknownRequested.payload as Record<string, unknown>)
+        : undefined;
+    expect(unknownPayload?.requestKind).toBe("unknown");
+    expect(unknownPayload?.providerSessionId).toBe("ses_child");
+    expect(unknownPayload?.detail).toContain("external_directory");
+    expect(unknownPayload?.args).toEqual({
+      permission: "external_directory",
+      sessionID: "ses_child",
+    });
 
     const resolved = thread?.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-request-resolved",
@@ -2712,6 +2750,55 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+  });
+
+  it("keeps parent session state when a child-session runtime.error arrives", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Seed a running session so there is live turn state to protect.
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-seed-child-error"),
+      threadId: ThreadId.make("thread-1"),
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("turn-child-error"),
+        updatedAt: now,
+        lastError: null,
+      },
+      createdAt: now,
+    });
+
+    // A subagent failure must surface as an activity, but it must not flip
+    // the parent thread's session into error — the root session is still
+    // working and owns that lifecycle.
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-child"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-child-error"),
+      providerRefs: {
+        providerSessionId: "ses_child",
+        providerParentSessionId: "ses_parent",
+      },
+      payload: {
+        message: "child task failed",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-runtime-error-child"),
+    );
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.lastError).toBeNull();
   });
 
   it("records runtime.error activities from the typed payload message", async () => {

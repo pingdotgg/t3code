@@ -50,4 +50,22 @@ describe("ComposerPendingApprovalPanel", () => {
 
     expect(markup).toContain("File read approval");
   });
+
+  it("renders generic permission details", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          requestId: ApprovalRequestId.make("approval-external-directory"),
+          requestKind: "unknown",
+          createdAt: "2026-07-18T00:00:00.000Z",
+          detail: "Permission: external_directory\n\nPatterns:\n/another/project/*",
+        }}
+        pendingCount={1}
+      />,
+    );
+
+    expect(markup).toContain("Permission approval");
+    expect(markup).toContain('aria-label="Permission details"');
+    expect(markup).toContain("external_directory");
+  });
 });
