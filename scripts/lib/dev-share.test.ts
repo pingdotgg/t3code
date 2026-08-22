@@ -26,8 +26,13 @@ const encode = (value: string) => Stream.make(new TextEncoder().encode(value));
  * Answers `tailscale status --json` with a valid tailnet name, and lets each
  * test set the outcome of the `off` (pre-clear) and `serve` calls separately —
  * they are the same subcommand and are told apart by the trailing `off`.
+ * `onServeArgs` observes each non-status, non-off invocation.
  */
-const spawnerLayer = (input: { readonly off?: CallResult; readonly serve?: CallResult }) =>
+const spawnerLayer = (input: {
+  readonly off?: CallResult;
+  readonly serve?: CallResult;
+  readonly onServeArgs?: (args: ReadonlyArray<string>) => void;
+}) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
@@ -36,7 +41,7 @@ const spawnerLayer = (input: { readonly off?: CallResult; readonly serve?: CallR
         ? { exitCode: 0 }
         : args.includes("off")
           ? (input.off ?? { exitCode: 0 })
-          : (input.serve ?? { exitCode: 0 });
+          : (input.onServeArgs?.(args), input.serve ?? { exitCode: 0 });
 
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
@@ -99,6 +104,19 @@ describe("shareDevServer", () => {
 
       assert.equal(shared.host, "host.example.ts.net");
       assert.equal(shared.url, "https://host.example.ts.net:5788/");
+    }),
+  );
+
+  it.effect("points the serve mapping at the host Vite actually bound", () =>
+    Effect.gen(function* () {
+      const serveArgs: ReadonlyArray<string>[] = [];
+      yield* shareDevServer({ webPort: 5788 }).pipe(
+        Effect.provide(spawnerLayer({ onServeArgs: (args) => serveArgs.push([...args]) })),
+      );
+
+      // Vite binds `localhost`, which resolves IPv6-first on some OSes; a
+      // hardcoded 127.0.0.1 target would answer 502 there.
+      assert.deepEqual(serveArgs, [["serve", "--bg", "--https=5788", "http://localhost:5788"]]);
     }),
   );
 

@@ -195,7 +195,16 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     });
   }
 
-  yield* ensureTailscaleServe({ localPort: input.webPort, servePort: input.webPort }).pipe(
+  // "localhost", not "127.0.0.1": Vite binds `host: "localhost"` (see
+  // apps/web/vite.config.ts), which resolves to whichever loopback family this
+  // OS prefers — ::1 on modern macOS. Naming the same host here lets
+  // tailscaled resolve it exactly like the dev server did, so the mapping and
+  // the listener always agree.
+  yield* ensureTailscaleServe({
+    localPort: input.webPort,
+    servePort: input.webPort,
+    localHost: "localhost",
+  }).pipe(
     Effect.mapError((error) => {
       const explanation = explainCommandFailure(error);
       return new DevServeFailedError({
