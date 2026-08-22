@@ -241,7 +241,14 @@ function projectFileFailureContext(
       return { failure: "workspace_path_outside_root" };
     case "WorkspaceFileSystemOperationError":
       return {
-        failure: "operation_failed",
+        // Only ENOENT means the target is genuinely absent, and a missing
+        // workspace root raises it through the same operation, so neither a
+        // permission error nor a missing root is reported as a missing file.
+        failure:
+          error.operation !== "realpath-workspace-root" &&
+          (error.cause as { readonly code?: unknown } | undefined)?.code === "ENOENT"
+            ? "file_not_found"
+            : "operation_failed",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
