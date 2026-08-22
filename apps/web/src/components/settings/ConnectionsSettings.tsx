@@ -1514,7 +1514,7 @@ function SavedBackendListRow({
             >
               <SelectTrigger
                 size="xs"
-                className="w-full sm:w-48"
+                className="w-full min-w-0 sm:w-48"
                 aria-label={`Connection method for ${environment.label}`}
                 disabled={
                   switchingRouteEnvironmentId === environmentId ||
