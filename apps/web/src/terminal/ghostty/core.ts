@@ -1,5 +1,6 @@
 import {
   type GhosttyKeyboardLayoutMap,
+  ghosttyConsumedMods,
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
@@ -163,6 +164,27 @@ function blend(foreground: GhosttyColor, background: GhosttyColor): GhosttyColor
 
 function sameColor(left: GhosttyColor, right: GhosttyColor): boolean {
   return left.r === right.r && left.g === right.g && left.b === right.b;
+}
+
+/**
+ * A terminal program can print one base character followed by a huge run of
+ * combining marks, packing hundreds of thousands of codepoints into a single
+ * cell that still fits the scrollback buffer. Engines cap spread-call
+ * arguments far below that, so convert in bounded chunks instead of spreading
+ * every codepoint into String.fromCodePoint at once.
+ */
+export function ghosttyCellText(codepointView: DataView, graphemeLength: number): string {
+  const CHUNK_SIZE = 4_096;
+  let text = "";
+  for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
+    const count = Math.min(CHUNK_SIZE, graphemeLength - start);
+    const codes = new Array<number>(count);
+    for (let index = 0; index < count; index += 1) {
+      codes[index] = codepointView.getUint32((start + index) * 4, true);
+    }
+    text += String.fromCodePoint(...codes);
+  }
+  return text;
 }
 
 export class GhosttyTerminalCore {
@@ -464,7 +486,11 @@ export class GhosttyTerminalCore {
       (event.getModifierState("CapsLock") ? 1 << 4 : 0) |
       (event.getModifierState("NumLock") ? 1 << 5 : 0);
     this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
-    this.runtime.call("ghostty_key_event_set_consumed_mods", this.keyEvent, 0);
+    this.runtime.call(
+      "ghostty_key_event_set_consumed_mods",
+      this.keyEvent,
+      ghosttyConsumedMods(event),
+    );
     this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
     this.runtime.call(
       "ghostty_key_event_set_unshifted_codepoint",
@@ -955,11 +981,7 @@ export class GhosttyTerminalCore {
           // Read through a DataView: the byte-array allocator guarantees no
           // 4-byte alignment, which a Uint32Array view would require.
           const codepointView = this.runtime.view(codepoints, bufferSize);
-          const codes: number[] = [];
-          for (let index = 0; index < graphemeLength; index += 1) {
-            codes.push(codepointView.getUint32(index * 4, true));
-          }
-          text = String.fromCodePoint(...codes);
+          text = ghosttyCellText(codepointView, graphemeLength);
         }
         this.runtime.free(codepoints, bufferSize);
       }

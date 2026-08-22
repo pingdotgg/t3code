@@ -132,10 +132,10 @@ describe("resolveMarkdownFileLinkTarget", () => {
 describe("resolveInlineCodeFileLinkMeta", () => {
   it("links relative paths with file extensions", () => {
     expect(
-      resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md", "/Users/julius/project"),
+      resolveInlineCodeFileLinkMeta("docs/internals/workspace-layout.md", "/Users/julius/project"),
     ).toMatchObject({
-      targetPath: "/Users/julius/project/.plans/worktree-management-v1.md",
-      basename: "worktree-management-v1.md",
+      targetPath: "/Users/julius/project/docs/internals/workspace-layout.md",
+      basename: "workspace-layout.md",
     });
   });
 
@@ -270,7 +270,7 @@ describe("resolveInlineCodeFileLinkMeta", () => {
   });
 
   it("ignores relative paths without a cwd to resolve against", () => {
-    expect(resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("docs/internals/workspace-layout.md")).toBeNull();
   });
 });
 
