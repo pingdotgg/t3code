@@ -18,12 +18,9 @@ export interface ExtractedPreviewAnnotation {
   annotation: ParsedPreviewAnnotation | null;
 }
 
-export function buildPreviewAnnotationPrompt(annotation: PreviewAnnotationPayload): string {
-  const lines = ["Preview annotation:"];
-  lines.push(`Id: ${annotation.id}`);
-  const title = annotation.pageTitle?.trim() || annotation.pageUrl.trim() || "Preview";
-  lines.push(`Page: ${title}`);
-  if (annotation.comment.trim()) lines.push(`Comment: ${annotation.comment.trim()}`);
+export function summarizePreviewAnnotationTargets(
+  annotation: Pick<PreviewAnnotationPayload, "elements" | "regions" | "strokes" | "styleChanges">,
+): string {
   const targets: string[] = [];
   if (annotation.elements.length > 0) {
     targets.push(
@@ -40,7 +37,22 @@ export function buildPreviewAnnotationPrompt(annotation: PreviewAnnotationPayloa
       `${annotation.strokes.length} drawing${annotation.strokes.length === 1 ? "" : "s"}`,
     );
   }
-  if (targets.length > 0) lines.push(`Targets: ${targets.join(", ")}.`);
+  if (annotation.styleChanges.length > 0) {
+    targets.push(
+      `${annotation.styleChanges.length} style change${annotation.styleChanges.length === 1 ? "" : "s"}`,
+    );
+  }
+  return targets.join(" · ");
+}
+
+export function buildPreviewAnnotationPrompt(annotation: PreviewAnnotationPayload): string {
+  const lines = ["Preview annotation:"];
+  lines.push(`Id: ${annotation.id}`);
+  const title = annotation.pageTitle?.trim() || annotation.pageUrl.trim() || "Preview";
+  lines.push(`Page: ${title}`);
+  if (annotation.comment.trim()) lines.push(`Comment: ${annotation.comment.trim()}`);
+  const targets = summarizePreviewAnnotationTargets(annotation);
+  if (targets.length > 0) lines.push(`Targets: ${targets}.`);
   if (annotation.styleChanges.length > 0) {
     lines.push("Requested visual changes:");
     for (const change of annotation.styleChanges) {
