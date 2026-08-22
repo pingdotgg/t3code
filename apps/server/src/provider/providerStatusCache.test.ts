@@ -182,6 +182,51 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("uses current settings as the authority for cached custom models", () => {
+    const configuredCustomModel = {
+      slug: "configured-custom-model",
+      name: "configured-custom-model",
+      isCustom: true,
+      capabilities: emptyCapabilities,
+    } as const;
+    const cachedCodex = makeProvider(CODEX_DRIVER, {
+      models: [
+        configuredCustomModel,
+        {
+          slug: "removed-custom-model",
+          name: "removed-custom-model",
+          isCustom: true,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gpt-5-mini",
+          name: "GPT-5 Mini",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackCodex = makeProvider(CODEX_DRIVER, {
+      models: [configuredCustomModel],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedCodex,
+        fallbackProvider: fallbackCodex,
+      }).models,
+      [
+        configuredCustomModel,
+        {
+          slug: "gpt-5-mini",
+          name: "GPT-5 Mini",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    );
+  });
+
   it("ignores stale cached enabled state when the provider is now disabled", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",

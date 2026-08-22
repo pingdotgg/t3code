@@ -598,6 +598,53 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it("retains discovered models but never removed custom models", () => {
+        const discoveredModel = {
+          slug: "gpt-5.6-sol",
+          name: "GPT-5.6-Sol",
+          isCustom: false,
+          capabilities: null,
+        } as const;
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-02T10:00:00.000Z",
+          version: "0.146.0",
+          models: [
+            discoveredModel,
+            {
+              slug: "removed-custom-model",
+              name: "removed-custom-model",
+              isCustom: true,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const successfulRefresh = {
+          ...previousProvider,
+          checkedAt: "2026-08-02T10:01:00.000Z",
+          models: [discoveredModel],
+        } satisfies ServerProvider;
+        const incompleteRefresh = {
+          ...previousProvider,
+          checkedAt: "2026-08-02T10:02:00.000Z",
+          models: [],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, successfulRefresh).models, [
+          discoveredModel,
+        ]);
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, incompleteRefresh).models, [
+          discoveredModel,
+        ]);
+      });
+
       it("drops stale OpenCode models missing from a successful refresh", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("opencode"),
