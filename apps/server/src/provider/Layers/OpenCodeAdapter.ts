@@ -528,6 +528,12 @@ function sessionErrorMessage(error: unknown): string {
     : "OpenCode session failed.";
 }
 
+function isSessionAbortError(error: unknown): boolean {
+  return Boolean(
+    error && typeof error === "object" && "name" in error && error.name === "MessageAbortedError",
+  );
+}
+
 function updateProviderSession(
   context: OpenCodeSessionContext,
   patch: Partial<ProviderSession>,
@@ -1092,9 +1098,35 @@ export function makeOpenCodeAdapter(
         }
 
         case "session.error": {
-          const message = sessionErrorMessage(event.properties.error);
+          const error = event.properties.error;
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
+          context.activeAgent = undefined;
+          context.activeVariant = undefined;
+
+          if (isSessionAbortError(error)) {
+            yield* updateProviderSession(
+              context,
+              { status: "ready" },
+              { clearActiveTurnId: true, clearLastError: true },
+            );
+            if (activeTurnId) {
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId: activeTurnId,
+                  raw: event,
+                })),
+                type: "turn.aborted",
+                payload: {
+                  reason: "Interrupted by user.",
+                },
+              });
+            }
+            break;
+          }
+
+          const message = sessionErrorMessage(error);
           yield* updateProviderSession(
             context,
             {
@@ -1126,7 +1158,7 @@ export function makeOpenCodeAdapter(
             payload: {
               message,
               class: "provider_error",
-              detail: event.properties.error,
+              detail: error,
             },
           });
           break;
@@ -1558,14 +1590,12 @@ export function makeOpenCodeAdapter(
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        yield* runOpenCodeSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
-        if (turnId ?? context.activeTurnId) {
+        const targetTurnId = turnId ?? context.activeTurnId;
+        if (targetTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
               threadId,
-              turnId: turnId ?? context.activeTurnId,
+              turnId: targetTurnId,
             })),
             type: "turn.aborted",
             payload: {
@@ -1573,6 +1603,26 @@ export function makeOpenCodeAdapter(
             },
           });
         }
+        // Publish the local lifecycle transition before waiting on the remote
+        // abort. OpenCode can sit in a provider retry (for example after a
+        // monthly usage limit) long enough for session.abort to hang, but the
+        // user must still be able to stop the turn immediately.
+        context.activeTurnId = undefined;
+        context.activeAgent = undefined;
+        context.activeVariant = undefined;
+        yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+
+        // Best effort: the lifecycle event above is the authoritative UI
+        // transition, while this request stops the provider's in-flight work
+        // when the OpenCode server is responsive. Run it in the session scope
+        // so a later session stop also cancels a hung abort request.
+        yield* runOpenCodeSdk("session.abort", () =>
+          context.client.session.abort({ sessionID: context.openCodeSessionId }),
+        ).pipe(
+          Effect.mapError(toRequestError),
+          Effect.ignore({ log: true }),
+          Effect.forkIn(context.sessionScope),
+        );
       },
     );
 
