@@ -106,6 +106,7 @@ const CommandLookupEnvConfig = Config.all({
   Path: Config.string("Path").pipe(Config.option),
   path: Config.string("path").pipe(Config.option),
   PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  HOME: Config.string("HOME").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -170,6 +171,24 @@ const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableComm
   }
   return Option.none();
 });
+
+function resolveEditorCommands(
+  editor: (typeof EDITORS)[number],
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): ReadonlyArray<string> {
+  const commands = editor.commands ?? [];
+  if (editor.id !== "vscode" || platform !== "darwin") {
+    return commands;
+  }
+
+  const appCliPath = "Visual Studio Code.app/Contents/Resources/app/bin/code";
+  return [
+    ...commands,
+    ...(env.HOME ? [`${env.HOME}/Applications/${appCliPath}`] : []),
+    `/Applications/${appCliPath}`,
+  ];
+}
 
 function encodeUtf16LeBase64(input: string): string {
   const bytes = new Uint8Array(input.length * 2);
@@ -277,7 +296,10 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
       continue;
     }
 
-    const command = yield* resolveAvailableCommand(editor.commands, env);
+    const command = yield* resolveAvailableCommand(
+      resolveEditorCommands(editor, platform, env),
+      env,
+    );
     if (Option.isSome(command)) {
       available.push(editor.id);
     }
@@ -361,7 +383,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   if (editorDef.commands) {
     const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
+      yield* resolveAvailableCommand(resolveEditorCommands(editorDef, platform, env), env),
       () => editorDef.commands[0],
     );
     return {

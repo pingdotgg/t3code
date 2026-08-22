@@ -157,6 +157,41 @@ it.effect("discovers editors through the service API", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("discovers and launches VS Code from its macOS app bundle without the code CLI", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-vscode-home-" });
+    const appCliDir = `${home}/Applications/Visual Studio Code.app/Contents/Resources/app/bin`;
+    const appCliPath = `${appCliDir}/code`;
+    yield* fileSystem.makeDirectory(appCliDir, { recursive: true });
+    yield* fileSystem.writeFileString(appCliPath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(appCliPath, 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      const editors = yield* launcher.resolveAvailableEditors();
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "/tmp/workspace" });
+      return editors;
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "darwin",
+          env: { HOME: home, PATH: "" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.equal(editors.includes("vscode"), true);
+    assert.ok(spawned);
+    assert.equal(spawned.command, appCliPath);
+    assert.deepEqual(spawned.args, ["/tmp/workspace"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("memoizes editor discovery and refreshes after the cache window", () => {
   let statCalls = 0;
   const fileInfo = { type: "File" } as FileSystem.File.Info;
