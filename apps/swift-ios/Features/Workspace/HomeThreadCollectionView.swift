@@ -264,15 +264,20 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         }
 
         private func configureAccessibility(_ cell: HomeCollectionCell, item: HomeCollectionItem) {
+            cell.accessibilityCustomActions = nil
             switch item {
-            case let .thread(thread, context, _, _, _):
+            case let .thread(thread, context, _, isArchived, _):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = selectedThreadID == thread.id
                     ? [.button, .selected]
                     : .button
                 cell.accessibilityLabel = thread.title
                 cell.accessibilityValue = threadAccessibilityValue(thread, context: context)
-                cell.accessibilityHint = "Opens task"
+                cell.accessibilityHint = "Opens thread. More actions are available."
+                cell.accessibilityCustomActions = threadAccessibilityActions(
+                    for: thread,
+                    isArchived: isArchived
+                )
                 cell.onAccessibilityActivate = { [weak self] in
                     guard let self else { return }
                     let previousSelection = self.selectedThreadID
@@ -288,14 +293,14 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             case let .shelfHeader(shelf, count, isExpanded):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
-                cell.accessibilityLabel = "\(shelf.title), \(count) tasks"
+                cell.accessibilityLabel = "\(shelf.title), \(count) \(count == 1 ? "task" : "tasks")"
                 cell.accessibilityValue = isExpanded ? "Expanded" : "Collapsed"
-                cell.accessibilityHint = nil
+                cell.accessibilityHint = isExpanded ? "Collapses the task list" : "Expands the task list"
                 cell.onAccessibilityActivate = { [weak self] in self?.toggle(shelf) }
             case let .showMoreSettled(remaining):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
-                cell.accessibilityLabel = "Show \(remaining) more settled tasks"
+                cell.accessibilityLabel = "Show \(remaining) more settled \(remaining == 1 ? "task" : "tasks")"
                 cell.accessibilityValue = nil
                 cell.accessibilityHint = nil
                 cell.onAccessibilityActivate = { [weak self] in
@@ -325,15 +330,102 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             _ thread: FeatureThread,
             context: HomeThreadRowContext
         ) -> String {
-            var values = [thread.homeStatusLabel ?? "Ready", "Project \(context.projectName)"]
-            values.append("Harness \(context.providerName)")
+            var status = thread.homeStatusLabel ?? "Ready"
             if let duration = thread.homeWorkingDuration(at: .now) {
-                values.append("for \(duration)")
+                status += " for \(duration)"
             }
+            var values = [status, "Project \(context.projectName)"]
+            if thread.pinnedAt != nil {
+                values.append("Pinned")
+            }
+            if thread.isArchived {
+                values.append("Archived")
+            } else if thread.isEffectivelySnoozed(at: .now) {
+                values.append("Snoozed")
+            } else if thread.isEffectivelySettled(at: .now) {
+                values.append("Settled")
+            }
+            values.append("Provider \(context.providerName)")
             if let environment = context.environmentLabel {
                 values.append("on \(environment)")
             }
             return values.joined(separator: ". ")
+        }
+
+        private func threadAccessibilityActions(
+            for thread: FeatureThread,
+            isArchived: Bool
+        ) -> [UIAccessibilityCustomAction] {
+            var actions = [accessibilityAction("Rename", systemImage: "pencil") { coordinator in
+                coordinator.parent.onRename(thread)
+            }]
+
+            if thread.supportsTitleRegeneration == true {
+                actions.append(accessibilityAction("Regenerate title", systemImage: "sparkles") { coordinator in
+                    coordinator.parent.onRegenerateTitle(thread)
+                })
+            }
+
+            if !isArchived {
+                if thread.canTogglePin {
+                    let isPinned = thread.pinnedAt != nil
+                    actions.append(accessibilityAction(
+                        isPinned ? "Unpin" : "Pin",
+                        systemImage: isPinned ? "pin.slash" : "pin"
+                    ) { coordinator in
+                        coordinator.parent.onPin(thread, !isPinned)
+                    })
+                }
+
+                if thread.canToggleSettlement {
+                    let isSettled = thread.isEffectivelySettled(at: .now)
+                    actions.append(accessibilityAction(
+                        isSettled ? "Reopen" : "Settle",
+                        systemImage: isSettled ? "arrow.counterclockwise" : "checkmark"
+                    ) { coordinator in
+                        coordinator.parent.onSettle(thread, !isSettled)
+                    })
+                }
+
+                if thread.canToggleSnooze {
+                    if thread.isEffectivelySnoozed(at: .now) {
+                        actions.append(accessibilityAction("Wake", systemImage: "bell") { coordinator in
+                            coordinator.parent.onSnooze(thread, nil)
+                        })
+                    } else if thread.state != .queued,
+                              thread.state != .waitingForApproval,
+                              thread.state != .waitingForInput {
+                        actions.append(contentsOf: DailyUXSnoozePresets.resolve(now: .now).map { preset in
+                            accessibilityAction("Snooze: \(preset.label)", systemImage: "clock") { coordinator in
+                                coordinator.parent.onSnooze(thread, preset.until)
+                            }
+                        })
+                    }
+                }
+            }
+
+            actions.append(accessibilityAction(
+                isArchived ? "Restore" : "Archive",
+                systemImage: isArchived ? "arrow.uturn.backward" : "archivebox"
+            ) { coordinator in
+                coordinator.parent.onArchive(thread, !isArchived)
+            })
+            actions.append(accessibilityAction("Delete thread", systemImage: "trash") { coordinator in
+                coordinator.parent.onDelete(thread)
+            })
+            return actions
+        }
+
+        private func accessibilityAction(
+            _ title: String,
+            systemImage: String,
+            perform: @escaping (Coordinator) -> Void
+        ) -> UIAccessibilityCustomAction {
+            UIAccessibilityCustomAction(name: title, image: UIImage(systemName: systemImage)) { [weak self] _ in
+                guard let self else { return false }
+                perform(self)
+                return true
+            }
         }
 
         private func synchronizeSelection(in collectionView: UICollectionView) {
@@ -379,16 +471,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             let rename = UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { [weak self] _ in
                 self?.parent.onRename(thread)
             }
-            let archive = UIAction(
-                title: isArchived ? "Restore" : "Archive",
-                image: UIImage(systemName: isArchived ? "arrow.uturn.backward" : "archivebox")
-            ) { [weak self] _ in
-                self?.parent.onArchive(thread, !isArchived)
-            }
 
-            var actions: [UIMenuElement] = [rename]
+            var titleActions: [UIMenuElement] = [rename]
             if thread.supportsTitleRegeneration == true {
-                actions.append(
+                titleActions.append(
                     UIAction(
                         title: "Regenerate title",
                         image: UIImage(systemName: "sparkles")
@@ -397,11 +483,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     }
                 )
             }
-            actions.append(archive)
+
+            var statusActions: [UIMenuElement] = []
             if !isArchived {
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
-                    actions.append(
+                    statusActions.append(
                         UIAction(
                             title: isPinned ? "Unpin" : "Pin",
                             image: UIImage(systemName: isPinned ? "pin.slash" : "pin")
@@ -412,7 +499,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 }
                 if thread.canToggleSettlement {
                     let isSettled = thread.isEffectivelySettled(at: .now)
-                    actions.append(
+                    statusActions.append(
                         UIAction(
                             title: isSettled ? "Reopen" : "Settle",
                             image: UIImage(
@@ -427,8 +514,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 if thread.canToggleSnooze {
                     let isSnoozed = thread.isEffectivelySnoozed(at: .now)
                     if isSnoozed {
-                        actions.append(
-                            UIAction(title: "Wake thread", image: UIImage(systemName: "bell")) {
+                        statusActions.append(
+                            UIAction(title: "Wake", image: UIImage(systemName: "bell")) {
                                 [weak self] _ in
                                 self?.parent.onSnooze(thread, nil)
                             }
@@ -451,18 +538,32 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                             image: UIImage(systemName: "clock"),
                             children: children
                         )
-                        actions.append(snooze)
+                        statusActions.append(snooze)
                     }
                 }
             }
 
-            actions.append(
-                UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) {
-                    [weak self] _ in
-                    self?.parent.onDelete(thread)
-                }
-            )
-            return actions
+            let archive = UIAction(
+                title: isArchived ? "Restore" : "Archive",
+                image: UIImage(systemName: isArchived ? "arrow.uturn.backward" : "archivebox")
+            ) { [weak self] _ in
+                self?.parent.onArchive(thread, !isArchived)
+            }
+            let delete = UIAction(
+                title: "Delete thread",
+                image: UIImage(systemName: "trash"),
+                attributes: .destructive
+            ) { [weak self] _ in
+                self?.parent.onDelete(thread)
+            }
+
+            var sections = [UIMenu(options: .displayInline, children: titleActions)]
+            if !statusActions.isEmpty {
+                sections.append(UIMenu(options: .displayInline, children: statusActions))
+            }
+            sections.append(UIMenu(options: .displayInline, children: [archive]))
+            sections.append(UIMenu(options: .displayInline, children: [delete]))
+            return sections
         }
 
         /// Working rows show a live per-second duration, so they need a 1 Hz
@@ -550,11 +651,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             })
         }
 
-        items.append(.shelfHeader(.snoozed, presentation.snoozed.count, isSnoozedExpanded))
-        if isSnoozedExpanded {
-            items.append(contentsOf: presentation.snoozed.isEmpty
-                ? [.empty(.snoozed)]
-                : presentation.snoozed.map {
+        if !presentation.snoozed.isEmpty {
+            items.append(.shelfHeader(.snoozed, presentation.snoozed.count, isSnoozedExpanded))
+            if isSnoozedExpanded {
+                items.append(contentsOf: presentation.snoozed.map {
                     .thread(
                         $0,
                         presentation.rowContexts[$0.id] ?? .fallback,
@@ -563,21 +663,24 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         forceRichRows
                     )
                 })
+            }
         }
 
-        items.append(.shelfHeader(.settled, presentation.settled.count, isSettledExpanded))
-        if isSettledExpanded {
-            items.append(contentsOf: presentation.settled.prefix(settledLimit).map {
-                .thread(
-                    $0,
-                    presentation.rowContexts[$0.id] ?? .fallback,
-                    forceRichRows ? .rich : .slim,
-                    false,
-                    forceRichRows
-                )
-            })
-            if presentation.settled.count > settledLimit {
-                items.append(.showMoreSettled(presentation.settled.count - settledLimit))
+        if !presentation.settled.isEmpty {
+            items.append(.shelfHeader(.settled, presentation.settled.count, isSettledExpanded))
+            if isSettledExpanded {
+                items.append(contentsOf: presentation.settled.prefix(settledLimit).map {
+                    .thread(
+                        $0,
+                        presentation.rowContexts[$0.id] ?? .fallback,
+                        forceRichRows ? .rich : .slim,
+                        false,
+                        forceRichRows
+                    )
+                })
+                if presentation.settled.count > settledLimit {
+                    items.append(.showMoreSettled(presentation.settled.count - settledLimit))
+                }
             }
         }
 

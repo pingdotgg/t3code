@@ -27,6 +27,7 @@ struct FeatureComposerCommandPopover: View {
                                 FeatureComposerCommandRow(item: item)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel(accessibilityLabel(for: item))
                             .accessibilityIdentifier("composer-suggestion-\(item.id)")
 
                             if index < items.count - 1 {
@@ -42,9 +43,9 @@ struct FeatureComposerCommandPopover: View {
         }
         .frame(height: menuHeight, alignment: .top)
         .background(T3Colors.surfaceRaised.opacity(0.98))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(T3Colors.border, lineWidth: 1)
         }
         .accessibilityLabel(groupLabel)
@@ -64,12 +65,16 @@ struct FeatureComposerCommandPopover: View {
         if isLoading { return "Searching files…" }
         if let errorMessage, !errorMessage.isEmpty { return errorMessage }
         switch triggerKind {
-        case .slashCommand: return "No matching commands."
-        case .model: return "No matching models."
-        case .skill: return "No matching skills."
-        case .path where !pathSearchAvailable: return "File search is unavailable."
-        case .path: return "Type a file name to search."
+        case .slashCommand: return "No matching commands"
+        case .model: return "No matching models"
+        case .skill: return "No matching skills"
+        case .path where !pathSearchAvailable: return "File search unavailable"
+        case .path: return "Type a file name"
         }
+    }
+
+    private func accessibilityLabel(for item: FeatureComposerMenuItem) -> String {
+        item.description.isEmpty ? item.label : "\(item.label), \(item.description)"
     }
 
     private var menuHeight: CGFloat {
@@ -99,6 +104,7 @@ private struct FeatureComposerCommandRow: View {
                 .font(T3Typography.control)
                 .foregroundStyle(T3Colors.textPrimary)
                 .lineLimit(1)
+                .layoutPriority(1)
 
             if !item.description.isEmpty {
                 Text(item.description)
@@ -117,8 +123,8 @@ private struct FeatureComposerCommandRow: View {
 
     private var iconName: String {
         switch item {
-        case .modelCommand, .providerCommand: return "terminal"
-        case .model: return "cpu"
+        case .modelCommand, .model: return "cpu"
+        case .providerCommand: return "terminal"
         case .skill: return "shippingbox"
         case let .path(entry): return entry.kind == .directory ? "folder" : "doc"
         }

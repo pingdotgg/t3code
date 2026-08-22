@@ -39,27 +39,14 @@ public struct T3ConnectView: View {
         content
             .navigationTitle("T3 Connect")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if controller.account != nil {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Sign out", role: .destructive) {
-                            guard !isSigningOut else { return }
-                            isSigningOut = true
-                            Task {
-                                await signOut()
-                                isSigningOut = false
-                                presentAuthenticationIfNeeded()
-                            }
-                        }
-                        .disabled(controller.isRefreshing || isSigningOut)
-                    }
-                }
-            }
+            .toolbarBackground(T3Colors.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .refreshable {
                 await controller.refresh()
             }
             .task {
                 await controller.refresh()
+                guard !Task.isCancelled else { return }
                 didFinishInitialRefresh = true
                 presentAuthenticationIfNeeded()
             }
@@ -97,15 +84,15 @@ public struct T3ConnectView: View {
             }
         } else if let account = controller.account {
             connectList {
-                accountSection(account)
                 environmentSection
+                accountSection(account)
             }
+        } else if isSigningOut {
+            loadingView("Signing out")
+        } else if didFinishInitialRefresh {
+            signedOutView
         } else {
-            ZStack {
-                T3Colors.background.ignoresSafeArea()
-                ProgressView()
-                    .tint(T3Colors.textPrimary)
-            }
+            loadingView("Checking account")
         }
     }
 
@@ -116,8 +103,45 @@ public struct T3ConnectView: View {
             content()
         }
         .listStyle(.plain)
+        .listSectionSpacing(28)
         .scrollContentBackground(.hidden)
-        .background(T3Colors.background)
+        .background(T3Colors.background.ignoresSafeArea())
+    }
+
+    private var signedOutView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sign in to T3 Connect")
+                .font(.title2.bold())
+                .foregroundStyle(T3Colors.textPrimary)
+
+            Text("Access environments linked to your account.")
+                .font(T3Typography.threadBody)
+                .foregroundStyle(T3Colors.textSecondary)
+
+            Button("Sign in") {
+                isAuthPresented = true
+            }
+            .font(T3Typography.control.weight(.semibold))
+            .frame(minHeight: T3Metrics.minimumTapTarget)
+            .padding(.top, 4)
+            .accessibilityIdentifier("t3-connect-sign-in")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(24)
+        .background(T3Colors.background.ignoresSafeArea())
+    }
+
+    private func loadingView(_ message: String) -> some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .tint(T3Colors.textPrimary)
+            Text(message)
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(T3Colors.background.ignoresSafeArea())
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
@@ -134,11 +158,7 @@ public struct T3ConnectView: View {
                 .environment(\.clerkTheme, T3ConnectClerkAppearance.theme)
                 .environment(clerk)
         } else {
-            ZStack {
-                T3Colors.background.ignoresSafeArea()
-                ProgressView()
-                    .tint(T3Colors.textPrimary)
-            }
+            loadingView("Loading sign-in")
         }
     }
 
@@ -160,12 +180,12 @@ public struct T3ConnectView: View {
     private func unavailableSection(_ reason: String) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
-                Label("Unavailable in this build", systemImage: "cloud.slash")
+                Label("T3 Connect unavailable", systemImage: "cloud.slash")
                     .font(T3Typography.homeTitle)
                 Text(reason)
                     .font(T3Typography.threadBody)
                     .foregroundStyle(T3Colors.textSecondary)
-                Text("Direct and local connections still work without an account.")
+                Text("You can still connect directly.")
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textTertiary)
             }
@@ -190,20 +210,45 @@ public struct T3ConnectView: View {
             }
             .padding(.vertical, 3)
             .listRowBackground(T3Colors.background)
+            .accessibilityElement(children: .combine)
+
+            Button(role: .destructive) {
+                handleSignOut()
+            } label: {
+                HStack {
+                    Text("Sign out")
+                    Spacer()
+                    if isSigningOut {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+            }
+            .disabled(controller.isRefreshing || isSigningOut || connectingEnvironmentID != nil)
+            .listRowBackground(T3Colors.background)
+            .accessibilityIdentifier("t3-connect-sign-out")
         }
     }
 
     private var environmentSection: some View {
-        Section(purpose == .manage ? "Linked machines" : "Cloud environments") {
+        Section("Environments") {
             if controller.environments.isEmpty, !controller.isRefreshing {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("No linked machines")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No linked environments")
                         .font(T3Typography.homeTitle)
-                    Text("Link an environment from T3 Code on desktop, then pull to refresh.")
+                    Text("Link an environment in T3 Code on your computer.")
                         .font(T3Typography.supporting)
                         .foregroundStyle(T3Colors.textSecondary)
+
+                    Button("Refresh") {
+                        Task { await controller.refresh() }
+                    }
+                    .font(T3Typography.control)
+                    .frame(minHeight: T3Metrics.minimumTapTarget)
+                    .accessibilityIdentifier("t3-connect-refresh")
                 }
-                .padding(.vertical, 8)
+                .padding(.top, 8)
                 .listRowBackground(T3Colors.background)
             }
 
@@ -226,11 +271,14 @@ public struct T3ConnectView: View {
             if controller.isRefreshing {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Refreshing environments…")
+                        .controlSize(.small)
+                    Text("Checking environments")
                         .font(T3Typography.supporting)
                         .foregroundStyle(T3Colors.textSecondary)
                 }
+                .frame(minHeight: T3Metrics.minimumTapTarget)
                 .listRowBackground(T3Colors.background)
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -249,9 +297,12 @@ public struct T3ConnectView: View {
                     .lineLimit(1)
                 Text(statusText(item))
                     .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .lineLimit(1)
+                    .foregroundStyle(
+                        item.statusError == nil ? T3Colors.textSecondary : T3Colors.danger
+                    )
+                    .lineLimit(2)
             }
+            .accessibilityElement(children: .combine)
 
             Spacer(minLength: 8)
 
@@ -263,20 +314,37 @@ public struct T3ConnectView: View {
                         || connectingEnvironmentID == item.id {
                         ProgressView()
                             .frame(width: 54)
+                            .accessibilityLabel("Connecting to \(item.environment.label)")
                     } else {
                         Text("Connect")
                             .font(T3Typography.supportingStrong)
                     }
                 }
                 .buttonStyle(.borderless)
+                .frame(minHeight: T3Metrics.minimumTapTarget)
                 .disabled(
                     controller.busyEnvironmentID != nil
                         || connectingEnvironmentID != nil
                         || item.status?.status == .offline
                 )
+                .accessibilityLabel("Connect to \(item.environment.label)")
+                .accessibilityHint(item.status?.status == .offline ? "Environment is offline" : "")
+                .accessibilityIdentifier("t3-connect-environment-\(item.id)")
             }
         }
         .padding(.vertical, 5)
+    }
+
+    private func handleSignOut() {
+        guard !isSigningOut else { return }
+        isSigningOut = true
+        Task {
+            await signOut()
+            isSigningOut = false
+            if controller.account == nil {
+                dismiss()
+            }
+        }
     }
 
     private func handleConnect(_ environment: T3ConnectRelayEnvironment) async {
@@ -301,12 +369,15 @@ public struct T3ConnectView: View {
         switch item.status?.status {
         case .online: return "Online"
         case .offline: return item.status?.error ?? "Offline"
-        case nil: return "Checking…"
+        case nil: return "Checking"
         }
     }
 
     private func statusColor(_ item: T3ConnectCloudEnvironment) -> Color {
-        switch item.status?.status {
+        if item.statusError != nil {
+            return T3Colors.danger
+        }
+        return switch item.status?.status {
         case .online: T3Colors.success
         case .offline: T3Colors.danger
         case nil: T3Colors.textTertiary
@@ -343,12 +414,12 @@ private struct T3ConnectAuthenticationView: View {
                     brand
                         .padding(.bottom, 38)
 
-                    Text("Continue to T3 Code")
+                    Text("Sign in to T3 Connect")
                         .font(.system(.largeTitle, design: .default, weight: .bold))
                         .foregroundStyle(T3Colors.textPrimary)
                         .padding(.bottom, 10)
 
-                    Text("Sign in to reach your environments from anywhere.")
+                    Text("Access your linked environments.")
                         .font(T3Typography.threadBody)
                         .foregroundStyle(T3Colors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -379,6 +450,7 @@ private struct T3ConnectAuthenticationView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close")
+                    .accessibilityIdentifier("t3-connect-auth-close")
                 }
             }
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -429,7 +501,7 @@ private struct T3ConnectAuthenticationView: View {
             HStack(spacing: 10) {
                 ProgressView()
                     .tint(T3Colors.textPrimary)
-                Text("Loading sign-in options…")
+                Text("Loading sign-in options")
                     .font(T3Typography.control)
                     .foregroundStyle(T3Colors.textSecondary)
             }
@@ -485,7 +557,7 @@ private struct T3ConnectAuthenticationView: View {
             HStack(spacing: 10) {
                 Image(systemName: "envelope")
                     .font(.system(size: 15, weight: .medium))
-                Text("Use email instead")
+                Text(availableProviders.isEmpty ? "Continue with email" : "Use email")
                     .font(T3Typography.control)
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -496,6 +568,8 @@ private struct T3ConnectAuthenticationView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(activeProvider != nil)
+        .accessibilityIdentifier("t3-connect-auth-email")
     }
 
     private var availableProviders: [OAuthProvider] {

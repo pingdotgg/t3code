@@ -4,6 +4,8 @@ import UIKit
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
+    @State private var isModelPickerPresented = false
+    @State private var restoresFocusAfterModelPickerDismissal = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
@@ -120,7 +122,7 @@ struct FeatureComposerView: View {
                     isFocused: focused,
                     textIsEmpty: textIsEmpty,
                     attachmentsAreEmpty: attachments.isEmpty,
-                    isAttachmentFlowActive: isAttachmentFlowActive,
+                    isAttachmentFlowActive: isAttachmentFlowActive || isModelPickerPresented,
                     isPreparingAttachments: attachmentPreparation.isPreparing
                 ) {
                     isManuallyExpanded = false
@@ -193,7 +195,7 @@ struct FeatureComposerView: View {
                     focused = true
                 }
             } label: {
-                Text(isWorking ? "Message to queue…" : "Ask anything…")
+                Text(composerPlaceholder)
                     .font(T3Typography.composer)
                     .foregroundStyle(T3Colors.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -226,12 +228,11 @@ struct FeatureComposerView: View {
 
             // Return is always editing input. Sending is deliberately
             // button-only, which is UITextView's native return behavior.
-            let placeholder = isWorking ? "Message to queue…" : "Ask anything…"
             ZStack(alignment: .topLeading) {
                 FeatureComposerTextInput(
                     text: $text,
                     focused: $focused,
-                    placeholder: placeholder,
+                    placeholder: composerPlaceholder,
                     acceptsImages: imagesAllowed,
                     selectionRequest: textSelectionRequest,
                     onPasteImages: attachImageProviders,
@@ -241,7 +242,7 @@ struct FeatureComposerView: View {
                 .padding(.top, 14)
 
                 if text.isEmpty {
-                    Text(placeholder)
+                    Text(composerPlaceholder)
                         .font(T3Typography.composer)
                         .foregroundStyle(T3Colors.textTertiary)
                         .padding(.horizontal, 16)
@@ -290,7 +291,8 @@ struct FeatureComposerView: View {
                 selection: $selection,
                 style: .compact,
                 threadSelection: threadSelection,
-                materializesDefaultSelection: materializesDefaultSelection
+                materializesDefaultSelection: materializesDefaultSelection,
+                onPresentationChange: handleModelPickerPresentation
             )
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(2)
@@ -311,27 +313,34 @@ struct FeatureComposerView: View {
 
     private var submitButton: some View {
         Button(action: performPrimaryAction) {
-            Group {
-                if isSending {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.white)
-                } else {
-                    Image(systemName: showsStop ? "stop.fill" : "arrow.up")
-                        .font(.system(size: showsStop ? 11 : 14, weight: .bold))
-                }
-            }
-            .foregroundStyle(.white)
-            .frame(width: 34, height: 34)
-            .background(showsStop ? T3Colors.danger : T3Colors.accent, in: Circle())
+            Image(systemName: submitSymbol)
+                .font(.system(size: showsStop ? 11 : 14, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(showsStop ? T3Colors.danger : T3Colors.accent, in: Circle())
+                .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(submitDisabled)
         .opacity(submitDisabled ? 0.3 : 1)
-        .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
-        .contentShape(Rectangle())
-        .accessibilityLabel(showsStop ? "Stop agent" : "Send")
+        .accessibilityLabel(submitAccessibilityLabel)
         .accessibilityIdentifier(showsStop ? "thread-stop" : "message-send")
+    }
+
+    private var composerPlaceholder: String {
+        isWorking ? "Queue a message…" : "Ask anything…"
+    }
+
+    private var submitSymbol: String {
+        if isSending { return "ellipsis" }
+        return showsStop ? "stop.fill" : "arrow.up"
+    }
+
+    private var submitAccessibilityLabel: String {
+        if isSending { return "Sending message" }
+        if showsStop { return "Stop agent" }
+        return isWorking ? "Queue message" : "Send message"
     }
 
     private var composerShape: RoundedRectangle {
@@ -497,6 +506,23 @@ struct FeatureComposerView: View {
         } else if FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton),
                   canSend {
             onSend()
+        }
+    }
+
+    private func handleModelPickerPresentation(_ isPresented: Bool) {
+        if isPresented {
+            restoresFocusAfterModelPickerDismissal = focused
+            isManuallyExpanded = true
+            isModelPickerPresented = true
+            return
+        }
+
+        isModelPickerPresented = false
+        guard restoresFocusAfterModelPickerDismissal else { return }
+        restoresFocusAfterModelPickerDismissal = false
+        Task { @MainActor in
+            await Task.yield()
+            focused = true
         }
     }
 

@@ -14,6 +14,33 @@ struct ConnectionHubPresentationTests {
     }
 
     @Test
+    func directSectionShowsEnabledConnectionsBeforeDisabledConnections() {
+        let disabledFirst = environment(
+            id: "disabled-first",
+            source: .direct,
+            isEnabled: false
+        )
+        let enabledFirst = environment(id: "enabled-first", source: .direct)
+        let disabledSecond = environment(
+            id: "disabled-second",
+            source: .direct,
+            isEnabled: false
+        )
+        let enabledSecond = environment(id: "enabled-second", source: .direct)
+
+        #expect(
+            ConnectionHubPresentation.directEnvironments(
+                in: [disabledFirst, enabledFirst, disabledSecond, enabledSecond]
+            ).map(\.id) == [
+                "enabled-first",
+                "enabled-second",
+                "disabled-first",
+                "disabled-second",
+            ]
+        )
+    }
+
+    @Test
     func t3ConnectSectionJoinsSavedAndAccountMachinesWithoutDuplicates() {
         let saved = [
             environment(
@@ -45,6 +72,149 @@ struct ConnectionHubPresentationTests {
         #expect(rows[1].isOnline)
         #expect(rows[2].savedEnvironment?.id == "saved-only")
         #expect(rows[2].linkedEnvironment == nil)
+    }
+
+    @Test(
+        arguments: [
+            (FeatureConnection.State.connected, ConnectionHubStatus.online),
+            (.connecting, .connecting),
+            (.reconnecting, .connecting),
+            (.disconnected, .offline),
+        ]
+    )
+    func savedEnvironmentStatusMatchesConnectionState(
+        connectionState: FeatureConnection.State,
+        expectedStatus: ConnectionHubStatus
+    ) {
+        let saved = environment(
+            id: "direct",
+            source: .direct,
+            connectionState: connectionState
+        )
+
+        #expect(ConnectionHubPresentation.status(for: saved) == expectedStatus)
+    }
+
+    @Test
+    func disabledEnvironmentDoesNotAppearOfflineOrOnline() {
+        let saved = environment(
+            id: "disabled",
+            source: .direct,
+            isEnabled: false,
+            connectionState: .connected
+        )
+
+        #expect(ConnectionHubPresentation.status(for: saved) == .disabled)
+        #expect(ConnectionHubPresentation.status(for: saved, pendingEnabled: true) == .connecting)
+    }
+
+    @Test
+    func environmentWithoutAReachabilityProbeIsChecking() {
+        let saved = environment(id: "pending", source: .direct)
+
+        #expect(ConnectionHubPresentation.status(for: saved) == .checking)
+        #expect(ConnectionHubPresentation.status(for: saved, pendingEnabled: false) == .disabled)
+    }
+
+    @Test
+    func managedEnvironmentUsesSavedConnectionStateBeforeCloudAvailability() {
+        let linked = cloudEnvironment(id: "managed", name: "Studio", isOnline: true)
+        let disabled = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: linked,
+            savedEnvironment: environment(
+                id: "managed",
+                source: .t3Connect,
+                isEnabled: false,
+                connectionState: .connected
+            )
+        )
+        let offline = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: linked,
+            savedEnvironment: environment(
+                id: "managed",
+                source: .t3Connect,
+                connectionState: .disconnected
+            )
+        )
+
+        #expect(disabled.status == .disabled)
+        #expect(offline.status == .offline)
+        #expect(!disabled.isOnline)
+        #expect(!offline.isOnline)
+    }
+
+    @Test
+    func linkedEnvironmentShowsCloudStatusUntilItIsSaved() {
+        let online = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: cloudEnvironment(id: "online", name: "Studio", isOnline: true),
+            savedEnvironment: nil
+        )
+        let offline = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: cloudEnvironment(id: "offline", name: "Studio", isOnline: false),
+            savedEnvironment: nil
+        )
+
+        #expect(online.status == .online)
+        #expect(offline.status == .offline)
+        #expect(online.connectionStatus(pendingEnabled: true) == .connecting)
+        #expect(offline.connectionStatus(isConnecting: true) == .connecting)
+    }
+
+    @Test
+    func linkedEnvironmentSeparatesUnknownStatusFromFailedReachability() {
+        let linked = cloudEnvironment(id: "linked", name: "Studio", isOnline: true)
+        let unchecked = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: T3ConnectCloudEnvironment(environment: linked.environment),
+            savedEnvironment: nil
+        )
+        let failed = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: T3ConnectCloudEnvironment(
+                environment: linked.environment,
+                statusError: "Connection failed"
+            ),
+            savedEnvironment: nil
+        )
+
+        #expect(unchecked.status == .checking)
+        #expect(failed.status == .offline)
+    }
+
+    @Test
+    func duplicateMachineNamesShowOnlyTheirSanitizedHostAndPort() {
+        let names = ["leftbook", "LeftBook", "studio"]
+
+        #expect(
+            ConnectionHubPresentation.disambiguatingEndpoint(
+                "https://agent:secret@leftbook.tailnet.ts.net:8443/work?token=private#code",
+                for: "leftbook",
+                among: names
+            ) == "leftbook.tailnet.ts.net:8443"
+        )
+        #expect(
+            ConnectionHubPresentation.disambiguatingEndpoint(
+                "https://second.tailnet.ts.net/private?token=hidden",
+                for: "LeftBook",
+                among: names
+            ) == "second.tailnet.ts.net"
+        )
+        #expect(
+            ConnectionHubPresentation.disambiguatingEndpoint(
+                "https://studio.example/",
+                for: "studio",
+                among: names
+            ) == nil
+        )
+    }
+
+    @Test
+    func managedEnvironmentUsesLinkedEndpointForDisambiguation() {
+        let linked = cloudEnvironment(id: "linked", name: "leftbook", isOnline: true)
+        let row = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: linked,
+            savedEnvironment: environment(id: "saved", name: "leftbook", source: .t3Connect)
+        )
+
+        #expect(row.endpoint == "https://linked.example")
     }
 
     private func environment(

@@ -15,7 +15,7 @@ struct ConnectionsView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 28) {
+                LazyVStack(alignment: .leading, spacing: 32) {
                     directConnectionsSection
                     t3ConnectSection
                     accessSection
@@ -127,10 +127,10 @@ struct ConnectionsView: View {
     }
 
     private var directConnectionsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                Text("DIRECT CONNECTIONS")
-                    .font(T3Typography.eyebrow)
+                Text("Direct")
+                    .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.textSecondary)
                 Spacer(minLength: 0)
                 Button("Add") { showingAddConnection = true }
@@ -139,13 +139,11 @@ struct ConnectionsView: View {
             }
 
             if directEnvironments.isEmpty {
-                emptyRow("No direct connections")
+                emptyRow("No paired environments")
             } else {
                 VStack(spacing: 0) {
-                    Divider().overlay(T3Colors.separator)
                     ForEach(directEnvironments) { environment in
                         directConnectionRow(environment)
-                        Divider().overlay(T3Colors.separator)
                     }
                 }
             }
@@ -162,10 +160,15 @@ struct ConnectionsView: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(T3Colors.textSecondary)
                         .frame(width: 25)
+                        .accessibilityHidden(true)
 
                     environmentLabel(
                         name: environment.name,
-                        isOnline: environment.connectionState == .connected
+                        status: ConnectionHubPresentation.status(
+                            for: environment,
+                            pendingEnabled: pendingEnabledValues[environment.id]
+                        ),
+                        endpoint: directEndpointLabel(for: environment)
                     )
 
                     Spacer(minLength: 8)
@@ -173,12 +176,18 @@ struct ConnectionsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityHint("Shows connection details")
 
             Toggle("Enabled", isOn: enabledBinding(for: environment))
                 .labelsHidden()
                 .tint(T3Colors.success)
                 .disabled(pendingEnabledValues[environment.id] != nil)
-                .accessibilityLabel("Enable \(environment.name)")
+                .accessibilityLabel(
+                    toggleAccessibilityLabel(
+                        name: environment.name,
+                        endpoint: directEndpointLabel(for: environment)
+                    )
+                )
         }
         .frame(minHeight: 70)
         .contextMenu {
@@ -191,16 +200,18 @@ struct ConnectionsView: View {
     }
 
     private var t3ConnectSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                Text("T3 CONNECT")
-                    .font(T3Typography.eyebrow)
+                Text("T3 Connect")
+                    .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.textSecondary)
                 Spacer(minLength: 0)
-                Button("Manage") { showingT3Connect = true }
-                    .font(T3Typography.control)
-                    .disabled(t3ConnectCapability == nil)
-                    .accessibilityIdentifier("connections-manage-t3-connect-button")
+                Button(t3ConnectController?.account == nil ? "Sign in" : "Manage") {
+                    showingT3Connect = true
+                }
+                .font(T3Typography.control)
+                .disabled(t3ConnectCapability == nil)
+                .accessibilityIdentifier("connections-manage-t3-connect-button")
             }
 
             if t3ConnectRows.isEmpty {
@@ -212,29 +223,22 @@ struct ConnectionsView: View {
                             .font(T3Typography.supporting)
                             .foregroundStyle(T3Colors.textSecondary)
                     }
-                    .frame(minHeight: 58)
+                    .frame(minHeight: 44)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(alignment: .top) { Divider().overlay(T3Colors.separator) }
-                    .overlay(alignment: .bottom) { Divider().overlay(T3Colors.separator) }
+                } else if t3ConnectCapability == nil {
+                    emptyRow("T3 Connect unavailable")
                 } else if t3ConnectController?.account == nil {
-                    emptyRow("Sign in to access your T3 Connect machines")
+                    emptyRow("Sign in to see your environments")
                 } else {
-                    emptyRow("No linked machines")
+                    emptyRow("No linked environments")
                 }
             } else {
                 VStack(spacing: 0) {
-                    Divider().overlay(T3Colors.separator)
                     ForEach(t3ConnectRows) { item in
                         t3ConnectConnectionRow(item)
-                        Divider().overlay(T3Colors.separator)
                     }
                 }
             }
-
-            Text("Turn on any online machine to use it on this iPhone.")
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textTertiary)
-                .padding(.top, 2)
         }
     }
 
@@ -250,6 +254,7 @@ struct ConnectionsView: View {
                         t3ConnectEnvironmentLabel(item)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Shows connection details")
                 } else {
                     t3ConnectEnvironmentLabel(item)
                 }
@@ -259,7 +264,17 @@ struct ConnectionsView: View {
                 .labelsHidden()
                 .tint(T3Colors.success)
                 .disabled(isT3ConnectToggleDisabled(item))
-                .accessibilityLabel("Enable \(item.name)")
+                .accessibilityHint(
+                    item.savedEnvironment == nil && item.status == .offline
+                        ? "Environment is offline"
+                        : ""
+                )
+                .accessibilityLabel(
+                    toggleAccessibilityLabel(
+                        name: item.name,
+                        endpoint: t3ConnectEndpointLabel(for: item)
+                    )
+                )
         }
         .frame(minHeight: 70)
     }
@@ -268,49 +283,71 @@ struct ConnectionsView: View {
         _ item: T3ConnectEnvironmentPresentation
     ) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "desktopcomputer")
+            Image(systemName: "cloud")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(width: 25)
+                .accessibilityHidden(true)
 
-            environmentLabel(name: item.name, isOnline: item.isOnline)
+            environmentLabel(
+                name: item.name,
+                status: item.connectionStatus(
+                    pendingEnabled: pendingEnabledValues[item.id],
+                    isConnecting: connectingEnvironmentID == item.id
+                        || t3ConnectController?.busyEnvironmentID == item.id
+                ),
+                endpoint: t3ConnectEndpointLabel(for: item)
+            )
             Spacer(minLength: 8)
         }
         .contentShape(Rectangle())
     }
 
-    private func environmentLabel(name: String, isOnline: Bool) -> some View {
+    private func environmentLabel(
+        name: String,
+        status: ConnectionHubStatus,
+        endpoint: String?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(name)
                 .font(T3Typography.homeTitle)
                 .foregroundStyle(T3Colors.textPrimary)
                 .lineLimit(1)
 
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 Circle()
-                    .fill(isOnline ? T3Colors.success : T3Colors.danger)
+                    .fill(status.color)
                     .frame(width: 7, height: 7)
-                Text(isOnline ? "Online" : "Offline")
+                    .accessibilityHidden(true)
+
+                Text(status.title)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                if let endpoint {
+                    Text(endpoint)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
             .font(T3Typography.supporting)
             .foregroundStyle(T3Colors.textSecondary)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private func emptyRow(_ message: String) -> some View {
         Text(message)
-            .font(T3Typography.threadBody)
+            .font(T3Typography.supporting)
             .foregroundStyle(T3Colors.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(minHeight: 58)
-            .overlay(alignment: .top) { Divider().overlay(T3Colors.separator) }
-            .overlay(alignment: .bottom) { Divider().overlay(T3Colors.separator) }
+            .frame(minHeight: 38)
     }
 
     private var accessSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("ACCESS")
-                .font(T3Typography.eyebrow)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Access")
+                .font(T3Typography.supportingStrong)
                 .foregroundStyle(T3Colors.textSecondary)
             Button {
                 showingDevices = true
@@ -320,6 +357,7 @@ struct ConnectionsView: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(T3Colors.accent)
                         .frame(width: 25)
+                        .accessibilityHidden(true)
                     Text("Devices and sessions")
                         .font(T3Typography.threadBody)
                         .foregroundStyle(T3Colors.textPrimary)
@@ -327,14 +365,37 @@ struct ConnectionsView: View {
                     Image(systemName: "chevron.right")
                         .font(T3Typography.supportingStrong)
                         .foregroundStyle(T3Colors.textTertiary)
+                        .accessibilityHidden(true)
                 }
                 .frame(minHeight: 54)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .overlay(alignment: .top) { Divider().overlay(T3Colors.separator) }
-            .overlay(alignment: .bottom) { Divider().overlay(T3Colors.separator) }
         }
+    }
+
+    private func directEndpointLabel(for environment: FeatureEnvironment) -> String? {
+        ConnectionHubPresentation.disambiguatingEndpoint(
+            environment.endpoint,
+            for: environment.name,
+            among: directEnvironments.map(\.name)
+        )
+    }
+
+    private func t3ConnectEndpointLabel(
+        for item: T3ConnectEnvironmentPresentation
+    ) -> String? {
+        guard let endpoint = item.endpoint else { return nil }
+        return ConnectionHubPresentation.disambiguatingEndpoint(
+            endpoint,
+            for: item.name,
+            among: t3ConnectRows.map(\.name)
+        )
+    }
+
+    private func toggleAccessibilityLabel(name: String, endpoint: String?) -> String {
+        guard let endpoint else { return "Enable \(name)" }
+        return "Enable \(name), \(endpoint)"
     }
 
     private func enabledBinding(for environment: FeatureEnvironment) -> Binding<Bool> {
@@ -400,6 +461,7 @@ struct ConnectionsView: View {
         pendingEnabledValues[item.id] != nil
             || (connectingEnvironmentID != nil && connectingEnvironmentID != item.id)
             || t3ConnectController?.busyEnvironmentID != nil
+            || (item.savedEnvironment == nil && item.status == .offline)
     }
 
     private var directEnvironments: [FeatureEnvironment] {
@@ -451,7 +513,13 @@ private struct ConnectionDetailView: View {
                     Toggle("Enabled", isOn: enabledBinding(for: environment))
                         .tint(T3Colors.success)
                         .disabled(pendingEnabledValues[environment.id] != nil)
-                    LabeledContent("Status", value: environment.status.title)
+                    LabeledContent(
+                        "Status",
+                        value: ConnectionHubPresentation.status(
+                            for: environment,
+                            pendingEnabled: pendingEnabledValues[environment.id]
+                        ).title
+                    )
                     LabeledContent("Connection", value: environment.source.title)
                 }
 
@@ -530,25 +598,13 @@ private extension FeatureEnvironment.Source {
 
 }
 
-private extension FeatureEnvironment {
-    var status: ConnectionStatusPresentation {
-        guard isEnabled else {
-            return ConnectionStatusPresentation(title: "Off", color: T3Colors.textTertiary)
-        }
-        switch connectionState {
-        case .connected:
-            return ConnectionStatusPresentation(title: "Online", color: T3Colors.success)
-        case .connecting, .reconnecting:
-            return ConnectionStatusPresentation(title: "Connecting", color: T3Colors.warning)
-        case .disconnected:
-            return ConnectionStatusPresentation(title: "Unreachable", color: T3Colors.danger)
-        case nil:
-            return ConnectionStatusPresentation(title: "Checking", color: T3Colors.textTertiary)
+private extension ConnectionHubStatus {
+    var color: Color {
+        switch self {
+        case .disabled, .checking: T3Colors.textTertiary
+        case .connecting: T3Colors.warning
+        case .offline: T3Colors.danger
+        case .online: T3Colors.success
         }
     }
-}
-
-private struct ConnectionStatusPresentation {
-    let title: String
-    let color: Color
 }

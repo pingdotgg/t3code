@@ -37,6 +37,8 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.tintColor = T3Colors.uiAccent
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
+        textView.smartQuotesType = .no
+        textView.smartDashesType = .no
         // Match the metrics of the SwiftUI text field this view replaced so
         // the swap is invisible: the surrounding paddings stay in SwiftUI.
         textView.textContainerInset = .zero
@@ -120,9 +122,9 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     private func updateAccessibility(_ textView: FeatureComposerUITextView) {
         textView.accessibilityLabel = "Message agent"
         textView.accessibilityHint = acceptsImages
-            ? "Enter a message or paste images to attach them."
-            : "Enter a message."
-        textView.accessibilityValue = text.isEmpty ? placeholder : nil
+            ? "Enter a message or paste images"
+            : "Enter a message"
+        textView.accessibilityValue = text.isEmpty ? placeholder : text
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {

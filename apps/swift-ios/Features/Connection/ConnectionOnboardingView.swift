@@ -17,6 +17,7 @@ public struct ConnectionOnboardingView: View {
     @State private var showsPermissionAction = false
     @State private var showingScanner = false
     @State private var entryHeading = "Connect manually"
+    @State private var connectionReturnStage = ConnectionStage.details
     @State private var connectionTask: Task<Void, Never>?
     @State private var connectionAttemptID: UUID?
     @FocusState private var focusedField: ConnectionField?
@@ -63,20 +64,24 @@ public struct ConnectionOnboardingView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(T3Colors.background)
+            .background(T3Colors.background.ignoresSafeArea())
             .animation(.snappy(duration: 0.24), value: stage)
-        }
-        .toolbar {
-            if stage == .welcome, let onCancel {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", action: onCancel)
-                }
-            } else if stage == .checking {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        cancelConnectionAttempt()
-                        model.errorMessage = nil
-                        stage = .details
+            .toolbarBackground(T3Colors.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                if stage == .welcome, let onCancel {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", action: onCancel)
+                            .accessibilityIdentifier("connection-onboarding-close")
+                    }
+                } else if stage == .checking || stage == .connecting {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            cancelConnectionAttempt()
+                            model.errorMessage = nil
+                            stage = connectionReturnStage
+                        }
+                        .accessibilityIdentifier("connection-onboarding-cancel")
                     }
                 }
             }
@@ -109,7 +114,7 @@ public struct ConnectionOnboardingView: View {
                 errorMessage = nil
             }
         }
-        .interactiveDismissDisabled(stage == .connecting)
+        .interactiveDismissDisabled(stage == .checking || stage == .connecting)
         .onDisappear {
             cancelConnectionAttempt()
         }
@@ -118,22 +123,27 @@ public struct ConnectionOnboardingView: View {
     private var welcomeView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Spacer(minLength: 48)
+                Spacer(minLength: 36)
 
                 Text("T3")
                     .font(.system(size: 34, weight: .black, design: .rounded))
                     .foregroundStyle(Color(red: 0.02, green: 0.74, blue: 0.5))
                     .accessibilityLabel("T3 Code")
 
-                Text("Your agents,\nwherever you are.")
-                    .font(.system(size: 38, weight: .bold, design: .default))
-                    .tracking(-1.1)
-                    .padding(.top, 24)
+                Text("Connect an environment")
+                    .font(.largeTitle.bold())
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .padding(.top, 20)
 
-                Text("Connect securely to T3 Code running on your computer.")
+                Text("Choose how to connect to T3 Code.")
                     .font(.body)
                     .foregroundStyle(T3Colors.textSecondary)
-                    .padding(.top, 12)
+                    .padding(.top, 8)
+
+                if let errorMessage {
+                    connectionError(message: errorMessage)
+                        .padding(.top, 20)
+                }
 
                 if showsT3ConnectOption,
                    let capability = model.client as? any T3ConnectCapable,
@@ -144,20 +154,23 @@ public struct ConnectionOnboardingView: View {
                             onConnected()
                         }
                     } label: {
-                        Label("Continue with T3 Connect", systemImage: "cloud")
+                        Label("T3 Connect", systemImage: "cloud")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(ConnectionPrimaryButtonStyle())
-                    .padding(.top, 36)
-                    .accessibilityHint("Sign in to connect an environment linked to your T3 account")
+                    .padding(.top, 32)
+                    .accessibilityHint("Sign in to connect a linked environment")
+                    .accessibilityIdentifier("connection-onboarding-t3-connect")
                 }
 
                 VStack(spacing: 0) {
                     connectionAction(
                         title: "Scan QR code",
-                        subtitle: "Pair directly with a computer nearby",
+                        subtitle: "Use the code on your computer",
                         systemImage: "qrcode.viewfinder"
                     ) {
+                        errorMessage = nil
+                        showsPermissionAction = false
                         showingScanner = true
                     }
 
@@ -165,7 +178,7 @@ public struct ConnectionOnboardingView: View {
 
                     connectionAction(
                         title: "Paste connection link",
-                        subtitle: "Copy it from T3 Code on your computer",
+                        subtitle: "Use a link from your computer",
                         systemImage: "doc.on.clipboard"
                     ) {
                         pasteConnectionLink()
@@ -174,16 +187,17 @@ public struct ConnectionOnboardingView: View {
                     Divider().overlay(T3Colors.border)
 
                     connectionAction(
-                        title: "Enter details manually",
-                        subtitle: "Use the server address and pairing code",
+                        title: "Enter details",
+                        subtitle: "Use an address and pairing code",
                         systemImage: "keyboard"
                     ) {
                         entryHeading = "Connect manually"
                         errorMessage = nil
+                        showsPermissionAction = false
                         stage = .details
                     }
                 }
-                .padding(.top, 12)
+                .padding(.top, showsT3ConnectOption ? 20 : 28)
 
                 knownEnvironments
             }
@@ -199,10 +213,10 @@ public struct ConnectionOnboardingView: View {
     private var knownEnvironments: some View {
         if !knownEnvironmentValues.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                Text("KNOWN SERVERS")
-                    .font(T3Typography.eyebrow)
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .padding(.top, 34)
+                Text("Saved environments")
+                    .font(.headline)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .padding(.top, 36)
                     .padding(.bottom, 8)
 
                 ForEach(knownEnvironmentValues) { environment in
@@ -237,7 +251,9 @@ public struct ConnectionOnboardingView: View {
                         .padding(.vertical, 12)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("Reconnects to this server")
+                    .accessibilityLabel(environment.name)
+                    .accessibilityValue(environment.endpoint)
+                    .accessibilityHint("Connects to this saved environment")
 
                     if environment.id != knownEnvironmentValues.last?.id {
                         Divider().overlay(T3Colors.border)
@@ -248,8 +264,8 @@ public struct ConnectionOnboardingView: View {
     }
 
     private var knownEnvironmentValues: [FeatureEnvironment] {
-        guard !showsT3ConnectOption else { return model.snapshot.environments }
-        return model.snapshot.environments.filter { $0.source == .direct }
+        guard showsT3ConnectOption else { return [] }
+        return model.snapshot.environments
     }
 
     private var detailsView: some View {
@@ -258,50 +274,71 @@ public struct ConnectionOnboardingView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(entryHeading)
                         .font(.largeTitle.bold())
-                        .tracking(-0.6)
-                    Text("Both values are shown in T3 Code when you create a mobile connection.")
+                        .foregroundStyle(T3Colors.textPrimary)
+                    Text("Find these details in T3 Code on your computer.")
                         .font(T3Typography.threadBody)
                         .foregroundStyle(T3Colors.textSecondary)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("SERVER ADDRESS")
-                        .font(T3Typography.eyebrow)
-                        .foregroundStyle(T3Colors.textSecondary)
+                    Text("Server address")
+                        .font(T3Typography.control)
+                        .foregroundStyle(T3Colors.textPrimary)
 
-                    TextField("http://192.168.1.5:3773", text: $endpoint)
+                    TextField(
+                        "Server address",
+                        text: $endpoint,
+                        prompt: Text("http://192.168.1.5:3773")
+                            .foregroundStyle(T3Colors.placeholder)
+                    )
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .endpoint)
                         .connectionInput()
                         .accessibilityLabel("Server address")
+                        .accessibilityIdentifier("connection-onboarding-address")
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .pairingCode }
                         .onChange(of: endpoint) { _, value in
                             autofillIfPairingLink(value)
                         }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("PAIRING CODE")
-                        .font(T3Typography.eyebrow)
-                        .foregroundStyle(T3Colors.textSecondary)
+                    Text("Pairing code")
+                        .font(T3Typography.control)
+                        .foregroundStyle(T3Colors.textPrimary)
 
-                    TextField("12-character code", text: $pairingCode)
+                    TextField(
+                        "Pairing code",
+                        text: $pairingCode,
+                        prompt: Text("Enter pairing code")
+                            .foregroundStyle(T3Colors.placeholder)
+                    )
                         .textInputAutocapitalization(.never)
                         .textContentType(.oneTimeCode)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .pairingCode)
                         .connectionInput()
+                        .privacySensitive()
                         .accessibilityLabel("Pairing code")
+                        .accessibilityIdentifier("connection-onboarding-pairing-code")
+                        .submitLabel(.go)
+                        .onSubmit {
+                            if canSubmit { submitDetails() }
+                        }
                 }
 
                 Button {
                     pasteConnectionLink()
                 } label: {
-                    Label("Paste a connection link instead", systemImage: "doc.on.clipboard")
+                    Label("Paste connection link", systemImage: "doc.on.clipboard")
                         .font(T3Typography.control.weight(.semibold))
                 }
                 .buttonStyle(.plain)
+                .frame(minHeight: T3Metrics.minimumTapTarget, alignment: .leading)
+                .accessibilityIdentifier("connection-onboarding-paste-link")
 
                 if let errorMessage {
                     connectionError(message: errorMessage)
@@ -316,6 +353,7 @@ public struct ConnectionOnboardingView: View {
                 .buttonStyle(ConnectionPrimaryButtonStyle())
                 .disabled(!canSubmit)
                 .opacity(canSubmit ? 1 : 0.45)
+                .accessibilityIdentifier("connection-onboarding-submit")
             }
             .padding(.horizontal, 24)
             .padding(.top, 24)
@@ -324,7 +362,7 @@ public struct ConnectionOnboardingView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle("Connect")
+        .navigationTitle("Add environment")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -344,13 +382,13 @@ public struct ConnectionOnboardingView: View {
         VStack(alignment: .leading, spacing: 34) {
             Spacer()
 
-            Text(stage == .checking ? "Finding your T3" : "Connecting securely")
+            Text(stage == .checking ? "Checking connection" : "Connecting")
                 .font(.largeTitle.bold())
-                .tracking(-0.7)
+                .foregroundStyle(T3Colors.textPrimary)
 
             VStack(alignment: .leading, spacing: 20) {
                 progressRow(
-                    title: "Server details",
+                    title: "Server address",
                     state: .complete
                 )
                 progressRow(
@@ -360,16 +398,17 @@ public struct ConnectionOnboardingView: View {
                     state: stage == .checking ? .active : .complete
                 )
                 progressRow(
-                    title: "Secure pairing",
+                    title: "Pairing",
                     state: stage == .connecting ? .active : .waiting
                 )
             }
 
             Spacer()
 
-            Text("Keep T3 Code open on your computer.")
+            Text(endpoint)
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
+                .lineLimit(1)
         }
         .padding(.horizontal, 32)
         .padding(.vertical, 28)
@@ -382,9 +421,9 @@ public struct ConnectionOnboardingView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 54))
                 .foregroundStyle(.green)
-            Text("You're connected")
+            Text("Connected")
                 .font(.title.bold())
-            Text("Loading your projects and threads.")
+            Text("Loading your projects.")
                 .font(T3Typography.threadBody)
                 .foregroundStyle(T3Colors.textSecondary)
         }
@@ -419,6 +458,8 @@ public struct ConnectionOnboardingView: View {
             .padding(.vertical, 14)
         }
         .buttonStyle(.plain)
+        .frame(minHeight: T3Metrics.minimumTapTarget)
+        .accessibilityElement(children: .combine)
     }
 
     private func connectionError(message: String) -> some View {
@@ -435,7 +476,7 @@ public struct ConnectionOnboardingView: View {
                 .font(T3Typography.control.weight(.semibold))
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     private func progressRow(title: String, state: ProgressRowState) -> some View {
@@ -546,6 +587,12 @@ public struct ConnectionOnboardingView: View {
         cancelConnectionAttempt()
         let attemptID = UUID()
         connectionAttemptID = attemptID
+        switch action {
+        case .pair:
+            connectionReturnStage = .details
+        case .activate:
+            connectionReturnStage = .welcome
+        }
         endpoint = action.endpoint
         errorMessage = nil
         showsPermissionAction = false
@@ -558,13 +605,17 @@ public struct ConnectionOnboardingView: View {
             case .ready:
                 stage = .connecting
             case .localNetworkDenied:
-                errorMessage = "Allow Local Network access so this iPhone can find T3 Code on your computer."
+                errorMessage = "Allow Local Network access to connect to this environment."
                 showsPermissionAction = true
-                stage = .details
+                connectionAttemptID = nil
+                connectionTask = nil
+                stage = connectionReturnStage
                 return
             case .unreachable:
-                errorMessage = "This iPhone cannot reach that server. Confirm the address and that both devices are on the same network."
-                stage = .details
+                errorMessage = "Cannot reach this environment. Check the address and network connection."
+                connectionAttemptID = nil
+                connectionTask = nil
+                stage = connectionReturnStage
                 return
             }
 
@@ -589,7 +640,7 @@ public struct ConnectionOnboardingView: View {
                 errorMessage = ConnectionErrorCopy.message(for: rawError)
                 connectionAttemptID = nil
                 connectionTask = nil
-                stage = .details
+                stage = connectionReturnStage
             }
         }
     }
@@ -637,6 +688,7 @@ private extension View {
     func connectionInput() -> some View {
         self
             .font(.body.monospaced())
+            .foregroundStyle(T3Colors.textPrimary)
             .padding(.horizontal, 14)
             .frame(minHeight: 50)
             .background(T3Colors.input)

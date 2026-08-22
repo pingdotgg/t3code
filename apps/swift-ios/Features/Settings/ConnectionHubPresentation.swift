@@ -1,5 +1,23 @@
 import Foundation
 
+enum ConnectionHubStatus: Equatable {
+    case disabled
+    case checking
+    case connecting
+    case offline
+    case online
+
+    var title: String {
+        switch self {
+        case .disabled: "Off"
+        case .checking: "Checking"
+        case .connecting: "Connecting"
+        case .offline: "Offline"
+        case .online: "Online"
+        }
+    }
+}
+
 struct T3ConnectEnvironmentPresentation: Identifiable, Equatable {
     let linkedEnvironment: T3ConnectCloudEnvironment?
     let savedEnvironment: FeatureEnvironment?
@@ -16,19 +34,87 @@ struct T3ConnectEnvironmentPresentation: Identifiable, Equatable {
         savedEnvironment?.isEnabled ?? false
     }
 
+    var endpoint: String? {
+        linkedEnvironment?.environment.endpoint.httpBaseUrl ?? savedEnvironment?.endpoint
+    }
+
     var isOnline: Bool {
-        if savedEnvironment?.connectionState == .connected {
-            return true
+        status == .online
+    }
+
+    var status: ConnectionHubStatus {
+        connectionStatus()
+    }
+
+    func connectionStatus(
+        pendingEnabled: Bool? = nil,
+        isConnecting: Bool = false
+    ) -> ConnectionHubStatus {
+        if isConnecting || (pendingEnabled == true && savedEnvironment == nil) {
+            return .connecting
         }
-        return linkedEnvironment?.status?.status == .online
+
+        if let savedEnvironment {
+            return ConnectionHubPresentation.status(
+                for: savedEnvironment,
+                pendingEnabled: pendingEnabled
+            )
+        }
+
+        return switch linkedEnvironment?.status?.status {
+        case .online: .online
+        case .offline: .offline
+        case nil: linkedEnvironment?.statusError == nil ? .checking : .offline
+        }
     }
 }
 
 enum ConnectionHubPresentation {
+    static func status(
+        for environment: FeatureEnvironment,
+        pendingEnabled: Bool? = nil
+    ) -> ConnectionHubStatus {
+        guard pendingEnabled ?? environment.isEnabled else { return .disabled }
+
+        if pendingEnabled == true && !environment.isEnabled {
+            return .connecting
+        }
+
+        return switch environment.connectionState {
+        case .connected: .online
+        case .connecting, .reconnecting: .connecting
+        case .disconnected: .offline
+        case nil: .checking
+        }
+    }
+
+    static func disambiguatingEndpoint(
+        _ endpoint: String,
+        for name: String,
+        among names: [String]
+    ) -> String? {
+        let matchingNames = names.filter {
+            $0.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }
+        guard matchingNames.count > 1,
+              let components = URLComponents(string: endpoint),
+              let host = components.host else { return nil }
+
+        return components.port.map { "\(host):\($0)" } ?? host
+    }
+
     static func directEnvironments(
         in environments: [FeatureEnvironment]
     ) -> [FeatureEnvironment] {
-        environments.filter { $0.source == .direct }
+        environments.enumerated()
+            .filter { $0.element.source == .direct }
+            .sorted { first, second in
+                if first.element.isEnabled != second.element.isEnabled {
+                    return first.element.isEnabled
+                }
+                return first.offset < second.offset
+            }
+            .map(\.element)
     }
 
     /// T3 Connect owns the account catalog while Core owns the environments
