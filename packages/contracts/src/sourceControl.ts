@@ -103,6 +103,45 @@ export const SourceControlPublishRepositoryResult = Schema.Struct({
 });
 export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;
 
+export const SourceControlSshPasswordPromptRequest = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  destination: TrimmedNonEmptyString,
+  username: Schema.NullOr(TrimmedNonEmptyString),
+  prompt: TrimmedNonEmptyString,
+  attempt: PositiveInt,
+  expiresAt: TrimmedNonEmptyString,
+  expiresInMs: PositiveInt,
+});
+export type SourceControlSshPasswordPromptRequest =
+  typeof SourceControlSshPasswordPromptRequest.Type;
+
+export const SourceControlSshPasswordPromptResolutionInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  password: Schema.NullOr(Schema.String),
+});
+export type SourceControlSshPasswordPromptResolutionInput =
+  typeof SourceControlSshPasswordPromptResolutionInput.Type;
+
+export const SourceControlCloneRepositoryEvent = Schema.Union([
+  Schema.TaggedStruct("ssh_password_prompt", {
+    request: SourceControlSshPasswordPromptRequest,
+  }),
+  Schema.TaggedStruct("complete", {
+    result: SourceControlCloneRepositoryResult,
+  }),
+]);
+export type SourceControlCloneRepositoryEvent = typeof SourceControlCloneRepositoryEvent.Type;
+
+export const SourceControlPublishRepositoryEvent = Schema.Union([
+  Schema.TaggedStruct("ssh_password_prompt", {
+    request: SourceControlSshPasswordPromptRequest,
+  }),
+  Schema.TaggedStruct("complete", {
+    result: SourceControlPublishRepositoryResult,
+  }),
+]);
+export type SourceControlPublishRepositoryEvent = typeof SourceControlPublishRepositoryEvent.Type;
+
 export const SourceControlDiscoveryStatus = Schema.Literals(["available", "missing"]);
 export type SourceControlDiscoveryStatus = typeof SourceControlDiscoveryStatus.Type;
 

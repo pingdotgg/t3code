@@ -1,6 +1,10 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
+import {
+  SourceControlProviderError,
+  SourceControlProviderInfo,
+  SourceControlSshPasswordPromptRequest,
+} from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
@@ -26,6 +30,7 @@ export const GitActionProgressKind = Schema.Literals([
   "hook_finished",
   "action_finished",
   "action_failed",
+  "ssh_password_prompt",
 ]);
 export type GitActionProgressKind = typeof GitActionProgressKind.Type;
 export const GitActionProgressStream = Schema.Literals(["stdout", "stderr"]);
@@ -448,6 +453,11 @@ const GitActionFailedEvent = Schema.Struct({
   phase: Schema.NullOr(GitActionProgressPhase),
   message: TrimmedNonEmptyStringSchema,
 });
+const GitActionSshPasswordPromptEvent = Schema.Struct({
+  ...GitActionProgressBase.fields,
+  kind: Schema.Literal("ssh_password_prompt"),
+  request: SourceControlSshPasswordPromptRequest,
+});
 
 export const GitActionProgressEvent = Schema.Union([
   GitActionStartedEvent,
@@ -457,5 +467,16 @@ export const GitActionProgressEvent = Schema.Union([
   GitActionHookFinishedEvent,
   GitActionFinishedEvent,
   GitActionFailedEvent,
+  GitActionSshPasswordPromptEvent,
 ]);
 export type GitActionProgressEvent = typeof GitActionProgressEvent.Type;
+
+export const VcsPullEvent = Schema.Union([
+  Schema.TaggedStruct("ssh_password_prompt", {
+    request: SourceControlSshPasswordPromptRequest,
+  }),
+  Schema.TaggedStruct("complete", {
+    result: VcsPullResult,
+  }),
+]);
+export type VcsPullEvent = typeof VcsPullEvent.Type;

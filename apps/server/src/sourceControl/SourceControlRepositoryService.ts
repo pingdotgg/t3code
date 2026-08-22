@@ -18,6 +18,7 @@ import {
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
 } from "@t3tools/contracts";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -209,6 +210,13 @@ export const make = Effect.gen(function* () {
       args: ["clone", remoteUrl, preparedDestination.directoryName],
       timeoutMs: 120_000,
       maxOutputBytes: 256 * 1024,
+      ...(isSshRemoteUrl(remoteUrl)
+        ? {
+            sshAuthentication: {
+              destination: remoteUrl,
+            },
+          }
+        : {}),
     });
 
     return {
@@ -262,7 +270,16 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName });
+      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, {
+        remoteName,
+        ...(remoteUrl === urls.sshUrl
+          ? {
+              sshAuthentication: {
+                destination: remoteUrl,
+              },
+            }
+          : {}),
+      });
 
       return {
         repository: toRepositoryInfo(providerKind, urls),

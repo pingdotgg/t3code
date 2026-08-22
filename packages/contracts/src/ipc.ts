@@ -87,7 +87,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, PositiveInt } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
@@ -341,6 +341,7 @@ export interface DesktopSshPasswordPromptRequest {
   username: string | null;
   prompt: string;
   expiresAt: string;
+  expiresInMs: number;
 }
 
 export const DesktopSshPasswordPromptRequestSchema = Schema.Struct({
@@ -349,6 +350,7 @@ export const DesktopSshPasswordPromptRequestSchema = Schema.Struct({
   username: Schema.NullOr(Schema.String),
   prompt: Schema.String,
   expiresAt: Schema.String,
+  expiresInMs: PositiveInt,
 });
 
 export const DesktopSshPasswordPromptCancelledType = "ssh-password-prompt-cancelled" as const;

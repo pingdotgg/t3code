@@ -134,8 +134,13 @@ describe("DesktopSshPasswordPrompts", () => {
       const sent = testWindow.sentMessages[0];
       assert.ok(sent);
       assert.equal(sent.channel, SSH_PASSWORD_PROMPT_CHANNEL);
-      const request = sent.args[0] as { readonly requestId: string; readonly destination: string };
+      const request = sent.args[0] as {
+        readonly requestId: string;
+        readonly destination: string;
+        readonly expiresInMs: number;
+      };
       assert.equal(request.destination, "devbox");
+      assert.equal(request.expiresInMs, 1_000);
       assert.equal(testWindow.isRestored(), true);
       assert.equal(testWindow.isFocused(), true);
 

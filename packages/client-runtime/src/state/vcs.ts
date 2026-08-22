@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type SourceControlSshPasswordPromptRequest,
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
@@ -15,13 +16,25 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentSubscriptionAtomFamily,
+  createRuntimeCommand,
+  runInEnvironment,
+} from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import { request, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import {
+  config as environmentConfig,
+  request,
+  runStream,
+  subscribe,
+  type EnvironmentRpcInput,
+} from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+import { consumeSshPromptedOperation } from "./sshPasswordPrompts.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import {
   invalidateCachedVcsRefs,
@@ -286,12 +299,39 @@ export function createVcsEnvironmentAtoms<R, E>(
           ),
         ),
     }),
-    pull: createEnvironmentRpcCommand(runtime, {
+    pull: createRuntimeCommand(runtime, {
       label: "environment-data:vcs:pull",
-      tag: WS_METHODS.vcsPull,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: invalidateRefs,
+      execute: (
+        target: {
+          readonly environmentId: EnvironmentId;
+          readonly input: { readonly cwd: string };
+          readonly onSshPasswordPrompt?: (
+            request: SourceControlSshPasswordPromptRequest,
+          ) => Promise<string | null>;
+        },
+        registry,
+      ) =>
+        runInEnvironment(
+          target.environmentId,
+          Effect.gen(function* () {
+            const onSshPasswordPrompt = target.onSshPasswordPrompt;
+            if (onSshPasswordPrompt === undefined) {
+              return yield* request(WS_METHODS.vcsPull, target.input);
+            }
+            const serverConfig = yield* environmentConfig;
+            if (serverConfig.environment.capabilities.sourceControlSshPasswordPrompts !== true) {
+              return yield* request(WS_METHODS.vcsPull, target.input);
+            }
+            return yield* consumeSshPromptedOperation(
+              target.environmentId,
+              "Git pull",
+              runStream(WS_METHODS.vcsPullWithPrompts, target.input),
+              onSshPasswordPrompt,
+            );
+          }),
+        ).pipe(Effect.ensuring(invalidateRefs(target, registry))),
     }),
     refreshStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:refresh-status",

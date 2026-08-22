@@ -25,6 +25,7 @@ T3 Code works with the platforms your team already uses:
 
 - Have a local Git repository without a remote?
 - Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push, in one flow
+- When an interactive clone, publish, pull, or push over SSH needs a key passphrase or password, T3 Code asks for it. It is passed to the server's SSH process for that attempt and is not saved.
 - If the local repository has no commits yet, publishing creates the remote and wires it up but does not push. Make a commit, then push normally.
 
 ### Manage Code Reviews Without Context Switching
@@ -142,6 +143,7 @@ Control settings**.
 - **Provider shows "Not authenticated"** – Run the login command for that provider (e.g., `gh auth login`) in a terminal on the server, then rescan in Settings
 - **GitHub says it could not verify sign-in status** – T3 Code needs GitHub CLI 2.81.0 or newer to check sign-in status. Update `gh` (e.g., `brew upgrade gh`), then rescan
 - **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
+- **SSH operations keep asking for a passphrase** – Add the key to an SSH agent on the machine running the T3 Code server if you want it remembered between attempts
 - **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
 
 **Need more help?** Check your provider's CLI documentation:

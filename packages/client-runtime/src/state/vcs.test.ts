@@ -1,10 +1,12 @@
 import {
   EnvironmentId,
   WS_METHODS,
+  type ServerConfig,
   type VcsListRefsInput,
   type VcsListRefsResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -82,10 +84,21 @@ const LIVE_REFS: VcsListRefsResult = {
   ],
 };
 
-function session(client: WsRpcProtocolClient): RpcSession {
+function session(client: WsRpcProtocolClient, sourceControlSshPasswordPrompts = false): RpcSession {
   return {
     client,
-    initialConfig: Effect.never,
+    initialConfig: Effect.succeed({
+      environment: {
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0-test",
+        capabilities: {
+          repositoryIdentity: true,
+          ...(sourceControlSshPasswordPrompts ? { sourceControlSshPasswordPrompts: true } : {}),
+        },
+      },
+    } as ServerConfig),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
@@ -114,6 +127,82 @@ function cacheWithRefs(
 }
 
 describe("cached VCS refs", () => {
+  it.effect("relays SSH password prompts while pulling", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const resolutionReceived = yield* Deferred.make<void>();
+        const promptRequests: string[] = [];
+        const pullResult = {
+          status: "pulled" as const,
+          refName: "main",
+          upstreamRef: "origin/main",
+        };
+        const client = {
+          [WS_METHODS.vcsPullWithPrompts]: () =>
+            Stream.make({
+              _tag: "ssh_password_prompt" as const,
+              request: {
+                requestId: "pull-prompt-1",
+                destination: "git@github.com:t3tools/t3code.git",
+                username: null,
+                prompt: "Enter the SSH key passphrase or password.",
+                attempt: 1,
+                expiresAt: "2026-08-17T10:00:00.000Z",
+                expiresInMs: 3 * 60 * 1_000,
+              },
+            }).pipe(
+              Stream.concat(
+                Stream.fromEffect(
+                  Deferred.await(resolutionReceived).pipe(
+                    Effect.as({ _tag: "complete" as const, result: pullResult }),
+                  ),
+                ),
+              ),
+            ),
+          [WS_METHODS.sourceControlResolveSshPasswordPrompt]: () =>
+            Deferred.succeed(resolutionReceived, undefined).pipe(Effect.asVoid),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client, true))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          run: (_environmentId, effect) =>
+            Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+
+        const result = yield* Effect.promise(() =>
+          atoms.pull.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { cwd: "/repo" },
+            onSshPasswordPrompt: async (request) => {
+              promptRequests.push(request.requestId);
+              return "secret";
+            },
+          }),
+        );
+
+        expect(AsyncResult.isSuccess(result)).toBe(true);
+        expect(promptRequests).toEqual(["pull-prompt-1"]);
+      }),
+    ),
+  );
+
   it("invalidates all ref streams in the mutated environment", () => {
     const registry = AtomRegistry.make();
     const environment = {

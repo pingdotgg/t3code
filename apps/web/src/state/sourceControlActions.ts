@@ -14,6 +14,7 @@ import type {
   GitResolvePullRequestResult,
   GitStackedAction,
   SourceControlCloneProtocol,
+  SourceControlSshPasswordPromptRequest,
   SourceControlRepositoryVisibility,
   ThreadId,
 } from "@t3tools/contracts";
@@ -171,24 +172,32 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
         })
       : null,
   );
-  const action = useCallback(async () => {
-    const target = resolveScope(scope);
-    if (target === null) {
-      return AsyncResult.failure<never, VcsActionUnavailableError>(
-        Cause.fail(
-          new VcsActionUnavailableError({
-            operation: "pull",
-            environmentId: scope.environmentId,
-            cwd: scope.cwd,
-          }),
-        ),
-      );
-    }
-    return pull({
-      environmentId: target.environmentId,
-      input: { cwd: target.cwd },
-    });
-  }, [pull, scope]);
+  const action = useCallback(
+    async (
+      onSshPasswordPrompt?: (
+        request: SourceControlSshPasswordPromptRequest,
+      ) => Promise<string | null>,
+    ) => {
+      const target = resolveScope(scope);
+      if (target === null) {
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation: "pull",
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
+      }
+      return pull({
+        environmentId: target.environmentId,
+        input: { cwd: target.cwd },
+        ...(onSshPasswordPrompt === undefined ? {} : { onSshPasswordPrompt }),
+      });
+    },
+    [pull, scope],
+  );
   return useAction({
     kind: "pull",
     label: "Pulling latest changes",
@@ -219,6 +228,9 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       featureBranch?: boolean;
       filePaths?: string[];
       onProgress?: (event: GitActionProgressEvent) => void;
+      onSshPasswordPrompt?: (
+        request: SourceControlSshPasswordPromptRequest,
+      ) => Promise<string | null>;
     }) => {
       if (resolveScope(scope) === null) {
         return AsyncResult.failure<never, VcsActionUnavailableError>(
@@ -238,6 +250,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
         ...(input.featureBranch ? { featureBranch: true } : {}),
         ...(input.filePaths?.length ? { filePaths: input.filePaths } : {}),
         ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+        ...(input.onSshPasswordPrompt ? { onSshPasswordPrompt: input.onSshPasswordPrompt } : {}),
       });
     },
     [runStackedAction, scope],
@@ -272,6 +285,9 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
       visibility: SourceControlRepositoryVisibility;
       remoteName: string;
       protocol: SourceControlCloneProtocol;
+      onSshPasswordPrompt?: (
+        request: SourceControlSshPasswordPromptRequest,
+      ) => Promise<string | null>;
     }) => {
       const target = resolveScope(scope);
       if (target === null) {
@@ -285,12 +301,14 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
           ),
         );
       }
+      const { onSshPasswordPrompt, ...publishInput } = input;
       return publishRepository({
         environmentId: target.environmentId,
         input: {
           cwd: target.cwd,
-          ...input,
+          ...publishInput,
         },
+        ...(onSshPasswordPrompt === undefined ? {} : { onSshPasswordPrompt }),
       });
     },
     [publishRepository, scope],
