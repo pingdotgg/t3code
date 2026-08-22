@@ -4,8 +4,8 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Alert, Platform, Pressable, View } from "react-native";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -44,6 +44,7 @@ import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
+import { readTerminalClipboardText } from "./terminalClipboard";
 import { getMobileTerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
@@ -78,6 +79,7 @@ type HostPlatform = "mac" | "linux" | "windows" | "unknown";
 type TerminalToolbarAction =
   | { readonly kind: "send"; readonly key: string; readonly label: string; readonly data: string }
   | { readonly kind: "clear"; readonly key: string; readonly label: string }
+  | { readonly kind: "paste"; readonly key: string; readonly label: string }
   | {
       readonly kind: "modifier";
       readonly key: string;
@@ -255,6 +257,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const firstNonEmptyBufferLoggedRef = useRef(false);
   const lastBufferReplayKeyRef = useRef<string | null>(null);
   const sentInitialInputKeyRef = useRef<string | null>(null);
+  const activePasteTargetRef = useRef<string | null>(null);
   const [readyBufferReplayKey, setReadyBufferReplayKey] = useState<string | null>(null);
   /** Default grid is always valid for attach; onResize refines cols/rows. Requiring a cached size blocked bootstrap for new terminal routes. */
   const [hasMeasuredSurface, setHasMeasuredSurface] = useState(true);
@@ -353,6 +356,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     readyReplayKey: readyBufferReplayKey,
   });
   const isRunning = terminal.status === "running" || terminal.status === "starting";
+
+  useLayoutEffect(() => {
+    activePasteTargetRef.current = isRunning ? terminalKey : null;
+    return () => {
+      if (activePasteTargetRef.current === terminalKey) {
+        activePasteTargetRef.current = null;
+      }
+    };
+  }, [isRunning, terminalKey]);
 
   // When the process ends while this screen is attached (e.g. typing `exit`),
   // close the session and leave the screen, mirroring the web drawer's
@@ -488,6 +500,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       { kind: "send", key: "esc", label: "esc", data: "\u001b" },
       ...modifierActions,
       { kind: "send", key: "tab", label: "tab", data: "\t" },
+      { kind: "paste", key: "paste", label: "paste" },
       { kind: "clear", key: "clear", label: "clear" },
       { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
       { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
@@ -927,11 +940,43 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     setTerminalFontSize(stepTerminalFontSize(fontSize, 1));
   }, [fontSize, setTerminalFontSize]);
 
+  const handlePasteTerminal = useCallback(() => {
+    if (!isRunning) {
+      return;
+    }
+
+    const pasteTargetKey = terminalKey;
+    void readTerminalClipboardText().then((result) => {
+      if (activePasteTargetRef.current !== pasteTargetKey) {
+        return;
+      }
+      switch (result._tag) {
+        case "text":
+          setPendingModifierState({ terminalId, value: null });
+          writeInput(result.text);
+          return;
+        case "empty":
+          Alert.alert("Nothing to paste", "The clipboard does not contain text.");
+          return;
+        case "unavailable":
+          console.warn("[terminal] clipboard paste failed", result.cause);
+          Alert.alert("Could not paste", "The clipboard is unavailable right now.");
+          return;
+      }
+    });
+  }, [isRunning, terminalId, terminalKey, writeInput]);
+
   // Android mirror of the iOS NativeHeaderToolbar terminal menu below: text
   // size, session switching, and "Open new terminal", rendered through the
   // token-styled anchored menu (the native header items are iOS-only).
   const androidTerminalMenuActions = useMemo<MenuAction[]>(
     () => [
+      {
+        id: "terminal-paste",
+        title: "Paste",
+        image: "doc.on.clipboard",
+        attributes: !isRunning ? { disabled: true } : undefined,
+      },
       {
         id: "text-size",
         title: "Text size",
@@ -965,7 +1010,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         subtitle: `Start another shell in ${basename(selectedThreadProject?.workspaceRoot ?? null) ?? "this workspace"}`,
       },
     ],
-    [fontSize, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions],
+    [fontSize, isRunning, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions],
   );
 
   const handleAndroidTerminalMenuAction = useCallback(
@@ -973,6 +1018,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       const id = event.nativeEvent.event;
       if (id === "font-decrease") {
         handleDecreaseFontSize();
+        return;
+      }
+      if (id === "terminal-paste") {
+        handlePasteTerminal();
         return;
       }
       if (id === "font-increase") {
@@ -987,7 +1036,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         handleSelectTerminal(id.slice("terminal-session:".length));
       }
     },
-    [handleDecreaseFontSize, handleIncreaseFontSize, handleOpenNewTerminal, handleSelectTerminal],
+    [
+      handleDecreaseFontSize,
+      handleIncreaseFontSize,
+      handleOpenNewTerminal,
+      handlePasteTerminal,
+      handleSelectTerminal,
+    ],
   );
 
   const handleClearTerminal = useCallback(() => {
@@ -1023,6 +1078,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         return;
       }
 
+      if (action.kind === "paste") {
+        handlePasteTerminal();
+        return;
+      }
+
       setPendingModifierState({ terminalId, value: null });
       if (pendingModifier === "ctrl") {
         writeInput(applyCtrlModifier(action.data));
@@ -1032,7 +1092,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         writeInput(action.data);
       }
     },
-    [handleClearTerminal, pendingModifier, terminalId, writeInput],
+    [handleClearTerminal, handlePasteTerminal, pendingModifier, terminalId, writeInput],
   );
 
   const handleDismissKeyboard = useCallback(() => {
@@ -1155,6 +1215,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 hasRunningSubprocess: terminal.hasRunningSubprocess,
               })}
             </NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.MenuAction
+              disabled={!isRunning}
+              icon="doc.on.clipboard"
+              onPress={handlePasteTerminal}
+            >
+              <NativeHeaderToolbar.Label>Paste</NativeHeaderToolbar.Label>
+            </NativeHeaderToolbar.MenuAction>
             <NativeHeaderToolbar.Menu icon="textformat.size" inline title="Text size">
               <NativeHeaderToolbar.Label>Text size</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
@@ -1266,7 +1333,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                             onPress={() => handleToolbarActionPress(action)}
                             showChevron={false}
                             textTransform={
-                              action.kind === "modifier" || action.kind === "clear"
+                              action.kind === "modifier" ||
+                              action.kind === "clear" ||
+                              action.kind === "paste"
                                 ? "uppercase"
                                 : "none"
                             }
