@@ -76,7 +76,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   }
   return {
     headline: "Available",
-    detail: provider.message ?? "Installed and ready, but authentication could not be verified.",
+    detail: provider.message ?? "Installed and ready. Authentication status was not reported.",
   };
 }
 
