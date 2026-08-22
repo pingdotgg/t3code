@@ -216,4 +216,9 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
+if (DesktopPreReadyPlatform.isVersionRequest(process.argv)) {
+  DesktopPreReadyPlatform.writeStdoutLineSync(Electron.app.getVersion());
+  process.exit(0);
+}
+
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);
