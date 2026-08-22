@@ -431,6 +431,80 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@keyframes live-activity-focus {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes live-activity-focus-counter {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+@utility live-activity-focus {
+  --live-activity-focus-width: 4.5rem;
+
+  right: auto;
+  left: calc(-1 * var(--live-activity-focus-width));
+  width: calc(100% + var(--live-activity-focus-width) + var(--live-activity-focus-width));
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 12%) 0.675rem,
+    rgb(0 0 0 / 55%) 1.575rem,
+    black 2.25rem,
+    rgb(0 0 0 / 55%) 2.925rem,
+    rgb(0 0 0 / 12%) 3.825rem,
+    transparent var(--live-activity-focus-width),
+    transparent 100%
+  );
+  -webkit-mask-repeat: no-repeat;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 12%) 0.675rem,
+    rgb(0 0 0 / 55%) 1.575rem,
+    black 2.25rem,
+    rgb(0 0 0 / 55%) 2.925rem,
+    rgb(0 0 0 / 12%) 3.825rem,
+    transparent var(--live-activity-focus-width),
+    transparent 100%
+  );
+  mask-repeat: no-repeat;
+  animation: live-activity-focus 2.2s linear infinite;
+  will-change: transform;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    opacity: 0;
+    will-change: auto;
+  }
+}
+
+@utility live-activity-focus-counter {
+  width: 100%;
+  animation: live-activity-focus-counter 2.2s linear infinite;
+  will-change: transform;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+@utility live-activity-focus-aligned {
+  width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
+  margin-left: var(--live-activity-focus-width);
+}
+
 @layer base {
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in
@@ -680,7 +754,191 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
+  .chat-composer-shoulder-tab {
+    border-color: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--foreground) 8%, transparent)
+    );
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface, var(--card)) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    box-shadow: 0 -8px 24px -18px rgb(0 0 0 / 45%);
+
+    @variant dark {
+      box-shadow: 0 -10px 28px -18px rgb(0 0 0 / 80%);
+    }
+
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background: var(--chat-composer-glass-surface, var(--card));
+    }
+  }
+
+  .chat-composer-banner-stack-cap {
+    --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
+    --chat-composer-attached-outline: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--foreground) 8%, transparent)
+    );
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-attached-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+
+    @variant dark {
+      --chat-composer-attached-surface: var(
+        --chat-composer-glass-surface,
+        color-mix(in srgb, var(--background) 96%, var(--color-white))
+      );
+      --chat-composer-attached-outline: var(
+        --chat-composer-outline,
+        color-mix(in srgb, var(--color-white) 5%, transparent)
+      );
+    }
+
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background: var(--chat-composer-attached-surface);
+    }
+  }
+
+  /* Mirror the run-context strip above the composer. These surfaces deliberately
+     own no card fill or border themselves: a masked pseudo-element draws the
+     same inset glass, 16px outer corners, quiet outline, and open attachment
+     seam as the strip below. */
+  .chat-composer-drawer-surface,
+  .chat-composer-top-drawer {
+    --chat-composer-attachment-overlap: calc(1rem + 1px);
+    --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
+    --chat-composer-attached-outline: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--foreground) 8%, transparent)
+    );
+    --chat-composer-attached-tint: transparent;
+    position: relative;
+    isolation: isolate;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none;
+
+    @variant dark {
+      --chat-composer-attached-surface: var(
+        --chat-composer-glass-surface,
+        color-mix(in srgb, var(--background) 96%, var(--color-white))
+      );
+      --chat-composer-attached-outline: var(
+        --chat-composer-outline,
+        color-mix(in srgb, var(--color-white) 5%, transparent)
+      );
+
+      &::before {
+        background:
+          linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
+          linear-gradient(
+            to top,
+            transparent 0 var(--chat-composer-attachment-overlap),
+            rgb(0 0 0 / 18%) var(--chat-composer-attachment-overlap),
+            transparent calc(var(--chat-composer-attachment-overlap) + 10px)
+          ),
+          color-mix(
+            in srgb,
+            var(--chat-composer-attached-surface) var(--glass-opacity),
+            transparent
+          );
+        box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+      }
+    }
+  }
+
+  .chat-composer-drawer-attached,
+  .chat-composer-top-drawer {
+    padding-bottom: var(--chat-composer-attachment-overlap);
+  }
+
+  [data-chat-composer-form="true"],
+  .chat-composer-drawer-slot,
+  .chat-composer-top-drawer {
+    --chat-composer-drawer-inset: 1.375rem;
+  }
+
+  .chat-composer-drawer-slot,
+  .chat-composer-top-drawer {
+    --chat-composer-attachment-overlap: calc(1rem + 1px);
+    width: calc(100% - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
+    max-width: calc(48rem - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
+    margin-inline: auto;
+    margin-bottom: calc(-1 * var(--chat-composer-attachment-overlap));
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)::before {
+    pointer-events: none;
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-attached-outline);
+    border-radius: 16px 16px 0 0;
+    background:
+      linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
+      color-mix(in srgb, var(--chat-composer-attached-surface) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    -webkit-mask-image: linear-gradient(
+      to top,
+      transparent 0 var(--chat-composer-attachment-overlap),
+      black var(--chat-composer-attachment-overlap)
+    );
+    mask-image: linear-gradient(
+      to top,
+      transparent 0 var(--chat-composer-attachment-overlap),
+      black var(--chat-composer-attachment-overlap)
+    );
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    content: "";
+
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background:
+        linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
+        var(--chat-composer-attached-surface) !important;
+    }
+  }
+
+  .chat-composer-drawer-slot + .chat-composer-drawer-slot::before,
+  .chat-composer-drawer-slot + :has(.chat-composer-top-drawer) .chat-composer-top-drawer::before {
+    border-top: 0;
+    border-radius: 0;
+  }
+
+  .chat-composer-top-drawer {
+    z-index: 0;
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="error"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--error) 32%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--error) 8%, transparent);
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="info"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--info) 32%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--info) 4%, transparent);
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="success"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--success) 32%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--success) 4%, transparent);
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="warning"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--warning) 28%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--warning) 8%, transparent);
+  }
+
   .chat-composer-glass-shell {
+    --chat-composer-attachment-overlap: calc(1rem + 1px);
     --chat-composer-glass-surface: var(--card);
     --chat-composer-outline: rgb(0 0 0 / 8%);
 
@@ -775,7 +1033,83 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     content: "";
   }
 
-  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after {
+  /* A top attachment cannot share the shell's single clipped backdrop: it
+     needs the composer surface and outline to paint in front of its overlap.
+     Split the glass into exact surfaces while a drawer or tab is present; the
+     default composer keeps the cheaper continuous layer. */
+  .chat-composer-glass-shell:is(
+    .chat-composer-glass-shell-attached,
+    :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+  )::before,
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-glass-host::after {
+    display: none;
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-glass-host {
+    box-shadow: none;
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-glass-host
+    [data-chat-composer-main-surface="true"] {
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+
+    &::after {
+      pointer-events: none;
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      border: 1px solid var(--chat-composer-outline);
+      border-radius: inherit;
+      content: "";
+    }
+
+    @variant dark {
+      box-shadow: none;
+
+      &::after {
+        box-shadow: inset 0 1px var(--chat-composer-highlight);
+      }
+    }
+
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background: var(--chat-composer-glass-surface);
+    }
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(.chat-composer-top-drawer)
+    )
+    .chat-composer-glass-host
+    [data-chat-composer-mobile-collapsed="true"] {
+    min-height: var(--chat-composer-attachment-overlap);
+  }
+
+  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after,
+  .chat-composer-glass-shell-with-context:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    [data-chat-composer-main-surface="true"]::after {
     /* Keep the attachment seam open; the strip continues the outer outline below. */
     clip-path: polygon(
       0 0,
@@ -820,6 +1154,36 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
     box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
     content: "";
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-context-strip {
+    &::before {
+      background: color-mix(
+        in srgb,
+        var(--chat-composer-glass-surface) var(--glass-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    }
+
+    @variant dark {
+      &::before {
+        background:
+          linear-gradient(
+            to bottom,
+            transparent 0 1rem,
+            rgb(0 0 0 / 18%) 1rem,
+            transparent calc(1rem + 10px)
+          ),
+          linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+          color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+      }
+    }
   }
 
   @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
@@ -1255,12 +1619,42 @@ html[data-theme-id] .chat-composer-glass-shell {
   }
 }
 
+html[data-theme-id]
+  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer) {
+  --chat-composer-attached-surface: var(--app-theme-surface-raised);
+}
+
+html[data-theme-id]
+  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
+    :not([data-variant]),
+    [data-variant="default"]
+  ) {
+  --chat-composer-attached-outline: var(--chat-composer-outline, var(--app-theme-toolbar-border));
+
+  @variant dark {
+    --chat-composer-attached-outline: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--app-theme-input) 30%, var(--background))
+    );
+  }
+}
+
 html[data-theme-id="t3-chat"] .chat-composer-glass-shell {
   /* T3 Chat's visible composer edge is a dark plum, not the stock translucent
      white outline. Its highlight is derived from --chat-input-gradient. */
   @variant dark {
     --chat-composer-outline: #241e28;
     --chat-composer-highlight: color-mix(in srgb, #432d48 12%, transparent);
+  }
+}
+
+html[data-theme-id="t3-chat"]
+  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
+    :not([data-variant]),
+    [data-variant="default"]
+  ) {
+  @variant dark {
+    --chat-composer-attached-outline: #241e28;
   }
 }
 
@@ -1646,13 +2040,17 @@ code {
 
 /* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
    ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   last marker is 3+ digits, so item 100+ isn't clipped by list-style-position:
+   widest marker is 3+ characters, so item 100+ isn't clipped by list-style-position:
    outside painting the marker past the padding box. Reset it here too so a
    nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {
   --list-gutter: 1.25rem;
   padding-left: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
+}
+
+.chat-markdown ol > li::marker {
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-markdown ul ul {
@@ -1720,7 +2118,6 @@ code {
 
 .chat-markdown section[data-footnotes] ol {
   margin: 0;
-  padding-left: 1.25rem;
 }
 
 .chat-markdown section[data-footnotes] li + li {
@@ -1933,7 +2330,6 @@ code {
     #ff6b6b 100%
   );
   position: relative;
-  background: transparent;
 }
 
 .ultrathink-frame::before {
@@ -1963,4 +2359,39 @@ code {
 
 .ultrathink-chroma {
   animation: ultrathink-chroma-shift 10s linear infinite;
+}
+
+@keyframes preview-loading-progress {
+  from {
+    transform: scaleX(0.04);
+  }
+
+  to {
+    transform: scaleX(0.9);
+  }
+}
+
+.preview-loading-progress {
+  opacity: 0;
+  transform: scaleX(1);
+  transition:
+    transform 150ms ease-out,
+    opacity 150ms ease-out 220ms;
+}
+
+.preview-loading-progress[data-loading="true"] {
+  opacity: 1;
+  animation: preview-loading-progress 5.3s cubic-bezier(0.1, 0.5, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-loading-progress,
+  .preview-loading-progress[data-loading="true"] {
+    transition: none;
+    animation: none;
+  }
+
+  .preview-loading-progress[data-loading="true"] {
+    transform: scaleX(0.9);
+  }
 }
