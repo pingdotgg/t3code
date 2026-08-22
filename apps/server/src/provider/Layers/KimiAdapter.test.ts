@@ -25,7 +25,11 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { makeKimiTurnActivity, type KimiTurnActivity } from "../acp/KimiAcpSupport.ts";
-import { kimiPromptSettlementBelongsToContext, makeKimiAdapter } from "./KimiAdapter.ts";
+import {
+  clearSettledKimiInterruptedTurnIds,
+  kimiPromptSettlementBelongsToContext,
+  makeKimiAdapter,
+} from "./KimiAdapter.ts";
 
 const decodeKimiSettings = Schema.decodeSync(KimiSettings);
 const mockAgentCommand = process.execPath;
@@ -42,6 +46,7 @@ const exitOnPrompt = process.env.T3_ACP_EXIT_ON_PROMPT === "1";
 const terminalCommandJson = process.env.T3_ACP_TERMINAL_COMMAND;
 const planFlow = process.env.T3_ACP_PLAN_FLOW === "1";
 const permissionAfterCancel = process.env.T3_ACP_PERMISSION_AFTER_CANCEL === "1";
+const emitSteerPreparedMarker = process.env.T3_ACP_STEER_PREPARED_MARKER === "1";
 const sessionId = "mock-kimi-session-1";
 let currentMode = "default";
 let currentModel = "default";
@@ -367,6 +372,19 @@ function handleRequest(message) {
       if (params.configId === "reasoning") currentReasoning = String(params.value);
       result(message.id, { configOptions: configOptions() });
       notifyConfigOptions();
+      if (emitSteerPreparedMarker && params.configId === "model") {
+        send({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "steer-prepared" },
+            },
+          },
+        });
+      }
       return;
     case "session/prompt": {
       if (exitOnPrompt) {
@@ -566,6 +584,12 @@ it("requires a settlement to match the live Kimi turn", () => {
       turnId: staleTurnId,
     }),
   );
+});
+
+it("clears interrupted turn ids after a newer turn settles", () => {
+  const interruptedTurnIds = new Set([TurnId.make("interrupted-1"), TurnId.make("interrupted-2")]);
+  clearSettledKimiInterruptedTurnIds(interruptedTurnIds);
+  assert.strictEqual(interruptedTurnIds.size, 0);
 });
 
 it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
@@ -850,6 +874,105 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       );
       assert.lengthOf(terminalEvents(events, threadId), 1);
       assert.equal(yield* turnActivity.activeCount, 0);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not run a queued steer after the active turn is interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-queued-steer-after-interrupt");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-queued-steer-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_STEER_PREPARED_MARKER: "1",
+        }),
+      );
+      const baseActivity = yield* makeKimiTurnActivity;
+      const activityMarks = yield* Ref.make(0);
+      const twoPromptsActive = yield* Deferred.make<void>();
+      const turnActivity: KimiTurnActivity = {
+        ...baseActivity,
+        markActive: (activeThreadId) =>
+          baseActivity
+            .markActive(activeThreadId)
+            .pipe(
+              Effect.andThen(
+                Ref.updateAndGet(activityMarks, (count) => count + 1).pipe(
+                  Effect.flatMap((count) =>
+                    count === 2
+                      ? Deferred.succeed(twoPromptsActive, undefined).pipe(Effect.asVoid)
+                      : Effect.void,
+                  ),
+                ),
+              ),
+            ),
+      };
+      const steerPrepared = yield* Deferred.make<void>();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        turnActivity,
+        nativeEventLogger: {
+          filePath: "memory://kimi-queued-steer-native-events",
+          write: (record: unknown) =>
+            JSON.stringify(record).includes("steer-prepared")
+              ? Deferred.succeed(steerPrepared, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          close: () => Effect.void,
+        },
+      });
+      const requestOpened = yield* Deferred.make<void>();
+      const turnStarted = yield* Deferred.make<TurnId>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "request.opened"
+          ? Deferred.succeed(requestOpened, undefined).pipe(Effect.asVoid)
+          : event.type === "turn.started" && event.turnId !== undefined
+            ? Deferred.succeed(turnStarted, event.turnId).pipe(Effect.asVoid)
+            : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* startTestSession(adapter, threadId);
+      const firstFiber = yield* adapter
+        .sendTurn({ threadId, input: "active prompt", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(requestOpened).pipe(Effect.timeout("5 seconds"));
+      const turnId = yield* Deferred.await(turnStarted).pipe(Effect.timeout("5 seconds"));
+      const steerFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "queued steer",
+          attachments: [],
+          modelSelection: {
+            instanceId: KIMI_INSTANCE,
+            model: "gpt-5.4",
+            options: [{ id: "reasoning", value: "high" }],
+          },
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(twoPromptsActive).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(steerPrepared).pipe(Effect.timeout("5 seconds"));
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.join(firstFiber).pipe(Effect.timeout("5 seconds"));
+      yield* Fiber.await(steerFiber).pipe(Effect.timeout("5 seconds"));
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.lengthOf(
+        requests.filter((request) => request.method === "session/prompt"),
+        1,
+      );
+      assert.strictEqual(yield* turnActivity.activeCount, 0);
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      assert.strictEqual(session?.status, "ready");
+      assert.isUndefined(session?.activeTurnId);
 
       yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
@@ -1159,7 +1282,7 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       assert.isAtLeast(sessionNewIndex, 0);
       const sessionInitialize = requests
         .slice(0, sessionNewIndex)
-        .reverse()
+        .toReversed()
         .find((request) => request.method === "initialize");
       const initializeParams = sessionInitialize?.params as
         | { clientCapabilities?: { terminal?: boolean } }

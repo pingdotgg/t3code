@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -201,6 +202,71 @@ describe("KimiAcpTerminalSupport", () => {
           });
         }),
       ),
+  );
+
+  it.effect("killAll kills a terminal whose create is still awaiting spawn", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnStarted = yield* Deferred.make<void>();
+      const releaseSpawn = yield* Deferred.make<void>();
+      const manager = yield* makeKimiAcpTerminalManager({
+        childProcessSpawner: {
+          ...childProcessSpawner,
+          spawn: (command) =>
+            Deferred.succeed(spawnStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSpawn)),
+              Effect.andThen(childProcessSpawner.spawn(command)),
+            ),
+        },
+      });
+      const { command, args } = nodeScript("setTimeout(() => {}, 600000)");
+      const createFiber = yield* manager
+        .handleCreateTerminal({ sessionId: SESSION_ID, command, args })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(spawnStarted);
+      yield* manager.killAll;
+      yield* Deferred.succeed(releaseSpawn, undefined);
+      const created = yield* Fiber.join(createFiber);
+      const exit = yield* manager.handleTerminalWaitForExit({
+        sessionId: SESSION_ID,
+        terminalId: created.terminalId,
+      });
+
+      assert.isUndefined(exit.exitCode);
+      assert.strictEqual(exit.signal, "SIGTERM");
+      yield* manager.shutdown;
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("shutdown disposes a terminal whose create is still awaiting spawn", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnStarted = yield* Deferred.make<void>();
+      const releaseSpawn = yield* Deferred.make<void>();
+      const manager = yield* makeKimiAcpTerminalManager({
+        childProcessSpawner: {
+          ...childProcessSpawner,
+          spawn: (command) =>
+            Deferred.succeed(spawnStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSpawn)),
+              Effect.andThen(childProcessSpawner.spawn(command)),
+            ),
+        },
+      });
+      const { command, args } = nodeScript("setTimeout(() => {}, 600000)");
+      const createFiber = yield* manager
+        .handleCreateTerminal({ sessionId: SESSION_ID, command, args })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(spawnStarted);
+      yield* manager.shutdown;
+      yield* Deferred.succeed(releaseSpawn, undefined);
+      const error = yield* Fiber.join(createFiber).pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "AcpRequestError");
+      assert.include(error._tag === "AcpRequestError" ? error.errorMessage : "", "session stopped");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("shutdown kills open terminals and forgets them", () =>

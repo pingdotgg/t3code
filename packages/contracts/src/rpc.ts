@@ -52,7 +52,13 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
-import { KimiAuthError, KimiAuthSignInEvent, KimiAuthSignInInput } from "./kimiAuth.ts";
+import {
+  KimiAuthCompletedEvent,
+  KimiAuthError,
+  KimiAuthSignInEvent,
+  KimiAuthSignInInput,
+  KimiAuthSignOutInput,
+} from "./kimiAuth.ts";
 import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
@@ -279,8 +285,9 @@ export const WS_METHODS = {
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
-  // Kimi in-app sign-in (OAuth device flow)
+  // Kimi in-app authentication
   kimiAuthSignIn: "kimiAuth.signIn",
+  kimiAuthSignOut: "kimiAuth.signOut",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -485,6 +492,12 @@ export const WsKimiAuthSignInRpc = Rpc.make(WS_METHODS.kimiAuthSignIn, {
   success: KimiAuthSignInEvent,
   error: Schema.Union([KimiAuthError, EnvironmentAuthorizationError]),
   stream: true,
+});
+
+export const WsKimiAuthSignOutRpc = Rpc.make(WS_METHODS.kimiAuthSignOut, {
+  payload: KimiAuthSignOutInput,
+  success: KimiAuthCompletedEvent,
+  error: Schema.Union([KimiAuthError, EnvironmentAuthorizationError]),
 });
 
 const PullRequestRpcError = Schema.Union([
@@ -1024,6 +1037,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsKimiAuthSignInRpc,
+  WsKimiAuthSignOutRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsDetailRpc,

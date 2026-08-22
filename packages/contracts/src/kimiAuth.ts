@@ -24,6 +24,11 @@ export const KimiAuthSignInInput = Schema.Struct({
 });
 export type KimiAuthSignInInput = typeof KimiAuthSignInInput.Type;
 
+export const KimiAuthSignOutInput = Schema.Struct({
+  instanceId: Schema.optional(ProviderInstanceId),
+});
+export type KimiAuthSignOutInput = typeof KimiAuthSignOutInput.Type;
+
 /** The user-facing half of the device flow: where to go and what to enter. */
 export const KimiAuthVerificationEvent = Schema.Struct({
   type: Schema.Literal("verification"),
@@ -56,12 +61,17 @@ export const KimiAuthFailureReason = Schema.Literals([
   "request-failed",
   // The token arrived but persisting the credentials file failed.
   "credential-write-failed",
+  // Removing an existing credential during sign-out failed.
+  "credential-remove-failed",
+  // The requested provider instance is missing, invalid, or not Kimi.
+  "invalid-instance",
 ]);
 export type KimiAuthFailureReason = typeof KimiAuthFailureReason.Type;
 
 export class KimiAuthError extends Schema.TaggedErrorClass<KimiAuthError>()("KimiAuthError", {
   reason: KimiAuthFailureReason,
   detail: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     switch (this.reason) {
@@ -71,6 +81,10 @@ export class KimiAuthError extends Schema.TaggedErrorClass<KimiAuthError>()("Kim
         return "Kimi sign-in expired before it was approved.";
       case "credential-write-failed":
         return "Kimi sign-in succeeded but the credential could not be saved.";
+      case "credential-remove-failed":
+        return "Kimi credentials could not be removed.";
+      case "invalid-instance":
+        return "The selected Kimi provider instance is unavailable.";
       case "request-failed":
       default:
         return "Kimi sign-in failed.";

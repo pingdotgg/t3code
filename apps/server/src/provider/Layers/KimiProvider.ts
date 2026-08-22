@@ -590,7 +590,9 @@ export const probeKimiProviderStatus = Effect.fn("probeKimiProviderStatus")(func
     kimiSettings,
   });
   const cachedDiscovery =
-    options.discoveryCache?.key === cacheKey ? options.discoveryCache : undefined;
+    options.discoveryCache?.key === cacheKey && options.discoveryCache.models.length > 0
+      ? options.discoveryCache
+      : undefined;
   let acpResult: KimiAcpProbeResult<ReadonlyArray<ServerProviderModel>>;
   if (cachedDiscovery) {
     const authenticationResult = yield* operations.probeAuthentication(kimiSettings, environment);
@@ -705,7 +707,9 @@ export const probeKimiProviderStatus = Effect.fn("probeKimiProviderStatus")(func
     discoveredModels.length > 0
       ? kimiModelsFromSettings(kimiSettings.customModels, discoveredModels)
       : fallbackModels;
-  const discoveryCache = cachedDiscovery ?? { key: cacheKey, models: discoveredModels };
+  const discoveryCache =
+    cachedDiscovery ??
+    (discoveredModels.length > 0 ? { key: cacheKey, models: discoveredModels } : undefined);
 
   return {
     classification: {
@@ -724,7 +728,7 @@ export const probeKimiProviderStatus = Effect.fn("probeKimiProviderStatus")(func
         auth: { status: "authenticated" },
       },
     }),
-    discoveryCache,
+    ...(discoveryCache ? { discoveryCache } : {}),
   };
 });
 

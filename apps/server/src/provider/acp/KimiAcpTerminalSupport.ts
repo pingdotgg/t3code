@@ -67,6 +67,12 @@ interface KimiTerminalOutputBuffer {
   readonly byteLimit: number;
 }
 
+interface KimiPendingTerminalCreation {
+  readonly scope: Scope.Closeable;
+  killRequested: boolean;
+  disposeRequested: boolean;
+}
+
 interface KimiTerminalState {
   readonly scope: Scope.Closeable;
   readonly buffer: KimiTerminalOutputBuffer;
@@ -139,6 +145,7 @@ export const makeKimiAcpTerminalManager = (input: {
 }): Effect.Effect<KimiAcpTerminalManager> =>
   Effect.sync(() => {
     const terminals = new Map<string, KimiTerminalState>();
+    const pendingCreations = new Map<string, KimiPendingTerminalCreation>();
     let nextTerminalId = 0;
 
     const requireTerminal = (
@@ -167,6 +174,12 @@ export const makeKimiAcpTerminalManager = (input: {
       Effect.gen(function* () {
         const terminalId = `term-${++nextTerminalId}`;
         const scope = yield* Scope.make();
+        const pendingCreation: KimiPendingTerminalCreation = {
+          scope,
+          killRequested: false,
+          disposeRequested: false,
+        };
+        pendingCreations.set(terminalId, pendingCreation);
         const env = request.env
           ? Object.fromEntries(request.env.map((entry) => [entry.name, entry.value]))
           : undefined;
@@ -185,7 +198,11 @@ export const makeKimiAcpTerminalManager = (input: {
           )
           .pipe(
             Effect.provideService(Scope.Scope, scope),
-            Effect.onError(() => Effect.ignore(Scope.close(scope, Exit.void))),
+            Effect.onError(() =>
+              Effect.sync(() => pendingCreations.delete(terminalId)).pipe(
+                Effect.andThen(Effect.ignore(Scope.close(scope, Exit.void))),
+              ),
+            ),
             Effect.mapError((cause) =>
               EffectAcpErrors.AcpRequestError.internalError(
                 `Failed to spawn terminal command '${request.command}'.`,
@@ -228,13 +245,27 @@ export const makeKimiAcpTerminalManager = (input: {
           Effect.forkIn(scope),
         );
 
-        terminals.set(terminalId, {
+        const terminalState: KimiTerminalState = {
           scope,
           buffer,
           exit,
           drainFibers: [stdoutFiber, stderrFiber],
           kill: Effect.ignore(handle.kill()),
-        });
+        };
+        terminals.set(terminalId, terminalState);
+        pendingCreations.delete(terminalId);
+        if (pendingCreation.disposeRequested) {
+          yield* disposeTerminal(terminalId, terminalState);
+          return yield* EffectAcpErrors.AcpRequestError.internalError(
+            "Terminal creation was cancelled because the Kimi session stopped.",
+            undefined,
+            { method: "terminal/create" },
+          );
+        }
+        if (pendingCreation.killRequested) {
+          yield* Deferred.succeed(exit, { exitCode: null, signal: "SIGTERM" });
+          yield* terminalState.kill;
+        }
         return { terminalId } satisfies EffectAcpSchema.CreateTerminalResponse;
       });
 
@@ -292,26 +323,42 @@ export const makeKimiAcpTerminalManager = (input: {
       });
 
     const killAll: Effect.Effect<void> = Effect.suspend(() =>
-      Effect.forEach(
-        Array.from(terminals.values()),
-        (state) =>
-          // Settle the exit first so a concurrent wait_for_exit observes the
-          // SIGTERM status deterministically; Deferred.succeed is a no-op when
-          // the process already exited. The kill then stops the process (a
-          // no-op for an already-dead one) while the entry stays readable.
-          Effect.gen(function* () {
-            yield* Deferred.succeed(state.exit, { exitCode: null, signal: "SIGTERM" });
-            yield* state.kill;
-          }),
-        { discard: true },
+      Effect.sync(() => {
+        for (const pending of pendingCreations.values()) {
+          pending.killRequested = true;
+        }
+        return Array.from(terminals.values());
+      }).pipe(
+        Effect.flatMap((snapshot) =>
+          Effect.forEach(
+            snapshot,
+            (state) =>
+              // Settle the exit first so a concurrent wait_for_exit observes the
+              // SIGTERM status deterministically; Deferred.succeed is a no-op when
+              // the process already exited. The kill then stops the process (a
+              // no-op for an already-dead one) while the entry stays readable.
+              Effect.gen(function* () {
+                yield* Deferred.succeed(state.exit, { exitCode: null, signal: "SIGTERM" });
+                yield* state.kill;
+              }),
+            { discard: true },
+          ),
+        ),
       ),
     );
 
     const shutdown: Effect.Effect<void> = Effect.suspend(() =>
-      Effect.forEach(
-        Array.from(terminals.entries()),
-        ([terminalId, state]) => disposeTerminal(terminalId, state),
-        { discard: true },
+      Effect.sync(() => {
+        for (const pending of pendingCreations.values()) {
+          pending.disposeRequested = true;
+        }
+        return Array.from(terminals.entries());
+      }).pipe(
+        Effect.flatMap((snapshot) =>
+          Effect.forEach(snapshot, ([terminalId, state]) => disposeTerminal(terminalId, state), {
+            discard: true,
+          }),
+        ),
       ),
     );
 

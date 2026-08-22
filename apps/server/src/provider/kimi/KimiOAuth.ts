@@ -19,6 +19,8 @@ import {
   KimiAuthError,
   type KimiAuthSignInEvent,
   KimiSettings,
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
   type ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -58,26 +60,58 @@ export function resolveKimiCodeHome(homePath: string | null | undefined): string
 }
 
 const decodeKimiSettingsExit = Schema.decodeUnknownExit(KimiSettings);
+const KIMI_DRIVER = ProviderDriverKind.make("kimi");
+const DEFAULT_KIMI_INSTANCE_ID = defaultInstanceIdForDriver(KIMI_DRIVER);
 
-/**
- * KIMI_CODE_HOME override for a sign-in target. An explicit
- * `providerInstances` entry wins; the legacy `providers.kimi` blob covers the
- * synthesized default instance. `undefined` means the CLI default home.
- */
-export function resolveKimiSignInHomePath(
-  settings: ServerSettings | undefined,
-  instanceId: ProviderInstanceId | undefined,
-): string | undefined {
-  if (!settings) return undefined;
-  if (instanceId !== undefined) {
-    const instance = settings.providerInstances[instanceId];
-    if (instance !== undefined && instance.driver === "kimi") {
-      const decoded = decodeKimiSettingsExit(instance.config ?? {});
-      return Exit.isSuccess(decoded) ? decoded.value.homePath.trim() || undefined : undefined;
-    }
-  }
-  return settings.providers.kimi.homePath.trim() || undefined;
+export interface KimiAuthTarget {
+  readonly instanceId: ProviderInstanceId;
+  readonly homePath: string | undefined;
 }
+
+export const resolveKimiAuthTarget = Effect.fn("kimi.oauth.resolve_target")(function* (
+  settings: ServerSettings,
+  instanceId: ProviderInstanceId | undefined,
+) {
+  const targetInstanceId = instanceId ?? DEFAULT_KIMI_INSTANCE_ID;
+  const instance = settings.providerInstances[targetInstanceId];
+  if (instance !== undefined) {
+    if (instance.driver !== KIMI_DRIVER) {
+      return yield* new KimiAuthError({
+        reason: "invalid-instance",
+        detail: `Provider instance '${targetInstanceId}' is not a Kimi instance.`,
+      });
+    }
+    const decoded = decodeKimiSettingsExit(instance.config ?? {});
+    if (Exit.isFailure(decoded)) {
+      return yield* new KimiAuthError({
+        reason: "invalid-instance",
+        detail: `Provider instance '${targetInstanceId}' has invalid Kimi settings.`,
+        cause: decoded.cause,
+      });
+    }
+    return {
+      instanceId: targetInstanceId,
+      homePath: decoded.value.homePath.trim() || undefined,
+    } satisfies KimiAuthTarget;
+  }
+  if (targetInstanceId !== DEFAULT_KIMI_INSTANCE_ID) {
+    return yield* new KimiAuthError({
+      reason: "invalid-instance",
+      detail: `Kimi provider instance '${targetInstanceId}' was not found.`,
+    });
+  }
+  return {
+    instanceId: DEFAULT_KIMI_INSTANCE_ID,
+    homePath: settings.providers.kimi.homePath.trim() || undefined,
+  } satisfies KimiAuthTarget;
+});
+
+export const resolveKimiSignInHomePath = Effect.fn("kimi.oauth.resolve_sign_in_home")(function* (
+  settings: ServerSettings,
+  instanceId: ProviderInstanceId | undefined,
+) {
+  return (yield* resolveKimiAuthTarget(settings, instanceId)).homePath;
+});
 
 function resolveOAuthHost(): string {
   const override =
@@ -123,7 +157,12 @@ const requestDeviceAuthorization = Effect.fn("kimi.oauth.device_authorization")(
     client_id: KIMI_OAUTH_CLIENT_ID,
   }).pipe(
     Effect.mapError(
-      (cause) => new KimiAuthError({ reason: "request-failed", detail: cause.message }),
+      (cause) =>
+        new KimiAuthError({
+          reason: "request-failed",
+          detail: "Failed to request Kimi device authorization.",
+          cause,
+        }),
     ),
   );
   if (response.status !== 200) {
@@ -134,7 +173,12 @@ const requestDeviceAuthorization = Effect.fn("kimi.oauth.device_authorization")(
   }
   return yield* HttpClientResponse.schemaBodyJson(DeviceAuthorizationResponse)(response).pipe(
     Effect.mapError(
-      (cause) => new KimiAuthError({ reason: "request-failed", detail: cause.message }),
+      (cause) =>
+        new KimiAuthError({
+          reason: "request-failed",
+          detail: "Kimi device authorization returned an invalid response.",
+          cause,
+        }),
     ),
   );
 });
@@ -150,7 +194,12 @@ const pollToken = Effect.fn("kimi.oauth.poll_token")(
     return { status: response.status, body };
   },
   Effect.mapError(
-    (cause) => new KimiAuthError({ reason: "request-failed", detail: cause.message }),
+    (cause) =>
+      new KimiAuthError({
+        reason: "request-failed",
+        detail: "Failed to poll Kimi device authorization.",
+        cause,
+      }),
   ),
 );
 
@@ -202,10 +251,38 @@ export const writeKimiCredentials = Effect.fn("kimi.oauth.write_credentials")(fu
   }).pipe(
     Effect.tapError(() => Effect.ignore(fileSystem.remove(temporaryPath, { force: true }))),
     Effect.mapError(
-      (cause) => new KimiAuthError({ reason: "credential-write-failed", detail: cause.message }),
+      (cause) =>
+        new KimiAuthError({
+          reason: "credential-write-failed",
+          detail: "Failed to write the Kimi credential file.",
+          cause,
+        }),
     ),
   );
 
+  return credentialsPath;
+});
+
+export const removeKimiCredentials = Effect.fn("kimi.oauth.remove_credentials")(function* (
+  homePath: string | null | undefined,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const credentialsPath = path.join(
+    resolveKimiCodeHome(homePath),
+    CREDENTIALS_DIR_NAME,
+    CREDENTIALS_FILE_NAME,
+  );
+  yield* fileSystem.remove(credentialsPath, { force: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new KimiAuthError({
+          reason: "credential-remove-failed",
+          detail: "Failed to remove the Kimi credential file.",
+          cause,
+        }),
+    ),
+  );
   return credentialsPath;
 });
 
@@ -259,7 +336,11 @@ export function signInWithKimi(
         let intervalSeconds = Math.max(1, authorization.interval ?? DEFAULT_POLL_INTERVAL_SECONDS);
 
         while ((yield* Clock.currentTimeMillis) < deadlineMs) {
-          yield* Effect.sleep(Duration.seconds(intervalSeconds));
+          const remainingMs = deadlineMs - (yield* Clock.currentTimeMillis);
+          yield* Effect.sleep(Duration.millis(Math.min(intervalSeconds * 1000, remainingMs)));
+          if ((yield* Clock.currentTimeMillis) >= deadlineMs) {
+            break;
+          }
           const poll = yield* pollToken(authorization.device_code);
           if (poll.status === 200 && poll.body.access_token) {
             yield* writeKimiCredentials(input.homePath, poll.body);

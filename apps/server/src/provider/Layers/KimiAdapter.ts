@@ -109,6 +109,7 @@ interface KimiSessionContext {
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
   readonly terminals: KimiAcpTerminalManager;
+  readonly promptSemaphore: Semaphore.Semaphore;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
@@ -197,6 +198,10 @@ function completedStopReasonFromPromptResponse(
   response: EffectAcpSchema.PromptResponse | undefined,
 ): EffectAcpSchema.StopReason | null {
   return response?.stopReason ?? null;
+}
+
+export function clearSettledKimiInterruptedTurnIds(interruptedTurnIds: Set<TurnId>): void {
+  interruptedTurnIds.clear();
 }
 
 export function kimiPromptSettlementBelongsToContext(input: {
@@ -417,6 +422,9 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               stopReason: options.completedStopReason ?? null,
             },
           });
+        }
+        if (!options?.settleAllPrompts && (shouldEmitFailedTurn || shouldEmitCompletedTurn)) {
+          clearSettledKimiInterruptedTurnIds(liveCtx.interruptedTurnIds);
         }
       });
 
@@ -774,6 +782,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             createdAt: now,
             updatedAt: now,
           };
+          const promptSemaphore = yield* Semaphore.make(1);
 
           const ctx: KimiSessionContext = {
             threadId: input.threadId,
@@ -782,6 +791,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             scope: sessionScope,
             acp,
             terminals,
+            promptSemaphore,
             notificationFiber: undefined,
             pendingApprovals,
             configOptionsRef,
@@ -1114,6 +1124,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 acpSessionId: ctx.acpSessionId,
                 displayModel,
                 promptParts,
+                promptSemaphore: ctx.promptSemaphore,
                 turnId,
               };
             }).pipe(
@@ -1140,7 +1151,33 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
 
         const promptFailureMessageRef = yield* Ref.make<string | undefined>(undefined);
 
-        return yield* Effect.gen(function* () {
+        const runPrompt = Effect.gen(function* () {
+          const promptAdmitted = yield* withThreadLock(
+            input.threadId,
+            Effect.gen(function* () {
+              const ctx = yield* requireSession(input.threadId);
+              if (
+                ctx.acpSessionId !== prepared.acpSessionId ||
+                ctx.interruptedTurnIds.has(prepared.turnId) ||
+                ctx.promptsInFlight <= 0 ||
+                ctx.activeTurnId !== prepared.turnId ||
+                ctx.session.activeTurnId !== prepared.turnId
+              ) {
+                return false;
+              }
+              clearSettledKimiInterruptedTurnIds(ctx.interruptedTurnIds);
+              return true;
+            }),
+          );
+          if (!promptAdmitted) {
+            yield* Ref.set(promptSettled, true);
+            return {
+              threadId: input.threadId,
+              turnId: prepared.turnId,
+              resumeCursor: (yield* requireSession(input.threadId)).session.resumeCursor,
+            };
+          }
+
           const result = yield* prepared.acp
             .prompt({
               prompt: prepared.promptParts,
@@ -1261,7 +1298,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                     stopReason: completedStopReason,
                   },
                 });
-                ctx.interruptedTurnIds.delete(prepared.turnId);
+                clearSettledKimiInterruptedTurnIds(ctx.interruptedTurnIds);
                 yield* Ref.set(promptSettled, true);
               } else if (remainingPrompts > 0) {
                 yield* Ref.set(promptSettled, true);
@@ -1341,6 +1378,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             }).pipe(Effect.catch(() => Effect.void)),
           ),
         );
+        return yield* prepared.promptSemaphore.withPermit(runPrompt);
       });
 
     const interruptTurn: KimiAdapterShape["interruptTurn"] = (threadId, turnId) =>

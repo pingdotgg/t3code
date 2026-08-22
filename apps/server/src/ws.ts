@@ -52,8 +52,7 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
-  defaultInstanceIdForDriver,
-  ProviderDriverKind,
+  KimiAuthError,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -1743,24 +1742,53 @@ const makeWsRpcLayer = (
             WS_METHODS.kimiAuthSignIn,
             Effect.gen(function* () {
               const settings = yield* serverSettings.getSettings.pipe(
-                Effect.orElseSucceed(() => undefined),
+                Effect.mapError(
+                  (cause) =>
+                    new KimiAuthError({
+                      reason: "request-failed",
+                      detail: "Failed to load provider settings for Kimi sign-in.",
+                      cause,
+                    }),
+                ),
               );
-              const homePath = KimiOAuth.resolveKimiSignInHomePath(settings, input.instanceId);
-              const refreshInstanceId =
-                input.instanceId ?? defaultInstanceIdForDriver(ProviderDriverKind.make("kimi"));
-              return KimiOAuth.signInWithKimi({ homePath }).pipe(
+              const target = yield* KimiOAuth.resolveKimiAuthTarget(settings, input.instanceId);
+              return KimiOAuth.signInWithKimi({ homePath: target.homePath }).pipe(
                 // A fresh credential flips the probe to authenticated; refresh
                 // eagerly so the UI reflects the sign-in without waiting for
                 // the periodic health check.
                 Stream.tap((event) =>
                   event.type === "completed"
-                    ? providerRegistry.refreshInstance(refreshInstanceId).pipe(Effect.ignore)
+                    ? providerRegistry.refreshInstance(target.instanceId).pipe(Effect.ignore)
                     : Effect.void,
                 ),
                 Stream.provideService(HttpClient.HttpClient, kimiSignInHttpClient),
                 Stream.provideService(FileSystem.FileSystem, kimiSignInFileSystem),
                 Stream.provideService(Path.Path, kimiSignInPath),
               );
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.kimiAuthSignOut]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.kimiAuthSignOut,
+            Effect.gen(function* () {
+              const settings = yield* serverSettings.getSettings.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new KimiAuthError({
+                      reason: "request-failed",
+                      detail: "Failed to load provider settings for Kimi sign-out.",
+                      cause,
+                    }),
+                ),
+              );
+              const target = yield* KimiOAuth.resolveKimiAuthTarget(settings, input.instanceId);
+              yield* KimiOAuth.removeKimiCredentials(target.homePath).pipe(
+                Effect.provideService(FileSystem.FileSystem, kimiSignInFileSystem),
+                Effect.provideService(Path.Path, kimiSignInPath),
+              );
+              yield* providerRegistry.refreshInstance(target.instanceId).pipe(Effect.ignore);
+              return { type: "completed" } as const;
             }),
             { "rpc.aggregate": "server" },
           ),

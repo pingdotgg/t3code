@@ -1,6 +1,6 @@
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CheckIcon, ExternalLinkIcon, LoaderIcon } from "lucide-react";
+import { CheckIcon, ExternalLinkIcon, LoaderIcon, LogOutIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -17,14 +17,19 @@ import { Button } from "../ui/button";
  * authenticated on its own.
  */
 export function KimiSignInControl({
+  authenticated,
   environmentId,
   instanceId,
 }: {
+  readonly authenticated: boolean;
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
 }) {
-  const signInState = useAtomValue(serverEnvironment.kimiSignInStateAtom(environmentId));
+  const signInState = useAtomValue(
+    serverEnvironment.kimiSignInStateAtom(environmentId, instanceId),
+  );
   const kimiSignIn = useAtomCommand(serverEnvironment.kimiSignIn, { reportFailure: false });
+  const kimiSignOut = useAtomCommand(serverEnvironment.kimiSignOut, { reportFailure: false });
   const [isDispatching, setIsDispatching] = useState(false);
   const dispatchingRef = useRef(false);
 
@@ -37,6 +42,30 @@ export function KimiSignInControl({
       setIsDispatching(false);
     });
   }, [environmentId, instanceId, kimiSignIn]);
+  const startSignOut = useCallback(() => {
+    if (dispatchingRef.current) return;
+    dispatchingRef.current = true;
+    setIsDispatching(true);
+    void kimiSignOut({ environmentId, input: { instanceId } }).finally(() => {
+      dispatchingRef.current = false;
+      setIsDispatching(false);
+    });
+  }, [environmentId, instanceId, kimiSignOut]);
+
+  if (authenticated) {
+    return (
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        disabled={isDispatching}
+        onClick={startSignOut}
+      >
+        {isDispatching ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
+        Sign out
+      </Button>
+    );
+  }
 
   if (signInState.status === "waiting") {
     return (
