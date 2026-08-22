@@ -176,9 +176,7 @@ export const sharedServerCommandFlags = {
   host: hostFlag,
   baseDir: baseDirFlag,
   cwd: Argument.string("cwd").pipe(
-    Argument.withDescription(
-      "Working directory for provider sessions (defaults to the current directory).",
-    ),
+    Argument.withDescription("Directory to open as a project (defaults to the current directory)."),
     Argument.optional,
   ),
   devUrl: devUrlFlag,

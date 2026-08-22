@@ -37,6 +37,7 @@ import {
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { findAliveServerRuntimeCandidates, makePairServerConfig } from "./pair.ts";
 
 type ProjectMutationTarget = {
   readonly id: ProjectId;
@@ -569,6 +570,117 @@ const projectRenameCommand = Command.make("rename", {
     ),
   ),
 );
+
+/** Attach `cwd` to a live server. Returns false when none is reachable. */
+export const openLiveProjectIfPresent = Effect.fn("openLiveProjectIfPresent")(function* (flags: {
+  readonly baseDir: Option.Option<string>;
+  readonly cwd: Option.Option<string>;
+  readonly clearOnFailure?: boolean;
+}) {
+  const logLevel = Option.getOrElse(yield* GlobalFlag.LogLevel, () => "Warn" as const);
+  const workspaceRootInput = Option.getOrElse(flags.cwd ?? Option.none(), () => process.cwd());
+
+  // Same home/variant walk as `t3 pair` (worktree `.t3`, then home; userdata
+  // and `dev/`) so a running `vp run dev` is found. Liveness is the
+  // orchestration HTTP call below — not the public environment descriptor.
+  const { candidates } = yield* findAliveServerRuntimeCandidates(
+    Option.getOrUndefined(flags.baseDir),
+  );
+
+  for (const candidate of candidates) {
+    const config = yield* makePairServerConfig({
+      target: candidate,
+      logLevel,
+    });
+    const origin = candidate.state.origin;
+    const runtimeLayer = Layer.mergeAll(EnvironmentAuth.runtimeLayer, WorkspacePaths.layer).pipe(
+      Layer.provideMerge(FetchHttpClient.layer),
+      Layer.provide(ServerConfig.layer(config)),
+      Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+    );
+
+    // Soft miss: cannot reach this candidate. Hard fail: server answered but
+    // open/create failed — do not fall through to desktop/CLI server launch.
+    const outcome = yield* Effect.gen(function* () {
+      const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+
+      return yield* withProjectCliSessionToken(environmentAuth, (token) =>
+        Effect.gen(function* () {
+          const snapshotAttempt = yield* Effect.result(
+            fetchLiveOrchestrationSnapshot(origin, token),
+          );
+          if (snapshotAttempt._tag === "Failure") {
+            return { _tag: "Miss" as const, cause: snapshotAttempt.failure };
+          }
+          const snapshot = snapshotAttempt.success;
+
+          return yield* Effect.gen(function* () {
+            const workspaceRoot =
+              yield* normalizeWorkspaceRootForProjectCommand(workspaceRootInput);
+            const existingProject = snapshot.projects.find(
+              (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
+            );
+            if (existingProject) {
+              yield* Console.log(
+                `Opened project ${existingProject.id} (${existingProject.title}) at ${workspaceRoot}.`,
+              );
+              return;
+            }
+
+            const title = yield* resolveProjectTitle(workspaceRoot);
+            const projectId = ProjectId.make(yield* projectCommandUuid);
+            yield* dispatchLiveOrchestrationCommand(origin, token, {
+              type: "project.create",
+              commandId: CommandId.make(yield* projectCommandUuid),
+              projectId,
+              title,
+              workspaceRoot,
+              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
+              createdAt: DateTime.formatIso(yield* DateTime.now),
+            });
+            yield* Console.log(`Opened project ${projectId} (${title}) at ${workspaceRoot}.`);
+          }).pipe(
+            Effect.as({ _tag: "Opened" as const }),
+            // Path/title validation should stop; transport/dispatch flakes during
+            // desktop attach polling should soft-miss and retry.
+            Effect.catchTags({
+              ProjectLiveServerRequestError: (cause) =>
+                Effect.succeed({ _tag: "Miss" as const, cause }),
+              ProjectLiveServerUndeclaredStatusError: (cause) =>
+                Effect.succeed({ _tag: "Miss" as const, cause }),
+            }),
+            Effect.catch((error) => Effect.succeed({ _tag: "Fail" as const, error })),
+          );
+        }),
+      );
+    }).pipe(
+      Effect.catch((cause) =>
+        // Auth/session setup before a successful snapshot: treat as miss.
+        Effect.succeed({ _tag: "Miss" as const, cause }),
+      ),
+      Effect.provide(runtimeLayer),
+    );
+
+    if (outcome._tag === "Opened") {
+      return true;
+    }
+    if (outcome._tag === "Fail") {
+      return yield* Effect.fail(outcome.error);
+    }
+
+    yield* Effect.logDebug("Failed to reach a discovered live server for open.", {
+      origin,
+      cause: outcome.cause,
+    });
+    // Only clear when the caller allows it; polling must not delete a
+    // just-written runtime file for a still-starting desktop/backend.
+    if (flags.clearOnFailure !== false) {
+      yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    }
+  }
+
+  return false;
+});
 
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),

@@ -14,8 +14,13 @@ At least one provider CLI, installed and authenticated. See [Providers](#provide
 npx t3@latest
 ```
 
-This starts the T3 Code server on your machine and opens the local web app. Use
-`npx t3@latest --help` for the full CLI reference.
+This starts the T3 Code server on your machine and opens the local web app. From
+a repository, `npx t3@latest .` (or `t3 .` if the CLI is on your `PATH`) opens
+that folder as a project in the desktop app when it is installed, or attaches to
+a running T3 Code server. If neither is available, it starts a local server
+instead.
+
+Use `npx t3@latest --help` for the full CLI reference.
 
 ## Desktop App
 

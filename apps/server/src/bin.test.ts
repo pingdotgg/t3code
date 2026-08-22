@@ -62,9 +62,16 @@ const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     return { result, output };
   }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer)));
 
-const makeCliTestServerConfig = (baseDir: string) =>
+const makeCliTestServerConfig = (
+  baseDir: string,
+  options?: { readonly stateVariant?: "userdata" | "dev" },
+) =>
   Effect.gen(function* () {
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+    const asDev = options?.stateVariant === "dev";
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(
+      baseDir,
+      asDev ? new URL("http://localhost:5733") : undefined,
+    );
     return {
       logLevel: "Info",
       traceMinLevel: "Info",
@@ -83,7 +90,9 @@ const makeCliTestServerConfig = (baseDir: string) =>
       baseDir,
       ...derivedPaths,
       staticDir: undefined,
-      devUrl: undefined,
+      // Origin for open/attach is still the backend HTTP port; a recorded
+      // devUrl only selects the `dev/` state directory for this fixture.
+      devUrl: asDev ? "http://localhost:5733" : undefined,
       devAllowedOrigins: [],
       noBrowser: true,
       startupPresentation: "browser",
@@ -113,9 +122,13 @@ const readPersistedSnapshot = (baseDir: string) =>
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
 
-const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
+const withLiveProjectCliServer = <A, E, R>(
+  baseDir: string,
+  run: () => Effect.Effect<A, E, R>,
+  options?: { readonly stateVariant?: "userdata" | "dev" },
+) =>
   Effect.gen(function* () {
-    const config = yield* makeCliTestServerConfig(baseDir);
+    const config = yield* makeCliTestServerConfig(baseDir, options);
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
@@ -567,6 +580,109 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
           );
           assert.isTrue(addedProject !== undefined);
           assert.equal(addedProject?.title, "Live Project");
+        }),
+      );
+    }),
+  );
+
+  it.effect("opens a directory on a running server instead of starting another", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-open-live-test-"));
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-open-live-workspace-"),
+      );
+
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          const first = yield* captureStdout(
+            runCli([workspaceRoot, "--base-dir", baseDir, "--no-browser"]),
+          );
+          const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+          const afterAdd = yield* projectionSnapshotQuery.getSnapshot();
+          const addedProject = afterAdd.projects.find(
+            (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+          );
+          assert.isTrue(addedProject !== undefined);
+          assert.include(first.output, "Opened project");
+          assert.include(first.output, workspaceRoot);
+
+          const second = yield* captureStdout(
+            runCli([workspaceRoot, "--base-dir", baseDir, "--no-browser"]),
+          );
+          const afterSecond = yield* projectionSnapshotQuery.getSnapshot();
+          const matching = afterSecond.projects.filter(
+            (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+          );
+          assert.equal(matching.length, 1);
+          assert.include(second.output, addedProject?.id ?? "");
+        }),
+      );
+    }),
+  );
+
+  it.effect("opens a directory against a live server that only wrote the dev state dir", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-open-live-dev-test-"),
+      );
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-open-live-dev-workspace-"),
+      );
+
+      yield* withLiveProjectCliServer(
+        baseDir,
+        () =>
+          Effect.gen(function* () {
+            assert.isFalse(
+              NodeFS.existsSync(NodePath.join(baseDir, "userdata", "server-runtime.json")),
+            );
+            assert.isTrue(NodeFS.existsSync(NodePath.join(baseDir, "dev", "server-runtime.json")));
+
+            const { output } = yield* captureStdout(
+              runCli([workspaceRoot, "--base-dir", baseDir, "--no-browser"]),
+            );
+            const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+            const afterAdd = yield* projectionSnapshotQuery.getSnapshot();
+            const addedProject = afterAdd.projects.find(
+              (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+            );
+            assert.isTrue(addedProject !== undefined);
+            assert.include(output, "Opened project");
+            assert.include(output, workspaceRoot);
+          }),
+        { stateVariant: "dev" },
+      );
+    }),
+  );
+
+  it.effect("surfaces open failures against a live server instead of starting another", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-open-live-fail-test-"),
+      );
+      const missingWorkspace = NodePath.join(
+        NodeOS.tmpdir(),
+        `t3-cli-open-live-missing-${Date.now()}`,
+      );
+
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          const error = yield* runCli([
+            missingWorkspace,
+            "--base-dir",
+            baseDir,
+            "--no-browser",
+          ]).pipe(Effect.flip);
+          const rendered = String(
+            typeof error === "object" && error !== null && "message" in error
+              ? error.message
+              : error,
+          );
+          assert.match(rendered, /does not exist|not exist|ENOENT|WorkspaceRoot/i);
+          // Soft-miss path must not have cleared the live runtime file.
+          assert.isTrue(
+            NodeFS.existsSync(NodePath.join(baseDir, "userdata", "server-runtime.json")),
+          );
         }),
       );
     }),

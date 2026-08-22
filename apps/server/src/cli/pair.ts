@@ -68,6 +68,18 @@ export type PairStateVariant = "userdata" | "dev";
 // dev-vs-userdata state directory; the value itself is not used.
 const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
+/** A live `server-runtime.json` with an alive pid, before HTTP probing. */
+export type AliveServerRuntimeCandidate = {
+  readonly baseDir: string;
+  readonly variant: PairStateVariant;
+  readonly state: PersistedServerRuntimeState;
+  readonly statePath: string;
+};
+
+export type DiscoveredPairTarget = AliveServerRuntimeCandidate & {
+  readonly descriptor: ExecutionEnvironmentDescriptor;
+};
+
 export class NoRunningServerError extends Schema.TaggedErrorClass<NoRunningServerError>()(
   "NoRunningServerError",
   {
@@ -240,62 +252,75 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-interface DiscoveredPairTarget {
-  readonly baseDir: string;
-  readonly variant: PairStateVariant;
-  readonly state: PersistedServerRuntimeState;
-  readonly descriptor: ExecutionEnvironmentDescriptor;
-}
+/**
+ * Walk the same homes `t3 pair` uses (explicit `--base-dir`, else worktree
+ * `.t3` then `T3CODE_HOME`/`~/.t3`) and both state variants (`userdata`,
+ * `dev`). Returns pid-alive runtime files in precedence order; callers decide
+ * how to confirm the origin is actually serving.
+ */
+export const findAliveServerRuntimeCandidates = Effect.fn("pair.findAliveServerRuntimeCandidates")(
+  function* (explicitBaseDir: string | undefined) {
+    const bases: Array<string> = [];
+    if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
+      bases.push(yield* resolveBaseDir(explicitBaseDir));
+    } else {
+      // Same precedence as dev-runner: inside a linked worktree its own `.t3`
+      // outranks the shared home, so CLI tools in a worktree attach to the dev
+      // server under test rather than the daily-driver install.
+      const worktreeHome = yield* resolveWorktreeT3Home(process.cwd());
+      if (worktreeHome !== undefined) {
+        bases.push(worktreeHome);
+      }
+      const envHome = yield* Config.string("T3CODE_HOME").pipe(Config.option);
+      bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
+    }
 
-const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
+    const candidates: Array<AliveServerRuntimeCandidate> = [];
+    const checkedStatePaths: Array<string> = [];
+    for (const baseDir of new Set(bases)) {
+      for (const variant of ["userdata", "dev"] as const) {
+        const derivedPaths = yield* ServerConfig.deriveServerPaths(
+          baseDir,
+          variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
+          {},
+        );
+        const statePath = derivedPaths.serverRuntimeStatePath;
+        checkedStatePaths.push(statePath);
+        const state = yield* readPersistedServerRuntimeState(statePath);
+        if (Option.isNone(state)) {
+          continue;
+        }
+        // The pid check guards against a dead server's state file whose port
+        // was since reused by a different server.
+        if (!isProcessAlive(state.value.pid)) {
+          continue;
+        }
+        candidates.push({
+          baseDir,
+          variant,
+          state: state.value,
+          statePath,
+        });
+      }
+    }
+    return { candidates, checkedStatePaths } as const;
+  },
+);
+
+export const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   explicitBaseDir: string | undefined,
 ) {
-  const bases: Array<string> = [];
-  if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
-    bases.push(yield* resolveBaseDir(explicitBaseDir));
-  } else {
-    // Same precedence as dev-runner: inside a linked worktree its own `.t3`
-    // outranks the shared home, so `t3 pair` in a worktree pairs with the dev
-    // server under test rather than the daily-driver install.
-    const worktreeHome = yield* resolveWorktreeT3Home(process.cwd());
-    if (worktreeHome !== undefined) {
-      bases.push(worktreeHome);
+  const { candidates, checkedStatePaths } =
+    yield* findAliveServerRuntimeCandidates(explicitBaseDir);
+  for (const candidate of candidates) {
+    const probed = yield* probeEnvironmentDescriptor(candidate.state.origin);
+    if (probed._tag !== "descriptor") {
+      continue;
     }
-    const envHome = yield* Config.string("T3CODE_HOME").pipe(Config.option);
-    bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
-  }
-
-  const checkedStatePaths: Array<string> = [];
-  for (const baseDir of new Set(bases)) {
-    for (const variant of ["userdata", "dev"] as const) {
-      const derivedPaths = yield* ServerConfig.deriveServerPaths(
-        baseDir,
-        variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
-        {},
-      );
-      const statePath = derivedPaths.serverRuntimeStatePath;
-      checkedStatePaths.push(statePath);
-      const state = yield* readPersistedServerRuntimeState(statePath);
-      if (Option.isNone(state)) {
-        continue;
-      }
-      // The pid check guards against a dead server's state file whose port
-      // was since reused by a different server: pairing would then mint a
-      // token in the old database while the QR code points at the new server.
-      if (!isProcessAlive(state.value.pid)) {
-        continue;
-      }
-      const probed = yield* probeEnvironmentDescriptor(state.value.origin);
-      if (probed._tag !== "descriptor") {
-        continue;
-      }
-      return {
-        baseDir,
-        variant,
-        state: state.value,
-        descriptor: probed.descriptor,
-      } satisfies DiscoveredPairTarget;
-    }
+    return {
+      ...candidate,
+      descriptor: probed.descriptor,
+    } satisfies DiscoveredPairTarget;
   }
   return yield* new NoRunningServerError({ checkedStatePaths });
 });
@@ -307,8 +332,8 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
  * choice pinned to where the runtime state was actually found, independent of
  * ambient environment variables.
  */
-const makePairServerConfig = Effect.fn(function* (input: {
-  readonly target: DiscoveredPairTarget;
+export const makePairServerConfig = Effect.fn(function* (input: {
+  readonly target: Pick<AliveServerRuntimeCandidate, "baseDir" | "variant" | "state">;
   readonly logLevel: ServerConfig.ServerConfig["Service"]["logLevel"];
 }) {
   const { baseDir, variant, state } = input.target;
