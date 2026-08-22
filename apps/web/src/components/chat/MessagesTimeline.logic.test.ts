@@ -1374,6 +1374,41 @@ describe("deriveMessagesTimelineRows", () => {
       expanded: true,
     });
   });
+
+  it.each([
+    ["mixed", ["failed", "completed"], false],
+    ["failed", ["failed", "failed"], true],
+  ] as const)(
+    "marks %s tool groups failed only when every call fails",
+    (_, statuses, hasFailure) => {
+      const timelineEntries = statuses.map((status, index) => ({
+        id: `work-entry-${index}`,
+        kind: "work" as const,
+        createdAt: `2026-01-01T00:00:0${index}Z`,
+        entry: {
+          id: `work-${index}`,
+          createdAt: `2026-01-01T00:00:0${index}Z`,
+          label: "Ran command",
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+          toolLifecycleStatus: status,
+        },
+      }));
+
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+
+      expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
+        hiddenCount: 2,
+        hasFailure,
+      });
+    },
+  );
 });
 
 describe("computeStableMessagesTimelineRows", () => {
