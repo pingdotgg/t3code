@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
@@ -10,6 +11,7 @@ import * as Electron from "electron";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
@@ -25,6 +27,7 @@ const { logInfo: logTrayInfo, logWarning: logTrayWarning } = makeComponentLogger
 export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const state = yield* DesktopState.DesktopState;
   const electronApp = yield* ElectronApp.ElectronApp;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const context = yield* Effect.context<ElectronApp.ElectronApp | DesktopWindow.DesktopWindow>();
@@ -60,7 +63,13 @@ export const make = Effect.gen(function* () {
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         const open = () => {
-          return runTrayEffect("open", desktopWindow.activate);
+          return runTrayEffect(
+            "open",
+            Effect.gen(function* () {
+              if (yield* Ref.get(state.quitting)) return;
+              yield* desktopWindow.activate;
+            }),
+          );
         };
         const quit = () => {
           return runTrayEffect("quit", electronApp.quit);

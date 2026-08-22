@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 
 import type * as Electron from "electron";
 import { vi } from "vite-plus/test";
@@ -42,6 +43,7 @@ vi.mock("electron", async (importOriginal) => ({
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopTray from "./DesktopTray.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
@@ -52,6 +54,7 @@ function makeLayer(input: {
   readonly activations: string[];
   readonly quits: string[];
   readonly activate?: Effect.Effect<void, DesktopWindow.DesktopWindowError>;
+  readonly quitting?: boolean;
 }) {
   const window = {
     createMain: Effect.die("unexpected createMain"),
@@ -97,6 +100,13 @@ function makeLayer(input: {
           }),
         } as ElectronApp.ElectronApp["Service"]),
         Layer.succeed(DesktopWindow.DesktopWindow, window),
+        Layer.effect(
+          DesktopState.DesktopState,
+          Effect.all({
+            backendReady: Ref.make(false),
+            quitting: Ref.make(input.quitting ?? false),
+          }),
+        ),
       ),
     ),
   );
@@ -149,6 +159,41 @@ describe("DesktopTray", () => {
           assert.equal(electronMocks.trays.at(-1)?.destroy.mock.calls.length, 1);
         }),
       ),
+    );
+  });
+
+  it.effect("ignores tray opens while the app is quitting", () => {
+    const activations: string[] = [];
+    const layer = makeLayer({
+      iconPath: Option.some("C:\\T3 Code\\icon.ico"),
+      backgroundModeChanges: [],
+      activations,
+      quits: [],
+      quitting: true,
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const trayService = yield* DesktopTray.DesktopTray;
+        yield* trayService.configure;
+
+        const tray = electronMocks.trays.at(-1);
+        assert.isDefined(tray);
+        const trayClick = tray.listeners.get("click")?.();
+        assert.isDefined(trayClick);
+
+        const template = electronMocks.buildFromTemplate.mock.calls.at(-1)?.[0];
+        const openItem = template?.find((item) => item.label === "Open T3 Code");
+        openItem?.click?.(
+          {} as Electron.MenuItem,
+          undefined as unknown as Electron.BaseWindow,
+          {} as Electron.KeyboardEvent,
+        );
+
+        yield* Effect.promise(() => trayClick);
+        yield* Effect.yieldNow;
+        assert.deepEqual(activations, []);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
