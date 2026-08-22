@@ -642,6 +642,7 @@ function makeManager(input?: {
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
           resolve: () => Effect.succeed(provider),
+          refineRemoteProvider: () => Effect.succeed(null),
           discover: Effect.succeed([]),
         }),
       ),
