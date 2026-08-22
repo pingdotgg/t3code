@@ -54,6 +54,47 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
+// Manifest files that may declare PWA icons.
+const MANIFEST_SOURCE_FILES = [
+  "manifest.json",
+  "public/manifest.json",
+  "site.webmanifest",
+  "public/site.webmanifest",
+] as const;
+
+// Directories scanned as a fallback for common icon filenames.
+const IMAGE_DIR_CANDIDATES = [
+  "",
+  "public",
+  "app",
+  "src",
+  "src/app",
+  "assets",
+  "src/assets",
+  "assets/icons",
+  "assets/icon",
+  "static",
+  "resources",
+  "images",
+  "img",
+  "media",
+  "app-icon",
+  ".idea",
+] as const;
+
+const IMAGE_NAME_CANDIDATES = [
+  "favicon",
+  "icon",
+  "logo",
+  "apple-touch-icon",
+  "app-icon",
+  "icon-rounded",
+  "brand",
+  "app",
+] as const;
+
+const IMAGE_EXTENSIONS = [".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico"] as const;
+
 // Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
 // The tag pattern is anchored on `<link`, so it only starts at real candidates. Object metadata
 // is matched by scanning brace-free runs instead of by one combined pattern: an unanchored
@@ -71,6 +112,8 @@ export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<Proje
       "resolve-path",
       "stat-candidate",
       "read-source",
+      "read-manifest",
+      "scan-directory",
     ]),
     workspaceRoot: Schema.String,
     relativePath: Schema.optional(Schema.String),
@@ -112,6 +155,18 @@ function extractIconHref(source: string): string | null {
   return null;
 }
 
+function parseIconSize(sizes: string | undefined): number {
+  if (!sizes) return 0;
+  let maxSize = 0;
+  for (const part of sizes.split(/\s+/)) {
+    const match = part.match(/^(\d+)x\d+$/);
+    if (match) {
+      maxSize = Math.max(maxSize, Number(match[1]));
+    }
+  }
+  return maxSize;
+}
+
 const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
@@ -133,6 +188,8 @@ export const make = Effect.gen(function* () {
     const clean = href.replace(/^\//, "");
     return [path.join("public", clean), clean];
   };
+
+  const toPosixRelativePath = (input: string): string => input.replaceAll("\\", "/");
 
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
     projectCwd: string,
@@ -176,6 +233,179 @@ export const make = Effect.gen(function* () {
       }
     }
     return null;
+  });
+
+  const findBestIconInDirectory = Effect.fn("ProjectFaviconResolver.findBestIconInDirectory")(
+    function* (
+      projectCwd: string,
+      dir: string,
+      candidatePriority: ReadonlyMap<
+        string,
+        { readonly dirIdx: number; readonly nameIdx: number; readonly extIdx: number }
+      >,
+    ): Effect.fn.Return<
+      {
+        readonly absolutePath: string;
+        readonly relativePath: string;
+        readonly priority: {
+          readonly dirIdx: number;
+          readonly nameIdx: number;
+          readonly extIdx: number;
+        };
+      } | null,
+      ProjectFaviconResolutionError
+    > {
+      const absoluteDir = path.resolve(projectCwd, dir);
+      const relativeToRoot = toPosixRelativePath(path.relative(projectCwd, absoluteDir));
+      if (
+        relativeToRoot.startsWith("../") ||
+        relativeToRoot === ".." ||
+        path.isAbsolute(relativeToRoot)
+      ) {
+        return null;
+      }
+
+      const entries = yield* Effect.option(fileSystem.readDirectory(absoluteDir));
+      if (Option.isNone(entries)) return null;
+
+      let best: {
+        readonly absolutePath: string;
+        readonly relativePath: string;
+        readonly priority: {
+          readonly dirIdx: number;
+          readonly nameIdx: number;
+          readonly extIdx: number;
+        };
+      } | null = null;
+
+      for (const entry of entries.value) {
+        const key = dir ? `${dir}/${entry}` : entry;
+        const priority = candidatePriority.get(key);
+        if (!priority) continue;
+
+        const absolutePath = path.join(absoluteDir, entry);
+        const relativePath = dir ? path.join(dir, entry) : entry;
+        const stats = yield* Effect.option(fileSystem.stat(absolutePath));
+        if (Option.isNone(stats) || stats.value.type !== "File") continue;
+
+        if (
+          !best ||
+          priority.dirIdx < best.priority.dirIdx ||
+          (priority.dirIdx === best.priority.dirIdx && priority.nameIdx < best.priority.nameIdx) ||
+          (priority.dirIdx === best.priority.dirIdx &&
+            priority.nameIdx === best.priority.nameIdx &&
+            priority.extIdx < best.priority.extIdx)
+        ) {
+          best = { absolutePath, relativePath, priority };
+        }
+      }
+
+      return best;
+    },
+  );
+
+  const findIconByDirectoryScan = Effect.fn("ProjectFaviconResolver.findIconByDirectoryScan")(
+    function* (projectCwd: string): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+      const candidatePriority = new Map<
+        string,
+        { readonly dirIdx: number; readonly nameIdx: number; readonly extIdx: number }
+      >();
+      IMAGE_DIR_CANDIDATES.forEach((candidateDir, dirIdx) => {
+        IMAGE_NAME_CANDIDATES.forEach((name, nameIdx) => {
+          IMAGE_EXTENSIONS.forEach((ext, extIdx) => {
+            const key = candidateDir ? `${candidateDir}/${name}${ext}` : `${name}${ext}`;
+            candidatePriority.set(key, { dirIdx, nameIdx, extIdx });
+          });
+        });
+      });
+
+      let best: {
+        readonly absolutePath: string;
+        readonly relativePath: string;
+        readonly priority: {
+          readonly dirIdx: number;
+          readonly nameIdx: number;
+          readonly extIdx: number;
+        };
+      } | null = null;
+
+      for (const candidateDir of IMAGE_DIR_CANDIDATES) {
+        const match = yield* findBestIconInDirectory(projectCwd, candidateDir, candidatePriority);
+        if (!match) continue;
+        if (
+          !best ||
+          match.priority.dirIdx < best.priority.dirIdx ||
+          (match.priority.dirIdx === best.priority.dirIdx &&
+            match.priority.nameIdx < best.priority.nameIdx) ||
+          (match.priority.dirIdx === best.priority.dirIdx &&
+            match.priority.nameIdx === best.priority.nameIdx &&
+            match.priority.extIdx < best.priority.extIdx)
+        ) {
+          best = match;
+        }
+      }
+
+      return best ? best.absolutePath : null;
+    },
+  );
+
+  const resolveManifestIcon = Effect.fn("ProjectFaviconResolver.resolveManifestIcon")(function* (
+    projectCwd: string,
+    relativePath: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    const sourcePath = yield* workspacePaths
+      .resolveRelativePathWithinRoot({
+        workspaceRoot: projectCwd,
+        relativePath,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectFaviconResolutionError({
+              operation: "resolve-path",
+              workspaceRoot: projectCwd,
+              relativePath,
+              cause,
+            }),
+        ),
+      );
+    const source = yield* optionOnNotFound(fileSystem.readFileString(sourcePath.absolutePath)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectFaviconResolutionError({
+            operation: "read-manifest",
+            workspaceRoot: projectCwd,
+            relativePath,
+            absolutePath: sourcePath.absolutePath,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isNone(source)) return null;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(source.value);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const manifest = parsed as { icons?: ReadonlyArray<{ src?: string; sizes?: string }> };
+    if (!Array.isArray(manifest.icons)) return null;
+
+    let bestIcon: string | null = null;
+    let bestSize = -1;
+    for (const icon of manifest.icons) {
+      if (typeof icon.src !== "string") continue;
+      const existing = yield* findExistingFile(projectCwd, resolveIconHref(icon.src));
+      if (!existing) continue;
+      const size = parseIconSize(icon.sizes);
+      if (size > bestSize) {
+        bestIcon = existing;
+        bestSize = size;
+      }
+    }
+    return bestIcon;
   });
 
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
@@ -262,6 +492,18 @@ export const make = Effect.gen(function* () {
       if (existing) {
         return existing;
       }
+    }
+
+    for (const manifestFile of MANIFEST_SOURCE_FILES) {
+      const existing = yield* resolveManifestIcon(projectCwd, manifestFile);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    const scanned = yield* findIconByDirectoryScan(projectCwd);
+    if (scanned) {
+      return scanned;
     }
 
     return null;

@@ -401,5 +401,159 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         expect(resolved).toContain("public/brand/logo.svg");
       }),
     );
+
+    it.effect("resolves icon from PWA manifest.json", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "manifest.json",
+          JSON.stringify({
+            icons: [{ src: "/icon-512.png", sizes: "512x512", type: "image/png" }],
+          }),
+        );
+        yield* writeTextFile(cwd, "public/icon-512.png", "png");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/icon-512.png");
+      }),
+    );
+
+    it.effect("prefers larger manifest icon by declared size", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "manifest.json",
+          JSON.stringify({
+            icons: [
+              { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+              { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+            ],
+          }),
+        );
+        yield* writeTextFile(cwd, "public/icon-192.png", "png");
+        yield* writeTextFile(cwd, "public/icon-512.png", "png");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/icon-512.png");
+      }),
+    );
+
+    it.effect("falls back to directory scan for common asset folders", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "images/icon.png", "png");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("images/icon.png");
+      }),
+    );
+
+    it.effect("directory scan respects name and extension priority", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "images/icon.png", "png");
+        yield* writeTextFile(cwd, "images/favicon.ico", "ico");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("images/favicon.ico");
+      }),
+    );
+
+    it.effect("directory scan prefers earlier directory over later better name", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "brand.svg", "svg");
+        yield* writeTextFile(cwd, "images/favicon.svg", "svg");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("brand.svg");
+        expect(resolved).not.toContain("images/favicon.svg");
+      }),
+    );
+
+    it.effect("directory scan continues after an unreadable directory", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "images/icon.png", "png");
+        const publicDir = path.join(cwd, "public");
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readDirectory",
+          pathOrDescriptor: publicDir,
+        });
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            readDirectory: (dirPath, options) =>
+              dirPath === publicDir
+                ? Effect.fail(cause)
+                : fileSystem.readDirectory(dirPath, options),
+          }),
+        );
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("images/icon.png");
+      }),
+    );
+
+    it.effect("manifest with JSON null falls back to directory scan", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "manifest.json", "null");
+        yield* writeTextFile(cwd, "images/icon.png", "png");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("images/icon.png");
+      }),
+    );
+
+    it.effect("manifest multi-size string picks largest dimension", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "manifest.json",
+          JSON.stringify({
+            icons: [
+              { src: "/icon-192.png", sizes: "192x192 512x512", type: "image/png" },
+              { src: "/icon-256.png", sizes: "256x256", type: "image/png" },
+            ],
+          }),
+        );
+        yield* writeTextFile(cwd, "public/icon-192.png", "png");
+        yield* writeTextFile(cwd, "public/icon-256.png", "png");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("icon-192.png");
+      }),
+    );
   });
 });
