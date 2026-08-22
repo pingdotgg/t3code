@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off -- A fixed instant keeps calendar-window assertions deterministic.
+import { USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -50,6 +51,10 @@ describe("hourly usage formatting", () => {
   it("builds an exact minute-aligned 24-hour request", () => {
     const window = makeWindow(1, new Date("2026-08-11T12:37:42.123Z"), "hour");
 
+    expect(window.contractVersion).toBe(USAGE_CONTRACT_VERSION);
+    expect(makeWindow(30, new Date("2026-08-11T12:37:42.123Z")).contractVersion).toBe(
+      USAGE_CONTRACT_VERSION,
+    );
     expect(window.resolution).toBe("hour");
     expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
     expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
