@@ -10,7 +10,6 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
@@ -224,7 +223,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
-  const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
     network: yield* connectivity.status,
@@ -755,22 +753,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   });
 
-  yield* connectivity.changes.pipe(
-    Stream.runForEach((network) =>
-      Ref.modify(intent, (current) =>
-        current.network === network ? [false, current] : ([true, { ...current, network }] as const),
-      ).pipe(
-        Effect.flatMap((changed) =>
-          changed ? signal({ _tag: "NetworkChanged", network }) : Effect.void,
-        ),
-      ),
-    ),
-    Effect.forkScoped,
-  );
-  yield* wakeups.changes.pipe(
-    Stream.runForEach((reason) => signal({ _tag: "Wakeup", reason })),
-    Effect.forkScoped,
-  );
+  const applyNetworkStatus = Effect.fnUntraced(function* (network: NetworkStatus) {
+    const changed = yield* Ref.modify(intent, (current) =>
+      current.network === network ? [false, current] : ([true, { ...current, network }] as const),
+    );
+    if (changed) {
+      yield* signal({ _tag: "NetworkChanged", network });
+    }
+  });
+
+  yield* Connectivity.followNetworkStatus({
+    apply: applyNetworkStatus,
+    onWakeup: (reason) => signal({ _tag: "Wakeup", reason }),
+  });
   yield* run().pipe(Effect.forkScoped);
 
   const connect = Ref.update(intent, (current) => ({

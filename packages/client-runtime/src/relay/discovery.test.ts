@@ -55,8 +55,13 @@ function status(
   };
 }
 
-const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
-  const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
+const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* (
+  initialNetworkStatus: NetworkStatus = "online",
+) {
+  const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(initialNetworkStatus);
+  const pauseNextStatusRead = yield* Ref.make(false);
+  const pausedStatusRead = yield* Deferred.make<void>();
+  const resumeStatusRead = yield* Deferred.make<void>();
   const listCalls = yield* Ref.make(0);
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
@@ -116,7 +121,14 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     resetTokenCache: Effect.void,
   } satisfies ManagedRelay.ManagedRelayClient["Service"]);
   const connectivity = Connectivity.Connectivity.of({
-    status: SubscriptionRef.get(networkStatus),
+    status: Effect.gen(function* () {
+      const status = yield* SubscriptionRef.get(networkStatus);
+      if (yield* Ref.getAndSet(pauseNextStatusRead, false)) {
+        yield* Deferred.succeed(pausedStatusRead, undefined);
+        yield* Deferred.await(resumeStatusRead);
+      }
+      return status;
+    }),
     changes: SubscriptionRef.changes(networkStatus),
   });
   const layer = RelayEnvironmentDiscovery.layer.pipe(
@@ -160,6 +172,9 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     listFailure,
     clerkToken,
     networkStatus,
+    pauseNextStatusRead,
+    pausedStatusRead,
+    resumeStatusRead,
     secondListCall,
     statusRequests,
     wake: (reason: "application-active" | "credentials-changed") =>
@@ -250,6 +265,70 @@ describe("RelayEnvironmentDiscovery", () => {
           expect(yield* Ref.get(harness.listCalls)).toBe(2);
         }).pipe(Effect.provide(harness.layer));
       }),
+  );
+
+  it.effect("clears an initial offline state on the first online transition", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness("offline");
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const offline = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.offline),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Fiber.join(offline);
+
+        const online = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => !state.offline),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* SubscriptionRef.set(harness.networkStatus, "online");
+        yield* Fiber.join(online);
+
+        expect((yield* SubscriptionRef.get(discovery.state)).offline).toBe(false);
+        expect(yield* Ref.get(harness.listCalls)).toBe(0);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("keeps the offline state when connectivity changes during a refresh status read", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* discovery.refresh;
+
+        yield* SubscriptionRef.set(harness.networkStatus, "offline");
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.offline),
+          Stream.runHead,
+        );
+
+        yield* Ref.set(harness.pauseNextStatusRead, true);
+        yield* SubscriptionRef.set(harness.networkStatus, "online");
+        yield* Deferred.await(harness.pausedStatusRead);
+        const offlineFiber = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.offline),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* SubscriptionRef.set(harness.networkStatus, "offline");
+        yield* Deferred.succeed(harness.resumeStatusRead, undefined);
+        yield* Fiber.join(offlineFiber);
+        yield* Deferred.await(harness.secondListCall);
+
+        expect((yield* SubscriptionRef.get(discovery.state)).offline).toBe(true);
+      }).pipe(Effect.provide(harness.layer));
+    }),
   );
 
   it.effect("publishes listing failures without rejecting the refresh command", () =>
