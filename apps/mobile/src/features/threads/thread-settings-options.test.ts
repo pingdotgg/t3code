@@ -1,7 +1,7 @@
 import type { ProviderOptionDescriptor } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { selectableChoices } from "./thread-settings-options";
+import { buildThreadSettingsOptionItems, selectableChoices } from "./thread-settings-options";
 
 const effortDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = {
   id: "effort",
@@ -24,6 +24,45 @@ describe("selectableChoices", () => {
       "low",
       "medium",
       "high",
+    ]);
+  });
+});
+
+describe("buildThreadSettingsOptionItems", () => {
+  const descriptor = (id: string): ProviderOptionDescriptor => ({
+    id,
+    label: id,
+    type: "boolean",
+    currentValue: false,
+  });
+
+  const itemIds = (items: ReturnType<typeof buildThreadSettingsOptionItems>) =>
+    items.map((item) =>
+      item.kind === "interaction-mode" ? "interactionMode" : item.descriptor.id,
+    );
+
+  it("puts interaction mode immediately after Fast Mode", () => {
+    expect(
+      itemIds(
+        buildThreadSettingsOptionItems(
+          [descriptor("effort"), descriptor("fastMode"), descriptor("serviceTier")],
+          true,
+        ),
+      ),
+    ).toEqual(["effort", "fastMode", "interactionMode", "serviceTier"]);
+  });
+
+  it("still shows interaction mode when the provider has no Fast Mode option", () => {
+    expect(
+      itemIds(
+        buildThreadSettingsOptionItems([descriptor("effort"), descriptor("serviceTier")], true),
+      ),
+    ).toEqual(["effort", "serviceTier", "interactionMode"]);
+  });
+
+  it("does not add interaction mode to existing-thread settings", () => {
+    expect(itemIds(buildThreadSettingsOptionItems([descriptor("fastMode")], false))).toEqual([
+      "fastMode",
     ]);
   });
 });

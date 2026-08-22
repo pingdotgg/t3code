@@ -1,5 +1,6 @@
 import type {
   ModelSelection,
+  ProviderInteractionMode,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
@@ -48,12 +49,17 @@ import {
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { interactionModeFromPlanToggle } from "./new-task-interaction-mode";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
-import { RUNTIME_MODE_CHOICES, selectableChoices } from "./thread-settings-options";
+import {
+  buildThreadSettingsOptionItems,
+  RUNTIME_MODE_CHOICES,
+  selectableChoices,
+} from "./thread-settings-options";
 import {
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
@@ -288,6 +294,8 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly interactionMode?: ProviderInteractionMode;
+  readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
 };
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
@@ -335,6 +343,8 @@ type ThreadSettingsSessionValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly onUpdateInteractionMode: ((mode: ProviderInteractionMode) => void) | undefined;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
@@ -453,6 +463,8 @@ function ThreadSettingsSessionProvider(
       providerGroups: props.providerGroups,
       runtimeMode: props.runtimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      interactionMode: props.interactionMode,
+      onUpdateInteractionMode: props.onUpdateInteractionMode,
       displayedDescriptors,
       providerExpansionOverrides,
       hasLegacyModels,
@@ -482,6 +494,8 @@ function ThreadSettingsSessionProvider(
       pressModel,
       providerFilter,
       props.onUpdateRuntimeMode,
+      props.interactionMode,
+      props.onUpdateInteractionMode,
       props.providerGroups,
       props.runtimeMode,
       searchQuery,
@@ -657,6 +671,10 @@ function ThreadSettingsOptionsItem(props: {
 }) {
   const insets = useSafeAreaInsets();
   const session = useThreadSettingsSession();
+  const optionItems = buildThreadSettingsOptionItems(
+    session.displayedDescriptors,
+    session.interactionMode !== undefined && session.onUpdateInteractionMode !== undefined,
+  );
   const bottomToolbarInset =
     Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
       ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
@@ -669,7 +687,28 @@ function ThreadSettingsOptionsItem(props: {
         className="mx-4 overflow-hidden rounded-2xl bg-card"
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
       >
-        {session.displayedDescriptors.map((descriptor) => {
+        {optionItems.map((item) => {
+          if (item.kind === "interaction-mode") {
+            return (
+              <Animated.View
+                key="interaction-mode"
+                entering={
+                  props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
+                }
+                exiting={props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined}
+                layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+              >
+                <SwitchRow
+                  label="Plan Mode"
+                  value={session.interactionMode === "plan"}
+                  onValueChange={(enabled) =>
+                    session.onUpdateInteractionMode?.(interactionModeFromPlanToggle(enabled))
+                  }
+                />
+              </Animated.View>
+            );
+          }
+          const descriptor = item.descriptor;
           if (descriptor.type === "select") {
             return (
               <Animated.View
@@ -1224,6 +1263,8 @@ export function NewTaskThreadSettingsRouteScreen() {
       onUpdateOptionSelections={flow.setSelectedModelOptions}
       runtimeMode={flow.runtimeMode}
       onUpdateRuntimeMode={flow.setRuntimeMode}
+      interactionMode={flow.interactionMode}
+      onUpdateInteractionMode={flow.setInteractionMode}
     >
       <ThreadSettingsPickerNavigator onClose={() => navigation.goBack()} />
     </ThreadSettingsSessionProvider>

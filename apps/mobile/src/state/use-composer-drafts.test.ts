@@ -182,7 +182,7 @@ describe("mobile composer drafts", () => {
     });
   });
 
-  it("drops the workspace selection when clearing a sent new-task draft", () => {
+  it("drops one-task settings when clearing a sent new-task draft", () => {
     const draftKey = "new-task:environment-1:project-1";
     const draft: ComposerDraft = {
       text: "send this",
@@ -191,6 +191,7 @@ describe("mobile composer drafts", () => {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
       },
+      interactionMode: "plan",
       workspaceSelection: {
         mode: "worktree",
         branch: "main",
@@ -201,6 +202,7 @@ describe("mobile composer drafts", () => {
 
     expect(
       clearComposerDraftContentState({ [draftKey]: draft }, draftKey, {
+        clearInteractionMode: true,
         clearWorkspaceSelection: true,
       }),
     ).toEqual({
