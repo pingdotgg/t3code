@@ -1081,9 +1081,24 @@ function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return scrubbed;
 }
 
+// launchd starts GUI apps without LANG/LC_* (Terminal.app injects its own), so
+// a packaged app's PTY shell lands in the single-byte C locale and zsh's line
+// editor renders multibyte input as raw `?`/`<00xx>` bytes. An explicit LANG or
+// LC_ALL — even a non-UTF-8 one — is the user's choice and is left alone.
+function withUtf8LocaleFallback(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  if (platform === "win32") return env;
+  if (env.LC_ALL || env.LANG) return env;
+  // en_US.UTF-8 always exists on macOS; on Linux only C.UTF-8 is guaranteed.
+  return { ...env, LANG: platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8" };
+}
+
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
-  runtimeEnv?: Record<string, string> | null,
+  runtimeEnv: Record<string, string> | undefined | null,
+  platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1096,7 +1111,7 @@ function createTerminalSpawnEnv(
       spawnEnv[key] = value;
     }
   }
-  return stripAppImageRuntimeEnv(spawnEnv);
+  return withUtf8LocaleFallback(stripAppImageRuntimeEnv(spawnEnv), platform);
 }
 
 function normalizedRuntimeEnv(
@@ -1868,7 +1883,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.andThen(
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform);
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;

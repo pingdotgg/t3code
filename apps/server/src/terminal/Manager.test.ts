@@ -1573,6 +1573,36 @@ it.layer(
     }),
   );
 
+  it.effect("falls back to a UTF-8 LANG when the host env has no locale", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { PATH: "/usr/bin:/bin" },
+      }).pipe(Effect.provide(withHostPlatform("darwin")));
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      // Without this fallback a Dock-launched app spawns the PTY in the C
+      // locale and zsh mangles multibyte input into `?`/`<00xx>` bytes.
+      expect(spawnInput.env.LANG).toBe("en_US.UTF-8");
+    }),
+  );
+
+  it.effect("keeps an explicitly configured locale untouched", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { PATH: "/usr/bin:/bin", LANG: "ru_RU.KOI8-R" },
+      }).pipe(Effect.provide(withHostPlatform("darwin")));
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.env.LANG).toBe("ru_RU.KOI8-R");
+    }),
+  );
+
   it.effect("injects runtime env overrides into spawned terminals", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
