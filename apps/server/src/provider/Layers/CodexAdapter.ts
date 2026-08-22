@@ -11,7 +11,9 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  EventId,
   ProviderDriverKind,
+  ProviderItemId,
   type ProviderEvent,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
@@ -820,17 +822,65 @@ function mapCollabAgentEvent(
  * blocks: first update goes out as soon as any text exists, later ones every
  * CODEX_REASONING_UPDATE_CHUNK chars.
  */
+interface CodexReasoningParts {
+  readonly summary: Map<number, string>;
+  readonly content: Map<number, string>;
+}
+
 interface CodexReasoningStreamState {
   /** itemId → indexed parts, summary and content apart (see compose note). */
-  readonly partsByItemId: Map<
-    string,
-    { readonly summary: Map<number, string>; readonly content: Map<number, string> }
-  >;
+  readonly partsByItemId: Map<string, CodexReasoningParts>;
   /** itemId → composed text length at the last emitted item.updated (throttles live updates). */
   readonly lastEmittedLengthByItemId: Map<string, number>;
 }
 
 const CODEX_REASONING_UPDATE_CHUNK = 512;
+
+function composeReasoningStreamParts(parts: CodexReasoningParts): string {
+  const byIndex = (a: [number, string], b: [number, string]) => a[0] - b[0];
+  return [
+    ...Array.from(parts.summary.entries()).sort(byIndex),
+    ...Array.from(parts.content.entries()).sort(byIndex),
+  ]
+    .map(([, value]) => value)
+    .join("\n\n");
+}
+
+/**
+ * Turn terminals can arrive without item/completed after an interruption.
+ * Seal every live reasoning row before the terminal event so persisted work
+ * never remains inProgress, then clear the accumulator for the next turn.
+ */
+function completeOpenReasoningStreams(
+  state: CodexReasoningStreamState,
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const base = runtimeEventBase(event, canonicalThreadId);
+  const completed = Array.from(state.partsByItemId, ([itemId, parts]) => {
+    const detail = composeReasoningStreamParts(parts);
+    return {
+      ...base,
+      eventId: EventId.make(`${event.id}:reasoning:${itemId}:completed`),
+      itemId: RuntimeItemId.make(itemId),
+      providerRefs: {
+        ...base.providerRefs,
+        providerItemId: ProviderItemId.make(itemId),
+      },
+      type: "item.completed",
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Reasoning",
+        ...(detail.trim().length > 0 ? { detail } : {}),
+        data: { toolCallId: itemId },
+      },
+    } satisfies ProviderRuntimeEvent;
+  });
+  state.partsByItemId.clear();
+  state.lastEmittedLengthByItemId.clear();
+  return completed;
+}
 
 function accumulateReasoningDeltaEvent(
   state: CodexReasoningStreamState,
@@ -855,13 +905,7 @@ function accumulateReasoningDeltaEvent(
   const bucket = part.kind === "summary" ? parts.summary : parts.content;
   const index = part.index ?? 0;
   bucket.set(index, (bucket.get(index) ?? "") + delta);
-  const byIndex = (a: [number, string], b: [number, string]) => a[0] - b[0];
-  const text = [
-    ...Array.from(parts.summary.entries()).sort(byIndex),
-    ...Array.from(parts.content.entries()).sort(byIndex),
-  ]
-    .map(([, value]) => value)
-    .join("\n\n");
+  const text = composeReasoningStreamParts(parts);
   const lastEmittedLength = state.lastEmittedLengthByItemId.get(itemId) ?? 0;
   if (lastEmittedLength > 0 && text.length - lastEmittedLength < CODEX_REASONING_UPDATE_CHUNK) {
     return undefined;
@@ -1162,13 +1206,12 @@ function mapToRuntimeEvents(
     if (!payload) {
       return [];
     }
-    // A finished turn seals every reasoning item it streamed; anything left in
-    // the accumulator belongs to items that never completed and would
-    // otherwise leak for the session's lifetime.
-    reasoningStreams?.partsByItemId.clear();
-    reasoningStreams?.lastEmittedLengthByItemId.clear();
+    const reasoningCompletions = reasoningStreams
+      ? completeOpenReasoningStreams(reasoningStreams, event, canonicalThreadId)
+      : [];
     const errorMessage = trimText(payload.turn.error?.message);
     return [
+      ...reasoningCompletions,
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.completed",
@@ -1181,11 +1224,11 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "turn/aborted") {
-    // Aborted turns never complete their reasoning items — drop the live
-    // accumulator with them (same leak guard as turn/completed).
-    reasoningStreams?.partsByItemId.clear();
-    reasoningStreams?.lastEmittedLengthByItemId.clear();
+    const reasoningCompletions = reasoningStreams
+      ? completeOpenReasoningStreams(reasoningStreams, event, canonicalThreadId)
+      : [];
     return [
+      ...reasoningCompletions,
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.aborted",

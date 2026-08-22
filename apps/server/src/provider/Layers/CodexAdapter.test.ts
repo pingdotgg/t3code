@@ -512,6 +512,68 @@ function startLifecycleRuntime() {
   });
 }
 
+function assertOpenReasoningSealedAtTurnEnd(input: {
+  readonly terminalEvent: ProviderEvent;
+  readonly terminalType: "turn.completed" | "turn.aborted";
+}) {
+  return Effect.gen(function* () {
+    const { adapter, runtime } = yield* startLifecycleRuntime();
+    const lifecycleEventsFiber = yield* adapter.streamEvents.pipe(
+      Stream.filter(
+        (event) =>
+          event.type === "item.updated" ||
+          event.type === "item.completed" ||
+          event.type === input.terminalType,
+      ),
+      Stream.takeUntil((event) => event.type === input.terminalType),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+
+    const emitDelta = (id: string, delta: string) =>
+      runtime.emit({
+        id: asEventId(id),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/reasoning/summaryTextDelta",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("rs-open"),
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "rs-open",
+          summaryIndex: 0,
+          delta,
+        },
+      } satisfies ProviderEvent);
+
+    yield* emitDelta("evt-open-reasoning-1", "partial");
+    // This remains below the live-update threshold. The terminal completion
+    // still has to flush the full accumulated text, not the last emitted text.
+    yield* emitDelta("evt-open-reasoning-2", " tail");
+    yield* runtime.emit(input.terminalEvent);
+
+    const events = Array.from(yield* Fiber.join(lifecycleEventsFiber));
+    NodeAssert.deepStrictEqual(
+      events.map((event) => event.type),
+      ["item.updated", "item.completed", input.terminalType],
+    );
+    const completion = events[1];
+    if (completion?.type !== "item.completed") {
+      return;
+    }
+    NodeAssert.notEqual(completion.eventId, input.terminalEvent.id);
+    NodeAssert.equal(completion.itemId, "rs-open");
+    NodeAssert.equal(completion.payload.itemType, "reasoning");
+    NodeAssert.equal(completion.payload.status, "completed");
+    NodeAssert.equal(completion.payload.detail, "partial tail");
+    NodeAssert.deepStrictEqual(completion.payload.data, { toolCallId: "rs-open" });
+    NodeAssert.equal(events[2]?.eventId, input.terminalEvent.id);
+  });
+}
+
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
@@ -659,6 +721,45 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         `Analizez prioritatea operatorilor${"x".repeat(600)}`,
       );
       NodeAssert.equal(second.itemId, first.itemId);
+    }),
+  );
+
+  it.effect("seals open reasoning rows before a turn completes", () =>
+    assertOpenReasoningSealedAtTurnEnd({
+      terminalType: "turn.completed",
+      terminalEvent: {
+        id: asEventId("evt-turn-completed-with-open-reasoning"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "turn/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turn: {
+            id: "turn-1",
+            items: [],
+            status: "completed",
+          },
+        },
+      } satisfies ProviderEvent,
+    }),
+  );
+
+  it.effect("seals open reasoning rows before a turn aborts", () =>
+    assertOpenReasoningSealedAtTurnEnd({
+      terminalType: "turn.aborted",
+      terminalEvent: {
+        id: asEventId("evt-turn-aborted-with-open-reasoning"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "turn/aborted",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        message: "Stopped by user",
+      } satisfies ProviderEvent,
     }),
   );
 
