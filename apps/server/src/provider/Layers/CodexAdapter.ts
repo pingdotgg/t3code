@@ -95,6 +95,11 @@ interface CodexAdapterSessionContext {
   stopped: boolean;
 }
 
+interface CodexCollabUsageState {
+  readonly baseline: RuntimeTaskUsage;
+  readonly latest: RuntimeTaskUsage;
+}
+
 function mapCodexRuntimeError(
   threadId: ThreadId,
   method: string,
@@ -507,6 +512,7 @@ function mapItemLifecycle(
 function mapCollabAgentEvent(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  usageByAgent: Map<string, CodexCollabUsageState>,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   const payload =
     typeof event.payload === "object" && event.payload !== null
@@ -667,8 +673,8 @@ function mapCollabAgentEvent(
       return [];
     }
     case "collabAgent/tokenUsage": {
-      // Cumulative per child thread: always the `total` breakdown, never
-      // `last` (which shrinks on follow-ups). Client folds max-merge.
+      // Calibrate the first cumulative `total` with `last` to remove copied
+      // history. Later snapshots stay based on `total`; `last` resets per turn.
       const tokenUsage =
         typeof payload.tokenUsage === "object" && payload.tokenUsage !== null
           ? (payload.tokenUsage as Record<string, unknown>)
@@ -677,29 +683,113 @@ function mapCollabAgentEvent(
         typeof tokenUsage?.total === "object" && tokenUsage.total !== null
           ? (tokenUsage.total as Record<string, unknown>)
           : undefined;
+      const last =
+        typeof tokenUsage?.last === "object" && tokenUsage.last !== null
+          ? (tokenUsage.last as Record<string, unknown>)
+          : undefined;
       const count = (value: unknown): number | undefined =>
         typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
       // Same validation as every other field: RuntimeTaskUsage.totalTokens
       // is NonNegativeInt, so NaN/Infinity/negative wire values must miss.
       const totalTokens = count(total?.totalTokens);
-      if (totalTokens === undefined) {
+      const lastTotalTokens = count(last?.totalTokens);
+      if (totalTokens === undefined || lastTotalTokens === undefined) {
         return [];
       }
+
+      const inputTokens = count(total?.inputTokens);
+      const cachedInputTokens = count(total?.cachedInputTokens);
+      const outputTokens = count(total?.outputTokens);
+      const reasoningOutputTokens = count(total?.reasoningOutputTokens);
+      const lastInputTokens = count(last?.inputTokens);
+      const lastCachedInputTokens = count(last?.cachedInputTokens);
+      const lastOutputTokens = count(last?.outputTokens);
+      const lastReasoningOutputTokens = count(last?.reasoningOutputTokens);
+      const existing = usageByAgent.get(agentThreadId);
+      const baselineCount = (
+        offset: number | undefined,
+        cumulative: number | undefined,
+        currentTurn: number | undefined,
+      ): number | undefined =>
+        offset ??
+        (cumulative !== undefined && currentTurn !== undefined
+          ? Math.max(cumulative - currentTurn, 0)
+          : undefined);
+      const baselineInputTokens = baselineCount(
+        existing?.baseline.inputTokens,
+        inputTokens,
+        lastInputTokens,
+      );
+      const baselineCachedInputTokens = baselineCount(
+        existing?.baseline.cachedInputTokens,
+        cachedInputTokens,
+        lastCachedInputTokens,
+      );
+      const baselineOutputTokens = baselineCount(
+        existing?.baseline.outputTokens,
+        outputTokens,
+        lastOutputTokens,
+      );
+      const baselineReasoningOutputTokens = baselineCount(
+        existing?.baseline.reasoningOutputTokens,
+        reasoningOutputTokens,
+        lastReasoningOutputTokens,
+      );
+      const baseline = {
+        totalTokens: existing?.baseline.totalTokens ?? Math.max(totalTokens - lastTotalTokens, 0),
+        ...(baselineInputTokens !== undefined ? { inputTokens: baselineInputTokens } : {}),
+        ...(baselineCachedInputTokens !== undefined
+          ? { cachedInputTokens: baselineCachedInputTokens }
+          : {}),
+        ...(baselineOutputTokens !== undefined ? { outputTokens: baselineOutputTokens } : {}),
+        ...(baselineReasoningOutputTokens !== undefined
+          ? { reasoningOutputTokens: baselineReasoningOutputTokens }
+          : {}),
+      } satisfies RuntimeTaskUsage;
+      const normalizedCount = (
+        cumulative: number | undefined,
+        offset: number | undefined,
+        latest: number | undefined,
+      ): number | undefined =>
+        cumulative !== undefined && offset !== undefined
+          ? Math.max(cumulative - offset, latest ?? 0, 0)
+          : undefined;
+      const normalizedInputTokens = normalizedCount(
+        inputTokens,
+        baseline.inputTokens,
+        existing?.latest.inputTokens,
+      );
+      const normalizedCachedInputTokens = normalizedCount(
+        cachedInputTokens,
+        baseline.cachedInputTokens,
+        existing?.latest.cachedInputTokens,
+      );
+      const normalizedOutputTokens = normalizedCount(
+        outputTokens,
+        baseline.outputTokens,
+        existing?.latest.outputTokens,
+      );
+      const normalizedReasoningOutputTokens = normalizedCount(
+        reasoningOutputTokens,
+        baseline.reasoningOutputTokens,
+        existing?.latest.reasoningOutputTokens,
+      );
       const typedUsage: RuntimeTaskUsage = {
-        totalTokens,
-        ...(count(total?.inputTokens) !== undefined
-          ? { inputTokens: count(total?.inputTokens) }
+        totalTokens: Math.max(
+          totalTokens - baseline.totalTokens,
+          existing?.latest.totalTokens ?? 0,
+          0,
+        ),
+        ...(normalizedInputTokens !== undefined ? { inputTokens: normalizedInputTokens } : {}),
+        ...(normalizedCachedInputTokens !== undefined
+          ? { cachedInputTokens: normalizedCachedInputTokens }
           : {}),
-        ...(count(total?.cachedInputTokens) !== undefined
-          ? { cachedInputTokens: count(total?.cachedInputTokens) }
-          : {}),
-        ...(count(total?.outputTokens) !== undefined
-          ? { outputTokens: count(total?.outputTokens) }
-          : {}),
-        ...(count(total?.reasoningOutputTokens) !== undefined
-          ? { reasoningOutputTokens: count(total?.reasoningOutputTokens) }
+        ...(normalizedOutputTokens !== undefined ? { outputTokens: normalizedOutputTokens } : {}),
+        ...(normalizedReasoningOutputTokens !== undefined
+          ? { reasoningOutputTokens: normalizedReasoningOutputTokens }
           : {}),
       };
+      usageByAgent.set(agentThreadId, { baseline, latest: typedUsage });
       return [
         {
           ...base,
@@ -762,9 +852,10 @@ function mapCollabAgentEvent(
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  collabUsageByAgent: Map<string, CodexCollabUsageState>,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
-    return mapCollabAgentEvent(event, canonicalThreadId);
+    return mapCollabAgentEvent(event, canonicalThreadId, collabUsageByAgent);
   }
   if (event.kind === "error") {
     if (!event.message) {
@@ -1719,10 +1810,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // this a child of `startSession`, and Effect interrupts a fiber's
         // children when it completes, so the consumer died on return and every
         // runtime event the session emitted afterwards was dropped.
+        const collabUsageByAgent = new Map<string, CodexCollabUsageState>();
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId, collabUsageByAgent);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

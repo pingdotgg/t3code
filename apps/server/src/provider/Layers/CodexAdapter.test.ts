@@ -15,6 +15,7 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  type RuntimeTaskUsage,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -1149,6 +1150,238 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
       });
+    }),
+  );
+
+  it.effect("reports only child-generated usage for Codex collab agents", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.type === "thread.token-usage.updated" || event.type === "task.progress",
+        ),
+        Stream.take(7),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const parentBaseline = 5_800_000_000;
+      yield* runtime.emit({
+        id: asEventId("evt-parent-usage-baseline"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "thread/tokenUsage/updated",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          tokenUsage: {
+            total: {
+              inputTokens: parentBaseline - 100,
+              cachedInputTokens: 0,
+              outputTokens: 100,
+              reasoningOutputTokens: 0,
+              totalTokens: parentBaseline,
+            },
+            last: {
+              inputTokens: 20,
+              cachedInputTokens: 0,
+              outputTokens: 5,
+              reasoningOutputTokens: 0,
+              totalTokens: 25,
+            },
+            modelContextWindow: 258_400,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const emitChildUsage = (
+        eventId: string,
+        agentThreadId: string,
+        total: RuntimeTaskUsage,
+        last: RuntimeTaskUsage,
+      ) =>
+        runtime.emit({
+          id: asEventId(eventId),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          method: "collabAgent/tokenUsage",
+          payload: {
+            agentThreadId,
+            tokenUsage: {
+              total,
+              last,
+              modelContextWindow: 258_400,
+            },
+          },
+        } satisfies ProviderEvent);
+
+      // Reasoning first appears on the resume frame. Its baseline must initialize then.
+      const childAFirstTotal = {
+        totalTokens: 5_800_000_100,
+        inputTokens: 5_000_000_070,
+        cachedInputTokens: 3_000_000_040,
+        outputTokens: 800_000_030,
+      } satisfies RuntimeTaskUsage;
+      const childAFirstLast = {
+        totalTokens: 100,
+        inputTokens: 70,
+        cachedInputTokens: 40,
+        outputTokens: 30,
+      } satisfies RuntimeTaskUsage;
+      const childBZeroTotal = {
+        totalTokens: 5_800_050_000,
+        inputTokens: 5_000_040_000,
+        cachedInputTokens: 3_000_030_000,
+        outputTokens: 800_010_000,
+        reasoningOutputTokens: 0,
+      } satisfies RuntimeTaskUsage;
+      const childBZeroLast = {
+        totalTokens: 0,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      } satisfies RuntimeTaskUsage;
+      const childBWorkTotal = {
+        totalTokens: 5_800_050_050,
+        inputTokens: 5_000_040_035,
+        cachedInputTokens: 3_000_030_020,
+        outputTokens: 800_010_015,
+        reasoningOutputTokens: 5,
+      } satisfies RuntimeTaskUsage;
+      const childBWorkLast = {
+        totalTokens: 50,
+        inputTokens: 35,
+        cachedInputTokens: 20,
+        outputTokens: 15,
+        reasoningOutputTokens: 5,
+      } satisfies RuntimeTaskUsage;
+      const childAResumeTotal = {
+        totalTokens: 5_800_000_130,
+        inputTokens: 5_000_000_090,
+        cachedInputTokens: 3_000_000_050,
+        outputTokens: 800_000_040,
+        reasoningOutputTokens: 10,
+      } satisfies RuntimeTaskUsage;
+      const childAResumeLast = {
+        totalTokens: 30,
+        inputTokens: 20,
+        cachedInputTokens: 10,
+        outputTokens: 10,
+        reasoningOutputTokens: 5,
+      } satisfies RuntimeTaskUsage;
+      const childARetryTotal = {
+        totalTokens: 5_800_000_150,
+        inputTokens: 5_000_000_100,
+        cachedInputTokens: 3_000_000_055,
+        outputTokens: 800_000_050,
+        reasoningOutputTokens: 15,
+      } satisfies RuntimeTaskUsage;
+      const childARetryLast = {
+        totalTokens: 20,
+        inputTokens: 10,
+        cachedInputTokens: 5,
+        outputTokens: 10,
+        reasoningOutputTokens: 5,
+      } satisfies RuntimeTaskUsage;
+
+      yield* emitChildUsage("evt-child-a-first", "child-a", childAFirstTotal, childAFirstLast);
+      yield* emitChildUsage("evt-child-b-zero", "child-b", childBZeroTotal, childBZeroLast);
+      yield* emitChildUsage("evt-child-b-work", "child-b", childBWorkTotal, childBWorkLast);
+      yield* emitChildUsage("evt-child-a-resume", "child-a", childAResumeTotal, childAResumeLast);
+      yield* emitChildUsage("evt-child-a-retry", "child-a", childARetryTotal, childARetryLast);
+      yield* emitChildUsage("evt-child-a-duplicate", "child-a", childARetryTotal, childARetryLast);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const parentEvents = events.filter((event) => event.type === "thread.token-usage.updated");
+      NodeAssert.equal(parentEvents.length, 1);
+      NodeAssert.equal(parentEvents[0]?.payload.usage.totalProcessedTokens, parentBaseline);
+
+      const childUsage = events.flatMap((event) => {
+        if (event.type !== "task.progress") return [];
+        return [
+          {
+            taskId: event.payload.taskId,
+            usage: event.payload.typedUsage,
+          },
+        ];
+      });
+      NodeAssert.deepEqual(childUsage, [
+        {
+          taskId: "child-a",
+          usage: {
+            totalTokens: 100,
+            inputTokens: 70,
+            cachedInputTokens: 40,
+            outputTokens: 30,
+          },
+        },
+        {
+          taskId: "child-b",
+          usage: {
+            totalTokens: 0,
+            inputTokens: 0,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
+        },
+        {
+          taskId: "child-b",
+          usage: {
+            totalTokens: 50,
+            inputTokens: 35,
+            cachedInputTokens: 20,
+            outputTokens: 15,
+            reasoningOutputTokens: 5,
+          },
+        },
+        {
+          taskId: "child-a",
+          usage: {
+            totalTokens: 130,
+            inputTokens: 90,
+            cachedInputTokens: 50,
+            outputTokens: 40,
+            reasoningOutputTokens: 5,
+          },
+        },
+        {
+          taskId: "child-a",
+          usage: {
+            totalTokens: 150,
+            inputTokens: 100,
+            cachedInputTokens: 55,
+            outputTokens: 50,
+            reasoningOutputTokens: 10,
+          },
+        },
+        {
+          taskId: "child-a",
+          usage: {
+            totalTokens: 150,
+            inputTokens: 100,
+            cachedInputTokens: 55,
+            outputTokens: 50,
+            reasoningOutputTokens: 10,
+          },
+        },
+      ]);
+
+      const latestByChild = new Map<string, RuntimeTaskUsage>();
+      for (const child of childUsage) {
+        if (child.usage) latestByChild.set(child.taskId, child.usage);
+      }
+      NodeAssert.equal(
+        Array.from(latestByChild.values()).reduce((sum, usage) => sum + usage.totalTokens, 0),
+        200,
+      );
     }),
   );
 
