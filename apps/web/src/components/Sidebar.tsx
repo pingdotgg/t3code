@@ -1489,8 +1489,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             screen readers announce every second. */}
                         <span role="status">{topStatus.label}</span>
                         {/* Compacting counts from the session's compaction
-                            clock, not from turn start. */}
-                        {isCompacting && thread.session ? (
+                            clock, not from turn start. Gated on the resolved
+                            label, not the raw overlay flag: attention labels
+                            (Approval, Input, Failed) outrank the overlay and
+                            never show a duration. */}
+                        {topStatus.label === "Compacting" && thread.session ? (
                           <span aria-hidden>
                             <WorkingDuration
                               startedAt={
