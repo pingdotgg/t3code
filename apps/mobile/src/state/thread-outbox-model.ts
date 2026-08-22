@@ -148,12 +148,15 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
 
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";
 
+/**
+ * Connectivity is the delivery boundary: a running turn does not hold a queued
+ * message back, because a message sent during one steers it.
+ */
 export function resolveThreadOutboxDeliveryAction(input: {
   readonly isCreation: boolean;
   readonly threadExists: boolean;
   readonly shellStatus: EnvironmentShellStatus;
   readonly environmentConnected: boolean;
-  readonly threadBusy: boolean;
 }): ThreadOutboxDeliveryAction {
   if (input.isCreation) {
     // A pending task creates its thread on delivery. If the thread already
