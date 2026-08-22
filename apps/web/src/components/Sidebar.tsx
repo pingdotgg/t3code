@@ -136,6 +136,7 @@ import {
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
+  sidebarRowNeedsAttention,
   resolveWorkingStartedAt,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
@@ -835,8 +836,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // stands out.
   const isInFlight =
     status === "working" || status === "monitoring" || status === "approval" || status === "input";
-  const shouldRecede =
-    (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
+  const needsAttention = sidebarRowNeedsAttention({
+    isUnread,
+    isWoke,
+    isActive: props.isActive,
+    isSelected,
+  });
+  const shouldRecede = (status === "ready" || isInFlight) && !needsAttention;
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
@@ -1107,10 +1113,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         : shouldRecede
           ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
-    isInFlight &&
-      !props.isActive &&
-      !isSelected &&
-      "opacity-70 transition-opacity hover:opacity-100",
+    isInFlight && !needsAttention && "opacity-70 transition-opacity hover:opacity-100",
   );
 
   const title = isRenaming ? (
