@@ -106,6 +106,11 @@ vi.mock("@legendapp/list/react", async () => {
   return { LegendList };
 });
 
+vi.mock("~/assets/assetUrls", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/assets/assetUrls")>()),
+  useAssetUrlState: () => ({ _tag: "Loading" as const }),
+}));
+
 function MockFileDiff(props: {
   fileDiff: { name?: string | null; prevName?: string | null };
   renderCustomHeader?: (fileDiff: {
@@ -665,6 +670,67 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-markdown-details=""');
     expect(markup).toContain("More");
     expect(markup).not.toContain("&lt;details&gt;");
+  });
+
+  it("renders Codex visualize references as inline previews instead of raw text", () => {
+    const marker = '�visualize�{"path":"/tmp/chart.html","mode":"wide"}�';
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry(`Summary\n${marker}`)]}
+      />,
+    );
+
+    expect(markup).toContain("Summary");
+    expect(markup).toContain('data-inline-visualization=""');
+    expect(markup).toContain('data-inline-visualization-mode="wide"');
+    expect(markup).toContain("max(100%,calc(100cqw-9.75rem))");
+    expect(markup).toContain("overflow-x-clip");
+    expect(markup).toContain("overflow-x-visible");
+    expect(markup).not.toContain(marker);
+    expect(markup).not.toContain("/tmp/chart.html");
+  });
+
+  it("keeps assistant line breaks consistent across an inline visualization", () => {
+    const marker = '�visualize�{"path":"/tmp/chart.html"}�';
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry(`★ Insight ───\nBefore\n${marker}\nAfter\nline`),
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(/After<br\/>\s*line/u);
+  });
+
+  it("keeps visualize references inside mismatched code fences as Markdown", () => {
+    const marker = '�visualize�{"path":"/tmp/chart.html"}�';
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry(`\`\`\`text\n~~~\n\`\`\`html\n${marker}\n\`\`\``),
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain('data-inline-visualization=""');
+    expect(markup).toContain("visualize");
+  });
+
+  it("does not treat four-space indented code as a fence", () => {
+    const marker = '�visualize�{"path":"/tmp/chart.html"}�';
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry(`    \`\`\`example\n${marker}`)]}
+      />,
+    );
+
+    expect(markup).toContain('data-inline-visualization=""');
+    expect(markup).not.toContain(marker);
   });
 
   it("sanitizes executable HTML while preserving supported assistant markup", async () => {

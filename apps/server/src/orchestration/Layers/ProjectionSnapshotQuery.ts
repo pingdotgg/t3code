@@ -26,6 +26,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { textReferencesInlineVisualizationPath } from "@t3tools/shared/inlineVisualization";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -139,6 +140,15 @@ const ProjectIdLookupInput = Schema.Struct({
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
 });
+const AssistantVisualizationLookupInput = Schema.Struct({
+  threadId: ThreadId,
+  afterMessageId: Schema.String,
+});
+const AssistantVisualizationRow = Schema.Struct({
+  messageId: Schema.String,
+  text: Schema.String,
+});
+const ASSISTANT_VISUALIZATION_SCAN_BATCH_SIZE = 32;
 // Windowed reads order turns by the stable keyset (anchor, turn key), where
 // anchor is requested_at and turn key is
 // COALESCE(turn_id, ''). Both are event-derived, so cursors survive the
@@ -981,6 +991,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
+      `,
+  });
+
+  const listAssistantVisualizationCandidates = SqlSchema.findAll({
+    Request: AssistantVisualizationLookupInput,
+    Result: AssistantVisualizationRow,
+    execute: ({ threadId, afterMessageId }) =>
+      sql`
+        SELECT message_id AS "messageId", text
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+          AND role = 'assistant'
+          AND message_id > ${afterMessageId}
+          AND instr(text, 'visualize') > 0
+        ORDER BY message_id ASC
+        LIMIT ${ASSISTANT_VISUALIZATION_SCAN_BATCH_SIZE}
       `,
   });
 
@@ -2669,6 +2695,31 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     getThreadDetailByIdBounded(threadId, undefined);
 
+  const hasAssistantVisualizationReference: ProjectionSnapshotQueryShape["hasAssistantVisualizationReference"] =
+    Effect.fn("ProjectionSnapshotQuery.hasAssistantVisualizationReference")(
+      function* (threadId, path) {
+        let afterMessageId = "";
+        while (true) {
+          const rows = yield* listAssistantVisualizationCandidates({
+            threadId,
+            afterMessageId,
+          }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.hasAssistantVisualizationReference:query",
+                "ProjectionSnapshotQuery.hasAssistantVisualizationReference:decodeRows",
+              ),
+            ),
+          );
+          if (rows.some((row) => textReferencesInlineVisualizationPath(row.text, path)))
+            return true;
+          const lastRow = rows.at(-1);
+          if (!lastRow || rows.length < ASSISTANT_VISUALIZATION_SCAN_BATCH_SIZE) return false;
+          afterMessageId = lastRow.messageId;
+        }
+      },
+    );
+
   // Bounds pathological fan-out: one user turn that spawned hundreds of
   // subagent turns still pages in bounded chunks, at the cost of splitting the
   // fan-out group across pages (the cursor continues the same group). Also
@@ -2826,6 +2877,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    hasAssistantVisualizationReference,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });

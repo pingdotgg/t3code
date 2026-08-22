@@ -232,6 +232,19 @@ describe("resolveAssistantMessageCopyState", () => {
     });
   });
 
+  it("removes inline visualization references from copied text", () => {
+    expect(
+      resolveAssistantMessageCopyState({
+        showCopyButton: true,
+        text: 'Summary\n�visualize�{"path":"/tmp/chart.html"}�\nDetails',
+        streaming: false,
+      }),
+    ).toEqual({
+      text: "Summary\nDetails",
+      visible: true,
+    });
+  });
+
   it("hides copy while an assistant message is still streaming", () => {
     expect(
       resolveAssistantMessageCopyState({

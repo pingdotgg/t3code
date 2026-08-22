@@ -10,6 +10,7 @@ import {
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import { stripInlineVisualizations } from "@t3tools/shared/inlineVisualization";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -438,9 +439,10 @@ export function resolveAssistantMessageCopyState({
   showCopyButton: boolean;
   streaming: boolean;
 }) {
-  const hasText = text !== null && text.trim().length > 0;
+  const copyText = text === null ? null : stripInlineVisualizations(text);
+  const hasText = copyText !== null && copyText.trim().length > 0;
   return {
-    text: hasText ? text : null,
+    text: hasText ? copyText : null,
     visible: showCopyButton && hasText && !streaming,
   };
 }

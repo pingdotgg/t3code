@@ -2459,4 +2459,61 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       }
     }),
   );
+
+  it.effect("checks visualization references in bounded batches with Windows paths", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-visualization");
+      const path = "/tmp/chart.html";
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES
+          ('user-reference', ${threadId}, NULL, 'user', ${`�visualize�{"path":"${path}"}�`}, 0,
+            '2026-03-03T00:00:00.000Z', '2026-03-03T00:00:00.000Z'),
+          ('assistant-plain-path', ${threadId}, NULL, 'assistant', ${`See ${path}`}, 0,
+            '2026-03-03T00:00:01.000Z', '2026-03-03T00:00:01.000Z')
+      `;
+
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      assert.equal(yield* snapshotQuery.hasAssistantVisualizationReference(threadId, path), false);
+
+      yield* Effect.forEach(
+        Array.from({ length: 32 }, (_, index) => index.toString().padStart(2, "0")),
+        (index) => sql`
+          INSERT INTO projection_thread_messages (
+            message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+          ) VALUES (${`assistant-decoy-${index}`}, ${threadId}, NULL, 'assistant',
+            ${`visualize "${path}"`}, 0, '2026-03-03T00:00:02.000Z',
+            '2026-03-03T00:00:02.000Z')
+        `,
+        { discard: true },
+      );
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES ('assistant-reference', ${threadId}, NULL, 'assistant',
+          ${`�visualize�{"path":"${path}"}�`}, 0,
+          '2026-03-03T00:00:02.000Z', '2026-03-03T00:00:02.000Z')
+      `;
+
+      assert.equal(yield* snapshotQuery.hasAssistantVisualizationReference(threadId, path), true);
+
+      const windowsPath = String.raw`C:\Temp\chart.html`;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES ('windows-reference', ${threadId}, NULL, 'assistant',
+          ${String.raw`�visualize�{"path":"C:\\Temp\\chart.html"}�`}, 0,
+          '2026-03-03T00:00:03.000Z', '2026-03-03T00:00:03.000Z')
+      `;
+
+      assert.equal(
+        yield* snapshotQuery.hasAssistantVisualizationReference(threadId, windowsPath),
+        true,
+      );
+    }),
+  );
 });

@@ -15,7 +15,12 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueAssetUrl,
+  resolveAsset,
+  VISUALIZATION_FRAGMENT_MAX_BYTES,
+} from "./AssetAccess.ts";
 
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
@@ -205,6 +210,123 @@ describe("AssetAccess", () => {
         kind: "file",
         path: attachmentPath,
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues visualization URLs for bounded absolute HTML fragments", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-visualization-",
+      });
+      const fragmentPath = path.join(root, "chart.html");
+      const fragment = '<div id="chart">Chart</div>';
+      yield* fileSystem.writeFileString(fragmentPath, fragment);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "visualization",
+          threadId: ThreadId.make("thread-1"),
+          path: fragmentPath,
+        },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(yield* resolveAsset(suffix.slice(0, separatorIndex), "chart.html")).toEqual({
+        kind: "text",
+        body: fragment,
+      });
+
+      yield* fileSystem.writeFileString(fragmentPath, "changed");
+      expect(yield* resolveAsset(suffix.slice(0, separatorIndex), "chart.html")).toBeNull();
+
+      yield* fileSystem.writeFile(
+        fragmentPath,
+        new Uint8Array(VISUALIZATION_FRAGMENT_MAX_BYTES + 1),
+      );
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "visualization",
+          threadId: ThreadId.make("thread-1"),
+          path: fragmentPath,
+        },
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("AssetVisualizationUnavailableError");
+
+      const textPath = path.join(root, "secret.txt");
+      const linkPath = path.join(root, "linked.html");
+      yield* fileSystem.writeFileString(textPath, "secret");
+      yield* fileSystem.symlink(textPath, linkPath);
+      const linkError = yield* issueAssetUrl({
+        resource: {
+          _tag: "visualization",
+          threadId: ThreadId.make("thread-1"),
+          path: linkPath,
+        },
+      }).pipe(Effect.flip);
+      expect(linkError._tag).toBe("AssetVisualizationUnavailableError");
+
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        directory: process.cwd(),
+        prefix: ".t3-asset-visualization-outside-",
+      });
+      const outsidePath = path.join(outside, "secret.html");
+      const hardLinkPath = path.join(root, "hard-linked.html");
+      yield* fileSystem.writeFileString(outsidePath, "secret");
+      yield* fileSystem.link(outsidePath, hardLinkPath);
+      const hardLinkError = yield* issueAssetUrl({
+        resource: {
+          _tag: "visualization",
+          threadId: ThreadId.make("thread-1"),
+          path: hardLinkPath,
+        },
+      }).pipe(Effect.flip);
+      expect(hardLinkError._tag).toBe("AssetVisualizationUnavailableError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects visualization files swapped between validation and opening", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-visualization-race-",
+      });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        directory: process.cwd(),
+        prefix: ".t3-asset-visualization-outside-",
+      });
+      const fragmentPath = path.join(root, "chart.html");
+      const outsidePath = path.join(outside, "secret.html");
+      yield* fileSystem.writeFileString(fragmentPath, "safe");
+      yield* fileSystem.writeFileString(outsidePath, "secret");
+
+      let swapped = false;
+      const swappingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: (filePath, options) =>
+          Effect.gen(function* () {
+            if (filePath === fragmentPath && !swapped) {
+              swapped = true;
+              yield* fileSystem.remove(fragmentPath);
+              yield* fileSystem.symlink(outsidePath, fragmentPath);
+            }
+            return yield* fileSystem.open(filePath, options);
+          }),
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "visualization",
+          threadId: ThreadId.make("thread-1"),
+          path: fragmentPath,
+        },
+      }).pipe(Effect.provideService(FileSystem.FileSystem, swappingFileSystem), Effect.flip);
+
+      expect(error._tag).toBe("AssetVisualizationUnavailableError");
     }).pipe(Effect.provide(testLayer)),
   );
 

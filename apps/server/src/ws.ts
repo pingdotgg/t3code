@@ -50,6 +50,7 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  AssetVisualizationUnavailableError,
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
@@ -1940,6 +1941,20 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               if (input.resource._tag === "attachment") {
                 return yield* issueAssetUrl({ resource: input.resource });
+              }
+              if (input.resource._tag === "visualization") {
+                const resource = input.resource;
+                const isReferenced = yield* projectionSnapshotQuery
+                  .hasAssistantVisualizationReference(resource.threadId, resource.path)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) => new AssetWorkspaceContextResolutionError({ resource, cause }),
+                    ),
+                  );
+                if (!isReferenced) {
+                  return yield* new AssetVisualizationUnavailableError({ resource });
+                }
+                return yield* issueAssetUrl({ resource });
               }
               if (input.resource._tag === "project-favicon") {
                 const project = yield* projectionSnapshotQuery
