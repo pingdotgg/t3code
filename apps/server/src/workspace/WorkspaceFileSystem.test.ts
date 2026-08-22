@@ -335,6 +335,28 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("rejects a watch that escapes the workspace through a symlink", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outside = yield* makeTempDir;
+        yield* fileSystem
+          .writeFileString(path.join(outside, "secret.txt"), "secret\n")
+          .pipe(Effect.orDie);
+        // Lexically `link/secret.txt` sits inside the workspace; physically it
+        // does not, so no watcher may be pointed at it.
+        yield* fileSystem.symlink(outside, path.join(cwd, "link")).pipe(Effect.orDie);
+
+        const error = yield* workspaceFileSystem
+          .watchFile({ cwd, relativePath: "link/secret.txt" })
+          .pipe(Stream.runHead, Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceFilePathEscapeError");
+      }),
+    );
+
     it.effect("rejects watches outside the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
