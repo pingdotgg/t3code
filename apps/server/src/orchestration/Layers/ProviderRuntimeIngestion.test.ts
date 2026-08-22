@@ -320,10 +320,29 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readShell: () => Effect.runPromise(snapshotQuery.getShellSnapshot()),
+      readEvents: () =>
+        Effect.runPromise(
+          Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((events) => Array.from(events))),
+        ),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
     };
+  }
+
+  async function drainAndRead(harness: Awaited<ReturnType<typeof createHarness>>) {
+    await harness.drain();
+    const threadId = asThreadId("thread-1");
+    const [detailSnapshot, shellSnapshot] = await Promise.all([
+      harness.readModel(),
+      harness.readShell(),
+    ]);
+    const detail = detailSnapshot.threads.find((entry) => entry.id === threadId);
+    const shell = shellSnapshot.threads.find((entry) => entry.id === threadId);
+    expect(detail).toBeDefined();
+    expect(shell).toBeDefined();
+    return { detail: detail!, shell: shell! };
   }
 
   it("maps turn started/completed events into thread session updates", async () => {
@@ -366,6 +385,565 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it.each(["codex", "opencode"] as const)(
+    "projects an aborted active turn as interrupted for %s",
+    async (provider) => {
+      const harness = await createHarness();
+      const threadId = asThreadId("thread-1");
+      const turnId = asTurnId("turn-aborted");
+      const startedAt = "2026-01-01T00:00:01.000Z";
+      const abortedAt = "2026-01-01T00:00:02.000Z";
+
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-turn-started-before-abort"),
+        provider: ProviderDriverKind.make(provider),
+        threadId,
+        createdAt: startedAt,
+        turnId,
+      });
+      await harness.drain();
+
+      let thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+      expect(thread?.session?.status).toBe("running");
+      expect(thread?.session?.activeTurnId).toBe(turnId);
+      expect(thread?.latestTurn?.state).toBe("running");
+      expect(thread?.latestTurn?.completedAt).toBeNull();
+
+      harness.emit({
+        type: "turn.aborted",
+        eventId: asEventId("evt-turn-aborted"),
+        provider: ProviderDriverKind.make(provider),
+        threadId,
+        createdAt: abortedAt,
+        turnId,
+        payload: { reason: "Interrupted by user." },
+      });
+      await harness.drain();
+
+      thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+      expect(thread?.session?.status).toBe("interrupted");
+      expect(thread?.session?.activeTurnId).toBeNull();
+      expect(thread?.session?.lastError).toBeNull();
+      expect(thread?.latestTurn?.state).toBe("interrupted");
+      expect(thread?.latestTurn?.completedAt).toBe(abortedAt);
+      const interruptedSessionEvents = (await harness.readEvents()).filter(
+        (event) =>
+          event.type === "thread.session-set" &&
+          event.payload.session.status === "interrupted" &&
+          event.payload.session.activeTurnId === null,
+      );
+      expect(interruptedSessionEvents).toHaveLength(1);
+    },
+  );
+
+  effectIt.effect("converges native Codex and OpenCode interruption ordering", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const codexThreadId = asThreadId("thread-1");
+      const openCodeThreadId = asThreadId("thread-opencode-interruption");
+      const codexTurnId = asTurnId("turn-codex-interruption");
+      const openCodeTurnId = asTurnId("turn-opencode-interruption");
+      const startedAt = "2026-01-01T00:00:01.000Z";
+      const interruptedAt = "2026-01-01T00:00:02.000Z";
+      const completedAt = "2026-01-01T00:00:03.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-create-opencode-interruption-thread"),
+        threadId: openCodeThreadId,
+        projectId: asProjectId("project-1"),
+        title: "OpenCode interruption",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-seed-opencode-interruption-session"),
+        threadId: openCodeThreadId,
+        session: {
+          threadId: openCodeThreadId,
+          status: "ready",
+          providerName: "opencode",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-native-codex-interruption-started"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: codexThreadId,
+        turnId: codexTurnId,
+        createdAt: startedAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-native-codex-interruption"),
+        threadId: codexThreadId,
+        turnId: codexTurnId,
+        createdAt: interruptedAt,
+      });
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-native-codex-interruption-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: codexThreadId,
+        turnId: codexTurnId,
+        createdAt: completedAt,
+        payload: { state: "interrupted" },
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-native-opencode-interruption-started"),
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: openCodeThreadId,
+        turnId: openCodeTurnId,
+        createdAt: startedAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      harness.emit({
+        type: "turn.aborted",
+        eventId: asEventId("evt-native-opencode-interruption-aborted"),
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: openCodeThreadId,
+        turnId: openCodeTurnId,
+        createdAt: interruptedAt,
+        payload: { reason: "Interrupted by user." },
+      });
+      yield* Effect.promise(() => harness.drain());
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-native-opencode-interruption-completed"),
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: openCodeThreadId,
+        turnId: openCodeTurnId,
+        createdAt: completedAt,
+        payload: { state: "completed" },
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      const snapshot = yield* Effect.promise(() => harness.readModel());
+      const lifecycle = (threadId: ThreadId) => {
+        const thread = snapshot.threads.find((entry) => entry.id === threadId);
+        return {
+          sessionStatus: thread?.session?.status,
+          activeTurnId: thread?.session?.activeTurnId,
+          turnState: thread?.latestTurn?.state,
+          turnCompletedAt: thread?.latestTurn?.completedAt,
+        };
+      };
+      const expectedLifecycle = {
+        sessionStatus: "ready",
+        activeTurnId: null,
+        turnState: "interrupted",
+        turnCompletedAt: interruptedAt,
+      };
+      expect(lifecycle(codexThreadId)).toEqual(expectedLifecycle);
+      expect(lifecycle(openCodeThreadId)).toEqual(expectedLifecycle);
+    }),
+  );
+
+  it("ignores unscoped, stale, duplicate, and post-terminal aborts", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const firstTurnId = asTurnId("turn-abort-identity-a");
+    const secondTurnId = asTurnId("turn-abort-identity-b");
+    const abortedAt = "2026-01-01T00:00:04.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-abort-identity-start-a"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      turnId: firstTurnId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    await harness.drain();
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-abort-identity-wrong-turn"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      turnId: secondTurnId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: { reason: "Stale turn" },
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-abort-identity-unscoped"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      payload: { reason: "Missing turn identity" },
+    });
+
+    let { detail } = await drainAndRead(harness);
+    expect(detail.session?.status).toBe("running");
+    expect(detail.session?.activeTurnId).toBe(firstTurnId);
+    expect(detail.latestTurn?.state).toBe("running");
+
+    const abort = {
+      type: "turn.aborted" as const,
+      eventId: asEventId("evt-abort-identity-matching"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      turnId: firstTurnId,
+      createdAt: abortedAt,
+      payload: { reason: "Interrupted by user." },
+    };
+    harness.emit(abort);
+    await harness.drain();
+    harness.emit(abort);
+
+    ({ detail } = await drainAndRead(harness));
+    expect(detail.session?.status).toBe("interrupted");
+    expect(detail.session?.activeTurnId).toBeNull();
+    expect(detail.latestTurn?.state).toBe("interrupted");
+    expect(detail.latestTurn?.completedAt).toBe(abortedAt);
+    expect(
+      (await harness.readEvents()).filter(
+        (event) =>
+          event.type === "thread.session-set" && event.payload.session.status === "interrupted",
+      ),
+    ).toHaveLength(1);
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-abort-identity-ready"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:05.000Z",
+      payload: { state: "ready" },
+    });
+    await harness.drain();
+    harness.emit(abort);
+
+    ({ detail } = await drainAndRead(harness));
+    expect(detail.session?.status).toBe("ready");
+    expect(detail.session?.activeTurnId).toBeNull();
+    expect(detail.latestTurn?.state).toBe("interrupted");
+    expect(detail.latestTurn?.completedAt).toBe(abortedAt);
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-abort-identity-start-b"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      turnId: secondTurnId,
+      createdAt: "2026-01-01T00:00:06.000Z",
+    });
+    await harness.drain();
+    harness.emit(abort);
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-abort-identity-late-completion-a"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      turnId: firstTurnId,
+      createdAt: "2026-01-01T00:00:07.000Z",
+      payload: { state: "completed" },
+    });
+
+    ({ detail } = await drainAndRead(harness));
+    expect(detail.session?.status).toBe("running");
+    expect(detail.session?.activeTurnId).toBe(secondTurnId);
+    expect(detail.latestTurn?.turnId).toBe(secondTurnId);
+    expect(detail.latestTurn?.state).toBe("running");
+  });
+
+  it.each([
+    ["starting", "starting"],
+    ["running", "running"],
+    ["waiting", "running"],
+    ["ready", "ready"],
+    ["error", "error"],
+    ["stopped", "stopped"],
+  ] as const)(
+    "preserves an interrupted turn after a later session state of %s",
+    async (runtimeState, expectedStatus) => {
+      const harness = await createHarness();
+      const threadId = asThreadId("thread-1");
+      const turnId = asTurnId(`turn-abort-before-state-${runtimeState}`);
+      const abortedAt = "2026-01-01T00:00:02.000Z";
+
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId(`evt-abort-before-state-${runtimeState}-start`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        turnId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      await harness.drain();
+      const abort = {
+        type: "turn.aborted" as const,
+        eventId: asEventId(`evt-abort-before-state-${runtimeState}-abort`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        turnId,
+        createdAt: abortedAt,
+        payload: { reason: "Interrupted by user." },
+      };
+      harness.emit(abort);
+      await harness.drain();
+      harness.emit({
+        type: "session.state.changed",
+        eventId: asEventId(`evt-abort-before-state-${runtimeState}-state`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:03.000Z",
+        payload:
+          runtimeState === "error"
+            ? { state: runtimeState, reason: "Late provider error" }
+            : { state: runtimeState },
+      });
+      await harness.drain();
+      harness.emit(abort);
+
+      const { detail } = await drainAndRead(harness);
+      expect(detail.session?.status).toBe(expectedStatus);
+      expect(detail.session?.activeTurnId).toBeNull();
+      expect(detail.session?.lastError).toBe(
+        runtimeState === "error" ? "Late provider error" : null,
+      );
+      expect(detail.latestTurn?.turnId).toBe(turnId);
+      expect(detail.latestTurn?.state).toBe("interrupted");
+      expect(detail.latestTurn?.completedAt).toBe(abortedAt);
+    },
+  );
+
+  it.each([
+    ["completed", "ready"],
+    ["interrupted", "ready"],
+    ["cancelled", "ready"],
+    ["failed", "error"],
+  ] as const)(
+    "preserves an interrupted turn after a later turn completion of %s",
+    async (completionState, expectedStatus) => {
+      const harness = await createHarness();
+      const threadId = asThreadId("thread-1");
+      const turnId = asTurnId(`turn-abort-before-completion-${completionState}`);
+      const abortedAt = "2026-01-01T00:00:02.000Z";
+
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId(`evt-abort-before-completion-${completionState}-start`),
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        turnId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      await harness.drain();
+      const abort = {
+        type: "turn.aborted" as const,
+        eventId: asEventId(`evt-abort-before-completion-${completionState}-abort`),
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        turnId,
+        createdAt: abortedAt,
+        payload: { reason: "Interrupted by user." },
+      };
+      harness.emit(abort);
+      await harness.drain();
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId(`evt-abort-before-completion-${completionState}-completed`),
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        turnId,
+        createdAt: "2026-01-01T00:00:03.000Z",
+        payload:
+          completionState === "failed"
+            ? { state: completionState, errorMessage: "Late turn failure" }
+            : { state: completionState },
+      });
+      await harness.drain();
+      harness.emit(abort);
+
+      const { detail } = await drainAndRead(harness);
+      expect(detail.session?.status).toBe(expectedStatus);
+      expect(detail.session?.activeTurnId).toBeNull();
+      expect(detail.session?.lastError).toBe(
+        completionState === "failed" ? "Late turn failure" : null,
+      );
+      expect(detail.latestTurn?.turnId).toBe(turnId);
+      expect(detail.latestTurn?.state).toBe("interrupted");
+      expect(detail.latestTurn?.completedAt).toBe(abortedAt);
+    },
+  );
+
+  it("preserves an interrupted turn after a later session exit", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-abort-before-exit");
+    const abortedAt = "2026-01-01T00:00:02.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-abort-before-exit-start"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      turnId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    await harness.drain();
+    const abort = {
+      type: "turn.aborted" as const,
+      eventId: asEventId("evt-abort-before-exit-abort"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      turnId,
+      createdAt: abortedAt,
+      payload: { reason: "Interrupted by user." },
+    };
+    harness.emit(abort);
+    await harness.drain();
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-abort-before-exit-exited"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      payload: { reason: "Provider stopped", exitKind: "graceful" },
+    });
+    await harness.drain();
+    harness.emit(abort);
+
+    const { detail } = await drainAndRead(harness);
+    expect(detail.session?.status).toBe("stopped");
+    expect(detail.session?.activeTurnId).toBeNull();
+    expect(detail.latestTurn?.turnId).toBe(turnId);
+    expect(detail.latestTurn?.state).toBe("interrupted");
+    expect(detail.latestTurn?.completedAt).toBe(abortedAt);
+  });
+
+  it("keeps approval and user-input requests pending when their waiting turn aborts", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-abort-while-waiting");
+    const approvalRequestId = ApprovalRequestId.make("approval-abort-waiting");
+    const userInputRequestId = ApprovalRequestId.make("user-input-abort-waiting");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-abort-waiting-start"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    await harness.drain();
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-abort-waiting-approval-opened"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      requestId: approvalRequestId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "pwd",
+      },
+    });
+    harness.emit({
+      type: "user-input.requested",
+      eventId: asEventId("evt-abort-waiting-user-input-requested"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      requestId: userInputRequestId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      payload: {
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question: "Continue?",
+            options: [{ label: "Yes", description: "Continue" }],
+          },
+        ],
+      },
+    });
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-abort-waiting-session-state"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      createdAt: "2026-01-01T00:00:04.000Z",
+      payload: { state: "waiting", reason: "Awaiting user action" },
+    });
+
+    let { detail, shell } = await drainAndRead(harness);
+    expect(detail.session?.status).toBe("running");
+    expect(detail.session?.activeTurnId).toBe(turnId);
+    expect(shell.hasPendingApprovals).toBe(true);
+    expect(shell.hasPendingUserInput).toBe(true);
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-abort-waiting-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      createdAt: "2026-01-01T00:00:05.000Z",
+      payload: { reason: "Interrupted by user." },
+    });
+
+    ({ detail, shell } = await drainAndRead(harness));
+    expect(detail.session?.status).toBe("interrupted");
+    expect(detail.session?.activeTurnId).toBeNull();
+    expect(detail.latestTurn?.state).toBe("interrupted");
+    expect(shell.hasPendingApprovals).toBe(true);
+    expect(shell.hasPendingUserInput).toBe(true);
+
+    harness.emit({
+      type: "request.resolved",
+      eventId: asEventId("evt-abort-waiting-approval-resolved"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      requestId: approvalRequestId,
+      createdAt: "2026-01-01T00:00:06.000Z",
+      payload: {
+        requestType: "command_execution_approval",
+        decision: "decline",
+      },
+    });
+    harness.emit({
+      type: "user-input.resolved",
+      eventId: asEventId("evt-abort-waiting-user-input-resolved"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      requestId: userInputRequestId,
+      createdAt: "2026-01-01T00:00:07.000Z",
+      payload: { answers: { choice: "No" } },
+    });
+
+    ({ detail, shell } = await drainAndRead(harness));
+    expect(detail.session?.status).toBe("interrupted");
+    expect(detail.session?.activeTurnId).toBeNull();
+    expect(shell.hasPendingApprovals).toBe(false);
+    expect(shell.hasPendingUserInput).toBe(false);
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
@@ -2248,11 +2826,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resumedMessage?.text).toBe(" second half");
     expect(resumedMessage?.streaming).toBe(false);
 
-    const events = await Effect.runPromise(
-      Stream.runCollect(harness.engine.readEvents(0)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      ),
-    );
+    const events = await harness.readEvents();
     const assistantEvents = events.filter(
       (event): event is Extract<(typeof events)[number], { type: "thread.message-sent" }> =>
         event.type === "thread.message-sent" &&
@@ -2604,11 +3178,7 @@ describe("ProviderRuntimeIngestion", () => {
         ),
     );
 
-    const events = await Effect.runPromise(
-      Stream.runCollect(harness.engine.readEvents(0)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      ),
-    );
+    const events = await harness.readEvents();
     const completionEvents = events.filter((event) => {
       if (event.type !== "thread.message-sent") {
         return false;

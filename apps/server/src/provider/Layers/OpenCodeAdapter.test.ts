@@ -695,16 +695,27 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("rolls back session state when sendTurn fails before OpenCode accepts the prompt", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-send-turn-failure");
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
-        threadId: asThreadId("thread-send-turn-failure"),
+        threadId,
         runtimeMode: "full-access",
       });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "turn.aborted"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
 
       runtimeMock.state.promptAsyncError = new Error("prompt failed");
       const error = yield* adapter
         .sendTurn({
-          threadId: asThreadId("thread-send-turn-failure"),
+          threadId,
           input: "Fix it",
           modelSelection: {
             instanceId: ProviderInstanceId.make("opencode"),
@@ -712,8 +723,19 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           },
         })
         .pipe(Effect.flip);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
       const sessions = yield* adapter.listSessions();
 
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["turn.started", "turn.aborted"],
+      );
+      NodeAssert.ok(events[0]?.turnId);
+      NodeAssert.equal(events[1]?.turnId, events[0]?.turnId);
+      NodeAssert.equal(events[1]?.type, "turn.aborted");
+      if (events[1]?.type === "turn.aborted") {
+        NodeAssert.equal(events[1].payload.reason, "prompt failed");
+      }
       NodeAssert.equal(error._tag, "ProviderAdapterRequestError");
       if (error._tag !== "ProviderAdapterRequestError") {
         throw new Error("Unexpected error type");
@@ -727,6 +749,51 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions[0]?.status, "ready");
       NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
       NodeAssert.equal(sessions[0]?.lastError, "prompt failed");
+    }),
+  );
+
+  it.effect("emits a canonical abort after OpenCode accepts an interrupt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-interrupt");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "turn.aborted"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Fix it",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["turn.started", "turn.aborted"],
+      );
+      NodeAssert.equal(events[0]?.turnId, turn.turnId);
+      NodeAssert.equal(events[1]?.turnId, turn.turnId);
+      NodeAssert.equal(events[1]?.type, "turn.aborted");
+      if (events[1]?.type === "turn.aborted") {
+        NodeAssert.equal(events[1].payload.reason, "Interrupted by user.");
+      }
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, ["http://127.0.0.1:9999/session"]);
     }),
   );
 

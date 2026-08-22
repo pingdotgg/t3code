@@ -241,6 +241,306 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
+it.layer(makeProjectionPipelinePrefixedTestLayer("t3-abort-rebuild-test-"))(
+  "OrchestrationProjectionPipeline abort rebuild",
+  (it) => {
+    it.effect(
+      "rebuilds interrupted lifecycle and pending requests identically from persisted events",
+      () =>
+        Effect.gen(function* () {
+          const eventStore = yield* OrchestrationEventStore;
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const sql = yield* SqlClient.SqlClient;
+          const threadId = ThreadId.make("thread-abort-rebuild");
+          const turnId = TurnId.make("turn-abort-rebuild");
+          const createdAt = "2026-08-10T12:00:00.000Z";
+          const startedAt = "2026-08-10T12:00:01.000Z";
+          const approvalAt = "2026-08-10T12:00:02.000Z";
+          const userInputAt = "2026-08-10T12:00:03.000Z";
+          const abortedAt = "2026-08-10T12:00:04.000Z";
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore
+              .append(event)
+              .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+          yield* appendAndProject({
+            type: "thread.created",
+            eventId: EventId.make("evt-abort-rebuild-created"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make("cmd-abort-rebuild-created"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-abort-rebuild-created"),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId: ProjectId.make("project-abort-rebuild"),
+              title: "Abort rebuild",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          });
+          yield* appendAndProject({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-abort-rebuild-running"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: startedAt,
+            commandId: CommandId.make("cmd-abort-rebuild-running"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-abort-rebuild-running"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: turnId,
+                lastError: null,
+                updatedAt: startedAt,
+              },
+            },
+          });
+          yield* appendAndProject({
+            type: "thread.activity-appended",
+            eventId: EventId.make("evt-abort-rebuild-approval"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: approvalAt,
+            commandId: CommandId.make("cmd-abort-rebuild-approval"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-abort-rebuild-approval"),
+            metadata: {},
+            payload: {
+              threadId,
+              activity: {
+                id: EventId.make("activity-abort-rebuild-approval"),
+                tone: "approval",
+                kind: "approval.requested",
+                summary: "Command approval requested",
+                payload: {
+                  requestId: "approval-abort-rebuild",
+                  requestKind: "command",
+                },
+                turnId,
+                createdAt: approvalAt,
+              },
+            },
+          });
+          yield* appendAndProject({
+            type: "thread.activity-appended",
+            eventId: EventId.make("evt-abort-rebuild-user-input"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: userInputAt,
+            commandId: CommandId.make("cmd-abort-rebuild-user-input"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-abort-rebuild-user-input"),
+            metadata: {},
+            payload: {
+              threadId,
+              activity: {
+                id: EventId.make("activity-abort-rebuild-user-input"),
+                tone: "info",
+                kind: "user-input.requested",
+                summary: "User input requested",
+                payload: {
+                  requestId: "user-input-abort-rebuild",
+                  questions: [
+                    {
+                      id: "choice",
+                      header: "Choice",
+                      question: "Continue?",
+                      options: [{ label: "Yes", description: "Continue" }],
+                    },
+                  ],
+                },
+                turnId,
+                createdAt: userInputAt,
+              },
+            },
+          });
+          yield* appendAndProject({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-abort-rebuild-interrupted"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: abortedAt,
+            commandId: CommandId.make("cmd-abort-rebuild-interrupted"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-abort-rebuild-interrupted"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "interrupted",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: abortedAt,
+              },
+            },
+          });
+
+          const readLifecycle = () =>
+            Effect.all({
+              threads: sql<{
+                readonly latestTurnId: string | null;
+                readonly pendingApprovalCount: number;
+                readonly pendingUserInputCount: number;
+                readonly updatedAt: string;
+              }>`
+                SELECT
+                  latest_turn_id AS "latestTurnId",
+                  pending_approval_count AS "pendingApprovalCount",
+                  pending_user_input_count AS "pendingUserInputCount",
+                  updated_at AS "updatedAt"
+                FROM projection_threads
+                WHERE thread_id = ${threadId}
+              `,
+              sessions: sql<{
+                readonly status: string;
+                readonly activeTurnId: string | null;
+                readonly lastError: string | null;
+                readonly updatedAt: string;
+              }>`
+                SELECT
+                  status,
+                  active_turn_id AS "activeTurnId",
+                  last_error AS "lastError",
+                  updated_at AS "updatedAt"
+                FROM projection_thread_sessions
+                WHERE thread_id = ${threadId}
+              `,
+              turns: sql<{
+                readonly turnId: string | null;
+                readonly state: string;
+                readonly requestedAt: string;
+                readonly startedAt: string | null;
+                readonly completedAt: string | null;
+              }>`
+                SELECT
+                  turn_id AS "turnId",
+                  state,
+                  requested_at AS "requestedAt",
+                  started_at AS "startedAt",
+                  completed_at AS "completedAt"
+                FROM projection_turns
+                WHERE thread_id = ${threadId}
+                ORDER BY requested_at ASC, turn_id ASC
+              `,
+              activities: sql<{
+                readonly activityId: string;
+                readonly kind: string;
+                readonly turnId: string | null;
+              }>`
+                SELECT
+                  activity_id AS "activityId",
+                  kind,
+                  turn_id AS "turnId"
+                FROM projection_thread_activities
+                WHERE thread_id = ${threadId}
+                ORDER BY created_at ASC, activity_id ASC
+              `,
+              pendingApprovals: sql<{
+                readonly requestId: string;
+                readonly status: string;
+                readonly turnId: string | null;
+              }>`
+                SELECT
+                  request_id AS "requestId",
+                  status,
+                  turn_id AS "turnId"
+                FROM projection_pending_approvals
+                WHERE thread_id = ${threadId}
+                ORDER BY request_id ASC
+              `,
+            });
+
+          const live = yield* readLifecycle();
+          assert.deepEqual(live.threads, [
+            {
+              latestTurnId: turnId,
+              pendingApprovalCount: 1,
+              pendingUserInputCount: 1,
+              updatedAt: abortedAt,
+            },
+          ]);
+          assert.deepEqual(live.sessions, [
+            {
+              status: "interrupted",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: abortedAt,
+            },
+          ]);
+          assert.deepEqual(live.turns, [
+            {
+              turnId,
+              state: "interrupted",
+              requestedAt: startedAt,
+              startedAt,
+              completedAt: abortedAt,
+            },
+          ]);
+
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                DELETE FROM projection_pending_approvals
+                WHERE thread_id = ${threadId}
+              `;
+              yield* sql`
+                DELETE FROM projection_thread_activities
+                WHERE thread_id = ${threadId}
+              `;
+              yield* sql`
+                DELETE FROM projection_thread_sessions
+                WHERE thread_id = ${threadId}
+              `;
+              yield* sql`
+                DELETE FROM projection_turns
+                WHERE thread_id = ${threadId}
+              `;
+              yield* sql`
+                DELETE FROM projection_threads
+                WHERE thread_id = ${threadId}
+              `;
+              yield* sql`
+                DELETE FROM projection_state
+                WHERE projector IN (
+                  ${ORCHESTRATION_PROJECTOR_NAMES.threadActivities},
+                  ${ORCHESTRATION_PROJECTOR_NAMES.threadSessions},
+                  ${ORCHESTRATION_PROJECTOR_NAMES.threadTurns},
+                  ${ORCHESTRATION_PROJECTOR_NAMES.pendingApprovals},
+                  ${ORCHESTRATION_PROJECTOR_NAMES.threads}
+                )
+              `;
+            }),
+          );
+
+          yield* projectionPipeline.bootstrap;
+
+          const rebuilt = yield* readLifecycle();
+          assert.deepEqual(rebuilt, live);
+        }),
+    );
+  },
+);
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
   (it) => {
