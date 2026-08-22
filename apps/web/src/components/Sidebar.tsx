@@ -3543,6 +3543,19 @@ export default function Sidebar() {
                               title={`Project settings for ${project.displayName}`}
                               className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
                               onPointerDown={(event) => event.stopPropagation()}
+                              onFocus={(event) => {
+                                // On open, Base UI focuses the first tabbable element in the popup,
+                                // which is the gear on the first row. Focus bubbling into the row
+                                // would highlight it before the pointer gets there, so hand that
+                                // open-time focus to the menu instead. Tab from a highlighted row
+                                // still lands here.
+                                const menu =
+                                  event.currentTarget.closest<HTMLElement>('[role="menu"]');
+                                if (menu && !menu.contains(event.relatedTarget)) {
+                                  event.stopPropagation();
+                                  menu.focus({ preventScroll: true });
+                                }
+                              }}
                               onClick={(event) => {
                                 void handleProjectSettings(event, project);
                               }}
