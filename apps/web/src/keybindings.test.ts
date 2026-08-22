@@ -140,8 +140,18 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  {
+    shortcut: modShortcut("p", { shiftKey: true }),
+    command: "git.createPullRequest",
+    whenAst: whenAnd(whenNot(whenIdentifier("terminalFocus")), whenIdentifier("gitCanCreatePr")),
+  },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
+  {
+    shortcut: modShortcut("a", { shiftKey: true }),
+    command: "thread.archive",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
@@ -530,6 +540,53 @@ describe("chat/editor shortcuts", () => {
     assert.isTrue(
       isOpenFavoriteEditorShortcut(event({ key: "o", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
+      }),
+    );
+  });
+
+  it("matches git.createPullRequest only when the ref has nothing left to send", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "p", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { gitCanCreatePr: true },
+      }),
+      "git.createPullRequest",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "p", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { gitCanCreatePr: false },
+      }),
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "p", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { gitCanCreatePr: true, terminalFocus: true },
+      }),
+    );
+  });
+
+  it("keeps filePicker.toggle on the unshifted mod+p", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "p", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { gitCanCreatePr: true },
+      }),
+      "filePicker.toggle",
+    );
+  });
+
+  it("matches thread.archive outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "a", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+      "thread.archive",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "a", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
       }),
     );
   });

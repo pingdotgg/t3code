@@ -57,6 +57,16 @@ agent responses across connected environments. Message matches show one labeled 
 keeping the thread's project, branch, and machine context visible. Message search begins after two
 characters and uses SQLite's ASCII case-insensitive matching.
 
+`git.createPullRequest` opens a pull request for the thread's ref and defaults to `mod+shift+p`.
+It is deliberately narrow: the shortcut only works when the ref has nothing left to send, which
+means no uncommitted changes, no local commits waiting on the upstream, nothing to pull, and no
+pull request open already. While work is still uncommitted or unpushed, the shortcut does nothing;
+use the source control button in the thread header, which offers to commit and push first.
+
+`thread.archive` archives the thread you are looking at and defaults to `mod+shift+a`. Archiving
+the open thread moves you to a new draft in the same project. A thread with a turn in flight is not
+archived, and you get an error toast instead. Restore threads from **Settings** → **Archived**.
+
 The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
 always matches the build you are running. Use that rather than a copied list.
 
@@ -74,9 +84,13 @@ but the new thread does not reuse the worktree created for the thread that just 
 ## `when` Conditions
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys
-the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
-`modelPickerOpen`. The set is open and grows over time, so treat that as the current list rather
-than a fixed one. Any key the running app does not supply evaluates to `false`.
+the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`,
+`modelPickerOpen`, and `gitCanCreatePr`. The set is open and grows over time, so treat that as the
+current list rather than a fixed one. Any key the running app does not supply evaluates to `false`.
+
+`gitCanCreatePr` is true only while the thread's ref has nothing left to send and no pull request
+open. It is supplied to the source control shortcuts, so a rule that uses it elsewhere reads as
+`false`.
 
 Operators: `!` (not), `&&` (and), `||` (or), and parentheses.
 

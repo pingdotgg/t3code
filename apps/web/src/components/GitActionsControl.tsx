@@ -39,6 +39,7 @@ import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  canCreatePrFromPushedWork,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
@@ -81,7 +82,7 @@ import {
 } from "~/lib/sourceControlActions";
 import { useThread } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { serverEnvironment } from "~/state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -92,6 +93,9 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { openPullRequestLink } from "~/lib/openPullRequestLink";
+import { isCommandPaletteOpen } from "~/commandPaletteBus";
+import { resolveShortcutCommand } from "~/keybindings";
+import { isTerminalFocused } from "~/lib/terminalFocus";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -986,6 +990,7 @@ export default function GitActionsControl({
     "thread branch metadata update",
   );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
@@ -1162,6 +1167,10 @@ export default function GitActionsControl({
     () =>
       resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
+  );
+  const canCreatePrFromShortcut = useMemo(
+    () => canCreatePrFromPushedWork(gitStatusForActions, isGitActionRunning),
+    [gitStatusForActions, isGitActionRunning],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")
@@ -1621,6 +1630,30 @@ export default function GitActionsControl({
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);
   };
+
+  // This control owns the git status for the active thread, so it also owns the
+  // `git.createPullRequest` shortcut rather than routing it through the global
+  // handler in `routes/_chat.tsx`, which would need a second status subscription
+  // to evaluate `gitCanCreatePr`.
+  const handleCreatePrShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || isCommandPaletteOpen()) return;
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: {
+        terminalFocus: isTerminalFocused(),
+        gitCanCreatePr: canCreatePrFromShortcut,
+      },
+    });
+    if (command !== "git.createPullRequest") return;
+    event.preventDefault();
+    event.stopPropagation();
+    void runGitActionWithToast({ action: "create_pr" });
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => handleCreatePrShortcut(event);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const runDialogAction = () => {
     if (!isCommitDialogOpen) return;
