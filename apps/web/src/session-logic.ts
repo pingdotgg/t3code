@@ -75,7 +75,7 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
-  itemType?: ToolLifecycleItemType;
+  itemType?: ToolLifecycleItemType | "reasoning";
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -180,6 +180,15 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
 }
 
+/**
+ * Stricter than tool-like for the "N tool calls" group labels: reasoning rows
+ * are tool-like for styling, but they are not tool calls and must not inflate
+ * the count.
+ */
+export function workLogEntryIsToolCall(entry: WorkLogEntry): boolean {
+  return entry.itemType !== "reasoning" && workLogEntryIsToolLike(entry);
+}
+
 /** Heuristic: providers often emit successful lifecycle status while error text lives in `detail` / `command`. */
 function toolDetailTextLooksLikeFailure(text: string): boolean {
   const t = text.toLowerCase();
@@ -230,6 +239,12 @@ function workEntryIndicatesToolFailureFromOutput(
   entry: WorkLogEntry,
   includeCommand: boolean,
 ): boolean {
+  // Reasoning rows carry the model's prose as detail; running the tool-output
+  // failure heuristic over it would flag any quoted error ("exit code 1") as
+  // a tool failure even though nothing failed.
+  if (entry.itemType === "reasoning") {
+    return false;
+  }
   if (entry.tone === "error") {
     return true;
   }
@@ -266,6 +281,11 @@ export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boole
 
 /** Tool/command row completed without failure (blue check affordance). */
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
+  // Reasoning is not a tool call; it must never claim the tool success
+  // affordance ("Completed" check).
+  if (entry.itemType === "reasoning") {
+    return false;
+  }
   if (!workLogEntryIsToolLike(entry)) {
     return false;
   }
@@ -290,6 +310,14 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
+  // Reasoning rows have no tool outcome; the neutral filter would hide the
+  // live thinking row for the entire turn (in-progress rows classify as
+  // neutral and both timeline builders drop them). Reasoning items with no
+  // thinking text (e.g. redacted_thinking blocks) stay neutral so they are
+  // still hidden instead of rendering a bare "Reasoning" row.
+  if (entry.itemType === "reasoning") {
+    return (entry.detail?.trim().length ?? 0) === 0;
+  }
   // Spawn CTA rows are never neutral-hidden: mid-run they derive from
   // task.progress (tone "thinking") and the neutral filter was swallowing
   // them exactly while the fleet ran — the one moment they matter most.
@@ -1029,7 +1057,7 @@ function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undef
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
   }
-  return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
+  return entry.toolCallId && entry.turnId ? `tool:${entry.turnId}:${entry.toolCallId}` : undefined;
 }
 
 function collapseDerivedWorkLogEntries(
@@ -1048,6 +1076,9 @@ function collapseDerivedWorkLogEntries(
   // own turn splintered one batch into a stream of "Kicked off N subagents"
   // rows (live-test finding, thread 7ac7ef05).
   const groupKeyByTaskId = new Map<string, string>();
+  // Tool-call ids are only globally safe inside a known turn. Turnless rows
+  // retain the adjacent fuzzy fallback below instead of sharing one identity
+  // map for the lifetime of the thread.
   const toolLifecycleRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
@@ -1103,7 +1134,15 @@ function collapseDerivedWorkLogEntries(
         matchingEntry &&
         shouldCollapseToolLifecycleEntries(matchingEntry, entry)
       ) {
-        collapsed[matchingLifecycleIndex] = mergeDerivedWorkLogEntries(matchingEntry, entry);
+        // Pin the anchor's identity: merged rows keep the FIRST activity's
+        // id/createdAt, so the live row neither jumps past interleaved tool
+        // rows (the timeline sorts by createdAt) nor remounts mid-stream.
+        collapsed[matchingLifecycleIndex] = {
+          ...mergeDerivedWorkLogEntries(matchingEntry, entry),
+          id: matchingEntry.id,
+          createdAt: matchingEntry.createdAt,
+          turnId: matchingEntry.turnId ?? null,
+        };
         continue;
       }
       toolLifecycleRowIndex.delete(lifecycleKey);
@@ -1210,8 +1249,11 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
   }
-  if (entry.toolCallId) {
-    return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
+  // A provider may reuse an id in a later chain. The turn boundary makes the
+  // identity safe for non-adjacent streaming updates; without one, fall back
+  // to the local fuzzy key below.
+  if (entry.toolCallId && entry.turnId) {
+    return `tool:${entry.turnId}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -1662,7 +1704,10 @@ function stripTrailingExitCode(value: string): {
 function extractWorkLogItemType(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["itemType"] | undefined {
-  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
+  if (
+    typeof payload?.itemType === "string" &&
+    (isToolLifecycleItemType(payload.itemType) || payload.itemType === "reasoning")
+  ) {
     return payload.itemType;
   }
   return undefined;

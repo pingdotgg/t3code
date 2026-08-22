@@ -3,6 +3,7 @@ import {
   formatDuration,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
+  workLogEntryIsToolCall,
   workLogEntryIsToolLike,
   type TimelineEntry,
   type TurnPlanEntry,
@@ -848,9 +849,13 @@ export function deriveMessagesTimelineRows(input: {
         (entry) => entry,
       );
       if (visibleGroupedEntries.length > 0) {
+        // Reasoning is not a tool call: a group containing it takes the
+        // mixed-group path below, never the one-line tool collapse (whose
+        // summary would claim a tool-call count over thinking rows).
         const onlyToolEntries = visibleGroupedEntries.every(
           (entry) =>
             workLogEntryIsToolLike(entry) &&
+            entry.itemType !== "reasoning" &&
             entry.agentSpawn === undefined &&
             entry.tone !== "error",
         );
@@ -955,7 +960,7 @@ export function deriveMessagesTimelineRows(input: {
               groupId,
               hiddenCount: hiddenEntries.length,
               expanded,
-              onlyToolEntries: hiddenEntries.every(workLogEntryIsToolLike),
+              onlyToolEntries: hiddenEntries.every(workLogEntryIsToolCall),
               summary: null,
               summaryKind: null,
               hasFailure: hiddenEntries.some((entry) =>

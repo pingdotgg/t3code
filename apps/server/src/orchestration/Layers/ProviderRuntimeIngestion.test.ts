@@ -1117,6 +1117,165 @@ describe("ProviderRuntimeIngestion", () => {
     expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
   });
 
+  it("keeps reasoning item lifecycle activities with the full thinking detail", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const thinking = "g".repeat(400);
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-reasoning-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning-1"),
+      payload: {
+        itemType: "reasoning",
+        status: "inProgress",
+        title: "Reasoning",
+      },
+    });
+
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-reasoning-updated"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning-1"),
+      payload: {
+        itemType: "reasoning",
+        status: "inProgress",
+        title: "Reasoning",
+        detail: thinking,
+        data: { toolCallId: "item-reasoning-1" },
+      },
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-reasoning-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning-1"),
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Reasoning",
+        detail: thinking,
+        data: { toolCallId: "item-reasoning-1" },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-completed",
+      ),
+    );
+
+    const started = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-reasoning-started",
+    );
+    expect(started?.kind).toBe("tool.started");
+    const startedPayload = started?.payload as Record<string, unknown> | undefined;
+    expect(startedPayload?.itemType).toBe("reasoning");
+
+    const updated = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-reasoning-updated",
+    );
+    expect(updated?.kind).toBe("tool.updated");
+    const updatedPayload = updated?.payload as Record<string, unknown> | undefined;
+    expect(updatedPayload?.itemType).toBe("reasoning");
+    // The thinking text is the payload, not a preview: no 180-char truncation.
+    expect(updatedPayload?.detail).toBe(thinking);
+
+    const completed = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-reasoning-completed",
+    );
+    expect(completed?.kind).toBe("tool.completed");
+    const completedPayload = completed?.payload as Record<string, unknown> | undefined;
+    expect(completedPayload?.itemType).toBe("reasoning");
+    expect(completedPayload?.detail).toBe(thinking);
+    const completedData = completedPayload?.data as { toolCallId?: string } | undefined;
+    expect(completedData?.toolCallId).toBe("item-reasoning-1");
+  });
+
+  it("drops reasoning events without a renderable title (Codex summaryPartAdded shape)", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Codex emits reasoning updates with no title and no data.toolCallId;
+    // persisting them would create unlabeled "Tool updated" rows clients
+    // cannot fold, so they stay dropped until the adapter emits Claude's shape.
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-codex-reasoning-updated"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-codex-reasoning"),
+      itemId: asItemId("item-codex-reasoning-1"),
+      payload: {
+        itemType: "reasoning",
+        data: { itemId: "item-codex-reasoning-1", summaryIndex: 0, text: "partial summary" },
+      },
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-codex-reasoning-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-codex-reasoning"),
+      itemId: asItemId("item-codex-reasoning-1"),
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+      },
+    });
+
+    // A renderable reasoning event in the same turn proves only the
+    // unrenderable ones were dropped.
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-claude-reasoning-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-codex-reasoning"),
+      itemId: asItemId("item-claude-reasoning-1"),
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Reasoning",
+        detail: "done thinking",
+        data: { toolCallId: "item-claude-reasoning-1" },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-claude-reasoning-completed",
+      ),
+    );
+
+    expect(
+      thread.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-codex-reasoning-updated",
+      ),
+    ).toBe(false);
+    expect(
+      thread.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-codex-reasoning-completed",
+      ),
+    ).toBe(false);
+  });
+
   it("normalizes command execution activities to ran-command summaries", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

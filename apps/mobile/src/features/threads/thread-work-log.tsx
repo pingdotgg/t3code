@@ -49,6 +49,8 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
       return { ios: "sparkles", android: "auto_awesome" };
     case "alert":
       return { ios: "exclamationmark.triangle", android: "error" };
+    case "brain":
+      return { ios: "brain", android: "psychology" };
     case "check":
       return { ios: "checkmark", android: "check" };
     case "command":
@@ -250,20 +252,32 @@ export function ThreadWorkLog(props: {
 
               {fullDetail ? (
                 <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
-                  <ScrollView
-                    nestedScrollEnabled
-                    directionalLockEnabled
-                    showsVerticalScrollIndicator
-                    className="max-h-60"
-                    contentContainerStyle={{ paddingRight: 8 }}
-                  >
+                  {row.icon === "brain" ? (
+                    // Reasoning is streamed prose the user follows live: the
+                    // block grows with the text instead of scrolling inside a
+                    // fixed-height box (tool outputs keep the max-h-60 clamp).
                     <Text
                       selectable
-                      className="font-mono text-2xs leading-normal text-foreground-muted"
+                      className="pr-2 font-mono text-2xs leading-normal text-foreground-muted"
                     >
                       {fullDetail}
                     </Text>
-                  </ScrollView>
+                  ) : (
+                    <ScrollView
+                      nestedScrollEnabled
+                      directionalLockEnabled
+                      showsVerticalScrollIndicator
+                      className="max-h-60"
+                      contentContainerStyle={{ paddingRight: 8 }}
+                    >
+                      <Text
+                        selectable
+                        className="font-mono text-2xs leading-normal text-foreground-muted"
+                      >
+                        {fullDetail}
+                      </Text>
+                    </ScrollView>
+                  )}
                 </View>
               ) : null}
             </Animated.View>

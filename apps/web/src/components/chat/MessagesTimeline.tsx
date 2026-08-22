@@ -46,6 +46,7 @@ import {
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
+  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -2143,6 +2144,7 @@ function formatWorkingTimerNow(startIso: string): string {
 
 type WorkEntryIconName =
   | "bot"
+  | "brain"
   | "check"
   | "circle-alert"
   | "eye"
@@ -2160,6 +2162,8 @@ function WorkEntryIconSvg({ name, className }: { name: WorkEntryIconName; classN
   switch (name) {
     case "bot":
       return <BotIcon className={className} aria-hidden />;
+    case "brain":
+      return <BrainIcon className={className} aria-hidden />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
@@ -2423,7 +2427,11 @@ function liveWorkEntryLabel(
     return "Running command";
   }
 
-  return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
+  const preview = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
+  // A streaming reasoning preview is the full thinking text (up to 20k): the
+  // visible row truncates to one line, but this string also becomes the live
+  // button's accessible name — keep it a label, not a transcript.
+  return preview.length > 200 ? `${preview.slice(0, 200)}…` : preview;
 }
 
 function buildToolCallExpandedBody(
@@ -2457,6 +2465,13 @@ function buildToolCallExpandedBody(
 const toolCallExpandedBodyClassName =
   "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
 
+// Reasoning is streamed prose the user follows live: clamping it to max-h-64
+// forced scrolling a 16rem box while the thinking kept growing past it. The
+// block grows with the text instead (Claude Code behavior); tool outputs keep
+// the clamp.
+const reasoningExpandedBodyClassName =
+  "cursor-text whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
+
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
@@ -2474,6 +2489,8 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
       return "hammer";
     case "collab_agent_tool_call":
       return "bot";
+    case "reasoning":
+      return "brain";
   }
 
   // Subagent lifecycle rows (grouped by taskId) get agent identity chrome.
@@ -2650,9 +2667,15 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         ? "text-secondary-label"
         : "text-foreground/80";
   const showEntryIcon = !isExpandedToolGroupEntry || showWarningIndicator || showFailedIndicator;
+  // Reasoning previews carry the full thinking text (up to 20k) and command
+  // rows put the verbatim command here: clamp BEFORE composing the failure
+  // suffix, so the announcement is never sliced off, and the accessible name
+  // stays a label, not a transcript.
+  const clampedDisplayText =
+    displayText.length > 200 ? `${displayText.slice(0, 200)}…` : displayText;
   const accessibleDisplayText = showFailedIndicator
-    ? `${displayText}, tool call failed`
-    : displayText;
+    ? `${clampedDisplayText}, tool call failed`
+    : clampedDisplayText;
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
@@ -2719,7 +2742,15 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+          <pre
+            className={
+              workEntry.itemType === "reasoning"
+                ? reasoningExpandedBodyClassName
+                : toolCallExpandedBodyClassName
+            }
+          >
+            {expandedBody}
+          </pre>
         </div>
       ) : null}
     </div>

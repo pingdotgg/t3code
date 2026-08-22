@@ -203,6 +203,188 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("collapses tool lifecycle rows keyed by payload-level toolCallId", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-tcid"),
+      projectId: ProjectId.make("project-1"),
+      title: "Payload identity",
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("t-updated"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "bun test",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("other-tool"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read file",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Read file",
+            itemType: "file_read",
+            toolCallId: "call-2",
+            detail: "index.ts",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("t-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "bun test — 3 passed",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    // The interleaved completion folds into its first row even though the
+    // identity arrived at payload level, not inside data.
+    expect(activities).toHaveLength(2);
+    expect(activities[0]?.summary).toContain("Run tests");
+    expect(activities[0]?.getFullDetail()).toContain("3 passed");
+  });
+
+  it("does not collapse a reused toolCallId across turns", () => {
+    const turn1 = TurnId.make("turn-1");
+    const turn2 = TurnId.make("turn-2");
+    const thread = makeThread({
+      id: ThreadId.make("thread-cross-turn"),
+      projectId: ProjectId.make("project-1"),
+      title: "Cross turn",
+      latestTurn: {
+        turnId: turn2,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:05.000Z",
+        startedAt: "2026-04-01T00:00:06.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("turn1-updated"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: turn1,
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "first run",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("turn2-updated"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:06.000Z",
+          turnId: turn2,
+          payload: {
+            title: "Run tests",
+            itemType: "command_execution",
+            toolCallId: "call-1",
+            detail: "second run",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities).toHaveLength(2);
+    expect(activities[0]?.getFullDetail()).toContain("first run");
+    expect(activities[1]?.getFullDetail()).toContain("second run");
+  });
+
+  it("does not identity-collapse reused toolCallIds without turn boundaries", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-turnless-identity"),
+      projectId: ProjectId.make("project-1"),
+      title: "Turnless identities",
+      activities: [
+        makeActivity({
+          id: EventId.make("turnless-tool-first"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Tool",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: {
+            title: "Tool",
+            itemType: "command_execution",
+            toolCallId: "reused-call",
+            detail: "first turnless chain",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("turnless-tool-interleaved"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Other tool",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            title: "Other tool",
+            itemType: "command_execution",
+            toolCallId: "other-call",
+            detail: "interleaved chain",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("turnless-tool-second"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Tool",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          payload: {
+            title: "Tool",
+            itemType: "command_execution",
+            toolCallId: "reused-call",
+            detail: "second turnless chain",
+          },
+        }),
+      ],
+    });
+
+    const activities = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities).toHaveLength(3);
+    expect(activities[0]?.getFullDetail()).toContain("first turnless chain");
+    expect(activities[2]?.getFullDetail()).toContain("second turnless chain");
+  });
+
   it("collapses matching tool lifecycle rows like desktop", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-2"),
@@ -558,6 +740,219 @@ describe("buildThreadFeed", () => {
     });
   });
 
+  it("never marks reasoning rows as failures when thinking quotes errors", () => {
+    const turnId = TurnId.make("turn-reasoning");
+    const thread = makeThread({
+      id: ThreadId.make("thread-reasoning"),
+      projectId: ProjectId.make("project-1"),
+      title: "Thinking",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("reasoning-1"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Reasoning",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: {
+            title: "Reasoning",
+            itemType: "reasoning",
+            detail: "The previous attempt failed with exit code 1: command not found",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ status: null, icon: "brain" }],
+    });
+  });
+
+  it("collapses reasoning updates interleaved with streaming tool calls into one row", () => {
+    // Claude streams thinking deltas interleaved with tool_call input deltas;
+    // adjacent-only folding used to split one block into a row per update.
+    const turnId = TurnId.make("turn-reasoning-interleaved");
+    const thread = makeThread({
+      id: ThreadId.make("thread-reasoning-interleaved"),
+      projectId: ProjectId.make("project-1"),
+      title: "Thinking",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("reasoning-update-1"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Reasoning",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            itemType: "reasoning",
+            status: "inProgress",
+            detail: "Let",
+            data: { toolCallId: "reasoning-item-1" },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("grep-update"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Grep",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "inProgress",
+            detail: 'Grep: {"pattern":"rea',
+            data: { toolCallId: "call-grep-1" },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("reasoning-complete"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Reasoning",
+          createdAt: "2026-04-01T00:00:04.000Z",
+          turnId,
+          payload: {
+            itemType: "reasoning",
+            status: "completed",
+            detail: "Let me look at the code",
+            data: { toolCallId: "reasoning-item-1" },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("grep-complete"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Grep",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "completed",
+            detail: 'Grep: {"pattern":"reasoning"}',
+            data: { toolCallId: "call-grep-1" },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    const reasoning = activities.filter((activity) => activity.icon === "brain");
+    expect(reasoning).toHaveLength(1);
+    // The row anchors where thinking started and carries the final full text.
+    expect(reasoning[0]?.id).toBe(EventId.make("reasoning-update-1"));
+    expect(reasoning[0]?.getFullDetail()).toContain("Let me look at the code");
+    const grep = activities.filter((activity) => activity.summary.includes("Grep"));
+    expect(grep).toHaveLength(1);
+    expect(grep[0]?.id).toBe(EventId.make("grep-update"));
+  });
+
+  it("hides reasoning rows that never accumulated thinking text", () => {
+    const turnId = TurnId.make("turn-reasoning-empty");
+    const thread = makeThread({
+      id: ThreadId.make("thread-reasoning-empty"),
+      projectId: ProjectId.make("project-1"),
+      title: "Redacted thinking",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("reasoning-empty"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Reasoning",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: {
+            title: "Reasoning",
+            itemType: "reasoning",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+
+    // No thinking text (e.g. redacted_thinking): the row stays neutral and
+    // the presentation filter keeps it out of the feed.
+    const feed = buildThreadFeed(thread);
+    const presented = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    expect(presented.filter((entry) => entry.type === "activity-group")).toHaveLength(0);
+  });
+
+  it("collapses a streamed reasoning update chain into one live row", () => {
+    const turnId = TurnId.make("turn-reasoning-stream");
+    const reasoningUpdate = (id: string, createdAt: string, detail: string) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind: "tool.updated",
+        tone: "tool",
+        summary: "Reasoning",
+        createdAt,
+        turnId,
+        payload: {
+          title: "Reasoning",
+          itemType: "reasoning",
+          status: "inProgress",
+          detail,
+          data: { toolCallId: "reasoning-item-1" },
+        },
+      });
+    const thread = makeThread({
+      id: ThreadId.make("thread-reasoning-stream"),
+      projectId: ProjectId.make("project-1"),
+      title: "Thinking",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        reasoningUpdate("rs-1", "2026-04-01T00:00:02.000Z", "Let me"),
+        reasoningUpdate("rs-2", "2026-04-01T00:00:03.000Z", "Let me think"),
+        reasoningUpdate("rs-3", "2026-04-01T00:00:04.000Z", "Let me think about this"),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed).toHaveLength(1);
+    // The whole chain folds into a single row carrying the latest text.
+    expect(feed[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ detail: "Let me think about this", icon: "brain" }],
+    });
+  });
+
   it("appends active work as a normal timeline row", () => {
     const startedAt = "2026-04-01T00:00:01.000Z";
     const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
@@ -588,6 +983,7 @@ describe("buildThreadFeed", () => {
       getCopyText: () => id,
       icon: "command",
       toolLike: true,
+      toolCall: true,
       status,
     });
     const feed: ThreadFeedEntry[] = [
