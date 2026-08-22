@@ -763,7 +763,7 @@ struct ProviderModelDisplaySections {
 
         let matchingLabels = Dictionary(grouping: catalog.all) { option in
             ModelPresentationKey(
-                providerID: option.provider.id,
+                providerName: option.provider.name,
                 name: option.model.name,
                 detail: option.model.detail ?? option.model.id
             )
@@ -776,7 +776,7 @@ struct ProviderModelDisplaySections {
     }
 
     private struct ModelPresentationKey: Hashable {
-        let providerID: String
+        let providerName: String
         let name: String
         let detail: String
     }

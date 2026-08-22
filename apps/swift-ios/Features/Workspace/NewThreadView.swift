@@ -578,12 +578,6 @@ public struct NewThreadView: View {
         guard selectedProject != nil else { return "Choose a project." }
         if let selectedEnvironment {
             guard selectedEnvironment.isEnabled else { return "Environment is off." }
-            switch selectedEnvironment.connectionState {
-            case .disconnected: return "Environment is offline."
-            case .connecting: return "Environment is connecting."
-            case .reconnecting: return "Environment is reconnecting."
-            case .connected, .none: break
-            }
         }
         guard restoredDraftProjectID == projectID else { return "Project is loading." }
         guard concreteSelection != nil else {

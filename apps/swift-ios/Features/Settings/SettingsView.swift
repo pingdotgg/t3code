@@ -5,6 +5,7 @@ public struct SettingsView: View {
     @Bindable private var model: FeatureRootModel
     @State private var settings: FeatureSettings
     @State private var isSaving = false
+    @State private var appearanceSaveTask: Task<Bool, Never>?
     @State private var saveErrorMessage: String?
     @State private var showingDiscardConfirmation = false
 
@@ -79,14 +80,7 @@ public struct SettingsView: View {
                 model.setConnectionManagementPresented(false)
             }
             .onChange(of: settings.appearance) { _, appearance in
-                Task {
-                    let didSave = await model.saveAppearance(appearance)
-                    if !didSave {
-                        settings.appearance = model.snapshot.settings.appearance
-                        saveErrorMessage = model.errorMessage
-                            ?? "Theme preference could not be saved."
-                    }
-                }
+                saveAppearance(appearance)
             }
         }
         .interactiveDismissDisabled(isSaving || hasUnsavedChanges)
@@ -248,29 +242,9 @@ public struct SettingsView: View {
     }
 
     private var connectedEnvironments: [FeatureEnvironment] {
-        let enabled = model.snapshot.environments.filter(\.isEnabled)
-        let connected = enabled.filter { $0.connectionState == .connected }
-        guard connected.isEmpty, model.snapshot.connection.state == .connected else {
-            return connected
+        model.snapshot.environments.filter {
+            ConnectionHubPresentation.status(for: $0) == .online
         }
-
-        let unchecked = enabled.filter { $0.connectionState == nil }
-        let connection = model.snapshot.connection
-        if let endpoint = connection.endpoint,
-           let environment = unchecked.first(where: { $0.endpoint == endpoint }) {
-            return [environment]
-        }
-
-        if let name = connection.environmentName,
-           let environment = unchecked.first(where: { $0.name == name }) {
-            return [environment]
-        }
-
-        if let environment = unchecked.first(where: \.isActive) {
-            return [environment]
-        }
-
-        return []
     }
 
     private var environmentCountLabel: String? {
@@ -306,9 +280,31 @@ public struct SettingsView: View {
     }
 
     @MainActor
+    private func saveAppearance(_ appearance: FeatureAppearance) {
+        let previousSave = appearanceSaveTask
+        appearanceSaveTask = Task {
+            _ = await previousSave?.value
+
+            let didSave = await model.saveAppearance(appearance)
+            if !didSave {
+                settings.appearance = model.snapshot.settings.appearance
+                saveErrorMessage = model.errorMessage
+                    ?? "Theme preference could not be saved."
+            }
+            return didSave
+        }
+    }
+
+    @MainActor
     private func save() {
+        let pendingAppearanceSave = appearanceSaveTask
         isSaving = true
         Task {
+            if let pendingAppearanceSave, await pendingAppearanceSave.value == false {
+                isSaving = false
+                return
+            }
+
             let didSave = await model.saveSettings(settings)
             isSaving = false
             if didSave {

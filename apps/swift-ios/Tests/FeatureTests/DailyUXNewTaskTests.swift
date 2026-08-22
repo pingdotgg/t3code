@@ -965,6 +965,39 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
+    func modelPickerDisambiguatesProvidersWithTheSameVisibleName() {
+        let providers = [
+            FeatureProvider(
+                id: "opencode-work",
+                name: "OpenCode",
+                models: [
+                    .init(id: "work/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+                ]
+            ),
+            FeatureProvider(
+                id: "opencode-personal",
+                name: "OpenCode",
+                models: [
+                    .init(id: "personal/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+                ]
+            ),
+        ]
+        let sections = ProviderModelDisplaySections(
+            catalog: DailyUXModelCatalog(
+                providers: providers,
+                query: "",
+                favoriteIDs: [],
+                recentIDs: []
+            )
+        )
+
+        #expect(sections.disambiguatedModelIDs == Set([
+            "opencode-work::work/gpt-5.6-luna",
+            "opencode-personal::personal/gpt-5.6-luna",
+        ]))
+    }
+
+    @Test
     func projectPickerSearchMatchesNamesPathsAndEnvironmentNames() {
         let studio = FeatureEnvironment(
             id: "studio",
