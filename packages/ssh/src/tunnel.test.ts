@@ -191,7 +191,8 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
     assert.include(buildRemoteLaunchScript(), "discover_running_runtime()");
     assert.include(buildRemoteLaunchScript(), "systemctl --user show t3code.service");
-    assert.include(buildRemoteLaunchScript(), 'fs.readdirSync("/proc")');
+    assert.notInclude(buildRemoteLaunchScript(), 'fs.readdirSync("/proc")');
+    assert.include(buildRemoteLaunchScript(), "knownBaseDirPath");
     assert.include(buildRemoteLaunchScript(), '"server-runtime.json"');
     assert.include(buildRemoteLaunchScript(), 'origin.protocol !== "http:"');
     assert.notInclude(buildRemoteLaunchScript(), "AbortSignal.timeout(2500)");
@@ -222,6 +223,7 @@ describe("ssh tunnel scripts", () => {
       assert.include(script, "acquire_state_lock()");
       assert.include(script, "release_state_lock()");
       assert.include(script, "flock -w 45 9");
+      assert.include(script, 'ln "$STATE_LOCK_OWNER_FILE" "$STATE_LOCK_LINK"');
       assert.include(script, 'kill -0 "$STATE_LOCK_OWNER_PID"');
       assert.include(script, 'STATE_LOCK_WAIT_COUNT" -ge 450');
       assert.include(script, "acquire_state_lock");
@@ -234,6 +236,8 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
     assert.include(buildRemoteLaunchScript(), "< /dev/null 9>&- &");
+    assert.include(buildRemoteLaunchScript(), 'mv "$DISCOVERED_BASE_DIR_FILE" "$BASE_DIR_FILE"');
+    assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$PREVIOUS_REMOTE_PORT"');
     assert.include(buildRemoteLaunchScript(), 'if [ -n "$LAUNCHED_PID" ]; then');
     assert.notInclude(
       buildRemoteLaunchScript(),

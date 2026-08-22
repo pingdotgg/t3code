@@ -455,7 +455,8 @@ exit 1
 
 const REMOTE_STATE_LOCK_SCRIPT = `acquire_state_lock() {
   STATE_LOCK_FILE="$STATE_DIR/operation.lock"
-  STATE_LOCK_DIR="$STATE_DIR/operation.lock.d"
+  STATE_LOCK_LINK="$STATE_DIR/operation.lock.link"
+  STATE_LOCK_OWNER_FILE="$STATE_DIR/operation.lock.owner.$$"
   STATE_LOCK_MODE=""
   if command -v flock >/dev/null 2>&1; then
     exec 9>"$STATE_LOCK_FILE"
@@ -468,43 +469,38 @@ const REMOTE_STATE_LOCK_SCRIPT = `acquire_state_lock() {
   fi
 
   STATE_LOCK_WAIT_COUNT=0
-  STATE_LOCK_MISSING_PID_COUNT=0
-  while ! mkdir "$STATE_LOCK_DIR" 2>/dev/null; do
-    STATE_LOCK_OWNER_PID="$(cat "$STATE_LOCK_DIR/pid" 2>/dev/null || true)"
+  printf '%s\n' "$$" >"$STATE_LOCK_OWNER_FILE"
+  while ! ln "$STATE_LOCK_OWNER_FILE" "$STATE_LOCK_LINK" 2>/dev/null; do
+    STATE_LOCK_OWNER_PID="$(cat "$STATE_LOCK_LINK" 2>/dev/null || true)"
     if [ -n "$STATE_LOCK_OWNER_PID" ]; then
-      STATE_LOCK_MISSING_PID_COUNT=0
       if ! kill -0 "$STATE_LOCK_OWNER_PID" 2>/dev/null; then
-        rm -f "$STATE_LOCK_DIR/pid"
-        rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
-        continue
-      fi
-    else
-      STATE_LOCK_MISSING_PID_COUNT=$((STATE_LOCK_MISSING_PID_COUNT + 1))
-      if [ "$STATE_LOCK_MISSING_PID_COUNT" -ge 10 ]; then
-        rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
-        STATE_LOCK_MISSING_PID_COUNT=0
+        rm -f "$STATE_LOCK_LINK"
         continue
       fi
     fi
     STATE_LOCK_WAIT_COUNT=$((STATE_LOCK_WAIT_COUNT + 1))
     if [ "$STATE_LOCK_WAIT_COUNT" -ge 450 ]; then
       printf 'Timed out waiting for another T3 SSH operation to finish.\n' >&2
+      rm -f "$STATE_LOCK_OWNER_FILE"
       return 1
     fi
     sleep 0.1
   done
-  printf '%s\n' "$$" >"$STATE_LOCK_DIR/pid"
-  STATE_LOCK_MODE="mkdir"
+  rm -f "$STATE_LOCK_OWNER_FILE"
+  STATE_LOCK_MODE="link"
 }
 
 release_state_lock() {
   if [ "\${STATE_LOCK_MODE:-}" = "flock" ]; then
     flock -u 9 2>/dev/null || true
     exec 9>&-
-  elif [ "\${STATE_LOCK_MODE:-}" = "mkdir" ]; then
-    rm -f "$STATE_LOCK_DIR/pid"
-    rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
+  elif [ "\${STATE_LOCK_MODE:-}" = "link" ]; then
+    STATE_LOCK_OWNER_PID="$(cat "$STATE_LOCK_LINK" 2>/dev/null || true)"
+    if [ "$STATE_LOCK_OWNER_PID" = "$$" ]; then
+      rm -f "$STATE_LOCK_LINK"
+    fi
   fi
+  rm -f "\${STATE_LOCK_OWNER_FILE:-}"
   STATE_LOCK_MODE=""
 }`;
 
@@ -521,12 +517,13 @@ BASE_DIR_FILE="$STATE_DIR/base-dir"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+DISCOVERED_BASE_DIR_FILE="$STATE_DIR/base-dir.next.$$"
 mkdir -p "$STATE_DIR"
 umask 077
 @@T3_STATE_LOCK_SCRIPT@@
 LAUNCHED_PID=""
 cleanup_runner_next() {
-  rm -f "$RUNNER_NEXT"
+  rm -f "$RUNNER_NEXT" "$DISCOVERED_BASE_DIR_FILE"
   release_state_lock
 }
 abort_remote_launch() {
@@ -582,13 +579,14 @@ discover_running_runtime() {
   if command -v systemctl >/dev/null 2>&1; then
     SERVICE_PID="$(systemctl --user show t3code.service --property=MainPID --value 2>/dev/null || true)"
   fi
-  node - "$DEFAULT_SERVER_HOME" "$BASE_DIR_FILE" "$SERVICE_PID" "\${T3CODE_HOME:-}" <<'NODE'
+  node - "$DEFAULT_SERVER_HOME" "$BASE_DIR_FILE" "$DISCOVERED_BASE_DIR_FILE" "$SERVICE_PID" "\${T3CODE_HOME:-}" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const defaultBaseDir = process.argv[2] ?? "";
-const baseDirOutputPath = process.argv[3] ?? "";
-const servicePid = Number.parseInt(process.argv[4] ?? "", 10);
-const environmentBaseDir = process.argv[5] ?? "";
+const knownBaseDirPath = process.argv[3] ?? "";
+const baseDirOutputPath = process.argv[4] ?? "";
+const servicePid = Number.parseInt(process.argv[5] ?? "", 10);
+const environmentBaseDir = process.argv[6] ?? "";
 const candidates = [];
 const seen = new Set();
 const addBaseDir = (value) => {
@@ -606,13 +604,11 @@ const addBaseDirFromPid = (pid) => {
   } catch {}
 };
 
-addBaseDirFromPid(servicePid);
 addBaseDir(environmentBaseDir);
 try {
-  for (const entry of fs.readdirSync("/proc")) {
-    if (/^[1-9][0-9]*$/u.test(entry)) addBaseDirFromPid(Number(entry));
-  }
+  addBaseDir(fs.readFileSync(knownBaseDirPath, "utf8"));
 } catch {}
+addBaseDirFromPid(servicePid);
 addBaseDir(defaultBaseDir);
 
 const isAlive = (pid) => {
@@ -682,11 +678,15 @@ if [ -n "$RUNNER_RUNTIME_PORT" ]; then
 elif [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
+  printf '%s\n' "$DEFAULT_SERVER_HOME" >"$DISCOVERED_BASE_DIR_FILE"
 fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   PREVIOUS_REMOTE_PORT="$REMOTE_PORT"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    if [ -f "$DISCOVERED_BASE_DIR_FILE" ]; then
+      mv "$DISCOVERED_BASE_DIR_FILE" "$BASE_DIR_FILE"
+    fi
     if [ "$REMOTE_MANAGED" = "managed" ] && [ "$PREVIOUS_REMOTE_PORT" = "$DEFAULT_REMOTE_PORT" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
       printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
     elif [ "$REMOTE_MANAGED" = "managed" ]; then
@@ -709,7 +709,10 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
     fi
   else
     printf 'Existing remote T3 server did not become ready on 127.0.0.1:%s.\n' "$REMOTE_PORT" >&2
-    exit 1
+    REMOTE_PORT="$PREVIOUS_REMOTE_PORT"
+    DEFAULT_REMOTE_PORT=""
+    DEFAULT_RUNTIME_PID=""
+    rm -f "$DISCOVERED_BASE_DIR_FILE"
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
