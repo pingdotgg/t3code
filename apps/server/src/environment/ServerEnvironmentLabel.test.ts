@@ -61,6 +61,54 @@ afterEach(() => {
 });
 
 describe("resolveServerEnvironmentLabel", () => {
+  it.effect("prefers a configured override label over the macOS ComputerName", () =>
+    Effect.gen(function* () {
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+        overrideLabel: "Mark's Mac mini (9773)",
+      }).pipe(Effect.provide(withHostPlatform(TestLayer, "darwin", "macbook-pro")));
+
+      expect(result).toBe("Mark's Mac mini (9773)");
+      expect(runMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("trims a configured override label", () =>
+    Effect.gen(function* () {
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+        overrideLabel: "  Staging Box  ",
+      }).pipe(Effect.provide(withHostPlatform(TestLayer, "linux", "buildbox")));
+
+      expect(result).toBe("Staging Box");
+      expect(runMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("falls back to OS detection when the override label is blank", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        Effect.succeed({
+          stdout: " Julius's MacBook Pro \n",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+      );
+
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+        overrideLabel: "   ",
+      }).pipe(Effect.provide(withHostPlatform(TestLayer, "darwin", "macbook-pro")));
+
+      expect(result).toBe("Julius's MacBook Pro");
+    }),
+  );
+
   it.effect("uses hostname fallback regardless of launch mode", () =>
     Effect.gen(function* () {
       const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({

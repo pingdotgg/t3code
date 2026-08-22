@@ -335,6 +335,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     mode: "web",
     port: state.port,
     host: state.host,
+    environmentLabel: undefined,
     cwd: process.cwd(),
     baseDir,
     ...derivedPaths,
