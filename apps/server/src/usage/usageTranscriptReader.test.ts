@@ -159,4 +159,13 @@ describe("readTranscriptRecords for mcode", () => {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("distinguishes a stat failure from an empty in-window store", async () => {
+    expect(
+      await statSqliteUsageStore(
+        NodePath.join(NodeOS.tmpdir(), "t3-mcode-missing-stat", "runtime-state.sqlite"),
+        0,
+      ),
+    ).toBeNull();
+  });
 });

@@ -85,7 +85,7 @@ export async function listTranscriptFiles(
 export async function statSqliteUsageStore(
   filePath: string,
   sinceMs: number,
-): Promise<readonly TranscriptFile[]> {
+): Promise<readonly TranscriptFile[] | null> {
   try {
     const stats = await NodeFSP.stat(filePath);
     const walStats = await NodeFSP.stat(`${filePath}-wal`).catch(() => null);
@@ -93,7 +93,7 @@ export async function statSqliteUsageStore(
     const mtimeMs = Math.max(stats.mtimeMs, walStats?.mtimeMs ?? 0);
     return mtimeMs >= sinceMs ? [{ path: filePath, size, mtimeMs }] : [];
   } catch {
-    return [];
+    return null;
   }
 }
 

@@ -26,7 +26,7 @@ export const PROVIDER_PRESENTATION = {
   },
   mcode: {
     label: "MCode",
-    color: "#7DC6FF",
+    color: "var(--usage-provider-mcode)",
     mark: MCode,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;

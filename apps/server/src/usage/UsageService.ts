@@ -443,14 +443,16 @@ export const make = Effect.gen(function* () {
       }
 
       walkedRoots.push(dir);
-      const files = yield* Effect.promise(() =>
+      const listedFiles = yield* Effect.promise(() =>
         source.file === undefined
           ? listTranscriptFiles(dir, windowStartMs)
           : statSqliteUsageStore(source.file, windowStartMs),
       );
+      const listingFailed = listedFiles === null;
+      const files = listedFiles ?? [];
       let scannedFiles = 0;
       let skippedFiles = 0;
-      let failedFiles = 0;
+      let failedFiles = listingFailed ? 1 : 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
@@ -482,7 +484,10 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      const readHealth = summarizeSourceReadFailures(files.length, failedFiles);
+      const readHealth = summarizeSourceReadFailures(
+        files.length + (listingFailed ? 1 : 0),
+        failedFiles,
+      );
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
         status: readHealth.status,

@@ -23,6 +23,6 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
   return {
     claude: "#d97757",
     codex: scheme === "dark" ? "#e6e6e6" : "#3c3c43",
-    mcode: "#7DC6FF",
+    mcode: scheme === "dark" ? "#7DC6FF" : "#2563EB",
   };
 }
