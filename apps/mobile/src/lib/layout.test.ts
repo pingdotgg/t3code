@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   constrainAuxiliaryPaneWidth,
+  shouldOfferSidebarReveal,
   constrainPrimarySidebarWidth,
   deriveCenteredContentHorizontalPadding,
   deriveFileInspectorPaneLayout,
@@ -339,5 +340,25 @@ describe("deriveStableFormSheetDetent", () => {
     { height: 0, expected: 0.92 },
   ])("derives a stable sheet detent for height $height", ({ height, expected }) => {
     expect(deriveStableFormSheetDetent(height)).toBe(expected);
+  });
+});
+
+describe("shouldOfferSidebarReveal", () => {
+  it("offers the sidebar back when it is hidden and the header has no toggle", () => {
+    expect(
+      shouldOfferSidebarReveal({ primarySidebarVisible: false, hasHeaderSidebarToggle: false }),
+    ).toBe(true);
+  });
+
+  it("stays quiet while the sidebar is on screen", () => {
+    expect(
+      shouldOfferSidebarReveal({ primarySidebarVisible: true, hasHeaderSidebarToggle: false }),
+    ).toBe(false);
+  });
+
+  it("defers to a header that already carries the toggle", () => {
+    expect(
+      shouldOfferSidebarReveal({ primarySidebarVisible: false, hasHeaderSidebarToggle: true }),
+    ).toBe(false);
   });
 });

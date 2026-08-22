@@ -254,3 +254,17 @@ export function deriveStableFormSheetDetent(containerHeight: number): number {
   );
   return Math.round(detent * 1_000) / 1_000;
 }
+
+/**
+ * Whether a detail pane has to offer the sidebar back itself.
+ *
+ * True only when the sidebar is hidden AND this surface's header has no toggle
+ * of its own — Android's split-view Home draws no header at all, so without
+ * this the sidebar can be hidden there and never recovered.
+ */
+export function shouldOfferSidebarReveal(input: {
+  readonly primarySidebarVisible: boolean;
+  readonly hasHeaderSidebarToggle: boolean;
+}): boolean {
+  return !input.primarySidebarVisible && !input.hasHeaderSidebarToggle;
+}
