@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
@@ -56,7 +57,7 @@ const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
-const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const REMOTE_REUSE_READY_TIMEOUT_MS = 20_000;
 
 export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
@@ -452,6 +453,61 @@ printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPE
 exit 1
 `;
 
+const REMOTE_STATE_LOCK_SCRIPT = `acquire_state_lock() {
+  STATE_LOCK_FILE="$STATE_DIR/operation.lock"
+  STATE_LOCK_DIR="$STATE_DIR/operation.lock.d"
+  STATE_LOCK_MODE=""
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$STATE_LOCK_FILE"
+    if ! flock -w 45 9; then
+      printf 'Timed out waiting for another T3 SSH operation to finish.\n' >&2
+      return 1
+    fi
+    STATE_LOCK_MODE="flock"
+    return 0
+  fi
+
+  STATE_LOCK_WAIT_COUNT=0
+  STATE_LOCK_MISSING_PID_COUNT=0
+  while ! mkdir "$STATE_LOCK_DIR" 2>/dev/null; do
+    STATE_LOCK_OWNER_PID="$(cat "$STATE_LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -n "$STATE_LOCK_OWNER_PID" ]; then
+      STATE_LOCK_MISSING_PID_COUNT=0
+      if ! kill -0 "$STATE_LOCK_OWNER_PID" 2>/dev/null; then
+        rm -f "$STATE_LOCK_DIR/pid"
+        rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
+        continue
+      fi
+    else
+      STATE_LOCK_MISSING_PID_COUNT=$((STATE_LOCK_MISSING_PID_COUNT + 1))
+      if [ "$STATE_LOCK_MISSING_PID_COUNT" -ge 10 ]; then
+        rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
+        STATE_LOCK_MISSING_PID_COUNT=0
+        continue
+      fi
+    fi
+    STATE_LOCK_WAIT_COUNT=$((STATE_LOCK_WAIT_COUNT + 1))
+    if [ "$STATE_LOCK_WAIT_COUNT" -ge 450 ]; then
+      printf 'Timed out waiting for another T3 SSH operation to finish.\n' >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  printf '%s\n' "$$" >"$STATE_LOCK_DIR/pid"
+  STATE_LOCK_MODE="mkdir"
+}
+
+release_state_lock() {
+  if [ "\${STATE_LOCK_MODE:-}" = "flock" ]; then
+    flock -u 9 2>/dev/null || true
+    exec 9>&-
+  elif [ "\${STATE_LOCK_MODE:-}" = "mkdir" ]; then
+    rm -f "$STATE_LOCK_DIR/pid"
+    rmdir "$STATE_LOCK_DIR" 2>/dev/null || true
+  fi
+  STATE_LOCK_MODE=""
+}`;
+
 export const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
@@ -461,14 +517,35 @@ DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 mkdir -p "$STATE_DIR"
+umask 077
+@@T3_STATE_LOCK_SCRIPT@@
+LAUNCHED_PID=""
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
+  release_state_lock
+}
+abort_remote_launch() {
+  if [ -n "$LAUNCHED_PID" ] && kill -0 "$LAUNCHED_PID" 2>/dev/null; then
+    kill "$LAUNCHED_PID" 2>/dev/null || true
+    ABORT_WAIT_COUNT=0
+    while kill -0 "$LAUNCHED_PID" 2>/dev/null && [ "$ABORT_WAIT_COUNT" -lt 20 ]; do
+      ABORT_WAIT_COUNT=$((ABORT_WAIT_COUNT + 1))
+      sleep 0.1
+    done
+  fi
+  if [ -n "$LAUNCHED_PID" ]; then
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
+  fi
+  exit 1
 }
 trap cleanup_runner_next EXIT
+trap abort_remote_launch HUP INT TERM
+acquire_state_lock
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
@@ -500,6 +577,77 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
+discover_running_runtime() {
+  SERVICE_PID=""
+  if command -v systemctl >/dev/null 2>&1; then
+    SERVICE_PID="$(systemctl --user show t3code.service --property=MainPID --value 2>/dev/null || true)"
+  fi
+  node - "$DEFAULT_SERVER_HOME" "$BASE_DIR_FILE" "$SERVICE_PID" "\${T3CODE_HOME:-}" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const defaultBaseDir = process.argv[2] ?? "";
+const baseDirOutputPath = process.argv[3] ?? "";
+const servicePid = Number.parseInt(process.argv[4] ?? "", 10);
+const environmentBaseDir = process.argv[5] ?? "";
+const candidates = [];
+const seen = new Set();
+const addBaseDir = (value) => {
+  const baseDir = value.trim();
+  if (baseDir.length === 0 || seen.has(baseDir)) return;
+  seen.add(baseDir);
+  candidates.push(baseDir);
+};
+const addBaseDirFromPid = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try {
+    const environment = fs.readFileSync(\`/proc/\${pid}/environ\`, "utf8").split("\\0");
+    const value = environment.find((entry) => entry.startsWith("T3CODE_HOME="));
+    if (value) addBaseDir(value.slice("T3CODE_HOME=".length));
+  } catch {}
+};
+
+addBaseDirFromPid(servicePid);
+addBaseDir(environmentBaseDir);
+try {
+  for (const entry of fs.readdirSync("/proc")) {
+    if (/^[1-9][0-9]*$/u.test(entry)) addBaseDirFromPid(Number(entry));
+  }
+} catch {}
+addBaseDir(defaultBaseDir);
+
+const isAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error && typeof error === "object" && error.code === "EPERM";
+  }
+};
+
+for (const baseDir of candidates) {
+  for (const variant of ["userdata", "dev"]) {
+    try {
+      const runtime = JSON.parse(
+        fs.readFileSync(path.join(baseDir, variant, "server-runtime.json"), "utf8"),
+      );
+      const pid = Number(runtime.pid);
+      const port = Number(runtime.port);
+      if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port) || !isAlive(pid)) {
+        continue;
+      }
+      const origin = new URL(String(runtime.origin ?? ""));
+      if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
+        continue;
+      }
+      fs.writeFileSync(baseDirOutputPath, \`\${baseDir}\\n\`, { mode: 0o600 });
+      process.stdout.write(String(port));
+      process.exit(0);
+    } catch {}
+  }
+}
+process.exitCode = 1;
+NODE
+}
 resolve_default_runtime_port() {
   node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
 const fs = require("node:fs");
@@ -525,17 +673,23 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+RUNNER_RUNTIME_PORT="$(discover_running_runtime 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
-if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
+if [ -n "$RUNNER_RUNTIME_PORT" ]; then
+  DEFAULT_REMOTE_PORT="$RUNNER_RUNTIME_PORT"
+elif [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+  PREVIOUS_REMOTE_PORT="$REMOTE_PORT"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if [ "$REMOTE_MANAGED" = "managed" ]; then
+    if [ "$REMOTE_MANAGED" = "managed" ] && [ "$PREVIOUS_REMOTE_PORT" = "$DEFAULT_REMOTE_PORT" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    elif [ "$REMOTE_MANAGED" = "managed" ]; then
       PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
       if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
         kill "$PID_TO_STOP" 2>/dev/null || true
@@ -554,9 +708,8 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_MANAGED="external"
     fi
   else
-    REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-    REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
-    REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+    printf 'Existing remote T3 server did not become ready on 127.0.0.1:%s.\n' "$REMOTE_PORT" >&2
+    exit 1
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
@@ -590,8 +743,10 @@ if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" >>"$LOG_FILE" 2>&1 < /dev/null 9>&- &
   REMOTE_PID="$!"
+  LAUNCHED_PID="$REMOTE_PID"
+  printf '%s\\n' "\${T3CODE_HOME:-$DEFAULT_SERVER_HOME}" >"$BASE_DIR_FILE"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
@@ -604,24 +759,70 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    LAUNCHED_PID=""
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
     exit 1
   fi
+  LAUNCHED_PID=""
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
 
 export const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
+PAIR_OUTPUT_FILE="$STATE_DIR/pair-output.$$"
 mkdir -p "$STATE_DIR"
-cat >"$RUNNER_FILE" <<'SH'
+umask 077
+@@T3_STATE_LOCK_SCRIPT@@
+cleanup_pairing_files() {
+  rm -f "$PAIR_OUTPUT_FILE" "$RUNNER_NEXT"
+  release_state_lock
+}
+trap cleanup_pairing_files EXIT
+acquire_state_lock
+cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
-chmod 700 "$RUNNER_FILE"
-PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
-"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+chmod 700 "$RUNNER_NEXT"
+mv -f "$RUNNER_NEXT" "$RUNNER_FILE"
+PAIRING_BASE_DIR="$(cat "$BASE_DIR_FILE" 2>/dev/null || true)"
+if [ -z "$PAIRING_BASE_DIR" ]; then
+  printf 'SSH environment state is missing its T3 base directory. Retry the connection.\n' >&2
+  exit 1
+fi
+PAIR_ATTEMPT=0
+PAIR_SUCCEEDED=0
+while [ "$PAIR_ATTEMPT" -lt 5 ]; do
+  PAIR_ATTEMPT=$((PAIR_ATTEMPT + 1))
+  if "$RUNNER_FILE" pair --base-dir "$PAIRING_BASE_DIR" >"$PAIR_OUTPUT_FILE" 2>&1; then
+    PAIR_SUCCEEDED=1
+    break
+  fi
+  if ! grep -q 'database is locked' "$PAIR_OUTPUT_FILE"; then
+    break
+  fi
+  sleep 0.2
+done
+if [ "$PAIR_SUCCEEDED" -ne 1 ]; then
+  printf 'Remote T3 server could not issue an SSH pairing credential.\n' >&2
+  exit 1
+fi
+node - "$PAIR_OUTPUT_FILE" <<'NODE'
+const fs = require("node:fs");
+const outputPath = process.argv[2] ?? "";
+try {
+  const output = fs.readFileSync(outputPath, "utf8");
+  const tokenLine = output.split(/\\r?\\n/u).findLast((line) => line.startsWith("Token: "));
+  const credential = tokenLine?.slice("Token: ".length).trim() ?? "";
+  if (credential.length === 0) process.exit(1);
+  process.stdout.write(JSON.stringify({ credential }) + "\\n");
+} catch {
+  process.exit(1);
+}
+NODE
 `;
 
 export const REMOTE_STOP_SCRIPT = `set -eu
@@ -629,9 +830,22 @@ STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
+mkdir -p "$STATE_DIR"
+umask 077
+@@T3_STATE_LOCK_SCRIPT@@
+cleanup_stop() {
+  release_state_lock
+}
+trap cleanup_stop EXIT
+acquire_state_lock
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+if [ "$REMOTE_MANAGED" = "external" ]; then
+  printf '{"stopped":true}\n'
+  exit 0
+fi
+if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
@@ -639,7 +853,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     sleep 0.1
   done
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$BASE_DIR_FILE"
 printf '{"stopped":true}\\n'
 `;
 
@@ -678,6 +892,7 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
     T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
+    T3_STATE_LOCK_SCRIPT: stripTrailingNewlines(REMOTE_STATE_LOCK_SCRIPT),
     T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
     T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
@@ -693,12 +908,14 @@ export function buildRemotePairingScript(
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     T3_STATE_KEY: remoteStateKey(target),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
+    T3_STATE_LOCK_SCRIPT: stripTrailingNewlines(REMOTE_STATE_LOCK_SCRIPT),
   });
 }
 
 export function buildRemoteStopScript(target: DesktopSshEnvironmentTarget): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     T3_STATE_KEY: remoteStateKey(target),
+    T3_STATE_LOCK_SCRIPT: stripTrailingNewlines(REMOTE_STATE_LOCK_SCRIPT),
   });
 }
 
@@ -1177,6 +1394,15 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>
   >();
   const authSecrets = new Map<string, string>();
+  const pairingSemaphores = new Map<string, Semaphore.Semaphore>();
+
+  const pairingSemaphoreFor = (key: string) => {
+    const existing = pairingSemaphores.get(key);
+    if (existing !== undefined) return existing;
+    const semaphore = Semaphore.makeUnsafe(1);
+    pairingSemaphores.set(key, semaphore);
+    return semaphore;
+  };
 
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
     entry: SshTunnelEntry,
@@ -1457,7 +1683,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         remotePort: entry.remotePort,
       });
       const readinessExit = yield* Effect.exit(
-        waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
+        waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: SSH_READY_TIMEOUT_MS }),
       );
       if (Exit.isSuccess(readinessExit)) {
         yield* Effect.logDebug("ssh.environment.tunnel.reused", {
@@ -1552,11 +1778,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
 
     const pairingResult = requestOptions?.issuePairingToken
-      ? yield* runWithSshAuth({
-          key,
-          target: entry.target,
-          operation: (authOptions) => issueRemotePairingToken(entry.target, authOptions, runner),
-        })
+      ? yield* pairingSemaphoreFor(key).withPermit(
+          runWithSshAuth({
+            key,
+            target: entry.target,
+            operation: (authOptions) => issueRemotePairingToken(entry.target, authOptions, runner),
+          }),
+        )
       : null;
     const pairingToken = pairingResult?.credential ?? null;
 

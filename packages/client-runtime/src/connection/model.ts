@@ -55,6 +55,18 @@ export type PersistedConnectionTarget = typeof PersistedConnectionTarget.Type;
 
 export type ConnectionTargetKind = ConnectionTarget["_tag"];
 
+export function connectionRouteId(target: ConnectionTarget): string {
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return `primary:${target.environmentId}`;
+    case "RelayConnectionTarget":
+      return `relay:${target.environmentId}`;
+    case "BearerConnectionTarget":
+    case "SshConnectionTarget":
+      return target.connectionId;
+  }
+}
+
 export type NetworkStatus = "unknown" | "offline" | "online";
 
 export const ConnectionTransientReason = Schema.Literals([
@@ -111,6 +123,7 @@ export type PreparedHttpAuthorization =
   | {
       readonly _tag: "Dpop";
       readonly accessToken: string;
+      readonly expiresAtEpochMs: number;
     };
 
 export interface PreparedConnection {

@@ -31,9 +31,11 @@ import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+const SSH_CONNECTION_ESTABLISHMENT_TIMEOUT = "120 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+const DPOP_REFRESH_SAFETY_MARGIN_MS = 60_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -487,6 +489,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   });
 
+  const waitForCredentialRefresh = Effect.fnUntraced(function* (prepared: PreparedConnection) {
+    const authorization = prepared.httpAuthorization;
+    if (authorization?._tag !== "Dpop") {
+      return yield* Effect.never;
+    }
+    const now = yield* Clock.currentTimeMillis;
+    yield* Effect.sleep(
+      Math.max(0, authorization.expiresAtEpochMs - DPOP_REFRESH_SAFETY_MARGIN_MS - now),
+    );
+    return true;
+  });
+
   const runAttempt = Effect.fnUntraced(function* (
     attempt: number,
     generation: number,
@@ -513,9 +527,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           }),
         ),
       ),
-      Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
-        Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
-      ),
+      Effect.sleep(
+        target._tag === "SshConnectionTarget"
+          ? SSH_CONNECTION_ESTABLISHMENT_TIMEOUT
+          : CONNECTION_ESTABLISHMENT_TIMEOUT,
+      ).pipe(Effect.as<EstablishmentEvent>({ _tag: "TimedOut" })),
     ]);
 
     if (establishment._tag === "Interrupted") {
@@ -593,13 +609,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           }),
         ),
       ),
-      monitorConnectedLease(active.lease).pipe(
-        Effect.mapError(
-          (error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: active.attemptSpan,
-          }),
+      Effect.raceFirst(
+        monitorConnectedLease(active.lease).pipe(
+          Effect.mapError(
+            (error): TracedAttemptFailure => ({
+              error,
+              attemptSpan: active.attemptSpan,
+            }),
+          ),
         ),
+        waitForCredentialRefresh(active.lease.prepared),
       ),
     ).pipe(exitUnlessInterrupted);
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;

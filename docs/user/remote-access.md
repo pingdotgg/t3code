@@ -136,9 +136,26 @@ After setup, the renderer connects to a local forwarded HTTP/WebSocket endpoint.
 
 SSH launch is a desktop feature because it needs local process and SSH access. Once the environment is paired and saved, it uses the same environment list and connection model as direct LAN, Tailscale, HTTPS, or future tunnel-backed environments.
 
+If the same server is already saved through T3 Connect, adding it through SSH does not create a
+second environment. The desktop keeps both access methods under the server's stable environment
+identity. Choose **T3 Connect** or **SSH** from the environment's connection-method menu. The choice
+is manual and applies only to that desktop; T3 Code does not silently fall back to the other method.
+Before switching, the desktop prepares the selected route and verifies that it reaches the same
+environment, then hands the active session over. If preparation fails, the current connection stays
+active.
+
+All clients still talk to the same T3 server, regardless of their route. A thread created by the
+desktop over SSH is therefore available to mobile over T3 Connect, and server events continue to fan
+out to every connected client.
+
 #### SSH Launch Troubleshooting
 
 The desktop SSH launcher connects with a non-interactive `sh` session, writes a small launcher script under `~/.t3/ssh-launch/<host-key>/`, starts or reuses a remote T3 server, and forwards the remote loopback port back to your desktop.
+
+Before starting another server, the launcher inspects the remote T3 service and running-process
+metadata, then validates the recorded server through its environment descriptor. This lets SSH reuse
+a server started by T3 Connect even when that service uses a private `T3CODE_HOME` that the SSH login
+shell does not inherit; the forwarded remote port is the port reported by that server.
 
 The remote host must have a compatible Node.js runtime. T3 Code uses the server package's `engines.node` requirement:
 
@@ -165,7 +182,47 @@ nvm alias default 24
 
 With mise, asdf, fnm, or nodenv, make sure the tool's shim directory is installed and resolves to a Node version satisfying the range above without an interactive shell.
 
-If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
+If reconnecting after an app update fails, use **Connect** to retry. The launcher compares its
+generated runner script, clears stale launcher state, and starts a fresh server only when it cannot
+discover or reuse a live one. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3`
+processes manually.
+
+### Forward a Remote Port to the Desktop
+
+The desktop app can expose a service listening on an environment's loopback
+interface as a loopback port on your computer. This works with T3 Connect,
+direct HTTPS or Tailscale connections, and desktop-managed SSH environments.
+
+1. Open **Settings** → **Connections** in the desktop app.
+2. Under **Port forwarding**, select an environment.
+3. Enter the remote port. Leave the local port blank to choose an available
+   port automatically. T3 Code first tries the same port, then nearby ports,
+   and finally an operating-system-assigned free port. Enter a local port when
+   you need an exact mapping; an exact-port conflict is reported instead of
+   silently changing it.
+4. Choose **Start** and connect to the displayed `127.0.0.1` address.
+
+For the active environment, the cable icon in the conversation header opens a
+compact version of the same controls and shows how many forwards are running.
+Each forward reports **Listening** until a local application connects,
+**connecting** while T3 Code authorizes and opens the remote bridge, and
+**connected** only after that bridge is established. A failed bridge shows its
+error without stopping the loopback listener, so a later connection can retry.
+Long-running relay connections refresh their authorization automatically; if a
+credential is rejected during forwarding, the desktop reconnects that
+environment and retries once.
+
+A forward always uses the connection method currently selected for its
+environment. When you switch between T3 Connect and SSH, T3 Code keeps the
+desktop loopback listener but closes its active TCP sessions; applications that
+reconnect use the newly selected method. Existing TCP streams cannot be moved
+between transports without interruption.
+
+The forward is TCP-only and can reach only the remote environment's loopback
+interface. Services bound to either IPv4 `127.0.0.1` or IPv6 `::1` through
+`localhost` are supported. The forward is not exposed to your LAN or the public
+Internet. Manual forwards are currently runtime-only: they stop when you quit
+the desktop app, remove the environment, or choose **Stop**.
 
 ## Updating a Remote Server
 

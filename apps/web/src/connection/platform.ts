@@ -2,6 +2,7 @@ import {
   ClientPresentation,
   CloudSession,
   EnvironmentOwnedDataCleanup,
+  EnvironmentRouteTransition,
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
@@ -30,6 +31,7 @@ import {
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
+  type EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -173,6 +175,44 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   };
 });
 
+export const prepareDesktopSshEnvironment = Effect.fn("web.connectionPlatform.ssh.prepareDesktop")(
+  function* (
+    bridge: DesktopBridge,
+    input: {
+      readonly target: DesktopSshEnvironmentTarget;
+      readonly bearerToken?: string;
+    },
+  ) {
+    const bootstrap = yield* Effect.tryPromise({
+      try: () =>
+        bridge.ensureSshEnvironment(input.target, {
+          issuePairingToken: input.bearerToken === undefined,
+        }),
+      catch: sshPreparationError,
+    });
+    if (input.bearerToken !== undefined) {
+      return {
+        bootstrap,
+        bearerToken: input.bearerToken,
+      };
+    }
+    if (bootstrap.pairingToken === null) {
+      return yield* new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "The SSH environment did not issue a pairing credential.",
+      });
+    }
+    const access = yield* Effect.tryPromise({
+      try: () => bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, bootstrap.pairingToken!),
+      catch: sshPreparationError,
+    });
+    return {
+      bootstrap,
+      bearerToken: access.access_token,
+    };
+  },
+);
+
 const capabilitiesLayer = Layer.effectContext(
   Effect.sync(() => {
     const presentation = ClientPresentation.of({
@@ -238,28 +278,7 @@ const capabilitiesLayer = Layer.effectContext(
             detail: "SSH environments are only available in the desktop app.",
           });
         }
-        const bootstrap = yield* Effect.tryPromise({
-          try: () =>
-            bridge.ensureSshEnvironment(input.target, {
-              issuePairingToken: true,
-            }),
-          catch: sshPreparationError,
-        });
-        if (bootstrap.pairingToken === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "The SSH environment did not issue a pairing credential.",
-          });
-        }
-        const access = yield* Effect.tryPromise({
-          try: () =>
-            bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, bootstrap.pairingToken!),
-          catch: sshPreparationError,
-        });
-        return {
-          bootstrap,
-          bearerToken: access.access_token,
-        };
+        return yield* prepareDesktopSshEnvironment(bridge, input);
       }),
       disconnect: Effect.fn("web.connectionPlatform.ssh.disconnect")(function* (target) {
         const bridge = window.desktopBridge;
@@ -580,9 +599,38 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   EnvironmentOwnedDataCleanup,
   EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         clearComposerDraftsEnvironment(environmentId);
+        const portForward = window.desktopBridge?.portForward;
+        if (portForward !== undefined) {
+          yield* Effect.promise(() => portForward.stopEnvironment(environmentId)).pipe(
+            Effect.catchCause(() => Effect.void),
+          );
+        }
       }),
+  }),
+);
+
+export const resetDesktopPortForwardConnections = Effect.fn(
+  "web.connectionPlatform.resetDesktopPortForwardConnections",
+)(function* (bridge: DesktopBridge | undefined, environmentId: EnvironmentId) {
+  const portForward = bridge?.portForward;
+  if (portForward === undefined) return;
+  yield* Effect.promise(() => portForward.resetEnvironmentConnections(environmentId)).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not reset desktop port forwards after changing routes.", {
+        environmentId,
+        cause,
+      }),
+    ),
+  );
+});
+
+const environmentRouteTransitionLayer = Layer.succeed(
+  EnvironmentRouteTransition,
+  EnvironmentRouteTransition.of({
+    afterSelected: ({ environmentId }) =>
+      resetDesktopPortForwardConnections(window.desktopBridge, environmentId),
   }),
 );
 
@@ -608,6 +656,7 @@ type ConnectionPlatformLayerSource =
   | typeof capabilitiesLayer
   | typeof platformConnectionSourceLayer
   | typeof environmentOwnedDataCleanupLayer
+  | typeof environmentRouteTransitionLayer
   | typeof rpcRequestObserverLayer;
 
 export const connectionPlatformLayer: Layer.Layer<
@@ -621,5 +670,6 @@ export const connectionPlatformLayer: Layer.Layer<
   capabilitiesLayer,
   platformConnectionSourceLayer,
   environmentOwnedDataCleanupLayer,
+  environmentRouteTransitionLayer,
   rpcRequestObserverLayer,
 );

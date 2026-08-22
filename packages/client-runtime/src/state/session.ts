@@ -1,4 +1,5 @@
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -29,6 +30,54 @@ export function initialConfigOption<E>(
     ),
   );
 }
+
+/**
+ * Reads the supervisor's current prepared connection directly. Unlike the
+ * reactive value atom, this does not require a mounted subscriber to have
+ * observed the supervisor stream first.
+ */
+export const currentPreparedConnection = Effect.fn("clientRuntime.state.currentPreparedConnection")(
+  function* (environmentId: EnvironmentId) {
+    const registry = yield* EnvironmentRegistry;
+    return yield* registry.run(
+      environmentId,
+      EnvironmentSupervisor.pipe(
+        Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.prepared)),
+      ),
+    );
+  },
+);
+
+const DEFAULT_PREPARED_CONNECTION_REFRESH_TIMEOUT_MS = 20_000;
+
+/**
+ * Replaces a live environment lease and waits for the next prepared connection.
+ * This is used by side-channel HTTP operations when a long-lived websocket has
+ * outlasted the credential that originally authorized it.
+ */
+export const refreshCurrentPreparedConnection = Effect.fn(
+  "clientRuntime.state.refreshCurrentPreparedConnection",
+)(function* (environmentId: EnvironmentId, timeoutMs?: number) {
+  const registry = yield* EnvironmentRegistry;
+  const before = yield* registry.state(environmentId);
+  yield* registry.retryNow(environmentId);
+  const settled = yield* registry.stateChanges(environmentId).pipe(
+    Stream.filter(
+      (state) =>
+        state.generation > before.generation &&
+        (state.phase === "connected" || state.phase === "blocked"),
+    ),
+    Stream.runHead,
+    Effect.timeoutOption(
+      Duration.millis(timeoutMs ?? DEFAULT_PREPARED_CONNECTION_REFRESH_TIMEOUT_MS),
+    ),
+    Effect.map(Option.flatten),
+  );
+  if (Option.isNone(settled) || settled.value.phase !== "connected") {
+    return Option.none<PreparedConnection>();
+  }
+  return yield* currentPreparedConnection(environmentId);
+});
 
 // Bounded like the snapshot fetches: a wedged environment must not pin the
 // permissions check (and with it the settings UI) in a loading state for long.

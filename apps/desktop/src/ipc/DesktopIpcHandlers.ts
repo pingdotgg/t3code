@@ -45,11 +45,13 @@ import {
   showContextMenu,
 } from "./methods/window.ts";
 import * as PreviewIpc from "./methods/preview.ts";
+import * as PortForwardIpc from "./methods/portForward.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* PreviewIpc.installPreviewEventForwarding();
+  yield* PortForwardIpc.installPortForwardEventForwarding();
 
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getSystemLocale);
@@ -89,6 +91,12 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(probeRemoteEditors);
+  yield* ipc.handle(PortForwardIpc.createPortForward);
+  yield* ipc.handle(PortForwardIpc.listPortForwards);
+  yield* ipc.handle(PortForwardIpc.stopPortForward);
+  yield* ipc.handle(PortForwardIpc.stopEnvironmentPortForwards);
+  yield* ipc.handle(PortForwardIpc.resetEnvironmentPortForwardConnections);
+  yield* ipc.handle(PortForwardIpc.resolvePortForwardAuthorization);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
   yield* ipc.handle(downloadUpdate);

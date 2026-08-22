@@ -43,6 +43,17 @@ export const SET_WSL_BACKEND_ENABLED_CHANNEL = "desktop:set-wsl-backend-enabled"
 export const SET_WSL_DISTRO_CHANNEL = "desktop:set-wsl-distro";
 export const SET_WSL_ONLY_CHANNEL = "desktop:set-wsl-only";
 export const SSH_PASSWORD_PROMPT_CANCELLED_RESULT = "ssh-password-prompt-cancelled";
+export const PORT_FORWARD_CREATE_CHANNEL = "desktop:port-forward-create";
+export const PORT_FORWARD_LIST_CHANNEL = "desktop:port-forward-list";
+export const PORT_FORWARD_STOP_CHANNEL = "desktop:port-forward-stop";
+export const PORT_FORWARD_STOP_ENVIRONMENT_CHANNEL = "desktop:port-forward-stop-environment";
+export const PORT_FORWARD_RESET_ENVIRONMENT_CONNECTIONS_CHANNEL =
+  "desktop:port-forward-reset-environment-connections";
+export const PORT_FORWARD_RESOLVE_AUTHORIZATION_CHANNEL =
+  "desktop:port-forward-resolve-authorization";
+export const PORT_FORWARD_STATE_CHANNEL = "desktop:port-forward-state";
+export const PORT_FORWARD_AUTHORIZATION_REQUEST_CHANNEL =
+  "desktop:port-forward-authorization-request";
 export const PREVIEW_CREATE_TAB_CHANNEL = "desktop:preview-create-tab";
 export const PREVIEW_CLOSE_TAB_CHANNEL = "desktop:preview-close-tab";
 export const PREVIEW_REGISTER_WEBVIEW_CHANNEL = "desktop:preview-register-webview";

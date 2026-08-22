@@ -23,6 +23,7 @@ import {
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -140,6 +141,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
             httpAuthorization: {
               _tag: "Dpop" as const,
               accessToken: "dpop-access-token",
+              expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
             },
           }),
         )),
@@ -350,6 +352,7 @@ describe("ConnectionResolver", () => {
               httpAuthorization: {
                 _tag: "Dpop" as const,
                 accessToken: "dpop-access-token",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
               },
             }),
           ),
@@ -387,6 +390,7 @@ describe("ConnectionResolver", () => {
               httpAuthorization: {
                 _tag: "Dpop" as const,
                 accessToken: "dpop-access-token",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
               },
             }),
             Effect.withSpan("test.remote.authorizeDpop"),
@@ -442,6 +446,159 @@ describe("ConnectionResolver", () => {
         (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
       ).toContain("wsTicket=bearer");
       expect(yield* Ref.get(preparedTargets)).toEqual([SSH_TARGET]);
+    }),
+  );
+
+  it.effect("reuses a cached SSH bearer without requesting a new pairing credential", () =>
+    Effect.gen(function* () {
+      const prepareBearerTokens = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+      const authorizeBearerTokens = yield* Ref.make<ReadonlyArray<string>>([]);
+      const target = new SshConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "SSH",
+        connectionId: "ssh-1",
+      });
+      const profile = new SshConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: target.environmentId,
+        label: target.label,
+        target: SSH_TARGET,
+      });
+      const brokerLayer = yield* makeDependencies({
+        profiles: [profile],
+        credentials: [
+          [target.connectionId, new BearerConnectionCredential({ token: "cached-ssh" })],
+        ],
+        prepareSsh: (input) =>
+          Ref.update(prepareBearerTokens, (values) => [...values, input.bearerToken]).pipe(
+            Effect.as({
+              bootstrap: {
+                target: input.target,
+                httpBaseUrl: "http://127.0.0.1:4010",
+                wsBaseUrl: "ws://127.0.0.1:4010",
+                pairingToken: null,
+              },
+              bearerToken: input.bearerToken ?? "unexpected-fresh-token",
+            }),
+          ),
+        authorizeBearer: (input) =>
+          Ref.update(authorizeBearerTokens, (values) => [...values, input.bearerToken]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "SSH",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: "ws://127.0.0.1:4010/ws?wsTicket=cached",
+              httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      yield* broker.prepare(catalogEntry(target, Option.some(profile)));
+
+      expect(yield* Ref.get(prepareBearerTokens)).toEqual(["cached-ssh"]);
+      expect(yield* Ref.get(authorizeBearerTokens)).toEqual(["cached-ssh"]);
+    }),
+  );
+
+  it.effect("replaces a cached SSH bearer only after authentication rejects it", () =>
+    Effect.gen(function* () {
+      const prepareBearerTokens = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+      const authorizeBearerTokens = yield* Ref.make<ReadonlyArray<string>>([]);
+      const target = new SshConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "SSH",
+        connectionId: "ssh-1",
+      });
+      const profile = new SshConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: target.environmentId,
+        label: target.label,
+        target: SSH_TARGET,
+      });
+      const brokerLayer = yield* makeDependencies({
+        profiles: [profile],
+        credentials: [
+          [target.connectionId, new BearerConnectionCredential({ token: "stale-ssh" })],
+        ],
+        prepareSsh: (input) =>
+          Ref.update(prepareBearerTokens, (values) => [...values, input.bearerToken]).pipe(
+            Effect.as({
+              bootstrap: {
+                target: input.target,
+                httpBaseUrl: "http://127.0.0.1:4010",
+                wsBaseUrl: "ws://127.0.0.1:4010",
+                pairingToken: input.bearerToken === undefined ? "pairing-token" : null,
+              },
+              bearerToken: input.bearerToken ?? "fresh-ssh",
+            }),
+          ),
+        authorizeBearer: (input) =>
+          Ref.update(authorizeBearerTokens, (values) => [...values, input.bearerToken]).pipe(
+            Effect.flatMap(() =>
+              input.bearerToken === "stale-ssh"
+                ? Effect.fail(
+                    new ConnectionBlockedError({
+                      reason: "authentication",
+                      detail: "Credential rejected.",
+                    }),
+                  )
+                : Effect.succeed({
+                    environmentId: input.expectedEnvironmentId,
+                    label: "SSH",
+                    httpBaseUrl: input.httpBaseUrl,
+                    socketUrl: "ws://127.0.0.1:4010/ws?wsTicket=fresh",
+                    httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+                  }),
+            ),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      yield* broker.prepare(catalogEntry(target, Option.some(profile)));
+
+      expect(yield* Ref.get(prepareBearerTokens)).toEqual(["stale-ssh", undefined]);
+      expect(yield* Ref.get(authorizeBearerTokens)).toEqual(["stale-ssh", "fresh-ssh"]);
+    }),
+  );
+
+  it.effect("does not replace a cached SSH bearer after a transient failure", () =>
+    Effect.gen(function* () {
+      const prepareBearerTokens = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+      const target = new SshConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "SSH",
+        connectionId: "ssh-1",
+      });
+      const profile = new SshConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: target.environmentId,
+        label: target.label,
+        target: SSH_TARGET,
+      });
+      const brokerLayer = yield* makeDependencies({
+        profiles: [profile],
+        credentials: [
+          [target.connectionId, new BearerConnectionCredential({ token: "cached-ssh" })],
+        ],
+        prepareSsh: (input) =>
+          Ref.update(prepareBearerTokens, (values) => [...values, input.bearerToken]).pipe(
+            Effect.flatMap(() =>
+              Effect.fail(
+                new ConnectionTransientError({
+                  reason: "timeout",
+                  detail: "SSH endpoint timed out.",
+                }),
+              ),
+            ),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target, Option.some(profile))));
+
+      expect(error).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      expect(yield* Ref.get(prepareBearerTokens)).toEqual(["cached-ssh"]);
     }),
   );
 

@@ -112,6 +112,46 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
+  portForward: {
+    create: (input) => ipcRenderer.invoke(IpcChannels.PORT_FORWARD_CREATE_CHANNEL, input),
+    list: () => ipcRenderer.invoke(IpcChannels.PORT_FORWARD_LIST_CHANNEL),
+    stop: (id) => ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_CHANNEL, { id }),
+    stopEnvironment: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_ENVIRONMENT_CHANNEL, { environmentId }),
+    resetEnvironmentConnections: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_RESET_ENVIRONMENT_CONNECTIONS_CHANNEL, {
+        environmentId,
+      }),
+    resolveAuthorization: (requestId, socketUrl, error) => {
+      const normalizedError = error?.trim();
+      return ipcRenderer.invoke(IpcChannels.PORT_FORWARD_RESOLVE_AUTHORIZATION_CHANNEL, {
+        requestId,
+        socketUrl,
+        ...(normalizedError ? { error: normalizedError } : {}),
+      });
+    },
+    onStateChange: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, snapshots: unknown) => {
+        if (!Array.isArray(snapshots)) return;
+        listener(snapshots as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.PORT_FORWARD_STATE_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PORT_FORWARD_STATE_CHANNEL, wrappedListener);
+    },
+    onAuthorizationRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+        if (typeof request !== "object" || request === null) return;
+        listener(request as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.PORT_FORWARD_AUTHORIZATION_REQUEST_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.PORT_FORWARD_AUTHORIZATION_REQUEST_CHANNEL,
+          wrappedListener,
+        );
+    },
+  },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

@@ -29,6 +29,9 @@ export interface EnvironmentConnectionLease {
 export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
   {
+    readonly prepare: (
+      entry: ConnectionCatalogEntry,
+    ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>;
     readonly connect: (
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
@@ -39,6 +42,7 @@ export class ConnectionDriver extends Context.Service<
 export const make = Effect.gen(function* () {
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const sessions = yield* RpcSession.RpcSessionFactory;
+  const prepare = resolver.prepare;
 
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
@@ -50,7 +54,7 @@ export const make = Effect.gen(function* () {
       "connection.target.kind": target._tag,
     });
     yield* reportProgress({ stage: "preparing" });
-    const prepared = yield* resolver.prepare(entry);
+    const prepared = yield* prepare(entry);
     yield* reportProgress({ stage: "opening", prepared });
     const session = yield* sessions.connect(prepared);
     yield* reportProgress({ stage: "synchronizing", prepared });
@@ -58,7 +62,7 @@ export const make = Effect.gen(function* () {
     return { prepared, session } satisfies EnvironmentConnectionLease;
   });
 
-  return ConnectionDriver.of({ connect });
+  return ConnectionDriver.of({ prepare, connect });
 });
 
 export const layer = Layer.effect(ConnectionDriver, make);

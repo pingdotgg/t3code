@@ -50,6 +50,27 @@ export function createEnvironmentCatalogAtoms<R, E>(
     Option.getOrElse(AsyncResult.value(get(catalogAtom)), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
   ).pipe(Atom.withLabel("environment-catalog-value"));
 
+  const routesAtom = runtime.atom(
+    Stream.unwrap(
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.map((registry) => SubscriptionRef.changes(registry.routes)),
+      ),
+    ),
+    {
+      initialValue: new Map<
+        EnvironmentIdType,
+        ReadonlyArray<ConnectionCatalogEntry>
+      >() as ReadonlyMap<EnvironmentIdType, ReadonlyArray<ConnectionCatalogEntry>>,
+    },
+  );
+
+  const routesValueAtom = Atom.make((get) =>
+    Option.getOrElse(
+      AsyncResult.value(get(routesAtom)),
+      () => new Map<EnvironmentIdType, ReadonlyArray<ConnectionCatalogEntry>>(),
+    ),
+  ).pipe(Atom.withLabel("environment-catalog-routes-value"));
+
   const networkStatusAtom = runtime.atom(
     Stream.unwrap(
       EnvironmentRegistry.EnvironmentRegistry.pipe(
@@ -97,6 +118,15 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.remove(environmentId)),
       ),
   });
+  const selectRoute = createRuntimeCommand(runtime, {
+    label: "environment-catalog:select-route",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (input: { readonly environmentId: EnvironmentIdType; readonly routeId: string }) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.selectRoute(input.environmentId, input.routeId)),
+      ),
+  });
   const removeRelayEnvironments = createRuntimeCommand(runtime, {
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,
@@ -119,10 +149,13 @@ export function createEnvironmentCatalogAtoms<R, E>(
   return {
     catalogAtom,
     catalogValueAtom,
+    routesAtom,
+    routesValueAtom,
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
     register,
+    selectRoute,
     remove,
     removeRelayEnvironments,
     retryNow,

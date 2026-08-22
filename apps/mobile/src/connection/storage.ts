@@ -3,9 +3,12 @@ import {
   ConnectionRegistrationStore,
   ConnectionTargetStore,
   registerConnectionInCatalog,
+  removeConnectionRouteFromCatalog,
   removeConnectionFromCatalog,
   removeCatalogValue,
   replaceCatalogValue,
+  selectConnectionRouteInCatalog,
+  connectionRoutes,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -20,7 +23,13 @@ import * as Option from "effect/Option";
 import * as CatalogStore from "./catalog-store";
 
 function targetPersistenceError(
-  operation: "list-targets" | "register-connection" | "remove-connection",
+  operation:
+    | "list-targets"
+    | "list-routes"
+    | "register-connection"
+    | "select-connection-route"
+    | "remove-connection-route"
+    | "remove-connection",
   error: ConnectionTransientError,
 ) {
   return new ConnectionPersistenceError({
@@ -38,12 +47,28 @@ export const connectionStorageLayer = Layer.effectContext(
         Effect.map((document) => document.targets),
         Effect.mapError((error) => targetPersistenceError("list-targets", error)),
       ),
+      listRoutes: catalog.read.pipe(
+        Effect.map(connectionRoutes),
+        Effect.mapError((error) => targetPersistenceError("list-routes", error)),
+      ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
       register: (registration) =>
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
           .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
+      select: (target) =>
+        catalog
+          .update((document) => selectConnectionRouteInCatalog(document, target))
+          .pipe(
+            Effect.mapError((error) => targetPersistenceError("select-connection-route", error)),
+          ),
+      removeRoute: (target, fallback) =>
+        catalog
+          .update((document) => removeConnectionRouteFromCatalog(document, target, fallback))
+          .pipe(
+            Effect.mapError((error) => targetPersistenceError("remove-connection-route", error)),
+          ),
       remove: (target) =>
         catalog
           .update((document) => removeConnectionFromCatalog(document, target))

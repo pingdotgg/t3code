@@ -26,6 +26,7 @@ import {
 } from "./auth.ts";
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { TcpPortForwardTicketRequest, TcpPortForwardTicketResult } from "./portForward.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -82,6 +83,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "browser_session_cookie_failed",
   "access_token_issuance_failed",
   "websocket_ticket_issuance_failed",
+  "tcp_forward_ticket_issuance_failed",
   "pairing_credential_issuance_failed",
   "pairing_links_load_failed",
   "pairing_link_revoke_failed",
@@ -435,6 +437,14 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalBearerHeaders,
       success: AuthWebSocketTicketResult,
       error: [EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("tcpPortForwardTicket", "/api/auth/tcp-forward-ticket", {
+      headers: OptionalBearerHeaders,
+      payload: TcpPortForwardTicketRequest,
+      success: TcpPortForwardTicketResult,
+      error: [EnvironmentScopeRequiredError, EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

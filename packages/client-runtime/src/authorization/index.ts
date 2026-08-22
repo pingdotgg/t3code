@@ -1,4 +1,5 @@
 export * from "./remote.ts";
+export * from "./portForward.ts";
 export {
   type AuthorizedRemoteEnvironment,
   type RelayEnvironmentAuthorization,

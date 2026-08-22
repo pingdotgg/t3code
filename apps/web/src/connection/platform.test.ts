@@ -11,9 +11,11 @@ import * as Effect from "effect/Effect";
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
+  prepareDesktopSshEnvironment,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
+  resetDesktopPortForwardConnections,
   secondaryRegistrationsToRetainAfterTopologyRead,
   secondaryBearerExpiresAtEpochMs,
   secondaryBearerRefreshAtEpochMs,
@@ -28,11 +30,18 @@ const TARGET: DesktopSshEnvironmentTarget = {
 
 function makeBridge(
   calls: string[],
-  options?: { readonly failDescriptor?: boolean },
+  options?: {
+    readonly failDescriptor?: boolean;
+    readonly ensurePairingOptions?: Array<boolean | null>;
+  },
 ): DesktopBridge {
   return {
-    ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
+    ensureSshEnvironment: async (
+      target: DesktopSshEnvironmentTarget,
+      ensureOptions?: { readonly issuePairingToken?: boolean },
+    ) => {
       calls.push("ensure");
+      options?.ensurePairingOptions?.push(ensureOptions?.issuePairingToken ?? null);
       return {
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
@@ -93,6 +102,60 @@ describe("desktop SSH pairing", () => {
       ).pipe(Effect.flip);
 
       expect(calls).toEqual(["ensure", "descriptor"]);
+    }),
+  );
+
+  it.effect("reuses a cached bearer without requesting or bootstrapping a pairing token", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const ensurePairingOptions: Array<boolean | null> = [];
+
+      const prepared = yield* prepareDesktopSshEnvironment(
+        makeBridge(calls, { ensurePairingOptions }),
+        {
+          target: TARGET,
+          bearerToken: "cached-bearer",
+        },
+      );
+
+      expect(prepared.bearerToken).toBe("cached-bearer");
+      expect(calls).toEqual(["ensure"]);
+      expect(ensurePairingOptions).toEqual([false]);
+    }),
+  );
+
+  it.effect("requests and bootstraps a pairing token when no bearer is cached", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const ensurePairingOptions: Array<boolean | null> = [];
+
+      const prepared = yield* prepareDesktopSshEnvironment(
+        makeBridge(calls, { ensurePairingOptions }),
+        { target: TARGET },
+      );
+
+      expect(prepared.bearerToken).toBe("bearer-token");
+      expect(calls).toEqual(["ensure", "token"]);
+      expect(ensurePairingOptions).toEqual([true]);
+    }),
+  );
+});
+
+describe("desktop route transitions", () => {
+  it.effect("resets port-forward bridge connections for the selected environment", () =>
+    Effect.gen(function* () {
+      const resetEnvironmentIds: EnvironmentId[] = [];
+      const bridge = {
+        portForward: {
+          resetEnvironmentConnections: async (environmentId: EnvironmentId) => {
+            resetEnvironmentIds.push(environmentId);
+          },
+        },
+      } as unknown as DesktopBridge;
+
+      yield* resetDesktopPortForwardConnections(bridge, EnvironmentId.make("environment-ssh"));
+
+      expect(resetEnvironmentIds).toEqual([EnvironmentId.make("environment-ssh")]);
     }),
   );
 });

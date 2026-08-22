@@ -6,10 +6,10 @@ import {
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
-import type { ConnectionAttemptError } from "../connection/model.ts";
+import type { ConnectionAttemptError, ConnectionTarget } from "../connection/model.ts";
 
 export interface PreparedSshEnvironment {
   readonly bootstrap: DesktopSshEnvironmentBootstrap;
@@ -60,9 +60,25 @@ export class SshEnvironmentGateway extends Context.Service<
       readonly connectionId: string;
       readonly expectedEnvironmentId: EnvironmentId;
       readonly target: DesktopSshEnvironmentTarget;
+      readonly bearerToken?: string;
     }) => Effect.Effect<PreparedSshEnvironment, ConnectionAttemptError>;
     readonly disconnect: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/SshEnvironmentGateway") {}
+
+/**
+ * Lets a client surface retire side-channel transports after the selected
+ * route has changed. Core RPC sessions are replaced by EnvironmentRegistry;
+ * platform-owned transports such as desktop port forwards use this hook.
+ */
+export class EnvironmentRouteTransition extends Context.Reference<{
+  readonly afterSelected: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly previous: ConnectionTarget;
+    readonly selected: ConnectionTarget;
+  }) => Effect.Effect<void>;
+}>("@t3tools/client-runtime/platform/capabilities/EnvironmentRouteTransition", {
+  defaultValue: () => ({ afterSelected: () => Effect.void }),
+}) {}
