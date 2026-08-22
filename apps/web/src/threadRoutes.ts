@@ -101,3 +101,8 @@ export function resolveActiveThreadRouteRef(
   }
   return draftThread.promotedTo;
 }
+
+/** The pathname the web client renders a thread at. */
+export function buildThreadRoutePath(ref: ScopedThreadRef): string {
+  return `/${encodeURIComponent(ref.environmentId)}/${encodeURIComponent(ref.threadId)}`;
+}

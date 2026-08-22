@@ -12,6 +12,18 @@ If reordering is unavailable for one environment, update the T3 Code server runn
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
 
+## Linking to a thread
+
+Open a thread's context menu and choose **Copy → Link** to put its address on the clipboard. In a
+browser the link uses the address you are already on; in the desktop app, which has no address bar,
+it uses the address this client reaches the environment at — a `localhost` address for a server on
+this machine, or its tunnel address when you connect remotely.
+
+The link opens the thread on any device that can reach that address and is paired with the
+environment, so it is worth checking that the address is one the other device can reach before you
+send it. It is not a public share link: someone without access to the environment cannot read the
+thread through it.
+
 ## Environment artwork
 
 Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in

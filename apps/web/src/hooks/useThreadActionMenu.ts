@@ -30,6 +30,7 @@ import {
   readThreadShell,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
+import { readThreadLink } from "../threadLink";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -98,6 +99,13 @@ export function useThreadActionMenu(input: {
     },
     onError: (error) => failureToast("Failed to copy branch", error),
   });
+  const { copyToClipboard: copyLinkToClipboard } = useCopyToClipboard<{ link: string }>({
+    target: "link",
+    onCopy: ({ link }) => {
+      toastManager.add({ type: "success", title: "Link copied", description: link });
+    },
+    onError: (error) => failureToast("Failed to copy link", error),
+  });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
       toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
@@ -124,6 +132,7 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const threadLink = readThreadLink(threadRef);
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
@@ -144,6 +153,7 @@ export function useThreadActionMenu(input: {
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
+          canCopyLink: threadLink !== null,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -233,6 +243,11 @@ export function useThreadActionMenu(input: {
           case "mark-unread":
             markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
             return;
+          case "copy-link":
+            if (threadLink) {
+              copyLinkToClipboard(threadLink, { link: threadLink });
+            }
+            return;
           case "copy-path": {
             const workspacePath = thread.worktreePath ?? projectCwd;
             if (!workspacePath) {
@@ -316,6 +331,7 @@ export function useThreadActionMenu(input: {
       confirmThreadArchive,
       confirmThreadDelete,
       copyBranchToClipboard,
+      copyLinkToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,

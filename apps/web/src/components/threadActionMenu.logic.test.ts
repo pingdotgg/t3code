@@ -11,6 +11,7 @@ const baseState: ThreadActionMenuState = {
   isRegeneratingTitle: false,
   isRunning: false,
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  canCopyLink: true,
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -42,6 +43,11 @@ describe("buildThreadActionMenuItems", () => {
     expect(withBranch).toContain("copy-branch");
     expect(allIds(baseState)).not.toContain("new-thread-on-branch");
     expect(allIds(baseState)).not.toContain("copy-branch");
+  });
+
+  it("offers the thread link only when this client can build one", () => {
+    expect(allIds(baseState)).toContain("copy-link");
+    expect(allIds({ ...baseState, canCopyLink: false })).not.toContain("copy-link");
   });
 
   it("flips lifecycle labels with thread state", () => {
