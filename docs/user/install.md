@@ -17,6 +17,12 @@ npx t3@latest
 This starts the T3 Code server on your machine and opens the local web app. Use
 `npx t3@latest --help` for the full CLI reference.
 
+## Docker
+
+For an isolated, headless environment, use the [Docker setup](./docker.md). It keeps T3 Code
+and provider credentials in a persistent volume while exposing only the workspace you mount into
+the container.
+
 ## Desktop App
 
 Download the latest release from
