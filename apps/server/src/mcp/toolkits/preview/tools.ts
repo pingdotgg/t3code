@@ -13,6 +13,7 @@ import {
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotInput,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
@@ -108,8 +109,8 @@ export const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot.",
-    parameters: PreviewAutomationTabTargetInput,
+      "Inspect a page before interacting. Default is a slim snapshot: URL, visible text, interactive elements, and a PNG. Pass include:['ax'], include:['console'], or include:['network'] only when you need those heavier slices. Hidden tabs still capture.",
+    parameters: PreviewAutomationSnapshotInput,
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,
     dependencies,
@@ -174,7 +175,7 @@ export const PreviewEvaluateTool = browserTool(
 export const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
     description:
-      "Wait in the tab selected by tabId, or this agent session's current tab when omitted, until all supplied locator, selector, text, and URL conditions match.",
+      "Wait in the tab selected by tabId, or this agent session's current tab when omitted, until all supplied locator, selector, text, and URL conditions match. Text defaults to the main landmark so sidebar labels do not satisfy the wait. Locators must match a visible element.",
     parameters: PreviewAutomationWaitForInput,
     success: PreviewActionResult,
     failure: PreviewAutomationError,
