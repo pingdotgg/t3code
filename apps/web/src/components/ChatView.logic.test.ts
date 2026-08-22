@@ -638,6 +638,29 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(false);
   });
 
+  it("keeps a follow-up active while its provider session is starting", () => {
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestTurn: completedTurn, session: readySession }),
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "connecting",
+        latestTurn: completedTurn,
+        latestUserMessageId: MessageId.make("message-followup"),
+        session: {
+          ...readySession,
+          status: "starting",
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
   it("acknowledges a settled newer turn", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestTurn: completedTurn, session: readySession }),
