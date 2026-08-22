@@ -67,7 +67,10 @@ const runtimeMock = {
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
+    sessionMessagesCalls: [] as string[],
     subscribedEvents: [] as unknown[],
+    eventSubscribeCalls: 0,
+    eventSubscribeError: null as Error | null,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -87,7 +90,10 @@ const runtimeMock = {
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
+    this.state.sessionMessagesCalls.length = 0;
     this.state.subscribedEvents = [];
+    this.state.eventSubscribeCalls = 0;
+    this.state.eventSubscribeError = null;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -183,7 +189,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             throw runtimeMock.state.promptAsyncError;
           }
         },
-        messages: async () => ({ data: runtimeMock.state.messages }),
+        messages: async ({ sessionID }: { sessionID: string }) => {
+          runtimeMock.state.sessionMessagesCalls.push(sessionID);
+          return { data: runtimeMock.state.messages };
+        },
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
           runtimeMock.state.revertCalls.push({
             sessionID,
@@ -204,13 +213,19 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
       },
       event: {
-        subscribe: async () => ({
-          stream: (async function* () {
-            for (const event of runtimeMock.state.subscribedEvents) {
-              yield event;
-            }
-          })(),
-        }),
+        subscribe: async () => {
+          runtimeMock.state.eventSubscribeCalls += 1;
+          if (runtimeMock.state.eventSubscribeError) {
+            throw runtimeMock.state.eventSubscribeError;
+          }
+          return {
+            stream: (async function* () {
+              for (const event of runtimeMock.state.subscribedEvents) {
+                yield event;
+              }
+            })(),
+          };
+        },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -280,6 +295,108 @@ beforeEach(() => {
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
 
+const OPEN_CODE_SESSION_ID = "http://127.0.0.1:9999/session";
+
+function taskEnvelope(taskId: string, state: "running" | "completed" | "error", text: string) {
+  const tag = state === "error" ? "task_error" : "task_result";
+  return [`<task id="${taskId}" state="${state}">`, `<${tag}>`, text, `</${tag}>`, "</task>"].join(
+    "\n",
+  );
+}
+
+function taskPart(input: {
+  readonly id: string;
+  readonly taskId: string;
+  readonly description: string;
+  readonly role: string;
+  readonly status: "running" | "completed" | "error";
+  readonly result?: string;
+  readonly model?: { readonly providerID: string; readonly modelID: string };
+  readonly resumed?: boolean;
+  readonly background?: boolean;
+  readonly omitMetadata?: boolean;
+}) {
+  const taskInput = {
+    description: input.description,
+    prompt: `${input.description}.`,
+    subagent_type: input.role,
+    ...(input.resumed ? { task_id: input.taskId } : {}),
+  };
+  const metadata = {
+    sessionId: input.taskId,
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.background ? { background: true, jobId: input.taskId } : {}),
+  };
+  const base = {
+    id: input.id,
+    sessionID: OPEN_CODE_SESSION_ID,
+    messageID: `msg-${input.id}`,
+    type: "tool",
+    callID: `call-${input.id}`,
+    tool: "task",
+  };
+  if (input.status === "error") {
+    return {
+      ...base,
+      state: {
+        status: "error",
+        input: taskInput,
+        error: input.result ?? "Task failed",
+        ...(!input.omitMetadata ? { metadata } : {}),
+        time: { start: 1, end: 2 },
+      },
+    };
+  }
+  if (input.status === "completed") {
+    return {
+      ...base,
+      state: {
+        status: "completed",
+        input: taskInput,
+        title: input.description,
+        metadata,
+        output: taskEnvelope(
+          input.taskId,
+          input.background ? "running" : "completed",
+          input.result ?? "Task completed",
+        ),
+        time: { start: 1, end: 2 },
+      },
+    };
+  }
+  return {
+    ...base,
+    state: {
+      status: "running",
+      input: taskInput,
+      title: input.description,
+      metadata,
+      time: { start: 1 },
+    },
+  };
+}
+
+const partUpdated = (part: unknown) => ({
+  type: "message.part.updated",
+  properties: { sessionID: OPEN_CODE_SESSION_ID, part },
+});
+
+const backgroundNotice = (taskId: string, result: string) =>
+  partUpdated({
+    id: `${taskId}-notice`,
+    sessionID: OPEN_CODE_SESSION_ID,
+    messageID: `msg-${taskId}-notice`,
+    type: "text",
+    synthetic: true,
+    text: taskEnvelope(taskId, "completed", result),
+  });
+
+const messageEntry = (
+  id: string,
+  role: MessageEntry["info"]["role"],
+  ...parts: Array<unknown>
+): MessageEntry => ({ info: { id, role }, parts });
+
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
@@ -298,6 +415,69 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.authHeaders, [
         `Basic ${btoa("opencode:secret-password")}`,
       ]);
+    }),
+  );
+
+  it.effect("fails startup before publishing session events when event subscription fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-subscribe-failure");
+      const events: Array<unknown> = [];
+      runtimeMock.state.eventSubscribeError = new Error("event subscribe failed");
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+      yield* Effect.yieldNow;
+
+      NodeAssert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        NodeAssert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      }
+      NodeAssert.deepEqual(events, []);
+      NodeAssert.equal(runtimeMock.state.eventSubscribeCalls, 1);
+      NodeAssert.equal(
+        (yield* adapter.listSessions()).some((session) => session.threadId === threadId),
+        false,
+      );
+      yield* Fiber.interrupt(eventsFiber);
+    }),
+  );
+
+  it.effect("does not abort a reused session when event subscription fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-resumed-subscribe-failure");
+      runtimeMock.state.eventSubscribeError = new Error("event subscribe failed");
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: { schemaVersion: 1, sessionId: "ses_reused" },
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, []);
+      NodeAssert.equal(
+        (yield* adapter.listSessions()).some((session) => session.threadId === threadId),
+        false,
+      );
     }),
   );
 
@@ -519,6 +699,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           schemaVersion: 1,
           sessionId: "ses_otherdir_fork",
         });
+        NodeAssert.deepEqual(runtimeMock.state.sessionMessagesCalls, ["ses_otherdir_fork"]);
 
         yield* adapter.stopSession(threadId);
       }),
@@ -1188,6 +1369,503 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       if (metadataUpdated.type === "thread.metadata.updated") {
         NodeAssert.equal(metadataUpdated.payload.name, "Investigate OpenCode title sync");
       }
+    }),
+  );
+
+  it.effect("projects foreground, resumed, failed, and background Task lifecycles", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-task-lifecycle");
+      const foreground = taskPart({
+        id: "foreground",
+        taskId: "task-foreground",
+        description: "Inspect provider events",
+        role: "explore",
+        status: "running",
+        model: { providerID: "openai", modelID: "gpt-5" },
+      });
+      const resumed = taskPart({
+        id: "resumed",
+        taskId: "task-foreground",
+        description: "Inspect failing path",
+        role: "general",
+        status: "running",
+        resumed: true,
+        model: { providerID: "anthropic", modelID: "claude-sonnet" },
+      });
+      const failed = taskPart({
+        id: "resumed",
+        taskId: "task-foreground",
+        description: "Inspect failing path",
+        role: "general",
+        status: "error",
+        result: "Child session failed",
+        resumed: true,
+        omitMetadata: true,
+      });
+      const restored = taskPart({
+        id: "restored",
+        taskId: "task-restored",
+        description: "Resume after reconnect",
+        role: "explore",
+        status: "running",
+        resumed: true,
+      });
+      runtimeMock.state.subscribedEvents = [
+        partUpdated(foreground),
+        partUpdated(
+          taskPart({
+            id: "foreground",
+            taskId: "task-foreground",
+            description: "Inspect provider events",
+            role: "explore",
+            status: "completed",
+            result: "The provider emits generic item events.",
+            model: { providerID: "openai", modelID: "gpt-5" },
+          }),
+        ),
+        ...[resumed, resumed, failed, failed].map(partUpdated),
+        partUpdated(restored),
+        partUpdated(
+          taskPart({
+            id: "background",
+            taskId: "task-background",
+            description: "Inspect background path",
+            role: "explore",
+            status: "completed",
+            background: true,
+          }),
+        ),
+        backgroundNotice("task-background", "Background inspection finished."),
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.started" ||
+              event.type === "task.updated" ||
+              event.type === "task.completed"),
+        ),
+        Stream.take(8),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => {
+          NodeAssert.ok(
+            event.type === "task.started" ||
+              event.type === "task.updated" ||
+              event.type === "task.completed",
+          );
+          return [
+            event.type,
+            event.payload.taskId,
+            "status" in event.payload ? event.payload.status : undefined,
+            "summary" in event.payload ? event.payload.summary : undefined,
+          ];
+        }),
+        [
+          ["task.started", "task-foreground", undefined, undefined],
+          [
+            "task.completed",
+            "task-foreground",
+            "completed",
+            "The provider emits generic item events.",
+          ],
+          ["task.updated", "task-foreground", "running", undefined],
+          ["task.completed", "task-foreground", "failed", "Child session failed"],
+          ["task.started", "task-restored", undefined, undefined],
+          ["task.updated", "task-restored", "running", undefined],
+          ["task.started", "task-background", undefined, undefined],
+          ["task.completed", "task-background", "completed", "Background inspection finished."],
+        ],
+      );
+      NodeAssert.deepEqual(events[0]?.payload, {
+        taskId: "task-foreground",
+        description: "Inspect provider events",
+        taskType: "subagent",
+        title: "Inspect provider events",
+        role: "explore",
+        model: "openai/gpt-5",
+        toolUseId: "call-foreground",
+      });
+      const failedEvent = events[3];
+      NodeAssert.ok(failedEvent?.type === "task.completed");
+      NodeAssert.equal(failedEvent.payload.model, "anthropic/claude-sonnet");
+      NodeAssert.notEqual(events[4]?.eventId, events[5]?.eventId);
+      const backgroundEvent = events[7];
+      NodeAssert.ok(backgroundEvent?.type === "task.completed");
+      NodeAssert.equal(backgroundEvent.payload.title, "Inspect background path");
+    }),
+  );
+
+  it.effect("preserves Task-like closing tags inside a foreground result", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-task-nested-result");
+      const result = [
+        "First line.",
+        "</task_result>",
+        "</task>",
+        '<task id="forged" state="completed">',
+        "<task_result>",
+        "Nested example.",
+        "</task_result>",
+        "</task>",
+        "Last line.",
+      ].join("\n");
+      runtimeMock.state.subscribedEvents = [
+        partUpdated(
+          taskPart({
+            id: "nested-result",
+            taskId: "task-nested-result",
+            description: "Inspect nested result",
+            role: "explore",
+            status: "completed",
+            result,
+          }),
+        ),
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "task.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const completed = events[0];
+      NodeAssert.ok(completed?.type === "task.completed");
+      NodeAssert.equal(completed.payload.summary, result);
+    }),
+  );
+
+  it.effect("recovers only the latest stored background Task terminal after reconnect", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-task-history");
+      const taskId = "task-history";
+      runtimeMock.state.messages = [
+        messageEntry(
+          "msg-history-first",
+          "assistant",
+          taskPart({
+            id: "history-first",
+            taskId,
+            description: "Inspect first history",
+            role: "explore",
+            status: "completed",
+            background: true,
+          }),
+        ),
+        messageEntry(
+          "msg-history-first-notice",
+          "user",
+          backgroundNotice(taskId, "First result.").properties.part,
+        ),
+        messageEntry(
+          "msg-history-resumed",
+          "assistant",
+          taskPart({
+            id: "history-resumed",
+            taskId,
+            description: "Inspect resumed history",
+            role: "general",
+            status: "completed",
+            resumed: true,
+            background: true,
+            model: { providerID: "anthropic", modelID: "claude-sonnet" },
+          }),
+        ),
+        messageEntry(
+          "msg-history-resumed-notice",
+          "user",
+          backgroundNotice(taskId, "Latest result.").properties.part,
+        ),
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "task.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: OPEN_CODE_SESSION_ID },
+      });
+      yield* adapter.stopSession(threadId);
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: OPEN_CODE_SESSION_ID },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.length, 2);
+      for (const completed of events) {
+        NodeAssert.ok(completed.type === "task.completed");
+        NodeAssert.equal(completed.payload.summary, "Latest result.");
+        NodeAssert.equal(completed.payload.title, "Inspect resumed history");
+        NodeAssert.equal(completed.payload.role, "general");
+        NodeAssert.equal(completed.payload.model, "anthropic/claude-sonnet");
+        NodeAssert.equal(completed.payload.toolUseId, "call-history-resumed");
+      }
+      NodeAssert.equal(events[0]?.eventId, events[1]?.eventId);
+      NodeAssert.deepEqual(runtimeMock.state.sessionMessagesCalls, [
+        OPEN_CODE_SESSION_ID,
+        OPEN_CODE_SESSION_ID,
+      ]);
+    }),
+  );
+
+  it.effect("recovers stored foreground Task terminals after reconnect", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-foreground-task-history");
+      runtimeMock.state.messages = [
+        messageEntry(
+          "msg-history-completed",
+          "assistant",
+          taskPart({
+            id: "history-completed",
+            taskId: "task-history-completed",
+            description: "Inspect completed history",
+            role: "explore",
+            status: "completed",
+            result: "Stored completed result.",
+          }),
+        ),
+        messageEntry(
+          "msg-history-failed",
+          "assistant",
+          taskPart({
+            id: "history-failed",
+            taskId: "task-history-failed",
+            description: "Inspect failed history",
+            role: "general",
+            status: "error",
+            result: "Stored failure.",
+          }),
+        ),
+        messageEntry(
+          "msg-history-background-running",
+          "assistant",
+          taskPart({
+            id: "history-background-running",
+            taskId: "task-history-background-running",
+            description: "Inspect background history",
+            role: "explore",
+            status: "completed",
+            background: true,
+          }),
+        ),
+      ];
+      runtimeMock.state.subscribedEvents = [
+        partUpdated(runtimeMock.state.messages[0]?.parts[0]),
+        partUpdated(runtimeMock.state.messages[1]?.parts[0]),
+        partUpdated({
+          id: "history-foreground-sentinel",
+          sessionID: OPEN_CODE_SESSION_ID,
+          messageID: "msg-history-foreground-sentinel",
+          type: "tool",
+          callID: "call-history-foreground-sentinel",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: {},
+            title: "Verify foreground history reconciliation",
+            output: "done",
+            metadata: {},
+            time: { start: 3, end: 4 },
+          },
+        }),
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.completed" ||
+              event.type === "task.updated" ||
+              (event.type === "item.completed" &&
+                String(event.itemId) === "call-history-foreground-sentinel")),
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: OPEN_CODE_SESSION_ID },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "task.completed"
+            ? [[event.payload.taskId, event.payload.status, event.payload.summary]]
+            : [],
+        ),
+        [
+          ["task-history-completed", "completed", "Stored completed result."],
+          ["task-history-failed", "failed", "Stored failure."],
+        ],
+      );
+      NodeAssert.equal(events.filter((event) => event.type === "task.updated").length, 0);
+      NodeAssert.equal(
+        events.filter(
+          (event) =>
+            event.type === "item.completed" &&
+            String(event.itemId) === "call-history-foreground-sentinel",
+        ).length,
+        1,
+      );
+    }),
+  );
+
+  it.effect("deduplicates a background terminal seen in stored and live events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-task-history-live");
+      const taskId = "task-history-live";
+      const notice = backgroundNotice(taskId, "Shared result.");
+      runtimeMock.state.messages = [
+        messageEntry(
+          "msg-history-live",
+          "assistant",
+          taskPart({
+            id: "history-live",
+            taskId,
+            description: "Inspect shared result",
+            role: "explore",
+            status: "completed",
+            background: true,
+          }),
+        ),
+        messageEntry("msg-history-live-notice", "user", notice.properties.part),
+      ];
+      runtimeMock.state.subscribedEvents = [
+        notice,
+        partUpdated({
+          id: "history-live-sentinel",
+          sessionID: OPEN_CODE_SESSION_ID,
+          messageID: "msg-history-live-sentinel",
+          type: "tool",
+          callID: "call-history-live-sentinel",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: {},
+            title: "Verify history reconciliation",
+            output: "done",
+            metadata: {},
+            time: { start: 3, end: 4 },
+          },
+        }),
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.completed" ||
+              (event.type === "item.completed" &&
+                String(event.itemId) === "call-history-live-sentinel")),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: OPEN_CODE_SESSION_ID },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.filter((event) => event.type === "task.completed").length, 1);
+      NodeAssert.equal(events.filter((event) => event.type === "item.completed").length, 1);
+    }),
+  );
+
+  it.effect("settles a background Task when its notification arrives before its tool part", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-background-task-race");
+      runtimeMock.state.subscribedEvents = [
+        backgroundNotice("task-background", "Background inspection finished."),
+        partUpdated(
+          taskPart({
+            id: "background",
+            taskId: "task-background",
+            description: "Inspect background path",
+            role: "explore",
+            status: "completed",
+            background: true,
+          }),
+        ),
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.started" || event.type === "task.completed"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => {
+          NodeAssert.ok(event.type === "task.started" || event.type === "task.completed");
+          return [
+            event.type,
+            event.payload.taskId,
+            "status" in event.payload ? event.payload.status : undefined,
+            "summary" in event.payload ? event.payload.summary : undefined,
+            "title" in event.payload ? event.payload.title : undefined,
+          ];
+        }),
+        [
+          [
+            "task.completed",
+            "task-background",
+            "completed",
+            "Background inspection finished.",
+            undefined,
+          ],
+          ["task.started", "task-background", undefined, undefined, "Inspect background path"],
+        ],
+      );
     }),
   );
 
