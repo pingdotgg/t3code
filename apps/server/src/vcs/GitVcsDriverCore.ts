@@ -68,6 +68,9 @@ const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
+// A project's default branch changes far more rarely than the local snapshot it
+// corrects, so a successful probe is cached well past that snapshot.
+const STATUS_REMOTE_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(30);
 const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
@@ -119,6 +122,11 @@ function statusUpstreamRefreshFailureCooldown(consecutiveFailures: number): Dura
     Duration.toMillis(STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN) * Math.pow(2, exponent);
   return Duration.min(Duration.millis(cooldownMs), STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN);
 }
+
+class RemoteDefaultBranchCacheKey extends Data.Class<{
+  gitCommonDir: string;
+  remoteName: string;
+}> {}
 
 class GitRefsSnapshotCacheKey extends Data.Class<{
   gitCommonDir: string;
@@ -399,6 +407,14 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
   }
   const refName = trimmed.slice(prefix.length).trim();
   return refName.length > 0 ? refName : null;
+}
+
+// `git ls-remote --symref <remote> HEAD` answers with the remote's own HEAD symref
+// followed by the resolved object, for example:
+//   ref: refs/heads/dev\tHEAD
+//   1a2b3cd\tHEAD
+function parseDefaultBranchFromLsRemoteSymref(value: string): string | null {
+  return /^ref:\s+refs\/heads\/(\S+)\s+HEAD\s*$/m.exec(value)?.[1] ?? null;
 }
 
 function isMissingGitCwdError(error: GitCommandError): boolean {
@@ -1133,10 +1149,60 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
 
+  // `refs/remotes/<remote>/HEAD` is written once, when the repository is cloned, and
+  // neither fetch nor pull ever moves it again. A project that changes its default
+  // branch afterwards leaves every existing clone pointing at the old one, so the real
+  // default branch gets classified as an ordinary topic branch. Ask the remote itself,
+  // and keep the local snapshot as the offline fallback. No mutation this driver
+  // performs can move the remote's own HEAD, so the entry is left to expire on its own
+  // rather than being dropped by `invalidateStatusStaticCaches` after every commit.
+  const remoteDefaultBranchCache = yield* Cache.makeWith(
+    ({ gitCommonDir, remoteName }: RemoteDefaultBranchCacheKey) =>
+      executeGit(
+        "GitVcsDriver.statusDetails.remoteDefaultBranch",
+        path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir,
+        ["--git-dir", gitCommonDir, "ls-remote", "--symref", remoteName, "HEAD"],
+        {
+          allowNonZeroExit: true,
+          env: STATUS_UPSTREAM_REFRESH_ENV,
+          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+        },
+      ).pipe(
+        Effect.map((result) =>
+          result.exitCode === 0 ? parseDefaultBranchFromLsRemoteSymref(result.stdout) : null,
+        ),
+      ),
+    {
+      capacity: 2_048,
+      timeToLive: Exit.match({
+        // An unreachable remote resolves to null. Retry that on the shorter local
+        // cadence instead of pinning the fallback in place for the full window.
+        onSuccess: (defaultBranch) =>
+          defaultBranch === null
+            ? STATUS_DEFAULT_BRANCH_CACHE_TTL
+            : STATUS_REMOTE_DEFAULT_BRANCH_CACHE_TTL,
+        // A timed-out or unspawnable probe carries the same answer as an unreachable
+        // remote — none — and costs the full timeout to learn it, so it cools down on
+        // that same cadence instead of re-probing on every miss.
+        onFailure: () => STATUS_DEFAULT_BRANCH_CACHE_TTL,
+      }),
+    },
+  );
+
+  const remoteDefaultBranchFor = (gitCommonDir: string, remoteName: string) =>
+    Cache.get(
+      remoteDefaultBranchCache,
+      new RemoteDefaultBranchCacheKey({ gitCommonDir, remoteName }),
+    ).pipe(Effect.orElseSucceed(() => null));
+
   const defaultBranchCache = yield* Cache.makeWith(
     (gitCommonDir: string) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        const remoteDefaultBranch = yield* remoteDefaultBranchFor(gitCommonDir, "origin");
+        if (remoteDefaultBranch !== null) {
+          return remoteDefaultBranch;
+        }
         const fetchCwd =
           path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
         return yield* executeGit(
@@ -1266,19 +1332,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     remoteName: string,
   ): Effect.Effect<string | null, GitCommandError> =>
-    executeGit(
-      "GitVcsDriver.resolveDefaultBranchName",
-      cwd,
-      ["symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
-      { allowNonZeroExit: true },
-    ).pipe(
-      Effect.map((result) => {
-        if (result.exitCode !== 0) {
-          return null;
-        }
-        return parseDefaultBranchFromRemoteHeadRef(result.stdout, remoteName);
-      }),
-    );
+    Effect.gen(function* () {
+      const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      const remoteDefaultBranch =
+        repositoryPaths === null
+          ? null
+          : yield* remoteDefaultBranchFor(repositoryPaths.gitCommonDir, remoteName);
+      if (remoteDefaultBranch !== null) {
+        return remoteDefaultBranch;
+      }
+      const result = yield* executeGit(
+        "GitVcsDriver.resolveDefaultBranchName",
+        cwd,
+        ["symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
+        { allowNonZeroExit: true },
+      );
+      return result.exitCode === 0
+        ? parseDefaultBranchFromRemoteHeadRef(result.stdout, remoteName)
+        : null;
+    });
 
   const remoteBranchExists = (
     cwd: string,
