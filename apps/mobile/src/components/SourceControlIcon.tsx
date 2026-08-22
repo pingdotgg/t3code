@@ -1,6 +1,11 @@
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
 
-export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops";
+export type SourceControlIconKind =
+  | "github"
+  | "gitlab"
+  | "bitbucket"
+  | "azure-devops"
+  | "cursor-origin";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -92,6 +97,15 @@ export function SourceControlIcon(props: {
           <Path
             fill="url(#bitbucket-a)"
             d="M2379.27,763.06h-745.5l-125.12,730.42H992.31l-609.67,723.67c19.32,16.71,43.96,26,69.5,26.21h1618.13 c39.35,0.51,73.14-27.88,79.44-66.72L2379.27,763.06z"
+          />
+        </Svg>
+      );
+    case "cursor-origin":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 466.73 532.09" fill="none">
+          <Path
+            fill={props.color ?? "#EDECEC"}
+            d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z"
           />
         </Svg>
       );

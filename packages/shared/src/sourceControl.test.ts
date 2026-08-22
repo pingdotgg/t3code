@@ -28,6 +28,10 @@ describe("source control presentation", () => {
       shortLabel: "PR",
       singular: "pull request",
     });
+    expect(getChangeRequestTerminologyForKind("cursor-origin")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
   });
 
   it("falls back to generic change request copy for unknown providers", () => {
@@ -56,6 +60,12 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://origin.cursor.com/acme/checkout.git")?.kind,
+    ).toBe("cursor-origin");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@origin.cursor.com:acme/checkout.git")?.kind,
+    ).toBe("cursor-origin");
   });
 
   it("detects Azure DevOps SSH remotes", () => {
@@ -119,6 +129,9 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl(
         "https://notbitbucket.example.com/workspace/repo.git",
       )?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://cursor.com/codebase/acme/checkout")?.kind,
     ).toBe("unknown");
   });
 

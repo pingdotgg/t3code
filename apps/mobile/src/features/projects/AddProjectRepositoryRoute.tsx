@@ -18,7 +18,8 @@ export function AddProjectRepositoryRoute({
     source === "github" ||
     source === "gitlab" ||
     source === "bitbucket" ||
-    source === "azure-devops"
+    source === "azure-devops" ||
+    source === "cursor-origin"
       ? addProjectRemoteSourceLabel(source)
       : "Git URL";
 

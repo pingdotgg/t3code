@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   VcsProcessExitError,
@@ -41,6 +42,35 @@ const captureProcessResult = (
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
     Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flip,
+  );
+
+const captureClassifiedExit = (command: string, stderr: string) =>
+  VcsProcess.make.pipe(
+    Effect.provideService(
+      ProcessRunner.ProcessRunner,
+      ProcessRunner.ProcessRunner.of({
+        run: () =>
+          Effect.succeed({
+            stdout: "",
+            stderr,
+            code: ChildProcessSpawner.ExitCode(1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      }),
+    ),
+    Effect.flatMap((service) =>
+      service.run({
+        operation: "test.classify",
+        command,
+        args: ["pr", "view", "13"],
+        cwd: "/repo",
+      }),
+    ),
     Effect.flip,
   );
 
@@ -138,6 +168,30 @@ describe("VcsProcess.run", () => {
       expect(error.message).not.toContain(secretStderr);
       expect(error.message).not.toContain("super-secret-token");
     }).pipe(provideLive),
+  );
+
+  it.effect("classifies Origin auth login hints as authentication failures", () =>
+    Effect.gen(function* () {
+      const error = yield* captureClassifiedExit("origin", "No account: run origin auth login");
+
+      expect(error).toMatchObject({
+        command: "origin",
+        failureKind: "authentication",
+        detail: "Authentication failed.",
+      });
+    }),
+  );
+
+  it.effect("classifies Origin missing pull requests as not-found", () =>
+    Effect.gen(function* () {
+      const error = yield* captureClassifiedExit("origin", "pull request 13 was not found");
+
+      expect(error).toMatchObject({
+        command: "origin",
+        failureKind: "not-found",
+        detail: "Pull request not found.",
+      });
+    }),
   );
 
   it.effect("classifies API rate limits without retaining provider stderr", () =>

@@ -13,6 +13,7 @@ import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
+import * as OriginCli from "./OriginCli.ts";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
@@ -30,6 +31,7 @@ const sourceControlProviderRegistryTestLayer = (input: {
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
+        Layer.mock(OriginCli.OriginCli)({}),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
       ),
@@ -161,6 +163,12 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unauthenticated",
           account: Option.none(),
         },
+        {
+          kind: "cursor-origin",
+          status: "missing",
+          auth: "unknown",
+          account: Option.none(),
+        },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -201,6 +209,9 @@ it.effect("probes provider authentication without exposing token details", () =>
 Logged in to gitlab.com as gitlab-user
 `),
         );
+      }
+      if (input.command === "origin" && input.args.join(" ") === "auth status") {
+        return Effect.succeed(processOutput("Logged in to origin.cursor.com as origin-user\n"));
       }
       if (
         input.command === "az" &&
@@ -275,6 +286,12 @@ Logged in to gitlab.com as gitlab-user
           kind: "bitbucket",
           auth: "authenticated",
           account: Option.some("bitbucket-user"),
+          detail: Option.none(),
+        },
+        {
+          kind: "cursor-origin",
+          auth: "authenticated",
+          account: Option.some("origin-user"),
           detail: Option.none(),
         },
       ],

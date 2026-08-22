@@ -21,6 +21,7 @@ import {
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { originGitHttpsUrl } from "./originPullRequests.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
@@ -65,12 +66,13 @@ function toRepositoryInfo(
 }
 
 function selectRemoteUrl(
+  provider: SourceControlProviderKind,
   urls: SourceControlRepositoryCloneUrls,
   protocol: SourceControlCloneProtocol | undefined,
 ): string {
   switch (protocol ?? "auto") {
     case "https":
-      return urls.url;
+      return provider === "cursor-origin" ? originGitHttpsUrl(urls.nameWithOwner) : urls.url;
     case "ssh":
     case "auto":
       return urls.sshUrl;
@@ -191,7 +193,7 @@ export const make = Effect.gen(function* () {
         repository: input.repository,
         cwd: preparedDestination.parentPath,
       });
-      remoteUrl = selectRemoteUrl(repository, input.protocol);
+      remoteUrl = selectRemoteUrl(provider, repository, input.protocol);
       provider = input.provider;
     }
 
@@ -230,7 +232,7 @@ export const make = Effect.gen(function* () {
         repository: input.repository.trim(),
         visibility: input.visibility,
       });
-      const remoteUrl = selectRemoteUrl(urls, input.protocol);
+      const remoteUrl = selectRemoteUrl(providerKind, urls, input.protocol);
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
         preferredName: input.remoteName?.trim() || "origin",

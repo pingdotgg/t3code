@@ -1006,6 +1006,11 @@ const PROVIDER_REQUIREMENT: Partial<
     unauthenticated:
       "Bitbucket rejected the configured credentials. Check T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.",
   },
+  "cursor-origin": {
+    missing:
+      "Origin CLI (`origin`) is required to browse change requests on this host. Install it from https://cursor.com/docs/origin/cli and reload.",
+    unauthenticated: "Origin CLI is not authenticated. Run `origin auth login` and retry.",
+  },
 };
 
 /**

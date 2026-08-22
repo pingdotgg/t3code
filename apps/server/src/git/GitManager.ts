@@ -60,6 +60,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { originGitHttpsUrl } from "../sourceControl/originPullRequests.ts";
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
@@ -583,6 +584,13 @@ function shouldPreferSshRemote(url: string | null): boolean {
   return isSshRemoteUrl(url);
 }
 
+function httpsRemoteUrl(
+  kind: string,
+  urls: { readonly url: string; readonly nameWithOwner: string },
+): string {
+  return kind === "cursor-origin" ? originGitHttpsUrl(urls.nameWithOwner) : urls.url;
+}
+
 function toPullRequestHeadRemoteInfo(pr: {
   isCrossRepository?: boolean | undefined;
   headRepositoryNameWithOwner?: string | null | undefined;
@@ -722,12 +730,15 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      const provider = yield* sourceControlProvider(cwd);
+      const cloneUrls = yield* provider.getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
-      const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
+      const remoteUrl = shouldPreferSshRemote(originRemoteUrl)
+        ? cloneUrls.sshUrl
+        : httpsRemoteUrl(provider.kind, cloneUrls);
       const preferredRemoteName =
         pullRequest.headRepositoryOwnerLogin?.trim() ||
         repositoryNameWithOwner.split("/")[0]?.trim() ||
@@ -785,12 +796,15 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      const provider = yield* sourceControlProvider(cwd);
+      const cloneUrls = yield* provider.getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
-      const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
+      const remoteUrl = shouldPreferSshRemote(originRemoteUrl)
+        ? cloneUrls.sshUrl
+        : httpsRemoteUrl(provider.kind, cloneUrls);
       const preferredRemoteName =
         pullRequest.headRepositoryOwnerLogin?.trim() ||
         repositoryNameWithOwner.split("/")[0]?.trim() ||

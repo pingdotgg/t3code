@@ -1,7 +1,13 @@
 import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
-  readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";
+  readonly icon:
+    | "github"
+    | "gitlab"
+    | "azure-devops"
+    | "bitbucket"
+    | "cursor-origin"
+    | "change-request";
   readonly providerName: string;
   readonly shortName: string;
   readonly longName: string;
@@ -64,6 +70,17 @@ const BITBUCKET_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://bitbucket.org/workspace/repo/pull-requests/42",
 };
 
+const CURSOR_ORIGIN_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "cursor-origin",
+  providerName: "Cursor Origin",
+  shortName: "PR",
+  longName: "pull request",
+  pluralLongName: "pull requests",
+  providerLongName: "Cursor Origin pull request",
+  checkoutCommandExample: "origin pr checkout 123",
+  urlExample: "https://cursor.com/codebase/owner/repo/pull/42",
+};
+
 const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "change-request",
   providerName: "source control",
@@ -87,6 +104,8 @@ export function resolveChangeRequestPresentation(
       return AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION;
     case "bitbucket":
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
+    case "cursor-origin":
+      return CURSOR_ORIGIN_CHANGE_REQUEST_PRESENTATION;
     case "unknown":
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
@@ -198,6 +217,10 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
+function isCursorOriginHost(host: string): boolean {
+  return host === "origin.cursor.com";
+}
+
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {
@@ -235,6 +258,14 @@ export function detectSourceControlProviderFromRemoteUrl(
     return {
       kind: "bitbucket",
       name: hostname === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
+      baseUrl: toBaseUrl(host),
+    };
+  }
+
+  if (isCursorOriginHost(hostname)) {
+    return {
+      kind: "cursor-origin",
+      name: "Cursor Origin",
       baseUrl: toBaseUrl(host),
     };
   }
