@@ -114,6 +114,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { ProgressSpinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -379,6 +380,12 @@ function AboutVersionSection() {
                   disabled={buttonDisabled || isUpdateActionPending}
                   onClick={handleButtonClick}
                 >
+                  {updateState?.status === "downloading" ? (
+                    <ProgressSpinner
+                      value={updateState.downloadPercent ?? 0}
+                      aria-label="Update download progress"
+                    />
+                  ) : null}
                   {buttonLabel}
                 </Button>
               }
