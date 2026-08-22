@@ -101,6 +101,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "context-window-token-count",
+    title: "Show context window token count",
+    to: "/settings/appearance",
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",
