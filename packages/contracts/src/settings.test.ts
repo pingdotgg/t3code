@@ -186,6 +186,7 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.claudeAgent.enabled).toBe(true);
     expect(decoded.providers.cursor.enabled).toBe(true);
     expect(decoded.providers.grok.enabled).toBe(false);
+    expect(decoded.providers.fx.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
   });
 
