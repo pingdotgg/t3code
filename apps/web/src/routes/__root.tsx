@@ -1,4 +1,5 @@
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { MAX_CHAT_TEXT_CONTRAST, MIN_CHAT_TEXT_CONTRAST } from "@t3tools/contracts/settings";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -132,6 +133,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <GlassAppearanceSync />
+        <ChatTextContrastSync />
         <FontAppearanceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
@@ -158,6 +160,24 @@ function GlassAppearanceSync() {
   useEffect(() => {
     document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);
   }, [glassOpacity]);
+
+  return null;
+}
+
+function ChatTextContrastSync() {
+  const chatTextContrast = useClientSettings((settings) => settings.chatTextContrast);
+
+  useEffect(() => {
+    // The setting reads as text strength (the minimum is the classic
+    // foreground/80, the maximum full contrast); the CSS variable is the
+    // color-mix progress toward the full-contrast endpoint, so the setting's
+    // range maps onto 0–100%.
+    const progress =
+      ((chatTextContrast - MIN_CHAT_TEXT_CONTRAST) /
+        (MAX_CHAT_TEXT_CONTRAST - MIN_CHAT_TEXT_CONTRAST)) *
+      100;
+    document.documentElement.style.setProperty("--chat-text-contrast", `${progress}%`);
+  }, [chatTextContrast]);
 
   return null;
 }

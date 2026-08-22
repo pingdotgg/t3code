@@ -565,7 +565,10 @@ function MarkdownDetails({
         <span>{summary}</span>
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <div className="pb-3 ps-6 text-foreground/80" data-markdown-details-content="">
+        <div
+          className="pb-3 ps-6 text-(--chat-markdown-foreground)"
+          data-markdown-details-content=""
+        >
           {content}
         </div>
       </CollapsiblePanel>
@@ -1789,7 +1792,7 @@ function ChatMarkdown({
   return (
     <div
       className={cn(
-        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80 [overflow-wrap:anywhere] [word-break:break-word]",
+        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-(--chat-markdown-foreground) [overflow-wrap:anywhere] [word-break:break-word]",
         className,
       )}
       onCopy={handleCopy}

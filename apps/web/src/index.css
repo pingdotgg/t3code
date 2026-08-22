@@ -95,6 +95,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
+  /* Chat body text sits between the dimmed classic tone (foreground at 80%
+     alpha) and a full-contrast endpoint — plain foreground in light mode,
+     pure white in dark. The contrast var is driven by the appearance
+     setting; 0% reproduces the historical foreground/80 exactly. */
+  --chat-text-contrast: 0%;
+  --chat-markdown-foreground: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--foreground) 80%, transparent),
+    var(--foreground) var(--chat-text-contrast)
+  );
   --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
@@ -109,6 +119,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
     --glass-blur: 16px;
     --glass-saturation: 1.08;
+    --chat-markdown-foreground: color-mix(
+      in srgb,
+      color-mix(in srgb, var(--foreground) 80%, transparent),
+      #fff var(--chat-text-contrast)
+    );
   }
 }
 

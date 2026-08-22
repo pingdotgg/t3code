@@ -64,6 +64,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    // Prefixed because the slider control already owns the `chat-text-contrast` id.
+    id: "setting-chat-text-contrast",
+    title: "Chat text contrast",
+    to: "/settings/appearance",
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

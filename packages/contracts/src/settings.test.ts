@@ -51,6 +51,22 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings chat text contrast", () => {
+  it("defaults to the classic dimmed chat text tone", () => {
+    expect(decodeClientSettings({}).chatTextContrast).toBe(80);
+  });
+
+  it.each([79, 101, 92.5])("rejects an invalid chat text contrast: %s", (value) => {
+    expect(() => decodeClientSettings({ chatTextContrast: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ chatTextContrast: value })).toThrow();
+  });
+
+  it.each([80, 90, 100])("accepts a chat text contrast within the supported range: %s", (value) => {
+    expect(decodeClientSettings({ chatTextContrast: value }).chatTextContrast).toBe(value);
+    expect(decodeClientSettingsPatch({ chatTextContrast: value }).chatTextContrast).toBe(value);
+  });
+});
+
 describe("ClientSettings environment identification", () => {
   it("defaults to artwork and accepts each presentation mode", () => {
     expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
