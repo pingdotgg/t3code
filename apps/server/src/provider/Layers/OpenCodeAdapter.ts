@@ -1555,12 +1555,37 @@ export function makeOpenCodeAdapter(
       };
     });
 
+    const abortOpenCodeSessionTree = Effect.fn("abortOpenCodeSessionTree")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      // Abort the parent first so it cannot spawn another child after we take the
+      // children snapshot. Older OpenCode releases do not reliably propagate this
+      // cancellation, so enumerate and abort any surviving children afterwards.
+      yield* runOpenCodeSdk("session.abort", () =>
+        context.client.session.abort({ sessionID: context.openCodeSessionId }),
+      ).pipe(Effect.mapError(toRequestError));
+
+      const children = yield* runOpenCodeSdk("session.children", () =>
+        context.client.session.children({ sessionID: context.openCodeSessionId }),
+      ).pipe(
+        Effect.map((response) => response.data ?? []),
+        Effect.orElseSucceed(() => []),
+      );
+
+      yield* Effect.forEach(
+        children,
+        (child) =>
+          runOpenCodeSdk("session.abort", () =>
+            context.client.session.abort({ sessionID: child.id }),
+          ).pipe(Effect.ignore),
+        { concurrency: "unbounded", discard: true },
+      );
+    });
+
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        yield* runOpenCodeSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
+        yield* abortOpenCodeSessionTree(context);
         if (turnId ?? context.activeTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
