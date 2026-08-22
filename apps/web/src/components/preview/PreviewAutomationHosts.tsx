@@ -67,6 +67,10 @@ import {
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
+  openPreviewRightPanelSurface,
+  reconcilePreviewRightPanelSurfaces,
+} from "./reconcilePreviewRightPanelSurfaces";
+import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
@@ -321,6 +325,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return raiseAtomCommandFailure(result);
           }
           reconcilePreviewServerSessions(threadRef, result.value);
+          reconcilePreviewRightPanelSurfaces(threadRef);
           state = readThreadPreviewState(threadRef);
         }
         tabId = request.tabId ?? state.snapshot?.tabId ?? null;
@@ -395,6 +400,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               activeSnapshot = snapshot;
               tabId = activeTabId;
             }
+            reconcilePreviewRightPanelSurfaces(threadRef);
             const activeRuntimeTabId = previewRuntimeTabId(
               threadRef,
               readThreadPreviewState(threadRef).serverEpoch,
@@ -437,7 +443,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               (await resolveBrowserDefaults()).autoShowFloatingPreview,
             );
             if (shouldPresentPreview) {
-              usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
+              usePreviewMiniPlayerStore.getState().close(threadRef);
+              openPreviewRightPanelSurface(threadRef, activeTabId);
+            } else {
+              reconcilePreviewRightPanelSurfaces(threadRef);
             }
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
               await waitForDesktopOverlay(
