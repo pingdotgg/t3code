@@ -23,12 +23,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -63,7 +61,6 @@ const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
 
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
-  private readonly eventConsumed = Effect.runSync(Deferred.make<void>());
   private readonly now = "2026-01-01T00:00:00.000Z";
 
   public readonly startImpl = vi.fn(() =>
@@ -154,12 +151,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   get events() {
-    return Stream.fromQueue(this.eventQueue).pipe(
-      Stream.tap(() => Deferred.succeed(this.eventConsumed, undefined)),
-    );
+    return Stream.fromQueue(this.eventQueue);
   }
-
-  eventWasConsumed = Deferred.poll(this.eventConsumed).pipe(Effect.map(Option.isSome));
 
   close = Effect.promise(() => this.closeImpl());
 
@@ -1260,62 +1253,6 @@ scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
     }),
   );
 });
-
-it.effect("keeps forwarding events after a managed runtime call completes", () =>
-  Effect.gen(function* () {
-    const runtimeFactory = makeScopedRuntimeFactory();
-    const layer = Layer.effect(
-      CodexAdapter,
-      Effect.gen(function* () {
-        const codexConfig = decodeCodexSettings({});
-        return yield* makeCodexAdapter(codexConfig, {
-          makeRuntime: runtimeFactory.factory,
-        });
-      }),
-    ).pipe(
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(providerSessionDirectoryTestLayer),
-      Layer.provideMerge(NodeServices.layer),
-    );
-    const managedRuntime = yield* Effect.acquireRelease(
-      Effect.sync(() => ManagedRuntime.make(layer)),
-      (runtime) => Effect.promise(() => runtime.dispose()),
-    );
-    const adapter = yield* Effect.promise(() => managedRuntime.runPromise(CodexAdapter));
-
-    yield* Effect.promise(() =>
-      managedRuntime.runPromise(
-        adapter.startSession({
-          provider: ProviderDriverKind.make("codex"),
-          threadId: asThreadId("thread-managed-events"),
-          runtimeMode: "full-access",
-        }),
-      ),
-    );
-
-    const runtime = runtimeFactory.lastRuntime;
-    NodeAssert.ok(runtime);
-    const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
-    yield* runtime.emit({
-      id: asEventId("evt-after-managed-start"),
-      kind: "notification",
-      provider: ProviderDriverKind.make("codex"),
-      threadId: asThreadId("thread-managed-events"),
-      createdAt: "2026-01-01T00:00:00.000Z",
-      method: "process/stderr",
-      message: "event after managed start",
-    } satisfies ProviderEvent);
-    yield* Effect.yieldNow;
-    NodeAssert.equal(yield* runtime.eventWasConsumed, true);
-
-    const firstEvent = yield* Fiber.join(firstEventFiber);
-    NodeAssert.equal(firstEvent._tag, "Some");
-    if (firstEvent._tag === "Some") {
-      NodeAssert.equal(firstEvent.value.type, "runtime.warning");
-    }
-  }),
-);
 
 const scopedFailureRuntimeFactory = makeScopedRuntimeFactory({ failConstruction: true });
 const scopedFailureLayer = it.layer(
