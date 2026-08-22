@@ -3541,6 +3541,10 @@ export default function Sidebar() {
                               variant="ghost-muted"
                               aria-label={`Project settings for ${project.displayName}`}
                               title={`Project settings for ${project.displayName}`}
+                              // Keep the gear out of the tab order: on open the menu focuses
+                              // the first tabbable element, and a tabbable gear drags focus and
+                              // the highlight onto this row before the pointer touches it.
+                              tabIndex={-1}
                               className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
                               onPointerDown={(event) => event.stopPropagation()}
                               onClick={(event) => {
