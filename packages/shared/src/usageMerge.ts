@@ -113,10 +113,10 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
- * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * the same provider home and would otherwise double count every token. A complete
+ * source wins over a partial duplicate; ties are sorted by
+ * environment id so the owner does not change between renders. Fully failed
+ * and missing sources cannot own a fingerprint.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -125,18 +125,25 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
   const duplicates: string[] = [];
 
-  const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
+  const candidates = environments
+    .flatMap((environment) =>
+      environment.summary.sources.flatMap((source) =>
+        source.status === "missing" || source.status === "failed" ? [] : [{ environment, source }],
+      ),
+    )
+    .sort((a, b) => {
+      const statusOrder =
+        Number(a.source.status === "partial") - Number(b.source.status === "partial");
+      return statusOrder || a.environment.environmentId.localeCompare(b.environment.environmentId);
+    });
 
-  for (const environment of ordered) {
-    for (const source of environment.summary.sources) {
-      if (source.status === "missing" || source.status === "failed") continue;
-      const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
-        continue;
-      }
-      ownerByFingerprint.set(key, environment.environmentId);
+  for (const { environment, source } of candidates) {
+    const key = fingerprintKey(source.fingerprint);
+    if (ownerByFingerprint.has(key)) {
+      duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      continue;
     }
+    ownerByFingerprint.set(key, environment.environmentId);
   }
 
   return { ownerByFingerprint, duplicates };
@@ -236,6 +243,8 @@ export function mergeUsage(
   for (const environment of current) {
     for (const source of environment.summary.sources) {
       if (source.status !== "partial" && source.status !== "failed") continue;
+      const owner = ownerByFingerprint.get(fingerprintKey(source.fingerprint));
+      if (owner !== undefined && owner !== environment.environmentId) continue;
       incompleteSources.push({
         environmentId: environment.environmentId,
         environmentLabel: environment.label,

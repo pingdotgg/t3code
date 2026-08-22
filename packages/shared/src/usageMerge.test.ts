@@ -229,6 +229,38 @@ describe("mergeUsage", () => {
     ]);
   });
 
+  it("prefers a complete duplicate without reporting a false coverage gap", () => {
+    const shared = {
+      provider: "zcode" as const,
+      hostId: "mac",
+      homePath: "/a/.zcode/cli/db",
+      volumeId: "16777220:1234",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "zcode", model: "glm-5.2", costUsd: 3 })],
+            [{ ...shared, status: "partial" }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ provider: "zcode", model: "glm-5.2", costUsd: 7 })],
+            [{ ...shared, status: "ok" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(7);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
+    expect(merged.incompleteSources).toEqual([]);
+  });
+
   it("derives provider shares and cost quality", () => {
     const merged = mergeUsage(
       [
