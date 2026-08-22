@@ -238,6 +238,28 @@ describe("readEnvironmentFromWindowsShell", () => {
     );
   });
 
+  it("captures the persisted Windows PATH scopes after the process PATH", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(
+      () =>
+        "__T3CODE_ENV_PATH_START__\nC:\\Windows\\System32;C:\\Program Files\\nodejs;C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links\n__T3CODE_ENV_PATH_END__\n",
+    );
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
+      PATH: "C:\\Windows\\System32;C:\\Program Files\\nodejs;C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links",
+    });
+
+    const command = execFile.mock.calls[0]?.[1]?.at(-1);
+    expect(command).toContain("GetEnvironmentVariable('PATH', 'Process')");
+    expect(command).toContain("GetEnvironmentVariable('PATH', 'Machine')");
+    expect(command).toContain("GetEnvironmentVariable('PATH', 'User')");
+  });
+
   it("strips CRLF delimiters from captured PowerShell values", () => {
     const execFile = vi.fn<
       (
