@@ -3,7 +3,6 @@ import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -103,6 +102,11 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import {
+  formatWorkingTimelineDuration,
+  resolveWorkingTimelineObservation,
+  type WorkingTimelineObservation,
+} from "../../lib/workingTimelineDuration";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -812,13 +816,19 @@ function renderFeedEntry(
     readonly reviewCommentColors: ReviewCommentColors;
     readonly reviewCommentBubbleWidth: number;
     readonly userBubbleMaxWidth: number;
+    readonly workingTimelineObservation: WorkingTimelineObservation | null;
   },
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
   if (entry.type === "working") {
-    return <WorkingTimelineRow startedAt={entry.createdAt} />;
+    if (props.workingTimelineObservation?.startedAt !== entry.createdAt) {
+      return null;
+    }
+    return (
+      <WorkingTimelineRow key={entry.createdAt} observation={props.workingTimelineObservation} />
+    );
   }
 
   if (entry.type === "turn-fold") {
@@ -1008,7 +1018,9 @@ function renderFeedEntry(
   );
 }
 
-const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
+const WorkingTimelineRow = memo(function WorkingTimelineRow(props: {
+  readonly observation: WorkingTimelineObservation;
+}) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -1016,9 +1028,13 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
       setNowMs(Date.now());
     }, 1_000);
     return () => clearInterval(intervalId);
-  }, [props.startedAt]);
+  }, []);
 
-  const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
+  const durationLabel = formatWorkingTimelineDuration(
+    props.observation.startedAt,
+    props.observation.observedAtMs,
+    nowMs,
+  );
 
   return (
     <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
@@ -1563,6 +1579,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return ids;
   }, [expandedWorkGroups]);
+  const workingTimelineObservationRef = useRef<WorkingTimelineObservation | null>(null);
+  const workingTimelineObservation = resolveWorkingTimelineObservation(
+    workingTimelineObservationRef.current,
+    props.activeWorkStartedAt,
+    Date.now(),
+  );
+  workingTimelineObservationRef.current = workingTimelineObservation;
   const presentedFeed = useMemo(
     () =>
       deriveThreadFeedPresentation(
@@ -1811,6 +1834,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         reviewCommentColors,
         reviewCommentBubbleWidth,
         userBubbleMaxWidth,
+        workingTimelineObservation,
         skills: props.skills,
       }),
     [
@@ -1824,6 +1848,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       reviewCommentBubbleWidth,
       userBubbleMaxWidth,
+      workingTimelineObservation,
       onCopyWorkRow,
       onMarkdownLinkPress,
       onPressImage,
