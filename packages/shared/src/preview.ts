@@ -47,7 +47,7 @@ export function isPreviewableUrl(rawUrl: string): boolean {
   }
 }
 
-export class PreviewUrlNormalizationError extends Schema.TaggedErrorClass<PreviewUrlNormalizationError>()(
+export class PreviewUrlNormalizationError extends Schema.TaggedError<PreviewUrlNormalizationError>()(
   "PreviewUrlNormalizationError",
   {
     inputLength: Schema.Number,

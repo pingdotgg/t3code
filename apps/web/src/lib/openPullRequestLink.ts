@@ -13,7 +13,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 
-export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullRequestLinkOpenError>()(
+export class PullRequestLinkOpenError extends Schema.TaggedError<PullRequestLinkOpenError>()(
   "PullRequestLinkOpenError",
   {
     targetOrigin: Schema.NullOr(Schema.String),

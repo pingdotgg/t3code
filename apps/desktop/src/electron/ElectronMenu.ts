@@ -30,7 +30,7 @@ const ElectronMenuOperation = Schema.Literals([
   "show-context-menu",
 ]);
 
-export class ElectronMenuOperationError extends Schema.TaggedErrorClass<ElectronMenuOperationError>()(
+export class ElectronMenuOperationError extends Schema.TaggedError<ElectronMenuOperationError>()(
   "ElectronMenuOperationError",
   {
     operation: ElectronMenuOperation,

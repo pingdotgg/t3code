@@ -18,7 +18,7 @@ export interface PreviewAutomationOperationContext {
   readonly tabId: Exclude<PreviewAutomationRequest["tabId"], undefined> | null;
 }
 
-export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationOverlayTimeoutError>()(
+export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedError<PreviewAutomationOverlayTimeoutError>()(
   "PreviewAutomationOverlayTimeoutError",
   {
     requestId: TrimmedNonEmptyString,
@@ -36,7 +36,7 @@ export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedErrorClas
   }
 }
 
-export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationNavigationTimeoutError>()(
+export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedError<PreviewAutomationNavigationTimeoutError>()(
   "PreviewAutomationNavigationTimeoutError",
   {
     requestId: TrimmedNonEmptyString,
@@ -56,7 +56,7 @@ export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedErrorC
   }
 }
 
-export class PreviewAutomationViewportTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationViewportTimeoutError>()(
+export class PreviewAutomationViewportTimeoutError extends Schema.TaggedError<PreviewAutomationViewportTimeoutError>()(
   "PreviewAutomationViewportTimeoutError",
   {
     requestId: TrimmedNonEmptyString,
@@ -75,7 +75,7 @@ export class PreviewAutomationViewportTimeoutError extends Schema.TaggedErrorCla
   }
 }
 
-export class PreviewAutomationTargetUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationTargetUnavailableError>()(
+export class PreviewAutomationTargetUnavailableError extends Schema.TaggedError<PreviewAutomationTargetUnavailableError>()(
   "PreviewAutomationTargetUnavailableError",
   {
     requestId: TrimmedNonEmptyString,
@@ -95,7 +95,7 @@ export class PreviewAutomationTargetUnavailableError extends Schema.TaggedErrorC
   }
 }
 
-export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedErrorClass<PreviewAutomationRecordingNotActiveError>()(
+export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedError<PreviewAutomationRecordingNotActiveError>()(
   "PreviewAutomationRecordingNotActiveError",
   {
     requestId: TrimmedNonEmptyString,
@@ -113,7 +113,7 @@ export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedError
   }
 }
 
-export class PreviewAutomationTargetNotEditableHostError extends Schema.TaggedErrorClass<PreviewAutomationTargetNotEditableHostError>()(
+export class PreviewAutomationTargetNotEditableHostError extends Schema.TaggedError<PreviewAutomationTargetNotEditableHostError>()(
   "PreviewAutomationTargetNotEditableHostError",
   {
     requestId: TrimmedNonEmptyString,
@@ -168,7 +168,7 @@ const targetNotEditableDiagnostics = (
   };
 };
 
-export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<PreviewAutomationOperationError>()(
+export class PreviewAutomationOperationError extends Schema.TaggedError<PreviewAutomationOperationError>()(
   "PreviewAutomationOperationError",
   {
     requestId: TrimmedNonEmptyString,

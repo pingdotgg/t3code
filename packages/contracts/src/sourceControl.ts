@@ -150,7 +150,7 @@ export const SourceControlDiscoveryResult = Schema.Struct({
 });
 export type SourceControlDiscoveryResult = typeof SourceControlDiscoveryResult.Type;
 
-export class SourceControlProviderError extends Schema.TaggedErrorClass<SourceControlProviderError>()(
+export class SourceControlProviderError extends Schema.TaggedError<SourceControlProviderError>()(
   "SourceControlProviderError",
   {
     provider: SourceControlProviderKind,
@@ -168,7 +168,7 @@ export class SourceControlProviderError extends Schema.TaggedErrorClass<SourceCo
   }
 }
 
-export class SourceControlRepositoryError extends Schema.TaggedErrorClass<SourceControlRepositoryError>()(
+export class SourceControlRepositoryError extends Schema.TaggedError<SourceControlRepositoryError>()(
   "SourceControlRepositoryError",
   {
     provider: SourceControlProviderKind,

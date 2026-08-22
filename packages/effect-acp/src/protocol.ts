@@ -513,6 +513,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     supportsAck: true,
     supportsTransferables: false,
     supportsSpanPropagation: true,
+    supportsNotifications: true,
   });
 
   const sendNotification = Effect.fn("sendNotification")(function* (

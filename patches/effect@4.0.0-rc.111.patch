@@ -1,0 +1,76 @@
+diff --git a/dist/unstable/ai/McpServer.js b/dist/unstable/ai/McpServer.js
+index d8525be5cc4e5463300abaaec001f5c228130d36..a0a18aa9340966876c96197153faaf78424cddc1 100644
+--- a/dist/unstable/ai/McpServer.js
++++ b/dist/unstable/ai/McpServer.js
+@@ -444,6 +444,31 @@ const runWithProtocolState = /*#__PURE__*/Effect.fnUntraced(function* (options,
+   const defaultLogLevel = yield* CurrentLogLevel;
+   const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter));
+   const sessions = protocolState.sessions;
++  if (isHttp && options.path !== undefined) {
++    const router = yield* HttpRouter.HttpRouter;
++    yield* router.add("DELETE", options.path, Effect.gen(function* () {
++      const request = yield* HttpServerRequest.HttpServerRequest;
++      if (!isAllowedMcpOrigin(request, options.allowedOrigins)) {
++        return HttpServerResponse.empty({
++          status: 403
++        });
++      }
++      const sessionId = request.headers[MCP_SESSION_ID_HEADER];
++      if (sessionId === undefined) {
++        return HttpServerResponse.empty({
++          status: 400
++        });
++      }
++      if (!sessions.bySessionId.delete(sessionId)) {
++        return HttpServerResponse.empty({
++          status: 404
++        });
++      }
++      return HttpServerResponse.empty({
++        status: 204
++      });
++    }));
++  }
+   const clientProtocols = new Map();
+   const activeRequests = new Map();
+   const clientProfiles = new Map();
+@@ -940,7 +965,7 @@ export const layerHttp = options => {
+   const methodNotAllowed = request => isAllowedMcpOrigin(request, options.allowedOrigins) ? Effect.succeed(methodNotAllowedResponse) : Effect.succeed(HttpServerResponse.empty({
+     status: 403
+   }));
+-  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowed), HttpRouter.add("PUT", options.path, methodNotAllowed), HttpRouter.add("PATCH", options.path, methodNotAllowed), HttpRouter.add("DELETE", options.path, methodNotAllowed), HttpRouter.add("OPTIONS", options.path, methodNotAllowed));
++  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowed), HttpRouter.add("PUT", options.path, methodNotAllowed), HttpRouter.add("PATCH", options.path, methodNotAllowed), HttpRouter.add("OPTIONS", options.path, methodNotAllowed));
+   return Layer.merge(layerWithProtocolState(options), routes).pipe(Layer.provide(layerMcpProtocolHttp(options)), Layer.provide(protocolState), Layer.provide(RpcSerialization.layerJsonRpc()));
+ };
+ const layerMcpProtocolHttp = options => Layer.effect(RpcServer.Protocol)(Effect.gen(function* () {
+diff --git a/dist/unstable/rpc/RpcClient.js b/dist/unstable/rpc/RpcClient.js
+index baa1fec27b45c0a92962078a230f5a56dd13c45e..213bfdb24ddef43e1ae6e595c81823ccc4613b46 100644
+--- a/dist/unstable/rpc/RpcClient.js
++++ b/dist/unstable/rpc/RpcClient.js
+@@ -700,17 +700,25 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+ const defaultRetryPolicy = /*#__PURE__*/Schedule.min([/*#__PURE__*/Schedule.exponential(500, 1.5), /*#__PURE__*/Schedule.spaced(5000)]);
+ const makePinger = /*#__PURE__*/Effect.fnUntraced(function* (writePing) {
+   let recievedPong = true;
++  let missedPongs = 0;
+   const latch = Latch.makeUnsafe();
+   const reset = () => {
+     recievedPong = true;
++    missedPongs = 0;
+     latch.closeUnsafe();
+   };
+   const onPong = () => {
+     recievedPong = true;
++    missedPongs = 0;
+   };
+   yield* Effect.suspend(() => {
+-    if (!recievedPong) return latch.open;
++    if (!recievedPong) {
++      missedPongs += 1;
++      if (missedPongs >= 3) return latch.open;
++      return writePing;
++    }
+     recievedPong = false;
++    missedPongs = 0;
+     return writePing;
+   }).pipe(Effect.delay("5 seconds"), Effect.ignore, Effect.forever, Effect.interruptible, Effect.forkScoped);
+   return {

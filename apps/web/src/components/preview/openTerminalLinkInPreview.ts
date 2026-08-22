@@ -15,7 +15,7 @@ const terminalLinkErrorContext = {
   cause: Schema.Defect(),
 };
 
-export class TerminalLinkContextMenuShowError extends Schema.TaggedErrorClass<TerminalLinkContextMenuShowError>()(
+export class TerminalLinkContextMenuShowError extends Schema.TaggedError<TerminalLinkContextMenuShowError>()(
   "TerminalLinkContextMenuShowError",
   terminalLinkErrorContext,
 ) {
@@ -24,7 +24,7 @@ export class TerminalLinkContextMenuShowError extends Schema.TaggedErrorClass<Te
   }
 }
 
-export class TerminalLinkPreviewOpenError extends Schema.TaggedErrorClass<TerminalLinkPreviewOpenError>()(
+export class TerminalLinkPreviewOpenError extends Schema.TaggedError<TerminalLinkPreviewOpenError>()(
   "TerminalLinkPreviewOpenError",
   terminalLinkErrorContext,
 ) {

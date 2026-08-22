@@ -29,7 +29,7 @@ const DesktopPackageJsonSchema = Schema.Struct({
   version: Schema.NonEmptyString,
 });
 
-export class InvalidDesktopPackageVersionError extends Schema.TaggedErrorClass<InvalidDesktopPackageVersionError>()(
+export class InvalidDesktopPackageVersionError extends Schema.TaggedError<InvalidDesktopPackageVersionError>()(
   "InvalidDesktopPackageVersionError",
   {
     version: Schema.String,
@@ -40,7 +40,7 @@ export class InvalidDesktopPackageVersionError extends Schema.TaggedErrorClass<I
   }
 }
 
-export class NightlyReleaseDesktopPackageError extends Schema.TaggedErrorClass<NightlyReleaseDesktopPackageError>()(
+export class NightlyReleaseDesktopPackageError extends Schema.TaggedError<NightlyReleaseDesktopPackageError>()(
   "NightlyReleaseDesktopPackageError",
   {
     operation: Schema.Literals(["read", "decode"]),
@@ -53,7 +53,7 @@ export class NightlyReleaseDesktopPackageError extends Schema.TaggedErrorClass<N
   }
 }
 
-export class NightlyReleaseGitHubOutputConfigError extends Schema.TaggedErrorClass<NightlyReleaseGitHubOutputConfigError>()(
+export class NightlyReleaseGitHubOutputConfigError extends Schema.TaggedError<NightlyReleaseGitHubOutputConfigError>()(
   "NightlyReleaseGitHubOutputConfigError",
   {
     cause: Schema.Defect(),
@@ -64,7 +64,7 @@ export class NightlyReleaseGitHubOutputConfigError extends Schema.TaggedErrorCla
   }
 }
 
-export class NightlyReleaseGitHubOutputAppendError extends Schema.TaggedErrorClass<NightlyReleaseGitHubOutputAppendError>()(
+export class NightlyReleaseGitHubOutputAppendError extends Schema.TaggedError<NightlyReleaseGitHubOutputAppendError>()(
   "NightlyReleaseGitHubOutputAppendError",
   {
     outputPath: Schema.String,

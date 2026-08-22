@@ -37,7 +37,7 @@ export interface ConnectGaOptions {
   readonly limit: number | undefined;
 }
 
-export class ConnectGaRequestError extends Schema.TaggedErrorClass<ConnectGaRequestError>()(
+export class ConnectGaRequestError extends Schema.TaggedError<ConnectGaRequestError>()(
   "ConnectGaRequestError",
   {
     operation: Schema.String,
@@ -49,7 +49,7 @@ export class ConnectGaRequestError extends Schema.TaggedErrorClass<ConnectGaRequ
   }
 }
 
-export class ConnectGaResponseError extends Schema.TaggedErrorClass<ConnectGaResponseError>()(
+export class ConnectGaResponseError extends Schema.TaggedError<ConnectGaResponseError>()(
   "ConnectGaResponseError",
   {
     operation: Schema.String,

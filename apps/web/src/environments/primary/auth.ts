@@ -35,7 +35,7 @@ const PrimaryEnvironmentRequestOperation = Schema.Literals([
 ]);
 type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
 
-export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<PrimaryEnvironmentRequestError>()(
+export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEnvironmentRequestError>()(
   "PrimaryEnvironmentRequestError",
   {
     operation: PrimaryEnvironmentRequestOperation,
@@ -68,7 +68,7 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<Prim
 
 export const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
 
-export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRejectedError>()(
+export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedError<PrimaryEnvironmentPairingCredentialRejectedError>()(
   "PrimaryEnvironmentPairingCredentialRejectedError",
   {
     providedLength: Schema.Number,
@@ -84,7 +84,7 @@ export const isPrimaryEnvironmentPairingCredentialRejectedError = Schema.is(
   PrimaryEnvironmentPairingCredentialRejectedError,
 );
 
-export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedErrorClass<PrimaryEnvironmentAuthSessionTimeoutError>()(
+export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedError<PrimaryEnvironmentAuthSessionTimeoutError>()(
   "PrimaryEnvironmentAuthSessionTimeoutError",
   {
     timeoutMs: Schema.Number,
@@ -100,7 +100,7 @@ export const isPrimaryEnvironmentAuthSessionTimeoutError = Schema.is(
   PrimaryEnvironmentAuthSessionTimeoutError,
 );
 
-export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRequiredError>()(
+export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.TaggedError<PrimaryEnvironmentPairingCredentialRequiredError>()(
   "PrimaryEnvironmentPairingCredentialRequiredError",
   {
     providedLength: Schema.Number,

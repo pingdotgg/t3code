@@ -14,7 +14,7 @@ export interface ElectronAppMetadata {
   readonly runningUnderArm64Translation: boolean;
 }
 
-export class ElectronAppMetadataReadError extends Schema.TaggedErrorClass<ElectronAppMetadataReadError>()(
+export class ElectronAppMetadataReadError extends Schema.TaggedError<ElectronAppMetadataReadError>()(
   "ElectronAppMetadataReadError",
   {
     property: Schema.Literals(["app-version", "app-path"]),
@@ -26,7 +26,7 @@ export class ElectronAppMetadataReadError extends Schema.TaggedErrorClass<Electr
   }
 }
 
-export class ElectronAppWhenReadyError extends Schema.TaggedErrorClass<ElectronAppWhenReadyError>()(
+export class ElectronAppWhenReadyError extends Schema.TaggedError<ElectronAppWhenReadyError>()(
   "ElectronAppWhenReadyError",
   {
     isPackaged: Schema.Boolean,

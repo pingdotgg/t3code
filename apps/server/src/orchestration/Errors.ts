@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 
-export class OrchestrationCommandJsonParseError extends Schema.TaggedErrorClass<OrchestrationCommandJsonParseError>()(
+export class OrchestrationCommandJsonParseError extends Schema.TaggedError<OrchestrationCommandJsonParseError>()(
   "OrchestrationCommandJsonParseError",
   {
     detail: Schema.String,
@@ -15,7 +15,7 @@ export class OrchestrationCommandJsonParseError extends Schema.TaggedErrorClass<
   }
 }
 
-export class OrchestrationCommandDecodeError extends Schema.TaggedErrorClass<OrchestrationCommandDecodeError>()(
+export class OrchestrationCommandDecodeError extends Schema.TaggedError<OrchestrationCommandDecodeError>()(
   "OrchestrationCommandDecodeError",
   {
     issue: Schema.String,
@@ -27,7 +27,7 @@ export class OrchestrationCommandDecodeError extends Schema.TaggedErrorClass<Orc
   }
 }
 
-export class OrchestrationCommandInvariantError extends Schema.TaggedErrorClass<OrchestrationCommandInvariantError>()(
+export class OrchestrationCommandInvariantError extends Schema.TaggedError<OrchestrationCommandInvariantError>()(
   "OrchestrationCommandInvariantError",
   {
     commandType: Schema.String,
@@ -40,7 +40,7 @@ export class OrchestrationCommandInvariantError extends Schema.TaggedErrorClass<
   }
 }
 
-export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedErrorClass<OrchestrationCommandPreviouslyRejectedError>()(
+export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestrationCommandPreviouslyRejectedError>()(
   "OrchestrationCommandPreviouslyRejectedError",
   {
     commandId: Schema.String,
@@ -53,7 +53,7 @@ export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedEr
   }
 }
 
-export class OrchestrationCommandIdConflictError extends Schema.TaggedErrorClass<OrchestrationCommandIdConflictError>()(
+export class OrchestrationCommandIdConflictError extends Schema.TaggedError<OrchestrationCommandIdConflictError>()(
   "OrchestrationCommandIdConflictError",
   {
     commandId: Schema.String,
@@ -68,7 +68,7 @@ export class OrchestrationCommandIdConflictError extends Schema.TaggedErrorClass
   }
 }
 
-export class OrchestrationProjectorDecodeError extends Schema.TaggedErrorClass<OrchestrationProjectorDecodeError>()(
+export class OrchestrationProjectorDecodeError extends Schema.TaggedError<OrchestrationProjectorDecodeError>()(
   "OrchestrationProjectorDecodeError",
   {
     eventType: Schema.String,
@@ -81,7 +81,7 @@ export class OrchestrationProjectorDecodeError extends Schema.TaggedErrorClass<O
   }
 }
 
-export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<OrchestrationListenerCallbackError>()(
+export class OrchestrationListenerCallbackError extends Schema.TaggedError<OrchestrationListenerCallbackError>()(
   "OrchestrationListenerCallbackError",
   {
     listener: Schema.Literals(["read-model", "domain-event"]),

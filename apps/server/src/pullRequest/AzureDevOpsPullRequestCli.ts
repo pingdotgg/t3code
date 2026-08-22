@@ -25,7 +25,7 @@ import type { ProviderListCursor } from "./PullRequestProvider.ts";
  * Names the read that produced unusable output, so a failure reports the call it came from
  * rather than borrowing another operation's message.
  */
-export class AzureDevOpsPullRequestReadError extends Schema.TaggedErrorClass<AzureDevOpsPullRequestReadError>()(
+export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDevOpsPullRequestReadError>()(
   "AzureDevOpsPullRequestReadError",
   {
     command: Schema.Literal("az"),
@@ -44,7 +44,7 @@ export class AzureDevOpsPullRequestReadError extends Schema.TaggedErrorClass<Azu
 }
 
 /** Not a decode failure: az answered, the account it answered for just has no name. */
-export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<AzureDevOpsViewerUnavailableError>()(
+export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureDevOpsViewerUnavailableError>()(
   "AzureDevOpsViewerUnavailableError",
   {
     command: Schema.Literal("az"),
@@ -64,7 +64,7 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<A
  * Not a decode failure either: az answered with a well-formed pull request that simply carries
  * no branch or link, which is a response this cannot place rather than one it cannot read.
  */
-export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedErrorClass<AzureDevOpsPullRequestIncompleteError>()(
+export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<AzureDevOpsPullRequestIncompleteError>()(
   "AzureDevOpsPullRequestIncompleteError",
   {
     command: Schema.Literal("az"),
@@ -86,7 +86,7 @@ export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedErrorCla
  * reviewers travel as argv rather than in a request body — `az repos pr reviewer` takes them no
  * other way — so anything that could leave the value position is refused rather than sent.
  */
-export class AzureDevOpsReviewerNameError extends Schema.TaggedErrorClass<AzureDevOpsReviewerNameError>()(
+export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOpsReviewerNameError>()(
   "AzureDevOpsReviewerNameError",
   {
     command: Schema.Literal("az"),

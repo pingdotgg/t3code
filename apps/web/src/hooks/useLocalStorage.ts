@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Record from "effect/Record";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
-export class LocalStorageOperationError extends Schema.TaggedErrorClass<LocalStorageOperationError>()(
+export class LocalStorageOperationError extends Schema.TaggedError<LocalStorageOperationError>()(
   "LocalStorageOperationError",
   {
     operation: Schema.Literals(["read", "decode", "encode", "update", "write", "remove", "notify"]),

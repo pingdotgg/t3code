@@ -88,10 +88,9 @@ const provideTestEnv = Effect.provide(
 
 const isAuthorizationError = Schema.is(CliTokenManager.CloudCliAuthorizationError);
 
-class PromptRejectedError extends Schema.TaggedErrorClass<PromptRejectedError>()(
-  "PromptRejectedError",
-  { message: Schema.String },
-) {}
+class PromptRejectedError extends Schema.TaggedError<PromptRejectedError>()("PromptRejectedError", {
+  message: Schema.String,
+}) {}
 
 it("formats loopback authorization with a headless-host fallback", () => {
   assert.equal(

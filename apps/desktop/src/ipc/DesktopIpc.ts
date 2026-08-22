@@ -24,7 +24,7 @@ export interface DesktopIpcMain {
   on(channel: string, listener: DesktopIpcSyncListener): void;
 }
 
-export class DesktopIpcRegistrationError extends Schema.TaggedErrorClass<DesktopIpcRegistrationError>()(
+export class DesktopIpcRegistrationError extends Schema.TaggedError<DesktopIpcRegistrationError>()(
   "DesktopIpcRegistrationError",
   {
     handlerKind: Schema.Literals(["invoke", "sync"]),
@@ -37,7 +37,7 @@ export class DesktopIpcRegistrationError extends Schema.TaggedErrorClass<Desktop
   }
 }
 
-export class DesktopIpcUnregistrationError extends Schema.TaggedErrorClass<DesktopIpcUnregistrationError>()(
+export class DesktopIpcUnregistrationError extends Schema.TaggedError<DesktopIpcUnregistrationError>()(
   "DesktopIpcUnregistrationError",
   {
     handlerKind: Schema.Literals(["invoke", "sync"]),

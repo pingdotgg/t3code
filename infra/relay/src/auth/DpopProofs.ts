@@ -10,7 +10,7 @@ import { verifyDpopProof } from "@t3tools/shared/dpop";
 import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 
-export class DpopProofReplayPersistenceError extends Schema.TaggedErrorClass<DpopProofReplayPersistenceError>()(
+export class DpopProofReplayPersistenceError extends Schema.TaggedError<DpopProofReplayPersistenceError>()(
   "DpopProofReplayPersistenceError",
   {
     operation: Schema.Literals(["consume", "prune-expired"]),

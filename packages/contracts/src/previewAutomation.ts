@@ -631,7 +631,7 @@ export const PreviewAutomationResponse = Schema.Struct({
 });
 export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
-export class PreviewAutomationUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationUnavailableError>()(
+export class PreviewAutomationUnavailableError extends Schema.TaggedError<PreviewAutomationUnavailableError>()(
   "PreviewAutomationUnavailableError",
   {
     capability: Schema.Literal("preview"),
@@ -681,7 +681,7 @@ const PreviewAutomationOptionalRemoteDiagnosticFields = {
   cause: Schema.optional(Schema.Defect()),
 };
 
-export class PreviewAutomationNoAvailableHostError extends Schema.TaggedErrorClass<PreviewAutomationNoAvailableHostError>()(
+export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<PreviewAutomationNoAvailableHostError>()(
   "PreviewAutomationNoAvailableHostError",
   {
     ...PreviewAutomationScopeErrorFields,
@@ -699,7 +699,7 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedErrorCla
   }
 }
 
-export class PreviewAutomationUnsupportedClientError extends Schema.TaggedErrorClass<PreviewAutomationUnsupportedClientError>()(
+export class PreviewAutomationUnsupportedClientError extends Schema.TaggedError<PreviewAutomationUnsupportedClientError>()(
   "PreviewAutomationUnsupportedClientError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -711,7 +711,7 @@ export class PreviewAutomationUnsupportedClientError extends Schema.TaggedErrorC
   }
 }
 
-export class PreviewAutomationTabNotFoundError extends Schema.TaggedErrorClass<PreviewAutomationTabNotFoundError>()(
+export class PreviewAutomationTabNotFoundError extends Schema.TaggedError<PreviewAutomationTabNotFoundError>()(
   "PreviewAutomationTabNotFoundError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -726,7 +726,7 @@ export class PreviewAutomationTabNotFoundError extends Schema.TaggedErrorClass<P
   }
 }
 
-export class PreviewAutomationTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationTimeoutError>()(
+export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAutomationTimeoutError>()(
   "PreviewAutomationTimeoutError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -739,7 +739,7 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedErrorClass<Previ
   }
 }
 
-export class PreviewAutomationControlInterruptedError extends Schema.TaggedErrorClass<PreviewAutomationControlInterruptedError>()(
+export class PreviewAutomationControlInterruptedError extends Schema.TaggedError<PreviewAutomationControlInterruptedError>()(
   "PreviewAutomationControlInterruptedError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -751,7 +751,7 @@ export class PreviewAutomationControlInterruptedError extends Schema.TaggedError
   }
 }
 
-export class PreviewAutomationExecutionError extends Schema.TaggedErrorClass<PreviewAutomationExecutionError>()(
+export class PreviewAutomationExecutionError extends Schema.TaggedError<PreviewAutomationExecutionError>()(
   "PreviewAutomationExecutionError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -763,7 +763,7 @@ export class PreviewAutomationExecutionError extends Schema.TaggedErrorClass<Pre
   }
 }
 
-export class PreviewAutomationInvalidSelectorError extends Schema.TaggedErrorClass<PreviewAutomationInvalidSelectorError>()(
+export class PreviewAutomationInvalidSelectorError extends Schema.TaggedError<PreviewAutomationInvalidSelectorError>()(
   "PreviewAutomationInvalidSelectorError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -780,7 +780,7 @@ export class PreviewAutomationInvalidSelectorError extends Schema.TaggedErrorCla
   }
 }
 
-export class PreviewAutomationTargetNotEditableError extends Schema.TaggedErrorClass<PreviewAutomationTargetNotEditableError>()(
+export class PreviewAutomationTargetNotEditableError extends Schema.TaggedError<PreviewAutomationTargetNotEditableError>()(
   "PreviewAutomationTargetNotEditableError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -800,7 +800,7 @@ export class PreviewAutomationTargetNotEditableError extends Schema.TaggedErrorC
   }
 }
 
-export class PreviewAutomationResultTooLargeError extends Schema.TaggedErrorClass<PreviewAutomationResultTooLargeError>()(
+export class PreviewAutomationResultTooLargeError extends Schema.TaggedError<PreviewAutomationResultTooLargeError>()(
   "PreviewAutomationResultTooLargeError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -817,7 +817,7 @@ export class PreviewAutomationResultTooLargeError extends Schema.TaggedErrorClas
   }
 }
 
-export class PreviewAutomationClientDisconnectedError extends Schema.TaggedErrorClass<PreviewAutomationClientDisconnectedError>()(
+export class PreviewAutomationClientDisconnectedError extends Schema.TaggedError<PreviewAutomationClientDisconnectedError>()(
   "PreviewAutomationClientDisconnectedError",
   PreviewAutomationRequestErrorFields,
 ) {
@@ -826,7 +826,7 @@ export class PreviewAutomationClientDisconnectedError extends Schema.TaggedError
   }
 }
 
-export class PreviewAutomationRequestQueueClosedError extends Schema.TaggedErrorClass<PreviewAutomationRequestQueueClosedError>()(
+export class PreviewAutomationRequestQueueClosedError extends Schema.TaggedError<PreviewAutomationRequestQueueClosedError>()(
   "PreviewAutomationRequestQueueClosedError",
   PreviewAutomationRequestErrorFields,
 ) {
@@ -835,7 +835,7 @@ export class PreviewAutomationRequestQueueClosedError extends Schema.TaggedError
   }
 }
 
-export class PreviewAutomationRemoteUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationRemoteUnavailableError>()(
+export class PreviewAutomationRemoteUnavailableError extends Schema.TaggedError<PreviewAutomationRemoteUnavailableError>()(
   "PreviewAutomationRemoteUnavailableError",
   {
     ...PreviewAutomationRequestErrorFields,
@@ -847,7 +847,7 @@ export class PreviewAutomationRemoteUnavailableError extends Schema.TaggedErrorC
   }
 }
 
-export class PreviewAutomationMalformedResponseError extends Schema.TaggedErrorClass<PreviewAutomationMalformedResponseError>()(
+export class PreviewAutomationMalformedResponseError extends Schema.TaggedError<PreviewAutomationMalformedResponseError>()(
   "PreviewAutomationMalformedResponseError",
   PreviewAutomationRequestErrorFields,
 ) {

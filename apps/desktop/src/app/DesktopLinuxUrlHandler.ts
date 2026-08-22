@@ -24,7 +24,7 @@ export const URL_HANDLER_DESKTOP_ENTRY_NAME = "t3code-url-handler.desktop";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
-export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedErrorClass<DesktopLinuxUrlHandlerRegistrationError>()(
+export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(
   "DesktopLinuxUrlHandlerRegistrationError",
   {
     step: Schema.Literals(["write-desktop-entry", "set-default-handler"]),

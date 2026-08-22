@@ -74,7 +74,9 @@ export function decodeExtNotificationRegistration<A, I>(
 const encoder = new TextEncoder();
 
 const JsonRpcId = Schema.Union([Schema.Number, Schema.String]);
-const JsonRpcHeaders = Schema.Array(Schema.Unknown);
+const JsonRpcHeaders = Schema.Array(Schema.Unknown).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed([])),
+);
 
 export const jsonRpcRequest = <A, I>(method: string, params: Schema.Codec<A, I>) =>
   Schema.Struct({

@@ -39,7 +39,7 @@ const DesktopClientSettingsWriteOperation = Schema.Literals([
   "replace-settings-file",
 ]);
 
-export class DesktopClientSettingsWriteError extends Schema.TaggedErrorClass<DesktopClientSettingsWriteError>()(
+export class DesktopClientSettingsWriteError extends Schema.TaggedError<DesktopClientSettingsWriteError>()(
   "DesktopClientSettingsWriteError",
   {
     operation: DesktopClientSettingsWriteOperation,

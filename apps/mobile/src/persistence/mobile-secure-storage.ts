@@ -6,7 +6,7 @@ import * as SecureStore from "expo-secure-store";
 
 const MobileSecureStorageOperation = Schema.Literals(["read", "write", "delete"]);
 
-export class MobileSecureStorageError extends Schema.TaggedErrorClass<MobileSecureStorageError>()(
+export class MobileSecureStorageError extends Schema.TaggedError<MobileSecureStorageError>()(
   "MobileSecureStorageError",
   {
     operation: MobileSecureStorageOperation,

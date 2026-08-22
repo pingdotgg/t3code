@@ -35,7 +35,7 @@ const DEFAULT_HOST_POWER_ACTIVE_INTERVAL_MS = 30_000;
 const DEFAULT_HOST_POWER_IDLE_INTERVAL_MS = 120_000;
 const STALE_CHECK_INTERVAL = Duration.seconds(30);
 
-export class DesktopTelemetryDescriptorUnavailable extends Schema.TaggedErrorClass<DesktopTelemetryDescriptorUnavailable>()(
+export class DesktopTelemetryDescriptorUnavailable extends Schema.TaggedError<DesktopTelemetryDescriptorUnavailable>()(
   "DesktopTelemetryDescriptorUnavailable",
   {
     mode: Schema.String,
@@ -46,7 +46,7 @@ export class DesktopTelemetryDescriptorUnavailable extends Schema.TaggedErrorCla
   }
 }
 
-export class DesktopTelemetryProtocolMismatch extends Schema.TaggedErrorClass<DesktopTelemetryProtocolMismatch>()(
+export class DesktopTelemetryProtocolMismatch extends Schema.TaggedError<DesktopTelemetryProtocolMismatch>()(
   "DesktopTelemetryProtocolMismatch",
   {
     expectedVersion: Schema.Number,
@@ -58,7 +58,7 @@ export class DesktopTelemetryProtocolMismatch extends Schema.TaggedErrorClass<De
   }
 }
 
-export class DesktopTelemetryDecodeFailed extends Schema.TaggedErrorClass<DesktopTelemetryDecodeFailed>()(
+export class DesktopTelemetryDecodeFailed extends Schema.TaggedError<DesktopTelemetryDecodeFailed>()(
   "DesktopTelemetryDecodeFailed",
   {
     cause: Schema.Defect(),
@@ -69,7 +69,7 @@ export class DesktopTelemetryDecodeFailed extends Schema.TaggedErrorClass<Deskto
   }
 }
 
-export class DesktopTelemetryStreamFailed extends Schema.TaggedErrorClass<DesktopTelemetryStreamFailed>()(
+export class DesktopTelemetryStreamFailed extends Schema.TaggedError<DesktopTelemetryStreamFailed>()(
   "DesktopTelemetryStreamFailed",
   {
     fd: Schema.Number,
@@ -81,7 +81,7 @@ export class DesktopTelemetryStreamFailed extends Schema.TaggedErrorClass<Deskto
   }
 }
 
-export class DesktopTelemetryStreamClosed extends Schema.TaggedErrorClass<DesktopTelemetryStreamClosed>()(
+export class DesktopTelemetryStreamClosed extends Schema.TaggedError<DesktopTelemetryStreamClosed>()(
   "DesktopTelemetryStreamClosed",
   {
     fd: Schema.Number,
@@ -92,7 +92,7 @@ export class DesktopTelemetryStreamClosed extends Schema.TaggedErrorClass<Deskto
   }
 }
 
-export class DesktopTelemetryStale extends Schema.TaggedErrorClass<DesktopTelemetryStale>()(
+export class DesktopTelemetryStale extends Schema.TaggedError<DesktopTelemetryStale>()(
   "DesktopTelemetryStale",
   {
     fd: Schema.Number,
@@ -111,7 +111,7 @@ export type DesktopTelemetryReceiverError =
   | DesktopTelemetryStreamFailed
   | DesktopTelemetryStreamClosed;
 
-export class DesktopTelemetryControlFailed extends Schema.TaggedErrorClass<DesktopTelemetryControlFailed>()(
+export class DesktopTelemetryControlFailed extends Schema.TaggedError<DesktopTelemetryControlFailed>()(
   "DesktopTelemetryControlFailed",
   {
     fd: Schema.Number,
@@ -124,7 +124,7 @@ export class DesktopTelemetryControlFailed extends Schema.TaggedErrorClass<Deskt
   }
 }
 
-export class DesktopTelemetryControlStalled extends Schema.TaggedErrorClass<DesktopTelemetryControlStalled>()(
+export class DesktopTelemetryControlStalled extends Schema.TaggedError<DesktopTelemetryControlStalled>()(
   "DesktopTelemetryControlStalled",
   {
     fd: Schema.Number,

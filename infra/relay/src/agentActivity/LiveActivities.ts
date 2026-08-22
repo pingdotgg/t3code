@@ -18,7 +18,7 @@ import { and, eq, sql } from "drizzle-orm";
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
 
-export class LiveActivityRegistrationPersistenceError extends Schema.TaggedErrorClass<LiveActivityRegistrationPersistenceError>()(
+export class LiveActivityRegistrationPersistenceError extends Schema.TaggedError<LiveActivityRegistrationPersistenceError>()(
   "LiveActivityRegistrationPersistenceError",
   {
     userId: Schema.String,
@@ -31,7 +31,7 @@ export class LiveActivityRegistrationPersistenceError extends Schema.TaggedError
   }
 }
 
-export class LiveActivityTargetListPersistenceError extends Schema.TaggedErrorClass<LiveActivityTargetListPersistenceError>()(
+export class LiveActivityTargetListPersistenceError extends Schema.TaggedError<LiveActivityTargetListPersistenceError>()(
   "LiveActivityTargetListPersistenceError",
   {
     userId: Schema.String,
@@ -43,7 +43,7 @@ export class LiveActivityTargetListPersistenceError extends Schema.TaggedErrorCl
   }
 }
 
-export class LiveActivityDeliveryMarkPersistenceError extends Schema.TaggedErrorClass<LiveActivityDeliveryMarkPersistenceError>()(
+export class LiveActivityDeliveryMarkPersistenceError extends Schema.TaggedError<LiveActivityDeliveryMarkPersistenceError>()(
   "LiveActivityDeliveryMarkPersistenceError",
   {
     operation: Schema.Literals([

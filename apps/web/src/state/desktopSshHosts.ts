@@ -5,7 +5,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 type DesktopSshDiscoveryBridge = Pick<DesktopBridge, "discoverSshHosts">;
 
-class DesktopSshDiscoveryUnavailableError extends Schema.TaggedErrorClass<DesktopSshDiscoveryUnavailableError>()(
+class DesktopSshDiscoveryUnavailableError extends Schema.TaggedError<DesktopSshDiscoveryUnavailableError>()(
   "DesktopSshDiscoveryUnavailableError",
   {},
 ) {
@@ -14,7 +14,7 @@ class DesktopSshDiscoveryUnavailableError extends Schema.TaggedErrorClass<Deskto
   }
 }
 
-class DesktopSshDiscoveryError extends Schema.TaggedErrorClass<DesktopSshDiscoveryError>()(
+class DesktopSshDiscoveryError extends Schema.TaggedError<DesktopSshDiscoveryError>()(
   "DesktopSshDiscoveryError",
   { cause: Schema.Defect() },
 ) {

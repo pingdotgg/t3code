@@ -212,7 +212,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           direction: "outgoing",
           stage: "raw",
           payload:
-            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"},"id":"","headers":[]}\n',
+            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"},"id":""}\n',
         },
       ]);
     }),
