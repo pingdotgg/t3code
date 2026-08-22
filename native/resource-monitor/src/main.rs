@@ -604,6 +604,14 @@ fn sample_now_deadline(
     current.or_else(|| interval.map(|duration| now + duration))
 }
 
+fn next_periodic_deadline(previous: Instant, interval: Duration, now: Instant) -> Instant {
+    let mut next = previous + interval;
+    while next <= now {
+        next += interval;
+    }
+    next
+}
+
 fn write_event<T: Serialize>(writer: &mut impl Write, event: &T) -> io::Result<()> {
     serde_json::to_writer(&mut *writer, event)?;
     writer.write_all(b"\n")?;
@@ -696,12 +704,14 @@ fn main() -> io::Result<()> {
         if next_sample_at.is_some_and(|deadline| deadline <= Instant::now()) {
             if let Some(current) = config.as_ref() {
                 if let Some(interval) = current.sample_interval {
+                    let deadline = next_sample_at.expect("sample deadline is present");
                     let event = collector.sample(current, None);
                     history.record(&event);
                     if streaming_enabled {
                         write_event(&mut writer, &event)?;
                     }
-                    next_sample_at = Some(Instant::now() + interval);
+                    next_sample_at =
+                        Some(next_periodic_deadline(deadline, interval, Instant::now()));
                 } else {
                     next_sample_at = None;
                 }
@@ -923,6 +933,21 @@ mod tests {
         assert_eq!(
             clamp_sample_interval(100_000),
             Some(Duration::from_millis(60_000))
+        );
+    }
+
+    #[test]
+    fn periodic_deadlines_do_not_accumulate_collection_time() {
+        let baseline = Instant::now();
+        let interval = Duration::from_millis(250);
+
+        assert_eq!(
+            next_periodic_deadline(baseline, interval, baseline + Duration::from_millis(20)),
+            baseline + interval
+        );
+        assert_eq!(
+            next_periodic_deadline(baseline, interval, baseline + Duration::from_millis(510)),
+            baseline + Duration::from_millis(750)
         );
     }
 
