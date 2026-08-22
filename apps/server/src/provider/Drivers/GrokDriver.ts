@@ -28,8 +28,8 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
-  makeManualOnlyProviderMaintenanceCapabilities,
-  makeStaticProviderMaintenanceResolver,
+  makeProviderMaintenanceResolver,
+  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -40,12 +40,25 @@ import {
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("grok");
-const UPDATE = makeStaticProviderMaintenanceResolver(
-  makeManualOnlyProviderMaintenanceCapabilities({
-    provider: DRIVER_KIND,
-    packageName: null,
-  }),
-);
+
+function isGrokNativeCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return normalized.endsWith("/.grok/bin/grok") || normalized.endsWith("/.grok/bin/grok.exe");
+}
+
+const UPDATE = makeProviderMaintenanceResolver({
+  provider: DRIVER_KIND,
+  packageName: "@xai-official/grok",
+  homebrewFormula: null,
+  nativeUpdate: {
+    executable: "grok",
+    args: ["update"],
+    lockKey: "grok-native",
+    isCommandPath: isGrokNativeCommandPath,
+  },
+  executableName: "grok",
+  instructionsUrl: "https://docs.x.ai/build/overview",
+});
 
 export type GrokDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
@@ -86,6 +99,8 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -101,10 +116,15 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+      const resolveMaintenance = resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
-      });
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+      );
+      const maintenanceCapabilities = yield* resolveMaintenance;
 
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
@@ -122,6 +142,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
         maintenanceCapabilities,
+        resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -129,13 +150,17 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichGrokSnapshot({
-            snapshot: currentSnapshot,
-            maintenanceCapabilities,
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            publishSnapshot,
-            httpClient,
-          }),
+          resolveMaintenance.pipe(
+            Effect.flatMap((maintenanceCapabilities) =>
+              enrichGrokSnapshot({
+                snapshot: currentSnapshot,
+                maintenanceCapabilities,
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                publishSnapshot,
+                httpClient,
+              }),
+            ),
+          ),
       }).pipe(
         Effect.mapError(
           (cause) =>

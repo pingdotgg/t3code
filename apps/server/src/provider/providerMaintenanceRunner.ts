@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Provider paths may use either POSIX or Windows syntax.
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -7,6 +8,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import * as NodePath from "node:path";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -73,6 +75,7 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly command: string;
     readonly args: ReadonlyArray<string>;
+    readonly environment?: NodeJS.ProcessEnv;
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
@@ -81,9 +84,18 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         // which a bare ChildProcess.spawn cannot launch (spawn npm ENOENT);
         // resolveSpawnCommand finds the real `.cmd` and routes it through the
         // shell. On Linux/macOS (incl. the WSL backend) this is a no-op.
-        const resolved = yield* resolveSpawnCommand(input.command, input.args);
+        const resolved = yield* resolveSpawnCommand(
+          input.command,
+          input.args,
+          input.environment ? { env: input.environment, extendEnv: true } : {},
+        );
         const child = yield* input.spawner
-          .spawn(ChildProcess.make(resolved.command, resolved.args, { shell: resolved.shell }))
+          .spawn(
+            ChildProcess.make(resolved.command, resolved.args, {
+              ...(input.environment ? { env: input.environment, extendEnv: true } : {}),
+              shell: resolved.shell,
+            }),
+          )
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -201,11 +213,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
-  const runMaintenanceCommand = (command: string, args: ReadonlyArray<string>) =>
+  const runMaintenanceCommand = (
+    command: string,
+    args: ReadonlyArray<string>,
+    environment?: NodeJS.ProcessEnv,
+  ) =>
     runProviderMaintenanceCommandWithSpawner({
       spawner,
       command,
       args,
+      ...(environment ? { environment } : {}),
     });
   const commandCoordinator = yield* makeProviderMaintenanceCommandCoordinator({
     makeAlreadyRunningError: () =>
@@ -293,7 +310,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         ? defaultInstanceIdForDriver(provider)
         : (target.instanceId ?? defaultInstanceIdForDriver(provider));
     const targetKey = `instance:${instanceId}`;
-    const capabilities = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
+    const capabilities = yield* providerRegistry.resolveProviderMaintenanceCapabilitiesForInstance(
       instanceId,
       provider,
     );
@@ -339,7 +356,50 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }),
             );
 
-            const result = yield* runMaintenanceCommand(update.executable, update.args);
+            const freshCapabilities =
+              yield* providerRegistry.resolveProviderMaintenanceCapabilitiesForInstance(
+                instanceId,
+                provider,
+              );
+            const freshUpdate = freshCapabilities.update;
+            if (
+              !freshUpdate ||
+              freshUpdate.lockKey !== update.lockKey ||
+              (capabilities.identityKey !== null &&
+                capabilities.identityKey !== undefined &&
+                freshCapabilities.identityKey !== capabilities.identityKey)
+            ) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "Provider installation changed. Refresh and try again.",
+                }),
+              );
+            }
+
+            if (
+              freshCapabilities.identityKey !== null &&
+              freshCapabilities.identityKey !== undefined &&
+              !NodePath.posix.isAbsolute(freshUpdate.executable) &&
+              !NodePath.win32.isAbsolute(freshUpdate.executable)
+            ) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message: "Provider update executable could not be verified.",
+                }),
+              );
+            }
+
+            const result = yield* runMaintenanceCommand(
+              freshUpdate.executable,
+              freshUpdate.args,
+              freshUpdate.environment,
+            );
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(
@@ -353,9 +413,30 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
 
+            const verificationCapabilities =
+              yield* providerRegistry.resolveProviderMaintenanceCapabilitiesForInstance(
+                instanceId,
+                provider,
+              );
+            if (
+              freshCapabilities.identityKey !== null &&
+              freshCapabilities.identityKey !== undefined &&
+              verificationCapabilities.identityKey !== freshCapabilities.identityKey
+            ) {
+              return yield* finish(
+                makeUpdateState({
+                  status: "unchanged",
+                  startedAt,
+                  finishedAt,
+                  message:
+                    "Update command completed, but the provider installation changed during verification.",
+                  output: commandOutput(result),
+                }),
+              );
+            }
             const { verifiedProviders } = yield* verifyRefreshedProvider(
               provider,
-              capabilities,
+              verificationCapabilities,
               instanceId,
             );
             const couldNotVerify = verifiedProviders.length === 0;

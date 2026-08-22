@@ -189,7 +189,7 @@ function makeRegistry(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
-      getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+      resolveProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,
       streamChanges: Stream.empty,
@@ -249,6 +249,193 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("re-resolves ownership before spawning and stops when the installation changed", () => {
+    let resolutionCount = 0;
+    let spawnCount = 0;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const stored = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "/opt/npm/bin/npm",
+        updateArgs: ["install", "-g", "@openai/codex@latest"],
+        updateLockKey: "npm:/opt/npm",
+        identityKey: "installation-before",
+        ownershipVerified: true,
+      });
+      const changed = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "/home/test/scoop/shims/scoop",
+        updateArgs: ["update", "main/codex"],
+        updateLockKey: "scoop:/home/test/scoop",
+        identityKey: "installation-after",
+        ownershipVerified: true,
+      });
+      const guardedRegistry: ProviderRegistryShape = {
+        ...registry,
+        resolveProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(resolutionCount++ === 0 ? stored : changed),
+      };
+      const updater = yield* makeTestRunner(guardedRegistry);
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(spawnCount, 0);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Provider installation changed. Refresh and try again.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => {
+            spawnCount += 1;
+            return {};
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("stops when re-resolution changes the update lock", () => {
+    let resolutionCount = 0;
+    let spawnCount = 0;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const stored = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "npm",
+        updateArgs: ["install", "-g", "@openai/codex@latest"],
+        updateLockKey: "npm:/opt/npm",
+      });
+      const changed = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "npm",
+        updateArgs: ["install", "-g", "@openai/codex@latest"],
+        updateLockKey: "npm:/srv/npm",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        resolveProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(resolutionCount++ === 0 ? stored : changed),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(spawnCount, 0);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => {
+            spawnCount += 1;
+            return {};
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("accepts a verified update executable on a Windows UNC share", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const capabilities = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "\\\\server\\share\\scoop.cmd",
+        updateArgs: ["update", "main/codex"],
+        updateLockKey: "scoop:\\\\server\\share",
+        identityKey: "scoop-unc-installation",
+        ownershipVerified: true,
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        resolveProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(capabilities),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.deepStrictEqual(calls, [
+        {
+          command: "\\\\server\\share\\scoop.cmd",
+          args: ["update", "main/codex"],
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("does not report success when installation identity changes after the command", () => {
+    let resolutionCount = 0;
+    let spawnCount = 0;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const before = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "/home/test/scoop/shims/scoop",
+        updateArgs: ["update", "main/codex"],
+        updateLockKey: "scoop:/home/test/scoop",
+        identityKey: "installation-before",
+        ownershipVerified: true,
+      });
+      const after = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "/opt/npm/bin/npm",
+        updateArgs: ["install", "-g", "@openai/codex@latest"],
+        updateLockKey: "npm:/opt/npm",
+        identityKey: "installation-after",
+        ownershipVerified: true,
+      });
+      const guardedRegistry: ProviderRegistryShape = {
+        ...registry,
+        resolveProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(resolutionCount++ < 2 ? before : after),
+      };
+      const updater = yield* makeTestRunner(guardedRegistry);
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(spawnCount, 1);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Update command completed, but the provider installation changed during verification.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => {
+            spawnCount += 1;
+            return {};
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("uses the resolved provider capabilities when choosing the update executable", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
@@ -266,7 +453,7 @@ describe("providerMaintenanceRunner", () => {
       });
       const updater = yield* makeTestRunner({
         ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: () =>
+        resolveProviderMaintenanceCapabilitiesForInstance: () =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
               provider: CODEX_DRIVER,
@@ -351,7 +538,7 @@ describe("providerMaintenanceRunner", () => {
       ]);
       const updater = yield* makeTestRunner({
         ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: (instanceId, provider) =>
+        resolveProviderMaintenanceCapabilitiesForInstance: (instanceId, provider) =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
               provider,
@@ -512,7 +699,7 @@ describe("providerMaintenanceRunner", () => {
       const { registry } = yield* makeRegistry([baseProvider, baseOpenCodeProvider]);
       const updater = yield* makeTestRunner({
         ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+        resolveProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
               provider,
@@ -585,7 +772,7 @@ describe("providerMaintenanceRunner", () => {
       const { registry } = yield* makeRegistry(baseProvider);
       const updater = yield* makeTestRunner({
         ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+        resolveProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
               provider,

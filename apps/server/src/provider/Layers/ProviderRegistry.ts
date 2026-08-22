@@ -496,16 +496,17 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* refreshOneSource(providerSource);
     });
 
-    const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
-      "getProviderMaintenanceCapabilitiesForInstance",
+    const resolveProviderMaintenanceCapabilitiesForInstance = Effect.fn(
+      "resolveProviderMaintenanceCapabilitiesForInstance",
     )(function* (instanceId: ProviderInstanceId, provider: ProviderDriverKind) {
-      const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
-      return (
-        instance?.snapshot.maintenanceCapabilities ??
-        makeManualProviderMaintenanceCapabilities(provider)
-      );
+      const instance = yield* instanceRegistry.getInstance(instanceId);
+      if (!instance || instance.driverKind !== provider) {
+        return makeManualProviderMaintenanceCapabilities(provider);
+      }
+      return instance.snapshot.resolveMaintenance
+        ? yield* instance.snapshot.resolveMaintenance
+        : (instance.snapshot.maintenanceCapabilities ??
+            makeManualProviderMaintenanceCapabilities(provider));
     });
 
     /**
@@ -710,7 +711,7 @@ export const ProviderRegistryLive = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
-      getProviderMaintenanceCapabilitiesForInstance,
+      resolveProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
