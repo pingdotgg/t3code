@@ -1104,8 +1104,8 @@ export const makeCodexSessionRuntime = (
             return false;
           }
           const activitySpawnTurnId = (yield* Ref.get(sessionRef)).activeTurnId ?? undefined;
+          const existingChild = (yield* Ref.get(collabChildAgentsRef)).get(item.agentThreadId);
           yield* Ref.update(collabChildAgentsRef, (current) => {
-            const existing = current.get(item.agentThreadId);
             const next = new Map(current);
             // Merge-late semantics: when thread/started registered first, a
             // later subAgentActivity still carries the real agentPath (and a
@@ -1117,13 +1117,13 @@ export const makeCodexSessionRuntime = (
             next.set(item.agentThreadId, {
               agentThreadId: item.agentThreadId,
               nickname:
-                existing?.nickname ??
+                existingChild?.nickname ??
                 item.agentPath.split("/").findLast((segment) => segment.length > 0),
-              role: existing?.role,
-              agentPath: existing?.agentPath ?? item.agentPath,
-              depth: existing?.depth,
-              parentThreadId: existing?.parentThreadId,
-              spawnTurnId: existing ? existing.spawnTurnId : activitySpawnTurnId,
+              role: existingChild?.role,
+              agentPath: existingChild?.agentPath ?? item.agentPath,
+              depth: existingChild?.depth,
+              parentThreadId: existingChild?.parentThreadId,
+              spawnTurnId: existingChild ? existingChild.spawnTurnId : activitySpawnTurnId,
             });
             return next;
           });
@@ -1139,6 +1139,29 @@ export const makeCodexSessionRuntime = (
               activityKind: item.kind,
             },
           });
+          // A child turn can start before this activity registers the child.
+          // The foreign-notification suppressor records that live turn but
+          // cannot emit agent lifecycle until identity is known. Replay the
+          // explicit start after first registration so sidebar liveness sees
+          // genuine work; a trailing interaction with no live turn remains
+          // the status-free metadata update mapped by CodexAdapter.
+          const preRegistrationLiveTurn = (yield* Ref.get(collabChildLiveTurnsRef)).get(
+            item.agentThreadId,
+          );
+          if (!existingChild && item.kind === "interacted" && preRegistrationLiveTurn) {
+            yield* emitEvent({
+              kind: "notification",
+              threadId: options.threadId,
+              ...(registeredChild?.spawnTurnId ? { turnId: registeredChild.spawnTurnId } : {}),
+              method: "collabAgent/turnStarted",
+              payload: {
+                agentThreadId: item.agentThreadId,
+                ...(registeredChild?.nickname ? { nickname: registeredChild.nickname } : {}),
+                ...(registeredChild?.role ? { role: registeredChild.role } : {}),
+                agentPath: item.agentPath,
+              },
+            });
+          }
           return true;
         }
 

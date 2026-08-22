@@ -181,6 +181,13 @@ describe("CodexSessionRuntime collab integration", () => {
       assert.isDefined(registrationA);
       assert.isDefined(registrationB);
       assert.isDefined(rootThreadStarted);
+      const interactedRegistrationA = {
+        ...registrationA,
+        params: {
+          ...registrationA.params,
+          item: { ...registrationA.params.item, kind: "interacted" },
+        },
+      };
       const memoryThreadStarted = {
         ...rootThreadStarted,
         params: {
@@ -207,7 +214,7 @@ describe("CodexSessionRuntime collab integration", () => {
         hangInterruptFor: CHILD_A,
         notifications: [
           turnStartedA,
-          registrationA,
+          interactedRegistrationA,
           memoryThreadStarted,
           memoryTurnStarted,
           registrationB,
@@ -233,26 +240,38 @@ describe("CodexSessionRuntime collab integration", () => {
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
 
-      // Wait for both children's turnStarted signals to be processed before
-      // stopping (B via the registered-child path; A only produces live-turn
-      // bookkeeping, so key on B's synthetic event).
-      const childBStartedFiber = yield* runtime.events.pipe(
+      // Wait for both children's synthetic turnStarted signals before
+      // stopping. B arrives through the registered-child path; A is replayed
+      // when its later activity registration finds the pre-registration live
+      // turn recorded by the foreign-notification suppressor.
+      const childrenStartedFiber = yield* runtime.events.pipe(
         Stream.filter(
           (event) =>
             event.method === "collabAgent/turnStarted" &&
-            (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
+            [CHILD_A, CHILD_B].includes(
+              (event.payload as { agentThreadId?: string }).agentThreadId ?? "",
+            ),
         ),
-        Stream.take(1),
+        Stream.take(2),
         Stream.runCollect,
         Effect.forkScoped,
       );
 
       yield* runtime.start();
       yield* runtime.sendTurn({ input: "fan out and hang" });
-      const childBStarted = yield* Fiber.join(childBStartedFiber).pipe(
+      const childrenStarted = yield* Fiber.join(childrenStartedFiber).pipe(
         Effect.timeoutOption("15 seconds"),
       );
-      assert.isTrue(childBStarted._tag === "Some", "child B turnStarted never arrived");
+      assert.isTrue(childrenStarted._tag === "Some", "child turnStarted replay never arrived");
+      if (childrenStarted._tag === "Some") {
+        const startedThreadIds = new Set(
+          Array.from(childrenStarted.value).map(
+            (event) => (event.payload as { agentThreadId?: string }).agentThreadId,
+          ),
+        );
+        assert.isTrue(startedThreadIds.has(CHILD_A), "child A start must replay on registration");
+        assert.isTrue(startedThreadIds.has(CHILD_B), "child B start must flow after registration");
+      }
 
       // Stop everything. A's interrupt hangs forever — the bounded child
       // deadline must expire and the parent interrupt must still be sent.
