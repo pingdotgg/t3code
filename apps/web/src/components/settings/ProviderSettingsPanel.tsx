@@ -835,10 +835,13 @@ export function EnvironmentProviderSettings({
               ) : null;
             const authAction =
               row.driver === ProviderDriverKind.make("kimi") &&
-              (row.instance.enabled ?? true) &&
-              liveProvider?.installed === true &&
-              liveProvider.auth.status !== "authenticated" ? (
-                <KimiSignInControl environmentId={environmentId} instanceId={row.instanceId} />
+              resolveProviderInstanceEnabled(row.instance) &&
+              liveProvider?.installed === true ? (
+                <KimiSignInControl
+                  authenticated={liveProvider.auth.status === "authenticated"}
+                  environmentId={environmentId}
+                  instanceId={row.instanceId}
+                />
               ) : undefined;
             return (
               <ProviderInstanceCard

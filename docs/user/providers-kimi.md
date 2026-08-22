@@ -39,8 +39,9 @@ kimi login
 ```
 
 Both paths store the same credential, and the Kimi CLI keeps it refreshed from then on. After a
-successful sign-in, T3 Code refreshes the provider automatically. Temporary CLI startup delays do
-not discard an already healthy connection.
+successful sign-in, T3 Code refreshes the provider automatically. Use **Sign out** on that provider
+card to remove only that instance's credential. Temporary CLI startup delays do not discard an
+already healthy connection.
 
 ## Models
 
