@@ -497,10 +497,16 @@ describe("DesktopBackendConfiguration", () => {
       const previousWslEnv = process.env.WSLENV;
       const previousOpenAiKey = process.env.OPENAI_API_KEY;
       const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+      const previousBitbucketAccessToken = process.env.T3CODE_BITBUCKET_ACCESS_TOKEN;
+      const previousBitbucketEmail = process.env.T3CODE_BITBUCKET_EMAIL;
+      const previousBitbucketApiToken = process.env.T3CODE_BITBUCKET_API_TOKEN;
       try {
         process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
         process.env.OPENAI_API_KEY = "openai-key";
         process.env.ANTHROPIC_API_KEY = "anthropic-key";
+        process.env.T3CODE_BITBUCKET_ACCESS_TOKEN = "bitbucket-access-token";
+        process.env.T3CODE_BITBUCKET_EMAIL = "developer@example.com";
+        process.env.T3CODE_BITBUCKET_API_TOKEN = "bitbucket-api-token";
 
         yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -520,13 +526,16 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");
           assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
+          assert.equal(config.env.T3CODE_BITBUCKET_ACCESS_TOKEN, "bitbucket-access-token");
+          assert.equal(config.env.T3CODE_BITBUCKET_EMAIL, "developer@example.com");
+          assert.equal(config.env.T3CODE_BITBUCKET_API_TOKEN, "bitbucket-api-token");
           // The existing WSLENV is preserved byte-for-byte (note the empty
           // "::" segment survives — WSL ignores it, so we don't normalize
-          // it away) and ANTHROPIC_API_KEY is appended. OPENAI_API_KEY is
+          // it away) and missing credentials are appended. OPENAI_API_KEY is
           // already declared, so it isn't forwarded twice.
           assert.equal(
             config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY",
+            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:T3CODE_BITBUCKET_ACCESS_TOKEN:T3CODE_BITBUCKET_EMAIL:T3CODE_BITBUCKET_API_TOKEN",
           );
         }).pipe(
           Effect.provide(
@@ -549,6 +558,9 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("WSLENV", previousWslEnv);
         restoreEnv("OPENAI_API_KEY", previousOpenAiKey);
         restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
+        restoreEnv("T3CODE_BITBUCKET_ACCESS_TOKEN", previousBitbucketAccessToken);
+        restoreEnv("T3CODE_BITBUCKET_EMAIL", previousBitbucketEmail);
+        restoreEnv("T3CODE_BITBUCKET_API_TOKEN", previousBitbucketApiToken);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
