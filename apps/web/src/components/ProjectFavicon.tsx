@@ -1,3 +1,10 @@
+import { useAtomValue } from "@effect/atom-react";
+import {
+  forgetProjectFavicon,
+  getLoadedProjectFavicon,
+  rememberProjectFavicon,
+  subscribeProjectFavicons,
+} from "@t3tools/client-runtime/state/project-favicon";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   getProjectFaviconCacheKey,
@@ -5,11 +12,11 @@ import {
 } from "@t3tools/shared/projectFavicon";
 import { FolderIcon } from "lucide-react";
 import type { ComponentType } from "react";
-import { useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAssetUrlState } from "../assets/assetUrls";
+import { derivePhysicalProjectKeyFromPath } from "../logicalProject";
+import { projectFaviconSourcesAtom } from "../state/projects";
 import { cn } from "~/lib/utils";
-
-const loadedProjectFaviconSrcs = new Map<string, string>();
 
 export function ProjectFavicon(input: {
   environmentId: EnvironmentId;
@@ -18,21 +25,45 @@ export function ProjectFavicon(input: {
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
-  const state = useProjectFaviconAsset(input);
-  const src = state._tag === "Success" ? state.url : null;
+  const physicalProjectKey = derivePhysicalProjectKeyFromPath(input.environmentId, input.cwd);
+  const source = useAtomValue(projectFaviconSourcesAtom).get(physicalProjectKey);
+  const projectKey = source?.projectKey ?? physicalProjectKey;
+  const loadedFavicon = useSyncExternalStore(
+    useCallback((listener) => subscribeProjectFavicons(projectKey, listener), [projectKey]),
+    useCallback(() => getLoadedProjectFavicon(projectKey), [projectKey]),
+  );
+  const state = useProjectFaviconAsset(source ?? input);
   const FallbackIcon = input.fallbackIcon ?? FolderIcon;
+  const faviconIsMissing = state._tag === "Success" && isProjectFaviconFallbackUrl(state.url);
 
-  if (!src || isProjectFaviconFallbackUrl(src)) {
+  useEffect(() => {
+    if (faviconIsMissing) forgetProjectFavicon(projectKey);
+  }, [faviconIsMissing, projectKey]);
+
+  const favicon =
+    state._tag === "Success" && !faviconIsMissing
+      ? {
+          cacheKey: getProjectFaviconCacheKey(
+            source?.environmentId ?? input.environmentId,
+            source?.cwd ?? input.cwd,
+            state.url,
+          ),
+          src: state.url,
+        }
+      : faviconIsMissing
+        ? null
+        : (loadedFavicon ?? null);
+
+  if (favicon === null) {
     return <ProjectFaviconFallback className={input.className} icon={FallbackIcon} />;
   }
 
-  const cacheKey = getProjectFaviconCacheKey(input.environmentId, input.cwd, src);
-
   return (
     <ProjectFaviconImage
-      key={cacheKey}
-      cacheKey={cacheKey}
-      src={src}
+      key={projectKey}
+      projectKey={projectKey}
+      cacheKey={favicon.cacheKey}
+      src={favicon.src}
       className={input.className}
       fallbackIcon={FallbackIcon}
     />
@@ -62,24 +93,24 @@ function ProjectFaviconFallback({
 }
 
 function ProjectFaviconImage({
+  projectKey,
   cacheKey,
   src,
   className,
   fallbackIcon: FallbackIcon,
 }: {
+  readonly projectKey: string;
   readonly cacheKey: string;
   readonly src: string;
   readonly className?: string | undefined;
   readonly fallbackIcon: ComponentType<{ className?: string }>;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(
-    () => loadedProjectFaviconSrcs.get(cacheKey) ?? null,
+    () => getLoadedProjectFavicon(projectKey)?.src ?? null,
   );
   const isLoading = displayedSrc !== src;
   const handleLoadError = (failedSrc: string) => {
-    if (loadedProjectFaviconSrcs.get(cacheKey) === failedSrc) {
-      loadedProjectFaviconSrcs.delete(cacheKey);
-    }
+    forgetProjectFavicon(projectKey, failedSrc);
     setDisplayedSrc((currentSrc) => (currentSrc === failedSrc ? null : currentSrc));
   };
 
@@ -102,7 +133,7 @@ function ProjectFaviconImage({
           alt=""
           className="hidden"
           onLoad={() => {
-            loadedProjectFaviconSrcs.set(cacheKey, src);
+            rememberProjectFavicon(projectKey, { cacheKey, src });
             setDisplayedSrc(src);
           }}
           onError={() => handleLoadError(src)}

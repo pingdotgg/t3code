@@ -10,7 +10,12 @@ To choose a different icon:
 3. Under **Appearance**, select **Choose a project file**.
 4. Search for an image file and select it.
 
-T3 Code supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected path applies to
-each checkout in the project group and appears on your connected clients.
+T3 Code supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected icon appears for
+each checkout in the project group and on your connected clients. On desktop, you can also select
+an image outside the project.
+
+Automatic detection uses the same icon source for every checkout in the group.
+
+After an icon loads, T3 Code keeps it visible during temporary environment disconnects.
 
 To use automatic detection again, select **Automatic**.

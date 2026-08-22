@@ -1,7 +1,9 @@
+import { selectProjectFaviconSources } from "@t3tools/client-runtime/state/project-favicon";
 import { createEnvironmentProjectAtoms } from "@t3tools/client-runtime/state/projects";
 import { createProjectEnvironmentAtoms } from "@t3tools/client-runtime/state/projects";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { WS_METHODS } from "@t3tools/contracts";
+import { Atom } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -23,3 +25,7 @@ export const environmentProjects = createEnvironmentProjectAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: environmentSnapshotAtom,
 });
+
+export const projectFaviconSourcesAtom = Atom.make((get) =>
+  selectProjectFaviconSources(get(environmentProjects.projectsAtom)),
+).pipe(Atom.withLabel("web-project-favicon-sources"));

@@ -23,6 +23,7 @@ import type {
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
@@ -67,7 +68,7 @@ import {
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
-import { projectEnvironment } from "../../state/projects";
+import { projectEnvironment, projectFaviconSourcesAtom } from "../../state/projects";
 import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -294,6 +295,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const projects = useProjects();
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -322,14 +324,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     group.memberProjects.find(
       (member) => member.environmentId === group.environmentId && member.id === group.id,
     ) ?? group.memberProjects[0]!;
-  const faviconPath = representative.faviconPath ?? null;
+  const faviconSources = useAtomValue(projectFaviconSourcesAtom);
+  const faviconSource = faviconSources.get(representative.physicalProjectKey);
+  const faviconPath = faviconSource?.faviconPath ?? representative.faviconPath ?? null;
   const pickProjectFavicon =
     typeof window !== "undefined" &&
-    group.memberProjects.every(
-      (member) =>
-        member.environmentId === primaryEnvironmentId &&
-        canPickExternalProjectFavicon(member.workspaceRoot, navigator.platform),
-    )
+    representative.environmentId === primaryEnvironmentId &&
+    canPickExternalProjectFavicon(representative.workspaceRoot, navigator.platform)
       ? window.desktopBridge?.pickProjectFavicon
       : undefined;
 
@@ -364,8 +365,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         faviconPath: string | null;
       }>,
       failureTitle: string,
+      members: ReadonlyArray<
+        (typeof group.memberProjects)[number] | (typeof projects)[number]
+      > = group.memberProjects,
     ): Promise<AtomCommandResult<void, unknown>> => {
-      for (const member of group.memberProjects) {
+      for (const member of members) {
         const result = mapAtomCommandResult(
           await updateProject({
             environmentId: member.environmentId,
@@ -377,8 +381,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           // A partial fan-out is possible: earlier members already took the
           // write. Name the environment so the user knows where it stopped.
           reportFailure(
-            group.memberProjects.length > 1
-              ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
+            members.length > 1
+              ? `${failureTitle} on ${("environmentLabel" in member ? member.environmentLabel : null) ?? member.environmentId}`
               : failureTitle,
             result,
           );
@@ -448,13 +452,37 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       savingFaviconRef.current = true;
       setIsSavingFavicon(true);
       try {
-        await updateAllMembers({ faviconPath }, "Failed to update project icon");
+        const isExternalFavicon =
+          faviconPath !== null &&
+          (faviconPath.startsWith("/") || isWindowsAbsolutePath(faviconPath));
+        const members =
+          faviconPath === null && faviconSource
+            ? projects.filter(
+                (project) =>
+                  project.faviconPath != null &&
+                  faviconSources.get(deriveProjectGroupingOverrideKey(project))?.projectKey ===
+                    faviconSource.projectKey,
+              )
+            : isExternalFavicon
+              ? [representative]
+              : [
+                  ...group.memberProjects.filter((member) => member !== representative),
+                  representative,
+                ];
+        await updateAllMembers({ faviconPath }, "Failed to update project icon", members);
       } finally {
         savingFaviconRef.current = false;
         setIsSavingFavicon(false);
       }
     },
-    [updateAllMembers],
+    [
+      faviconSource,
+      faviconSources,
+      group.memberProjects,
+      projects,
+      representative,
+      updateAllMembers,
+    ],
   );
 
   // ----- checkout selection and scripts -----

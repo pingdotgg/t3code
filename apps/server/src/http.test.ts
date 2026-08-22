@@ -45,6 +45,13 @@ describe("assetResponseHeaders", () => {
     });
   });
 
+  it("keeps versioned project icons in the browser cache", () => {
+    expect(assetResponseHeaders("/workspace/favicon.svg", "immutable")).toMatchObject({
+      "Cache-Control": "private, max-age=31536000, immutable",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    });
+  });
+
   it("declares utf-8 for HTML assets so non-ASCII content renders correctly", () => {
     expect(assetResponseHeaders("/workspace/page.html")).toHaveProperty(
       "Content-Type",
