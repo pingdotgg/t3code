@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Public benchmark adapter owns isolated state and child lifecycle.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import { constants as NodeFSConstants } from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodePerfHooks from "node:perf_hooks";
@@ -441,16 +442,28 @@ async function makeDefaultDependencies(): Promise<T3DriverDependencies> {
   let application: PlaywrightElectronApplication | undefined;
   let page: PlaywrightPage | undefined;
   let processIdentity: OwnedProcess | undefined;
+  let activeAttemptHome: string | undefined;
+  let preserveActiveAttempt = false;
   let attemptSequence = 0;
 
   const shutdown = async () => {
     const app = application;
     const identity = processIdentity;
+    const attemptHome = activeAttemptHome;
+    const preserveAttempt = preserveActiveAttempt;
     application = undefined;
     page = undefined;
     processIdentity = undefined;
-    if (!app) return { terminated: [], survivors: [] };
+    activeAttemptHome = undefined;
+    preserveActiveAttempt = false;
+    if (!app) {
+      if (attemptHome && !preserveAttempt)
+        await NodeFSP.rm(attemptHome, { recursive: true, force: true });
+      return { terminated: [], survivors: [] };
+    }
     const closed = await closeOwnedApplication(app, app.process());
+    if (closed && attemptHome && !preserveAttempt)
+      await NodeFSP.rm(attemptHome, { recursive: true, force: true });
     if (!identity) {
       if (!closed)
         throw new Error("T3 could not close an application that failed during readiness.");
@@ -471,7 +484,12 @@ async function makeDefaultDependencies(): Promise<T3DriverDependencies> {
       String(attemptSequence++),
     );
     await NodeFSP.mkdir(NodePath.dirname(attemptHome), { recursive: true, mode: 0o700 });
-    await NodeFSP.cp(stateHandle, attemptHome, { recursive: true, errorOnExist: true });
+    await NodeFSP.cp(stateHandle, attemptHome, {
+      recursive: true,
+      errorOnExist: true,
+      mode: NodeFSConstants.COPYFILE_FICLONE,
+    });
+    activeAttemptHome = attemptHome;
     const launcher = (await import(
       NodeURL.pathToFileURL(NodePath.join(repoRoot, "apps/desktop/scripts/electron-launcher.mjs"))
         .href
@@ -483,19 +501,25 @@ async function makeDefaultDependencies(): Promise<T3DriverDependencies> {
     };
     const command = launcher.resolveElectronLaunchCommand([desktopEntry]);
     const start = NodePerfHooks.performance.now();
-    const app = (await _electron.launch({
-      executablePath: command.electronPath,
-      args: [...command.args],
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
+    const app = (await _electron
+      .launch({
+        executablePath: command.electronPath,
+        args: [...command.args],
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
           ),
-        ),
-        T3CODE_HOME: attemptHome,
-        VITE_DEV_SERVER_URL: "",
-      },
-    })) as unknown as PlaywrightElectronApplication;
+          T3CODE_HOME: attemptHome,
+          VITE_DEV_SERVER_URL: "",
+        },
+      })
+      .catch(async (error) => {
+        activeAttemptHome = undefined;
+        await NodeFSP.rm(attemptHome, { recursive: true, force: true });
+        throw error;
+      })) as unknown as PlaywrightElectronApplication;
     application = app;
     try {
       const window = await app.firstWindow();
@@ -587,8 +611,13 @@ async function makeDefaultDependencies(): Promise<T3DriverDependencies> {
         workspaceRoot,
       });
       readinessTargets = materialization.readinessTargets;
-      await NodeFSP.cp(p0, p1, { recursive: true, errorOnExist: true });
+      await NodeFSP.cp(p0, p1, {
+        recursive: true,
+        errorOnExist: true,
+        mode: NodeFSConstants.COPYFILE_FICLONE,
+      });
       await launch(p1, "control");
+      preserveActiveAttempt = true;
       const warmupShutdown = await shutdown();
       if (warmupShutdown.survivors.length > 0)
         throw new Error("T3 P1 initialization left a surviving process.");
