@@ -1,16 +1,27 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useProjects } from "../state/entities";
+import { useProjects, readProject, useThreadShell } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import {
+  resolveDisplayedThreadPr,
+  threadChangeRequestSnapshotsAtom,
+} from "../components/ThreadStatusIndicators";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -19,14 +30,17 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useEnvironmentQuery } from "../state/query";
+import { vcsEnvironment } from "../state/vcs";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { primaryServerKeybindingsAtom } from "~/state/server";
+import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "~/state/server";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const activeThreadShell = useThreadShell(routeThreadRef);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -54,6 +68,30 @@ function ChatRouteGlobalShortcuts() {
     routeThreadRef
       ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
       : false,
+  );
+  const { settleThread, unsettleThread } = useThreadActions();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
+  // PR resolution mirrors ChatView's banner exactly: live VCS status first,
+  // snapshot second. The snapshot alone (Sidebar-written) is missing on the
+  // legacy sidebar or before a row mounts, which would misclassify settle.
+  const gitStatusCwd =
+    activeThreadShell?.worktreePath ??
+    (routeThreadRef && activeThreadShell
+      ? (readProject({
+          environmentId: routeThreadRef.environmentId,
+          projectId: activeThreadShell.projectId,
+        })?.workspaceRoot ?? null)
+      : null);
+  const gitStatusQuery = useEnvironmentQuery(
+    routeThreadRef === null || gitStatusCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId: routeThreadRef.environmentId,
+          input: { cwd: gitStatusCwd },
+        }),
   );
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -149,6 +187,56 @@ function ChatRouteGlobalShortcuts() {
                   ? "zoom-out"
                   : "reset-zoom";
         dispatchPreviewAction(action);
+        return;
+      }
+
+      if (command === "thread.settle.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (!routeThreadRef || !activeThreadShell) return;
+        const supportsSettlement =
+          serverConfigs.get(routeThreadRef.environmentId)?.environment.capabilities
+            .threadSettlement === true;
+        if (!supportsSettlement) return;
+        const threadKey = scopedThreadKey(routeThreadRef);
+        // Same PR resolution as ChatView's banner: resolveDisplayedThreadPr
+        // over live git status + the snapshot map.
+        const activeThreadPr = resolveDisplayedThreadPr({
+          threadBranch: activeThreadShell.branch,
+          gitStatus: gitStatusQuery.data ?? null,
+          snapshot: changeRequestSnapshotByKey.get(threadKey),
+          retainTerminalOnBranchMismatch: activeThreadShell.worktreePath === null,
+        });
+        const changeRequest =
+          activeThreadPr === null
+            ? null
+            : { state: activeThreadPr.state, updatedAt: activeThreadPr.updatedAt };
+        // Classify like ChatView's parked-thread banner and the header menu:
+        // effectiveSettled alone, minute-quantized so it cannot disagree
+        // with those surfaces within the same minute.
+        const isSettled = effectiveSettled(activeThreadShell, {
+          now: `${new Date().toISOString().slice(0, 16)}:00.000Z`,
+          autoSettleAfterDays,
+          autoSettleOnMerge,
+          changeRequest,
+        });
+        void (async () => {
+          const result = isSettled
+            ? await unsettleThread(routeThreadRef)
+            : await settleThread(routeThreadRef);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: isSettled ? "Failed to un-settle thread" : "Failed to settle thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+        })();
+        return;
       }
     };
 
@@ -159,8 +247,13 @@ function ChatRouteGlobalShortcuts() {
   }, [
     activeDraftThread,
     activeThread,
+    activeThreadShell,
+    autoSettleAfterDays,
+    autoSettleOnMerge,
+    changeRequestSnapshotByKey,
     clearSelection,
     handleNewThread,
+    gitStatusQuery.data,
     keybindings,
     defaultProjectRef,
     previewOpen,
@@ -168,7 +261,10 @@ function ChatRouteGlobalShortcuts() {
     routeThreadRef,
     selectedThreadKeysSize,
     legacySidebarEnabled,
+    serverConfigs,
+    settleThread,
     terminalOpen,
+    unsettleThread,
   ]);
 
   return null;
