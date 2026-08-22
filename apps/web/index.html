@@ -18,6 +18,8 @@
         const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
         const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
         const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        const OMARCHY_LINKED_THEME_ID = "__omarchy-linked";
+        const OMARCHY_LINKED_THEME_STORAGE_KEY = "t3code:omarchy-linked-theme:v1";
         const SPLASH_COLORS = {
           light: {
             background: "#ffffff",
@@ -215,6 +217,39 @@
             return null;
           }
         };
+        const findCachedOmarchyLinkedTheme = (themeId) => {
+          if (themeId !== OMARCHY_LINKED_THEME_ID) return null;
+          try {
+            const value = JSON.parse(
+              window.localStorage.getItem(OMARCHY_LINKED_THEME_STORAGE_KEY) ?? "null",
+            );
+            if (
+              !isRecord(value) ||
+              !isThemeAppearance(value.appearance) ||
+              !isRecord(value.colors) ||
+              (value.variants !== undefined &&
+                (!isRecord(value.variants) ||
+                  !Object.entries(value.variants).every(
+                    ([appearance, colors]) =>
+                      isThemeAppearance(appearance) &&
+                      (appearance === value.appearance || isRecord(colors)),
+                  )))
+            ) {
+              return null;
+            }
+            return {
+              id: OMARCHY_LINKED_THEME_ID,
+              label: "Omarchy Linked",
+              appearance: value.appearance,
+              colors: value.colors,
+              ...(value.variants ? { variants: value.variants } : {}),
+            };
+          } catch {
+            return null;
+          }
+        };
+        const findStoredTheme = (themeId) =>
+          findCachedOmarchyLinkedTheme(themeId) ?? findCustomTheme(themeId);
 
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
@@ -234,7 +269,7 @@
             storedTheme === null ? "" : (LEGACY_THEME_IDS[storedTheme] ?? storedTheme);
           const legacyMode = isLegacyT3ChatDark ? "dark" : null;
           const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
-          const customTheme = builtInModes ? null : findCustomTheme(themeId);
+          const customTheme = builtInModes ? null : findStoredTheme(themeId);
           const themeModes =
             builtInModes ??
             (customTheme
@@ -283,7 +318,7 @@
             if (typeof candidate === "string") {
               const halfId = LEGACY_THEME_IDS[candidate] ?? candidate;
               const halfBuiltIn = BUILT_IN_THEME_MODES[halfId] ?? null;
-              const halfCustom = halfBuiltIn ? null : findCustomTheme(halfId);
+              const halfCustom = halfBuiltIn ? null : findStoredTheme(halfId);
               const halfModes =
                 halfBuiltIn ??
                 (halfCustom

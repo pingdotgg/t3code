@@ -11,6 +11,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
+import { installOmarchyThemeWatcher } from "../ipc/methods/omarchyTheme.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
@@ -199,6 +200,7 @@ const bootstrap = Effect.gen(function* () {
 
   yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
+  yield* installOmarchyThemeWatcher();
 
   if (!(yield* Ref.get(state.quitting))) {
     // In wsl-only mode the renderer is served by the WSL backend, which can be

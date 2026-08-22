@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  PickedThemeFile,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -104,6 +105,32 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
+  getOmarchyTheme: () => ipcRenderer.invoke(IpcChannels.GET_OMARCHY_THEME_CHANNEL, undefined),
+  onOmarchyThemeChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, theme: unknown) => {
+      if (theme === null) {
+        listener(null);
+        return;
+      }
+      if (
+        typeof theme !== "object" ||
+        theme === null ||
+        !("name" in theme) ||
+        typeof theme.name !== "string" ||
+        !("size" in theme) ||
+        typeof theme.size !== "number" ||
+        !("text" in theme) ||
+        typeof theme.text !== "string"
+      ) {
+        return;
+      }
+      listener(theme as PickedThemeFile);
+    };
+    ipcRenderer.on(IpcChannels.OMARCHY_THEME_CHANGE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.OMARCHY_THEME_CHANGE_CHANNEL, wrappedListener);
+    };
+  },
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {

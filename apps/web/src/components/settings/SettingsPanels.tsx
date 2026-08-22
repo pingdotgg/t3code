@@ -55,6 +55,7 @@ import {
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
+import { useOmarchyLinkedTheme } from "../../hooks/useOmarchyLinkedTheme";
 import {
   readAppearanceModePreference,
   readThemeHalves,
@@ -974,6 +975,7 @@ export function AppearanceSettingsPanel() {
     themeHalves,
   } = useTheme();
   const customThemes = useCustomThemes();
+  const omarchyLinkedTheme = useOmarchyLinkedTheme();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -994,6 +996,7 @@ export function AppearanceSettingsPanel() {
           <ThemeLibrary
             appearanceMode={appearanceMode}
             customThemes={customThemes}
+            omarchyLinkedTheme={omarchyLinkedTheme}
             initialAppearance={resolvedTheme}
             refreshTheme={refreshTheme}
             isImportOpen={isImportThemeOpen}

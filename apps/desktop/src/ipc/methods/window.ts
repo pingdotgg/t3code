@@ -6,6 +6,7 @@ import {
   EDITORS,
   EditorId,
   PickedThemeFileSchema,
+  THEME_FILE_MAX_BYTES,
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
@@ -324,8 +325,6 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
 
 /** Theme files are a few KB; anything larger returns empty text and lets the
  *  renderer reject it by size without the contents ever crossing the bridge. */
-const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
-
 export const pickThemeFiles = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PICK_THEME_FILES_CHANNEL,
   payload: Schema.Undefined,
@@ -356,7 +355,7 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
       return Effect.gen(function* () {
         const info = yield* fileSystem.stat(filePath);
         const size = Number(info.size);
-        if (size > PICKED_THEME_FILE_MAX_BYTES) {
+        if (size > THEME_FILE_MAX_BYTES) {
           return { name, size, text: "" } satisfies PickedThemeFile;
         }
         const text = yield* fileSystem.readFileString(filePath);

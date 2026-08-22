@@ -17,6 +17,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
+import { OmarchyLinkedThemeSync } from "../components/desktop/OmarchyLinkedThemeSync";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
@@ -133,6 +134,7 @@ function RootRouteView() {
         <DocumentTitleSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
+        <OmarchyLinkedThemeSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />

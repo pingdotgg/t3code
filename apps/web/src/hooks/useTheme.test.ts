@@ -27,6 +27,26 @@ afterEach(() => {
 });
 
 describe("theme failure handling", () => {
+  it("recognizes a persisted Omarchy preference from its cached palette", async () => {
+    const storage = createStorage();
+    storage.setItem("t3code:theme", "__omarchy-linked");
+    storage.setItem(
+      "t3code:omarchy-linked-theme:v1",
+      JSON.stringify({
+        appearance: "dark",
+        colors: { canvas: "#111111", text: "#eeeeee", accent: "#7aa2f7" },
+      }),
+    );
+    vi.stubGlobal("window", {
+      localStorage: storage,
+      matchMedia: () => ({ matches: false }),
+    });
+
+    const { readThemePreference } = await import("./useTheme");
+
+    expect(readThemePreference()).toBe("__omarchy-linked");
+  });
+
   it("preserves exact storage causes and operation context", async () => {
     const readCause = new Error("storage read blocked");
     const writeCause = new Error("storage quota exceeded");
