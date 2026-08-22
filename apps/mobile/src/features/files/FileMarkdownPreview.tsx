@@ -1,3 +1,5 @@
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useCallback, useMemo, useState } from "react";
 import {
   Markdown,
@@ -14,6 +16,10 @@ import {
   resolveNativeMarkdownTypography,
 } from "../../lib/appearancePreferences";
 import { useThemeColor } from "../../lib/useThemeColor";
+import {
+  ThreadMarkdownImage,
+  ThreadMarkdownImageUnavailable,
+} from "../../components/markdownImages";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   hasNativeSelectableMarkdownText,
@@ -21,6 +27,7 @@ import {
   type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
+import { resolveWorkspaceFilePath } from "./filePath";
 
 interface MarkdownPreviewStyles {
   readonly theme: PartialMarkdownTheme;
@@ -181,9 +188,12 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
 }
 
 export function FileMarkdownPreview(props: {
+  readonly cwd: string;
+  readonly environmentId: EnvironmentId;
   readonly markdown: string;
+  readonly relativePath: string;
+  readonly threadId: ThreadId;
   readonly onRefresh?: () => Promise<void> | void;
-  readonly renderImage?: MarkdownImageRenderer;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
@@ -197,7 +207,33 @@ export function FileMarkdownPreview(props: {
       setIsPullRefreshing(false);
     }
   }, [props.onRefresh]);
-  const styles = useMarkdownPreviewStyles(props.renderImage);
+  const renderImage = useMemo<MarkdownImageRenderer>(() => {
+    const lastSeparator = Math.max(
+      props.relativePath.lastIndexOf("/"),
+      props.relativePath.lastIndexOf("\\"),
+    );
+    const imageBaseDir =
+      lastSeparator >= 0
+        ? resolveWorkspaceFilePath(props.cwd, props.relativePath.slice(0, lastSeparator))
+        : props.cwd;
+
+    return (image) => {
+      const imageSource = classifyMarkdownImageSource(image.href, imageBaseDir);
+      if (imageSource._tag === "Direct") return null;
+      if (imageSource._tag === "Blocked") {
+        return <ThreadMarkdownImageUnavailable alt={image.alt} />;
+      }
+      return (
+        <ThreadMarkdownImage
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+          path={imageSource.path}
+          alt={image.alt}
+        />
+      );
+    };
+  }, [props.cwd, props.environmentId, props.relativePath, props.threadId]);
+  const styles = useMarkdownPreviewStyles(renderImage);
   const onLinkPress = useCallback((href: string) => {
     void tryOpenExternalUrl(href, "markdown-link");
   }, []);
@@ -220,7 +256,7 @@ export function FileMarkdownPreview(props: {
           <SelectableMarkdownText
             markdown={props.markdown}
             onLinkPress={onLinkPress}
-            renderImage={props.renderImage}
+            renderImage={renderImage}
             textStyle={styles.nativeTextStyle}
           />
         ) : (

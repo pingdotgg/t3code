@@ -1,7 +1,6 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -17,15 +16,10 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import {
-  ThreadMarkdownImage,
-  ThreadMarkdownImageUnavailable,
-} from "../../components/markdownImages";
 import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useThemeColor } from "../../lib/useThemeColor";
-import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
@@ -56,7 +50,6 @@ import {
   isImagePreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
-  resolveWorkspaceFilePath,
 } from "./filePath";
 import { useWorkspaceFileAssetUrl } from "./workspaceFileAssetUrl";
 
@@ -101,7 +94,9 @@ function FileContent(props: {
   readonly initialLine: number | null;
   readonly truncated: boolean;
   readonly onRefresh?: () => Promise<void> | void;
-  readonly renderImage?: MarkdownImageRenderer;
+  readonly cwd: string;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
 }) {
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
   const isBrowserFile = isBrowserPreviewFile(props.relativePath);
@@ -154,9 +149,12 @@ function FileContent(props: {
       ) : null}
       {props.activeMode === "preview" && isMarkdown ? (
         <FileMarkdownPreview
+          cwd={props.cwd}
+          environmentId={props.environmentId}
           markdown={props.fileContents}
+          relativePath={props.relativePath}
+          threadId={props.threadId}
           onRefresh={props.onRefresh}
-          renderImage={props.renderImage}
         />
       ) : (
         <SourceFileSurface
@@ -523,36 +521,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
-  const renderMarkdownImage = useMemo<MarkdownImageRenderer | undefined>(() => {
-    if (environmentId === null || threadId === null || relativePath === null || cwd === null) {
-      return undefined;
-    }
-    const lastSeparator = Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"));
-    // Relative image sources in a rendered markdown file resolve against its own directory.
-    const imageBaseDir =
-      lastSeparator >= 0
-        ? resolveWorkspaceFilePath(cwd, relativePath.slice(0, lastSeparator))
-        : cwd;
-
-    return (image) => {
-      const imageSource = classifyMarkdownImageSource(image.href, imageBaseDir);
-      if (imageSource._tag === "Direct") {
-        return null;
-      }
-      if (imageSource._tag === "Blocked") {
-        return <ThreadMarkdownImageUnavailable alt={image.alt} />;
-      }
-      return (
-        <ThreadMarkdownImage
-          environmentId={environmentId}
-          threadId={threadId}
-          path={imageSource.path}
-          alt={image.alt}
-        />
-      );
-    };
-  }, [cwd, environmentId, relativePath, threadId]);
-
   const handleSelectFile = useCallback(
     (path: string) => {
       navigation.navigate("ThreadFile", {
@@ -701,12 +669,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         </NativeHeaderToolbar>
         <FileContent
           activeMode={resolvedActiveMode}
+          cwd={cwd}
+          environmentId={environmentId}
           previewUri={previewUri}
           fileContents={fileData?.contents ?? null}
           fileError={fileQuery.error}
           initialLine={targetLine}
           relativePath={relativePath}
-          renderImage={renderMarkdownImage}
+          threadId={threadId}
           truncated={fileData?.truncated ?? false}
           onRefresh={() => fileQuery.refresh()}
         />

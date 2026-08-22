@@ -2,18 +2,20 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { serializeRenderedMarkdownFragment } from "../markdown-clipboard";
+
 const testState = vi.hoisted(() => ({
   resources: [] as Array<unknown>,
-  assetState: "success" as "success" | "loading",
+  assetState: "success" as "success" | "loading" | "failure",
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../assets/assetUrls", () => ({
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
     testState.resources.push(resource);
-    return testState.assetState === "loading"
-      ? { _tag: "Loading" }
-      : { _tag: "Success", url: "https://signed.test/workspace-image.svg" };
+    if (testState.assetState === "loading") return { _tag: "Loading" };
+    if (testState.assetState === "failure") return { _tag: "Failure" };
+    return { _tag: "Success", url: "https://signed.test/workspace-image.svg" };
   },
 }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
@@ -30,6 +32,7 @@ vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn()
 vi.mock("~/lib/openPullRequestLink", () => ({ useOpenChangeRequestLink: () => vi.fn() }));
 
 import ChatMarkdown from "./ChatMarkdown";
+import { FileMarkdownPreview } from "./files/FileMarkdownPreview";
 
 const threadRef = {
   environmentId: EnvironmentId.make("env-windows"),
@@ -46,10 +49,74 @@ function renderWithoutThread(markdown: string): string {
   return renderToStaticMarkup(<ChatMarkdown cwd={"C:\\Users\\shawn\\project"} text={markdown} />);
 }
 
+function renderFilePreview(cwd: string, relativePath: string): string {
+  return renderToStaticMarkup(
+    <FileMarkdownPreview
+      cwd={cwd}
+      relativePath={relativePath}
+      text="![diagram](images/diagram.png)"
+      threadRef={threadRef}
+    />,
+  );
+}
+
+const TEXT_NODE = 3;
+const ELEMENT_NODE = 1;
+
+function copiedMarkdownFrom(html: string): string {
+  const copy = /data-markdown-copy="([^"]*)"/.exec(html)?.[1];
+  expect(copy).toBeDefined();
+  const element = {
+    nodeType: ELEMENT_NODE,
+    childNodes: [],
+    getAttribute: (name: string) => (name === "data-markdown-copy" ? copy : null),
+    hasAttribute: (name: string) => name === "data-markdown-copy",
+  };
+  const container = {
+    childNodes: [element],
+  };
+  vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  try {
+    return serializeRenderedMarkdownFragment(container as unknown as Node);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+}
+
+function firstInlineStyle(html: string): Record<string, string> {
+  const style = /style="([^"]+)"/.exec(html)?.[1];
+  expect(style).toBeDefined();
+  return Object.fromEntries(
+    (style ?? "").split(";").map((declaration) => {
+      const separator = declaration.indexOf(":");
+      return [declaration.slice(0, separator), declaration.slice(separator + 1)];
+    }),
+  );
+}
+
 describe("ChatMarkdown workspace images", () => {
   beforeEach(() => {
     testState.resources = [];
     testState.assetState = "success";
+  });
+
+  it.each([
+    ["/workspace/project", "docs/README.md", "/workspace/project/docs/images/diagram.png"],
+    [
+      "C:\\Users\\shawn\\project",
+      "docs\\README.md",
+      "C:\\Users\\shawn\\project\\docs\\images\\diagram.png",
+    ],
+  ])("resolves images beside a nested file in %s", (cwd, relativePath, expectedPath) => {
+    renderFilePreview(cwd, relativePath);
+
+    expect(testState.resources).toEqual([
+      {
+        _tag: "workspace-file",
+        threadId: threadRef.threadId,
+        path: expectedPath,
+      },
+    ]);
   });
 
   it("loads every Windows workspace path form through a signed asset URL", () => {
@@ -96,13 +163,44 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("https://signed.test/workspace-image.svg");
   });
 
-  it("honors authored dimensions on raw workspace images", () => {
-    const html = render('<img src=".t3/workspace-image.svg" alt="sized" width="128" height="96">');
+  it("keeps a tall image placeholder and loaded image at the same proportional bounds", () => {
+    const markdown = '<img src=".t3/workspace-image.svg" alt="sized" width="96" height="128">';
+    const loadedStyle = firstInlineStyle(render(markdown));
+    testState.assetState = "loading";
+    const loadingStyle = firstInlineStyle(render(markdown));
 
-    expect(html).toContain(
-      'style="width:128px;height:auto;aspect-ratio:128 / 96;max-width:min(100%, 30rem, 40rem)"',
-    );
+    expect(loadedStyle).toMatchObject({
+      width: "96px",
+      height: "auto",
+      "aspect-ratio": "96 / 128",
+      "max-width": "min(100%, 30rem, 22.5rem)",
+    });
+    expect(loadingStyle).toEqual(loadedStyle);
   });
+
+  it("retains an authored SVG fragment on the signed URL", () => {
+    const html = render("![logo](icons.svg#logo)");
+
+    expect(testState.resources).toEqual([
+      {
+        _tag: "workspace-file",
+        threadId: threadRef.threadId,
+        path: "C:\\Users\\shawn\\project\\icons.svg",
+      },
+    ]);
+    expect(html).toContain('src="https://signed.test/workspace-image.svg#logo"');
+  });
+
+  it.each(["success", "loading", "failure"] as const)(
+    "copies the authored workspace source while the asset is %s",
+    (assetState) => {
+      testState.assetState = assetState;
+
+      const html = render("![diagram](images/diagram.png#preview)");
+
+      expect(copiedMarkdownFrom(html)).toBe("![diagram](images/diagram.png#preview)");
+    },
+  );
 
   it("uses a static placeholder while a signed asset URL loads", () => {
     testState.assetState = "loading";

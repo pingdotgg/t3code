@@ -82,7 +82,6 @@ import {
   extractMarkdownLinkHrefs,
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
-  rehypePreserveLocalImageSrc,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -192,6 +191,33 @@ export function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 1}ch` };
 }
 
+type MarkdownImageHastNode = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownImageHastNode[];
+};
+
+/** Carries raw Windows drive paths through the sanitizer to the image renderer. */
+function rehypePreserveWindowsImageSrc() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode) => {
+      const src = node.properties?.src;
+      if (
+        node.type === "element" &&
+        node.tagName === "img" &&
+        typeof src === "string" &&
+        isWindowsDrivePathHref(src)
+      ) {
+        node.properties = { ...node.properties, dataLocalSrc: src };
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
+}
+
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
@@ -227,7 +253,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
-  rehypePreserveLocalImageSrc,
+  rehypePreserveWindowsImageSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -1847,9 +1873,9 @@ function ChatMarkdown({
           </code>
         );
       },
-      img({ node: _node, title: _title, src, alt, ...props }) {
+      img({ node, title: _title, src, alt, ...props }) {
         // The sanitizer removes a drive-path src, so prefer its allowlisted preserved value.
-        const localSrc = (props as Record<string, unknown>)["data-local-src"];
+        const localSrc = node?.properties?.dataLocalSrc;
         const authoredSrc = typeof localSrc === "string" ? localSrc : src;
         const srcString =
           typeof authoredSrc === "string" ? normalizeMarkdownLinkDestination(authoredSrc) : "";
