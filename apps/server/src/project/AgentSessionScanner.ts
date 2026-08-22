@@ -37,12 +37,9 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-/**
- * Bytes read from the head of each transcript. Session metadata (including
- * `cwd`) is written in the first record, so reading a prefix keeps the scan
- * cheap even when a transcript is hundreds of megabytes.
- */
+/** Chunk size for transcript reads; stop as soon as session metadata names its cwd. */
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
+/** Prevent malformed transcripts from turning project discovery into a full file scan. */
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 
 /**

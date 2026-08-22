@@ -124,7 +124,7 @@ export function WelcomeWizard({
   }, [completeOnboarding, onDone]);
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-white">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-white [--accent-foreground:#fff] [--accent:#171717] [--background:#000] [--border:#262626] [--foreground:#fff] [--input:#262626] [--muted-foreground:#a1a1aa] [--muted:#171717] [--placeholder:#71717a] [--ring:#737373] [color-scheme:dark]">
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-6 sm:px-10">
         <div className="flex items-center gap-2.5">
           <span className="font-mono text-lg font-semibold text-white">t3</span>
@@ -500,7 +500,7 @@ function PairDirectStep({
           </label>
           <Input
             id="onboarding-pairing-url"
-            className="mt-2 h-10 rounded-none border-white/15 bg-transparent text-white"
+            className="mt-2 border-white/15 bg-transparent text-white"
             autoCapitalize="none"
             autoComplete="off"
             autoCorrect="off"
@@ -511,6 +511,7 @@ function PairDirectStep({
             value={pairingUrl}
             onChange={(event) => setPairingUrl(event.currentTarget.value)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === "Enter" && pairingUrl.trim().length > 0) void submit();
             }}
           />
@@ -1234,6 +1235,8 @@ function CommandBlock({
 
     const scratch = document.createElement("textarea");
     scratch.value = command;
+    scratch.style.cssText =
+      "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none";
     document.body.append(scratch);
     scratch.select();
     const didCopy = document.execCommand("copy");

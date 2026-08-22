@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
@@ -12,7 +13,7 @@ import {
   useThreadShells,
 } from "../../state/entities";
 import { primaryServerConfigAtom } from "../../state/server";
-import { environmentShell, environmentShellSummaryAtom } from "../../state/shell";
+import { environmentShell } from "../../state/shell";
 
 /**
  * Holds back the authenticated app tree until the first-run decision is known,
@@ -59,7 +60,6 @@ export function FirstRunGate({
   const threads = useThreadShells();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const primaryShellLive = useAtomValue(primaryShellLiveAtom);
-  const shellSummary = useAtomValue(environmentShellSummaryAtom);
   // Within a session settings stay hydrated, so remounts (e.g. returning from
   // the wizard) resolve synchronously instead of blanking a frame.
   const [decision, setDecision] = useState<FirstRunDecision>(() =>
@@ -79,7 +79,10 @@ export function FirstRunGate({
   const workspaceFresh =
     projects.every(
       (project) =>
-        project.environmentId === primaryEnvironmentId && project.workspaceRoot === serverCwd,
+        project.environmentId === primaryEnvironmentId &&
+        serverCwd !== null &&
+        normalizeProjectPathForComparison(project.workspaceRoot) ===
+          normalizeProjectPathForComparison(serverCwd),
     ) &&
     threads.length <= 1 &&
     threads.every((thread) => thread.environmentId === primaryEnvironmentId);
@@ -89,8 +92,7 @@ export function FirstRunGate({
     hydrated,
     completed: onboardingCompletedAt !== null,
     bootstrapped,
-    authoritative:
-      primaryShellLive && !shellSummary.hasCachedShell && !shellSummary.hasSynchronizingShell,
+    authoritative: primaryShellLive,
     serverConfigAvailable: serverConfig !== null,
     workspaceFresh,
     projectCount: projects.length,
