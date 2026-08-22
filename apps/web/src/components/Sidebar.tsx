@@ -1232,6 +1232,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            {/* Card rows carry this label already; slim rows left the favicon
+              as the only project cue. That cue is absent whenever the icon
+              doesn't resolve — every such row falls back to the same
+              message-square glyph — and dimmed even when it does, so a
+              settled tail spanning several projects reads as one flat list.
+              Shrinks before the title does: the title identifies the row. */}
+            {props.projectTitle ? (
+              <span className="min-w-6 shrink truncate text-xs text-muted-foreground/70 group-hover/sidebar-row:text-muted-foreground">
+                {props.projectTitle}
+              </span>
+            ) : null}
             {title}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
