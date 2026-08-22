@@ -54,11 +54,15 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+// One entry per workspace the user has open. Small enough to bound CLI
+// spawns, large enough that switching between projects does not re-probe.
+const CAPABILITIES_PROBE_CACHE_CAPACITY = 16;
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -151,21 +155,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
 
-      // Per-instance capabilities cache: keyed on binary + resolved HOME so
-      // account-specific probes never share auth metadata across instances.
+      // Per-instance capabilities cache, keyed by working directory.
+      //
+      // This cache lives in one instance's scope, so binary path and resolved
+      // HOME are already constant here — they cannot leak account metadata
+      // across instances. The only thing that varies is the cwd, and it
+      // genuinely does vary: the CLI's init handshake reports PROJECT-scoped
+      // slash commands, so a probe run from the server's own cwd sees only the
+      // built-ins. Keying on cwd lets each workspace get its own answer while
+      // still costing one CLI spawn per workspace per TTL.
       const capabilitiesProbeCache = yield* Cache.make({
-        capacity: 1,
+        capacity: CAPABILITIES_PROBE_CACHE_CAPACITY,
         timeToLive: CAPABILITIES_PROBE_TTL,
-        lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+        lookup: (probeCwd: string) =>
+          probeClaudeCapabilities(effectiveConfig, processEnv, probeCwd).pipe(
             Effect.provideService(Path.Path, path),
           ),
       });
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
-        () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+        () => Cache.get(capabilitiesProbeCache, cwd),
         processEnv,
         cwd,
       ).pipe(
@@ -216,6 +226,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        // Project-scoped skills. The snapshot's own `skills` are scanned once
+        // against `ServerConfig.cwd`, which a packaged build sets to the home
+        // directory, so it can never see a project's `.claude/skills`. This is
+        // a filesystem scan, not a CLI probe, so it is cheap enough to run per
+        // request and needs no cache.
+        discoverSkillsForCwd: (skillsCwd: string) =>
+          discoverClaudeSkills(effectiveConfig, skillsCwd, processEnv).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+        // Slash commands come from the CLI's init handshake, so this spawns a
+        // process. It goes through the same cwd-keyed cache the snapshot probe
+        // uses, which bounds it to one spawn per workspace per TTL. A failed
+        // probe resolves empty so the caller falls back to the snapshot rather
+        // than surfacing an error in a picker.
+        discoverSlashCommandsForCwd: (commandsCwd: string) =>
+          Cache.get(capabilitiesProbeCache, commandsCwd).pipe(
+            Effect.map((capabilities) => capabilities?.slashCommands ?? []),
+            Effect.orElseSucceed(() => []),
+          ),
       } satisfies ProviderInstance;
     }),
 };

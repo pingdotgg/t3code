@@ -239,6 +239,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
+import { providerSkillsEnvironment } from "../state/providerSkills";
 import { useEnvironmentQuery } from "../state/query";
 import {
   primaryServerAvailableEditorsAtom,
@@ -2720,6 +2721,38 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  // Skills for the `$` picker, resolved against this thread's workspace root.
+  // `activeProviderStatus.skills` is machine-scoped: the server scans it once
+  // per provider instance against its own cwd, which a packaged desktop build
+  // sets to the user's home directory, so it reports user-scope skills only and
+  // is empty on a machine that keeps none there. Falling back to it keeps the
+  // picker working against a server that predates this RPC.
+  const workspaceCapabilitiesQuery = useEnvironmentQuery(
+    activeThread && activeProject && activeProviderInstanceId
+      ? providerSkillsEnvironment.workspaceSkills({
+          environmentId: activeThread.environmentId,
+          input: {
+            projectId: activeProject.id,
+            instanceId: activeProviderInstanceId,
+            // Only a persisted thread has a server-side row; a draft has none,
+            // and the project root is the right answer for it anyway.
+            ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
+          },
+        })
+      : null,
+  );
+  const activeSkills =
+    workspaceCapabilitiesQuery.data?.skills ??
+    activeProviderStatus?.skills ??
+    EMPTY_PROVIDER_SKILLS;
+  // Same story for `/`: the snapshot's slashCommands come from a probe run
+  // against the server's own cwd, so they are the CLI's built-ins only. The
+  // workspace-scoped result adds the project's own commands.
+  const activeSlashCommands =
+    workspaceCapabilitiesQuery.data?.slashCommands &&
+    workspaceCapabilitiesQuery.data.slashCommands.length > 0
+      ? workspaceCapabilitiesQuery.data.slashCommands
+      : undefined;
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -6534,7 +6567,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={activeSkills}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerOverlayHeight}
@@ -6661,6 +6694,8 @@ function ChatViewContent(props: ChatViewProps) {
                             interactionMode={interactionMode}
                             lockedProvider={lockedProvider}
                             providerStatuses={providerStatuses as ServerProvider[]}
+                            workspaceSkills={activeSkills}
+                            workspaceSlashCommands={activeSlashCommands}
                             activeProjectDefaultModelSelection={
                               activeProject?.defaultModelSelection
                             }
