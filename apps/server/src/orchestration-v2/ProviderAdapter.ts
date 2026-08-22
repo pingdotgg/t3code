@@ -503,6 +503,13 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly modelSelection?: ModelSelection;
     readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
   }) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
+  /**
+   * Remove the provider-native thread when the owning application thread is
+   * permanently deleted. Archive and ordinary detach flows never call this.
+   */
+  readonly deleteThread?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
@@ -529,6 +536,14 @@ export interface ProviderAdapterV2SessionRuntime {
 export interface ProviderAdapterV2Shape {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
+  /**
+   * Remove a provider-native thread when no managed provider session remains
+   * alive. The caller supplies a scope for any temporary provider connection.
+   */
+  readonly deleteDetachedThread?: (input: {
+    readonly providerSession: OrchestrationV2ProviderSession;
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<void, ProviderAdapterV2Error, Scope.Scope>;
   readonly getCapabilities: () => Effect.Effect<
     OrchestrationV2ProviderCapabilities,
     ProviderAdapterV2Error

@@ -3053,6 +3053,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   label: nonEmptyText(option.label, `Option ${optionIndex + 1}`),
                   description: nonEmptyText(option.description, option.label),
                 })) ?? [],
+              multiSelect: false,
             }));
             const nodeId = idAllocator.derive.nodeFromProviderItem({
               driver: CODEX_PROVIDER,

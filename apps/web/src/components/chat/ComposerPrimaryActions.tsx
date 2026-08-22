@@ -1,4 +1,4 @@
-import { memo, type PointerEventHandler } from "react";
+import { memo, type PointerEventHandler, type ReactNode } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
@@ -20,6 +20,8 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  canInterrupt?: boolean;
+  showSecondaryStop?: boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -62,6 +64,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  canInterrupt = isRunning,
+  showSecondaryStop = false,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -104,8 +108,42 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </button>
   );
 
+  const actionGapClassName = compact ? "gap-1.5" : "gap-2";
+  const secondaryStopButton =
+    !isRunning && showSecondaryStop ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon"
+              variant="destructive-outline"
+              className="rounded-full"
+              {...pointerFocusProps}
+              onClick={onInterrupt}
+              aria-label="Stop background work"
+            />
+          }
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+        </TooltipTrigger>
+        <TooltipPopup side="top">Stop background work</TooltipPopup>
+      </Tooltip>
+    ) : null;
+  const withSecondaryStop = (action: ReactNode) =>
+    secondaryStopButton === null ? (
+      action
+    ) : (
+      <div className={cn("flex items-center", actionGapClassName)}>
+        {secondaryStopButton}
+        {action}
+      </div>
+    );
+
   if (pendingAction) {
-    return (
+    const pendingActions = (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
         {isRunning ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
@@ -154,11 +192,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </Button>
       </div>
     );
+    return withSecondaryStop(pendingActions);
   }
 
-  if (showPlanFollowUpPrompt) {
+  if (showPlanFollowUpPrompt && !isRunning) {
     if (promptHasText) {
-      return (
+      const refineButton = (
         <Button
           type="submit"
           size="sm"
@@ -169,9 +208,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
         </Button>
       );
+      return withSecondaryStop(refineButton);
     }
 
-    return (
+    const implementActions = (
       <div data-chat-composer-implement-actions="true" className="flex items-center justify-end">
         <Button
           type="submit"
@@ -208,6 +248,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </Menu>
       </div>
     );
+    return withSecondaryStop(implementActions);
+  }
+
+  if (canInterrupt && !hasSendableContent) {
+    return renderStopGenerationButton(false);
   }
 
   const sendButton = (
@@ -257,7 +302,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   );
 
   if (!isRunning) {
-    return sendButton;
+    return withSecondaryStop(sendButton);
   }
 
   return (

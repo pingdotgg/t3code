@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   EnvironmentId,
   NodeId,
+  type OrchestrationV2Run,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -11,8 +12,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { expect, it as test } from "vite-plus/test";
 
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  type ThreadManagementInterruptResult,
+  ThreadManagementService,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -289,4 +294,55 @@ describe("OrchestratorMcpService", () => {
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
   );
+});
+
+test("maps provider-native interrupt requests to a run-less MCP result", () => {
+  const threadId = ThreadId.make("thread:mcp-provider-native-interrupt");
+  const result: ThreadManagementInterruptResult = {
+    type: "provider_interrupt_requested",
+    targets: [],
+    dispatch: {
+      sequence: 1,
+      storedEvents: [],
+    },
+  };
+
+  expect(OrchestratorMcpService.orchestratorMcpThreadInterruptResultFor(threadId, result)).toEqual({
+    threadId,
+    runId: null,
+    status: "interrupt_requested",
+  });
+});
+
+test("preserves the no-active-run MCP result when no provider work was found", () => {
+  const threadId = ThreadId.make("thread:mcp-no-active-run");
+
+  expect(
+    OrchestratorMcpService.orchestratorMcpThreadInterruptResultFor(threadId, {
+      type: "no_active_run",
+    }),
+  ).toEqual({
+    threadId,
+    runId: null,
+    status: "no_active_run",
+  });
+});
+
+test("preserves the run id for an ordinary waiting-root interrupt", () => {
+  const threadId = ThreadId.make("thread:mcp-waiting-root-interrupt");
+  const run = { id: RunId.make("run:mcp-waiting-root-interrupt") } as OrchestrationV2Run;
+  const result: ThreadManagementInterruptResult = {
+    type: "interrupt_requested",
+    run,
+    dispatch: {
+      sequence: 1,
+      storedEvents: [],
+    },
+  };
+
+  expect(OrchestratorMcpService.orchestratorMcpThreadInterruptResultFor(threadId, result)).toEqual({
+    threadId,
+    runId: run.id,
+    status: "interrupt_requested",
+  });
 });

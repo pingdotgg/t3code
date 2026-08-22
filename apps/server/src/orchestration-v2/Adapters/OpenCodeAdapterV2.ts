@@ -659,6 +659,26 @@ function toolStatus(part: ToolPart): {
   }
 }
 
+/**
+ * Node/item statuses for a tool that never reported its own terminal state.
+ * Mirrors the turn's outcome so an interrupted turn does not leave a spinner.
+ */
+export function terminalToolStatus(status: TerminalTurnStatus): {
+  readonly node: OrchestrationV2ExecutionNode["status"];
+  readonly item: OrchestrationV2TurnItem["status"];
+} {
+  switch (status) {
+    case "completed":
+      return { node: "completed", item: "completed" };
+    case "interrupted":
+      return { node: "interrupted", item: "interrupted" };
+    case "cancelled":
+      return { node: "cancelled", item: "cancelled" };
+    case "failed":
+      return { node: "failed", item: "failed" };
+  }
+}
+
 function toolInput(part: ToolPart): Record<string, unknown> {
   return part.state.input;
 }
@@ -1538,6 +1558,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               label: option.label.trim() || "Option",
               description: option.description.trim() || option.label.trim() || "Option",
             })),
+            multiSelect: false,
           }));
 
         const runtimeRequestTurnItem = (

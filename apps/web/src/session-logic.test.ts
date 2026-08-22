@@ -105,6 +105,14 @@ describe("V2 session presentation", () => {
         completedAt: now,
       }),
     ).toMatchObject({ label: "Provider error after 10/10 retries" });
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "failed",
+        retry: { attempt: 2, maxAttempts: null, retryDelayMs: 2034 },
+        completedAt: now,
+      }),
+    ).toMatchObject({ label: "Provider error (attempt 2)" });
   });
 
   it("selects the latest proposed plan for a run", () => {

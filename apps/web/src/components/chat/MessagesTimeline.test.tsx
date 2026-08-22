@@ -978,6 +978,121 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
+  it("renders durable compaction threshold diagnostics without provider summary text", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const { formatCompactionTokenDetail } = await import("./V2LifecycleRow");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "compaction",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "compaction",
+              item: {
+                id: "compaction",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 0,
+                status: "completed",
+                title: null,
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "compaction",
+                driver: "opencode2",
+                summary: "sensitive provider summary",
+                usedTokenCount: 902_000,
+                inputTokenCount: 272_000,
+                inputLimit: 922_000,
+                contextLimit: 1_050_000,
+                outputReserve: 32_000,
+                triggerThreshold: 902_000,
+                triggerReason: "auto",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain(
+      "902,000 used / 902,000 trigger · 922,000 input limit · 1,050,000 context",
+    );
+    expect(markup).toContain('data-base-ui-tooltip-trigger=""');
+    expect(markup).not.toContain("sensitive provider summary");
+    expect(
+      formatCompactionTokenDetail({
+        type: "compaction",
+        usedTokenCount: 243_437,
+        triggerThreshold: 252_000,
+        inputLimit: 272_000,
+        contextLimit: 272_000,
+      } as never),
+    ).toBe("243,437 used / 252,000 trigger · 272,000 input limit");
+    expect(
+      formatCompactionTokenDetail({
+        type: "compaction",
+        usedTokenCount: 243_437,
+        triggerThreshold: 240_000,
+        contextLimit: 272_000,
+      } as never),
+    ).toBe("243,437 used / 240,000 trigger · 272,000 context");
+  });
+
+  it("renders failed compaction entries with a danger tone", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "failed-compaction",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "failed-compaction",
+              item: {
+                id: "failed-compaction",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 0,
+                status: "failed",
+                title: null,
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "compaction",
+                driver: "opencode2",
+                triggerReason: "auto",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("text-destructive");
+  });
+
   it("does not render the transient V2 interruption request", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -1321,6 +1436,57 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Tests should be isolated.");
     expect(markup).toContain("Result: no shared state.");
     expect(markup).not.toContain("Explain test isolation");
+  });
+
+  it("renders a failed subagent as a prominent danger card", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "failed-subagent",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "failed-subagent",
+              item: {
+                id: "failed-subagent",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "failed",
+                title: "Rate-limited research",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "opencode2",
+                providerInstanceId: "opencode2",
+                childThreadId: "thread-subagent-1",
+                prompt: "Research the provider",
+                result: "HTTP 429: Rate limit exceeded",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain('data-tone="danger"');
+    expect(markup).toContain("HTTP 429: Rate limit exceeded");
+    expect(markup).toContain("text-destructive");
   });
 
   it("keeps live progress when a running subagent streams a partial result", async () => {
@@ -1731,6 +1897,69 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('src="/apple-touch-icon.png"');
     expect(markup).toContain("Read a T3 thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
+  });
+
+  it("renders OpenCode 2 execute-bridged T3 MCP tools with the product logo", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const code = `await tools["t3-code"].orchestrator_capabilities({});`;
+    const item = {
+      id: "tool-oc2-execute-t3",
+      threadId: "thread-source",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: "execute",
+      startedAt: null,
+      completedAt: null,
+      updatedAt: {},
+      type: "dynamic_tool",
+      toolName: "execute",
+      input: { code },
+      output: { ok: true },
+    } as const;
+    const projectedItem = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: "thread-source",
+      sourceItemId: item.id,
+      item,
+    } as const;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={
+          [
+            {
+              id: item.id,
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: item.id,
+                createdAt: MESSAGE_CREATED_AT,
+                runId: null,
+                label: item.toolName,
+                tone: "tool",
+                itemType: item.type,
+                toolTitle: item.toolName,
+                toolLifecycleStatus: "completed",
+                toolData: { input: item.input, output: item.output },
+                structuredPayload: item,
+                projectedItem,
+              },
+            },
+          ] as never
+        }
+      />,
+    );
+
+    expect(markup).toContain('data-tool-logo="t3-code"');
+    expect(markup).toContain("Get orchestration capabilities");
+    expect(markup).not.toContain(">Execute<");
   });
 
   it("formats changed file paths from the workspace root", async () => {

@@ -10,6 +10,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -103,7 +104,7 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
 
 const TestLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
-  Layer.provide(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettingsService.layerTest()),
@@ -719,6 +720,185 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("schedules terminal detach for a logical session that has not opened yet", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("runtime-layer-opening-session-delete-thread");
+      const providerSessionId = ProviderSessionId.make(
+        "provider-session:runtime-layer-opening-session-delete",
+      );
+      const providerThreadId = ProviderThreadId.make(
+        "provider-thread:runtime-layer-opening-session-delete",
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-opening-session-delete-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-opening-session-delete-project"),
+        title: "Opening session delete",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-opening-session-delete",
+      });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:runtime-layer-opening-session-delete:provider-thread"),
+            type: "provider-thread.updated",
+            threadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: providerThreadId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              providerSessionId,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "not_loaded",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      const commandId = CommandId.make("runtime-layer-opening-session-delete-command");
+      const deleted = yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId,
+        threadId,
+      });
+      assert.isTrue(
+        deleted.storedEvents.some(
+          (stored) =>
+            stored.event.type === "provider-session.detached" &&
+            stored.event.payload.providerSessionId === providerSessionId,
+        ),
+      );
+      const rows = yield* sql<{
+        readonly effect_id: string;
+        readonly provider_session_id: string;
+        readonly delete_provider_thread: number;
+        readonly provider_instance_id: string;
+      }>`
+        SELECT
+          effect_id,
+          json_extract(payload_json, '$.providerSessionId') AS provider_session_id,
+          json_extract(payload_json, '$.deleteProviderThread') AS delete_provider_thread,
+          json_extract(payload_json, '$.providerInstanceId') AS provider_instance_id
+        FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${commandId}
+          AND effect_type = 'provider-session.detach'
+      `;
+      assert.lengthOf(rows, 1);
+      assert.equal(
+        rows[0]?.effect_id,
+        `effect:${commandId}:provider-session.detach:${providerSessionId}`,
+      );
+      assert.deepInclude(rows[0]!, {
+        provider_session_id: providerSessionId,
+        delete_provider_thread: 1,
+        provider_instance_id: modelSelection.instanceId,
+      });
+    }),
+  );
+
+  it.effect("leaves a running archive detach to restore after the thread is unarchived", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("runtime-layer-unarchive-cancels-detach-thread");
+      const providerSessionId = ProviderSessionId.make(
+        "provider-session:runtime-layer-unarchive-cancels-detach",
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-unarchive-cancels-detach-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-unarchive-cancels-detach-project"),
+        title: "Unarchive cancellation",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-unarchive-cancels-detach",
+      });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:runtime-layer-unarchive-cancels-detach:session"),
+            type: "provider-session.attached",
+            threadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: providerSessionId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "ready",
+              cwd: "/workspace",
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          },
+        ],
+      });
+      const archiveCommandId = CommandId.make("runtime-layer-unarchive-cancels-detach-archive");
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: archiveCommandId,
+        threadId,
+      });
+      yield* sql`
+        UPDATE orchestration_v2_effect_outbox
+        SET status = 'running', lease_owner = 'test-worker'
+        WHERE command_id = ${archiveCommandId}
+          AND effect_type = 'provider-session.detach'
+      `;
+      const running = yield* sql<{ readonly status: string }>`
+        SELECT status
+        FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${archiveCommandId}
+          AND effect_type = 'provider-session.detach'
+      `;
+      assert.deepEqual(running, [{ status: "running" }]);
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-unarchive-cancels-detach-unarchive"),
+        threadId,
+      });
+      const stillRunning = yield* sql<{ readonly status: string }>`
+        SELECT status
+        FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${archiveCommandId}
+          AND effect_type = 'provider-session.detach'
+      `;
+      assert.deepEqual(stillRunning, [{ status: "running" }]);
+    }),
+  );
+
   it.effect("persists rejected command receipts across retries", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -1228,6 +1408,16 @@ it.layer(SharedApplicationDataPlaneTestLayer)("pending provider interruption", (
       );
       assert.deepEqual(interrupted.providerTurns, []);
       assert.isFalse(yield* effectWorker.runOnce);
+
+      const sequenceBeforeIdleStop = yield* orchestrator.getThreadEventSequence(threadId);
+      const idleStop = yield* threadManagement.interruptThread({
+        projectId,
+        commandId: CommandId.make("runtime-layer-pending-interrupt-idle-stop"),
+        threadId,
+        reason: "Repeated stop after completion",
+      });
+      assert.equal(idleStop.type, "no_active_run");
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequenceBeforeIdleStop);
     }),
   );
 });

@@ -241,6 +241,19 @@ describe("resolveTimelineToolPresentation", () => {
     });
   });
 
+  it("pretty prints OpenCode 2 execute-bridged T3 MCP tool names from input", () => {
+    expect(
+      resolveTimelineToolPresentation("execute", {
+        input: {
+          code: `await tools["t3-code"].t3_thread_read({ threadId: "x" });`,
+        },
+      }),
+    ).toEqual({
+      displayName: "Read a T3 thread",
+      logo: "t3-code",
+    });
+  });
+
   it("keeps unknown MCP tools on the generic renderer path", () => {
     expect(resolveTimelineToolPresentation("mcp__github__search_issues")).toBeNull();
   });

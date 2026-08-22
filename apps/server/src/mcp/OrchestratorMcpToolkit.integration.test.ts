@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpCreatedThread,
   OrchestratorMcpDelegateTaskResult,
@@ -76,6 +77,7 @@ const delegatedResult = "Delegated API boundary inspected.";
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
 const createdThreadPrompt = "Complete the newly created ordinary thread.";
 
+const decodeCapabilitiesResult = Schema.decodeUnknownEffect(OrchestratorMcpCapabilitiesResult);
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
 const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
@@ -87,6 +89,16 @@ const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadL
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
+
+type ProviderCapability = OrchestratorMcpCapabilitiesResult["providers"][number];
+
+function defaultProvidersAreSlim(result: OrchestratorMcpCapabilitiesResult): boolean {
+  return result.providers.every((provider) => !("models" in provider));
+}
+
+function providerCapabilityModels(provider: ProviderCapability | undefined) {
+  return provider !== undefined && "models" in provider ? provider.models : undefined;
+}
 
 const codexSelection = {
   instanceId: codexInstanceId,
@@ -112,6 +124,7 @@ function makeProviderSnapshot(input: {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly model: string;
+  readonly additionalModels?: ReadonlyArray<string>;
   readonly optionDescriptors?: ReadonlyArray<ProviderOptionDescriptor>;
 }): ServerProvider {
   return {
@@ -123,17 +136,18 @@ function makeProviderSnapshot(input: {
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-06-17T00:00:00.000Z",
-    models: [
-      {
-        slug: input.model,
-        name: input.model,
+    models: [input.model, ...(input.additionalModels ?? [])].map((model, index) => {
+      const capabilities =
+        index === 0 && input.optionDescriptors !== undefined
+          ? { optionDescriptors: input.optionDescriptors }
+          : null;
+      return {
+        slug: model,
+        name: model,
         isCustom: false,
-        capabilities:
-          input.optionDescriptors === undefined
-            ? null
-            : { optionDescriptors: input.optionDescriptors },
-      },
-    ],
+        capabilities,
+      };
+    }),
     slashCommands: [],
     skills: [],
   };
@@ -541,7 +555,11 @@ describe("orchestrator MCP toolkit", () => {
             makeProviderSnapshot({
               instanceId: ProviderInstanceId.make("opencode"),
               driver: ProviderDriverKind.make("opencode"),
-              model: "opencode/test",
+              model: "opencode/test-000",
+              additionalModels: Array.from(
+                { length: 124 },
+                (_, index) => `opencode/test-${String(index + 1).padStart(3, "0")}`,
+              ),
             }),
           ]);
           // In-memory ScheduledTaskService stub so the schedule/list/update/
@@ -1175,8 +1193,126 @@ describe("orchestrator MCP toolkit", () => {
                   providerInstanceId: "opencode",
                   canRunChildTask: true,
                 }),
-                // Models advertise their option descriptors so agents can
-                // discover valid target.options ids and values.
+                expect.objectContaining({
+                  providerInstanceId: codexInstanceId,
+                  canRunChildTask: true,
+                }),
+              ]),
+            });
+            const capabilitiesResult = yield* decodeCapabilitiesResult(
+              capabilities.structuredContent,
+            );
+            expect(defaultProvidersAreSlim(capabilitiesResult)).toBe(true);
+
+            const nullableCapabilities = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: null,
+              model: null,
+              modelCursor: null,
+              modelLimit: null,
+              includeModelOptions: null,
+            });
+            expect(nullableCapabilities.isError).toBe(false);
+            expect(
+              defaultProvidersAreSlim(
+                yield* decodeCapabilitiesResult(nullableCapabilities.structuredContent),
+              ),
+            ).toBe(true);
+
+            const claudeCatalog = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: claudeInstanceId,
+            });
+            expect(claudeCatalog.structuredContent).toMatchObject({
+              providers: expect.arrayContaining([
+                expect.objectContaining({
+                  providerInstanceId: claudeInstanceId,
+                  models: [expect.objectContaining({ id: claudeModel })],
+                  modelsNextCursor: null,
+                  modelsTotal: 1,
+                }),
+              ]),
+            });
+            const claudeCatalogResult = yield* decodeCapabilitiesResult(
+              claudeCatalog.structuredContent,
+            );
+            expect(
+              claudeCatalogResult.providers.find(
+                (provider) => provider.providerInstanceId === codexInstanceId,
+              ),
+            ).not.toHaveProperty("models");
+
+            const firstOpenCodePage = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: "opencode",
+            });
+            const firstOpenCodeResult = yield* decodeCapabilitiesResult(
+              firstOpenCodePage.structuredContent,
+            );
+            const firstOpenCodeProvider = firstOpenCodeResult.providers.find(
+              (provider) => provider.providerInstanceId === "opencode",
+            );
+            expect(providerCapabilityModels(firstOpenCodeProvider)).toHaveLength(50);
+            expect(firstOpenCodeProvider).toMatchObject({
+              modelsNextCursor: 50,
+              modelsTotal: 125,
+            });
+            expect(
+              providerCapabilityModels(firstOpenCodeProvider)?.every(
+                (model) => model.options === undefined,
+              ),
+            ).toBe(true);
+
+            const lastOpenCodePage = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: "opencode",
+              modelCursor: 100,
+              modelLimit: 50,
+            });
+            const lastOpenCodeResult = yield* decodeCapabilitiesResult(
+              lastOpenCodePage.structuredContent,
+            );
+            const lastOpenCodeProvider = lastOpenCodeResult.providers.find(
+              (provider) => provider.providerInstanceId === "opencode",
+            );
+            expect(providerCapabilityModels(lastOpenCodeProvider)).toHaveLength(25);
+            expect(lastOpenCodeProvider).toMatchObject({
+              modelsNextCursor: null,
+              modelsTotal: 125,
+            });
+
+            const pastOpenCodeCatalog = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: "opencode",
+              modelCursor: 200,
+            });
+            const pastOpenCodeResult = yield* decodeCapabilitiesResult(
+              pastOpenCodeCatalog.structuredContent,
+            );
+            const pastOpenCodeProvider = pastOpenCodeResult.providers.find(
+              (provider) => provider.providerInstanceId === "opencode",
+            );
+            expect(providerCapabilityModels(pastOpenCodeProvider)).toEqual([]);
+            expect(pastOpenCodeProvider).toMatchObject({
+              modelsNextCursor: null,
+              modelsTotal: 125,
+            });
+
+            const exactModel = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: codexInstanceId,
+              model: codexModel,
+            });
+            const exactModelResult = yield* decodeCapabilitiesResult(exactModel.structuredContent);
+            const exactModelProvider = exactModelResult.providers.find(
+              (provider) => provider.providerInstanceId === codexInstanceId,
+            );
+            expect(providerCapabilityModels(exactModelProvider)).toEqual([
+              { id: codexModel, label: codexModel },
+            ]);
+
+            const modelOptions = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: codexInstanceId,
+              model: codexModel,
+              includeModelOptions: true,
+            });
+            yield* decodeCapabilitiesResult(modelOptions.structuredContent);
+            expect(modelOptions.structuredContent).toMatchObject({
+              providers: expect.arrayContaining([
                 expect.objectContaining({
                   providerInstanceId: codexInstanceId,
                   models: [
@@ -1185,8 +1321,43 @@ describe("orchestrator MCP toolkit", () => {
                       options: [expect.objectContaining({ id: "reasoning", type: "select" })],
                     }),
                   ],
+                  modelsNextCursor: null,
+                  modelsTotal: 1,
                 }),
               ]),
+            });
+
+            const missingCatalogProvider = yield* invoke("orchestrator_capabilities", {
+              model: codexModel,
+            });
+            expect(missingCatalogProvider.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "invalid_request",
+              message: expect.stringContaining("providerInstanceId is required"),
+            });
+            const unboundedOptions = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: codexInstanceId,
+              includeModelOptions: true,
+            });
+            expect(unboundedOptions.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "invalid_request",
+              message: expect.stringContaining("requires an exact model id"),
+            });
+            const missingProvider = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: "missing-provider",
+            });
+            expect(missingProvider.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "provider_unavailable",
+            });
+            const missingModel = yield* invoke("orchestrator_capabilities", {
+              providerInstanceId: codexInstanceId,
+              model: "missing-model",
+            });
+            expect(missingModel.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "model_unavailable",
             });
 
             const scheduleTool = server.tools.find(({ tool }) => tool.name === "schedule_task");

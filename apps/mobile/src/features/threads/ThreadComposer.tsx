@@ -66,8 +66,11 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { collapsedComposerActions } from "./ThreadComposer.logic";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -330,7 +333,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     setIsFocused(false);
     onEditorFocusChange?.(false);
   }, [onEditorFocusChange]);
-  const showStopAction = props.canStopThread;
+  const { showStopPrimary: showStopPrimaryAction, showStopSecondary: showStopSecondaryAction } =
+    collapsedComposerActions({
+      canStopThread: props.canStopThread,
+      hasContent,
+      activeThreadBusy: props.activeThreadBusy,
+    });
 
   const sendLabel =
     props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
@@ -355,6 +363,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const projectSkillsQuery = useEnvironmentQuery(
+    selectedProviderStatus?.driver === "opencode2" &&
+      props.projectCwd !== null &&
+      props.projectCwd.length > 0 &&
+      selectedProviderStatus.instanceId
+      ? serverEnvironment.listProviderSkills({
+          environmentId: props.environmentId,
+          input: { instanceId: selectedProviderStatus.instanceId, cwd: props.projectCwd },
+        })
+      : null,
+  );
+  const pickerSkills = projectSkillsQuery.data?.skills ?? selectedProviderStatus?.skills ?? [];
 
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
@@ -435,7 +455,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
+      const enabledSkills = pickerSkills.filter((s) => s.enabled);
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });
@@ -532,7 +552,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, pickerSkills, selectedProviderStatus]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -697,6 +717,33 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     [navigation, settingsSheetPresentation.onStackTransitionsFinished],
   );
 
+  let collapsedPrimaryAction: ReactNode = (
+    <ControlPill icon="arrow.up" variant="primary" disabled={!canSend} onPress={handleSend} />
+  );
+  if (showStopSecondaryAction) {
+    collapsedPrimaryAction = (
+      <View className="flex-row items-center gap-1">
+        <ControlPill
+          icon="stop.fill"
+          accessibilityLabel="Stop"
+          variant="danger"
+          onPress={props.onStopThread}
+        />
+        <ControlPill
+          icon="arrow.up"
+          accessibilityLabel="Send"
+          variant="primary"
+          disabled={!canSend}
+          onPress={handleSend}
+        />
+      </View>
+    );
+  } else if (showStopPrimaryAction) {
+    collapsedPrimaryAction = (
+      <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+    );
+  }
+
   return (
     <Animated.View
       className="px-4"
@@ -784,7 +831,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ref={inputRef}
               multiline
               value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
+              skills={pickerSkills}
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}
@@ -838,16 +885,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
           {!isExpanded ? (
             <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
-              {showStopAction ? (
-                <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
-              ) : (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canSend}
-                  onPress={handleSend}
-                />
-              )}
+              {collapsedPrimaryAction}
             </Animated.View>
           ) : null}
           {isExpanded ? (
@@ -873,7 +911,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   maxWidth={152}
                   onPress={openSettings}
                 />
-                {showStopAction ? (
+                {props.canStopThread && (
                   <ComposerToolbarButton
                     accessibilityLabel="Stop"
                     icon="stop.fill"
@@ -881,7 +919,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     onPress={props.onStopThread}
                     showChevron={false}
                   />
-                ) : null}
+                )}
               </ComposerToolbarScroller>
               <ComposerToolbarButton
                 accessibilityLabel={sendLabel}

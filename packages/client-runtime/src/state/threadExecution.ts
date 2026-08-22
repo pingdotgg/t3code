@@ -2,11 +2,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
-import {
-  threadRuntimeIsActive,
-  type ThreadRunSummary,
-  type ThreadRuntimeSummary,
-} from "./models.ts";
+import type { ThreadRunSummary, ThreadRuntimeSummary } from "./models.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -86,6 +82,8 @@ export function deriveThreadRuntime(
   return {
     status: hasPendingBackgroundTasks ? "idle" : (activityRun?.status ?? "idle"),
     activeRunId,
+    hasInterruptibleProviderNativeBackgroundWork:
+      projectionHasInterruptibleProviderNativeBackgroundWork(projection),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     lastError: providerSession?.lastError ?? null,
@@ -93,12 +91,58 @@ export function deriveThreadRuntime(
   };
 }
 
+export function projectionHasInterruptibleProviderNativeBackgroundWork(
+  projection: OrchestrationV2ThreadProjection,
+): boolean {
+  const hasDirectProviderNativeChild = projection.subagents.some(
+    (subagent) =>
+      subagent.threadId === projection.thread.id &&
+      subagent.origin === "provider_native" &&
+      subagent.status === "running" &&
+      subagent.childThreadId !== null &&
+      subagent.providerThreadId !== null,
+  );
+
+  if (
+    projection.thread.creationSource === "provider" &&
+    projection.thread.lineage.relationshipToParent === "subagent"
+  ) {
+    const providerThreadId = projection.thread.activeProviderThreadId;
+    const hasOwnRunningTurn =
+      providerThreadId !== null &&
+      projection.providerTurns.some(
+        (turn) => turn.providerThreadId === providerThreadId && turn.status === "running",
+      );
+    return hasOwnRunningTurn || hasDirectProviderNativeChild;
+  }
+
+  return hasDirectProviderNativeChild;
+}
+
 export function threadRuntimeHasInterruptibleRun(
   runtime: ThreadRuntimeSummary | null | undefined,
 ): boolean {
   return (
-    threadRuntimeIsActive(runtime) &&
     runtime?.activeRunId !== null &&
-    runtime?.activeRunId !== undefined
+    runtime?.activeRunId !== undefined &&
+    (runtime.status === "preparing" ||
+      runtime.status === "starting" ||
+      runtime.status === "running" ||
+      runtime.status === "queued")
+  );
+}
+
+export function threadRuntimeHasInterruptibleProviderNativeBackgroundWork(
+  runtime: ThreadRuntimeSummary | null | undefined,
+): boolean {
+  return runtime?.hasInterruptibleProviderNativeBackgroundWork === true;
+}
+
+export function threadRuntimeHasInterruptibleWork(
+  runtime: ThreadRuntimeSummary | null | undefined,
+): boolean {
+  return (
+    threadRuntimeHasInterruptibleRun(runtime) ||
+    threadRuntimeHasInterruptibleProviderNativeBackgroundWork(runtime)
   );
 }

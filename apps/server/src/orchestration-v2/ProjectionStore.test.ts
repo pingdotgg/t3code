@@ -16,7 +16,9 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -24,9 +26,16 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
+  applyToProjectionReplayState,
   isTurnItemAtOrBeforeRun,
+  isTurnItemVisibleInForkPrefix,
+  layerMemory,
+  layerMemoryWithOptions,
+  makeProjectionReplayState,
   ProjectionStoreV2,
   layer as projectionStoreLayer,
+  threadShellFromProjection,
+  visibleTurnItemsThroughRun,
 } from "./ProjectionStore.ts";
 
 const TestLayer = Layer.mergeAll(
@@ -82,6 +91,568 @@ it("includes imported runless history when selecting fork context through a run"
     }),
   );
 });
+
+it("excludes cancelled queued prompts from fork history without hiding rolled-back history", () => {
+  const runId = RunId.make("run:projection-fork-prefix-visibility");
+  const nodeId = NodeId.make("node:projection-fork-prefix-visibility");
+  const queuedItem = {
+    type: "user_message" as const,
+    inputIntent: "queued_turn" as const,
+    runId,
+    nodeId,
+  };
+  assert.isFalse(
+    isTurnItemVisibleInForkPrefix({
+      item: queuedItem,
+      runs: [{ id: runId, status: "cancelled" }],
+      attempts: [],
+      items: [queuedItem],
+    }),
+  );
+
+  const deliveredItem = { ...queuedItem, inputIntent: "turn_start" as const };
+  assert.isTrue(
+    isTurnItemVisibleInForkPrefix({
+      item: deliveredItem,
+      runs: [{ id: runId, status: "rolled_back" }],
+      attempts: [],
+      items: [deliveredItem],
+    }),
+  );
+});
+
+it.effect("orders fork-prefix local items by ordinal rather than array insertion order", () =>
+  Effect.gen(function* () {
+    const runId = RunId.make("run:projection-fork-prefix-order");
+    const nodeId = NodeId.make("node:projection-fork-prefix-order");
+    const threadId = ThreadId.make("thread:projection-fork-prefix-order");
+    const now = yield* DateTime.now;
+    const laterFirst = {
+      id: TurnItemId.make("turn-item:projection-fork-prefix-order:2"),
+      type: "user_message" as const,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      inputIntent: "turn_start" as const,
+      messageId: MessageId.make("message:projection-fork-prefix-order:2"),
+      text: "second",
+      attachments: [],
+      threadId,
+      runId,
+      nodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      status: "completed" as const,
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: now,
+    };
+    const earlierSecond = {
+      ...laterFirst,
+      id: TurnItemId.make("turn-item:projection-fork-prefix-order:1"),
+      messageId: MessageId.make("message:projection-fork-prefix-order:1"),
+      text: "first",
+      ordinal: 1,
+    };
+    const prefix = visibleTurnItemsThroughRun({
+      sourceProjection: {
+        schemaVersion: 1 as never,
+        thread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:projection-fork-prefix-order"),
+          title: "Order",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        runs: [
+          {
+            id: runId,
+            threadId,
+            rootNodeId: nodeId,
+            ordinal: 1,
+            status: "completed",
+            activeAttemptId: null,
+            latestAttemptId: null,
+            createdAt: now,
+            updatedAt: now,
+            completedAt: now,
+          },
+        ],
+        attempts: [],
+        nodes: [],
+        subagents: [],
+        providerSessions: [],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        messages: [],
+        turnItems: [laterFirst, earlierSecond],
+        plans: [],
+        checkpointScopes: [],
+        checkpoints: [],
+        contextHandoffs: [],
+        contextTransfers: [],
+        visibleTurnItems: [],
+      } as never,
+      sourceRunId: runId,
+    });
+    assert.deepEqual(
+      prefix.map((row) => row.item.id),
+      [earlierSecond.id, laterFirst.id],
+    );
+  }),
+);
+
+it.effect("memory thread snapshots keep projection and sequence from one atomic state", () =>
+  Effect.gen(function* () {
+    const snapshotRead = yield* Deferred.make<void>();
+    const continueSnapshot = yield* Deferred.make<void>();
+    const threadId = ThreadId.make("thread:projection-memory-thread-snapshot-atomic");
+    const now = yield* DateTime.now;
+    const thread = {
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      id: threadId,
+      projectId: ProjectId.make("project:projection-memory-thread-snapshot-atomic"),
+      title: "Before",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    const test = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-memory-thread-snapshot-atomic:created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: thread,
+      });
+      const snapshotFiber = yield* projectionStore
+        .getThreadSnapshot(threadId)
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(snapshotRead);
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-memory-thread-snapshot-atomic:updated"),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...thread, title: "After" },
+      });
+      yield* Deferred.succeed(continueSnapshot, undefined);
+
+      const snapshot = yield* Fiber.join(snapshotFiber);
+      assert.equal(snapshot.snapshotSequence, 1);
+      assert.equal(snapshot.projection.thread.title, "Before");
+      const current = yield* projectionStore.getThreadSnapshot(threadId);
+      assert.equal(current.snapshotSequence, 2);
+      assert.equal(current.projection.thread.title, "After");
+    });
+
+    yield* test.pipe(
+      Effect.provide(
+        layerMemoryWithOptions({
+          afterSnapshotStateRead: Deferred.succeed(snapshotRead, undefined).pipe(
+            Effect.andThen(Deferred.await(continueSnapshot)),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("memory shell snapshots keep shells and sequence from one atomic state", () =>
+  Effect.gen(function* () {
+    const snapshotRead = yield* Deferred.make<void>();
+    const continueSnapshot = yield* Deferred.make<void>();
+    const threadId = ThreadId.make("thread:projection-memory-shell-snapshot-atomic");
+    const now = yield* DateTime.now;
+    const thread = {
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      id: threadId,
+      projectId: ProjectId.make("project:projection-memory-shell-snapshot-atomic"),
+      title: "Before",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    const test = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-memory-shell-snapshot-atomic:created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: thread,
+      });
+      const snapshotFiber = yield* projectionStore.getShellSnapshot().pipe(Effect.forkScoped);
+      yield* Deferred.await(snapshotRead);
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-memory-shell-snapshot-atomic:updated"),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...thread, title: "After" },
+      });
+      yield* Deferred.succeed(continueSnapshot, undefined);
+
+      const snapshot = yield* Fiber.join(snapshotFiber);
+      assert.equal(snapshot.snapshotSequence, 1);
+      assert.equal(snapshot.threads[0]?.title, "Before");
+      const current = yield* projectionStore.getShellSnapshot();
+      assert.equal(current.snapshotSequence, 2);
+      assert.equal(current.threads[0]?.title, "After");
+    });
+
+    yield* test.pipe(
+      Effect.provide(
+        layerMemoryWithOptions({
+          afterSnapshotStateRead: Deferred.succeed(snapshotRead, undefined).pipe(
+            Effect.andThen(Deferred.await(continueSnapshot)),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "memory retained sessions include detached parent ownership through child provider threads",
+  () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:projection-memory-retained-owner-parent");
+      const childThreadId = ThreadId.make("thread:projection-memory-retained-owner-child");
+      const unrelatedThreadId = ThreadId.make("thread:projection-memory-retained-owner-unrelated");
+      const providerSessionId = ProviderSessionId.make(
+        "provider-session:projection-memory-retained-owner",
+      );
+      const childProviderThreadId = ProviderThreadId.make(
+        "provider-thread:projection-memory-retained-owner-child",
+      );
+      const ownerNodeId = NodeId.make("node:projection-memory-retained-owner");
+      const runId = RunId.make("run:projection-memory-retained-owner");
+      const now = yield* DateTime.now;
+      const session = {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "ready" as const,
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      };
+      const makeThreadPayload = (threadId: ThreadId, title: string) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId: ProjectId.make("project:projection-memory-retained-owner"),
+        title,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+
+      const test = Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStoreV2;
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-memory-retained-owner:parent-created"),
+          type: "thread.created",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: makeThreadPayload(parentThreadId, "Parent retained owner"),
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-memory-retained-owner:child-created"),
+          type: "thread.created",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: makeThreadPayload(childThreadId, "Child retained owner"),
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-memory-retained-owner:unrelated-created"),
+          type: "thread.created",
+          threadId: unrelatedThreadId,
+          occurredAt: now,
+          payload: makeThreadPayload(unrelatedThreadId, "Unrelated retained owner"),
+        });
+        // Binding only on the parent: no local parent provider-thread row remains
+        // after detach, so lookup must follow the child row's owner node.
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-memory-retained-owner:attached"),
+          type: "provider-session.attached",
+          threadId: parentThreadId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: session,
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-memory-retained-owner:owner-node"),
+          type: "node.updated",
+          threadId: parentThreadId,
+          runId,
+          nodeId: ownerNodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: ownerNodeId,
+            threadId: parentThreadId,
+            runId,
+            parentNodeId: null,
+            rootNodeId: ownerNodeId,
+            kind: "root_turn",
+            status: "running",
+            countsForRun: true,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-memory-retained-owner:child-thread"),
+          type: "provider-thread.updated",
+          threadId: childThreadId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: childProviderThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId,
+            appThreadId: childThreadId,
+            ownerNodeId,
+            nativeThreadRef: {
+              driver,
+              nativeId: "native-child-session",
+              strength: "strong" as const,
+            },
+            nativeConversationHeadRef: null,
+            status: "active" as const,
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-memory-retained-owner:detached"),
+          type: "provider-session.detached",
+          threadId: parentThreadId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: { providerSessionId, detachedAt: now },
+        });
+
+        assert.lengthOf(
+          (yield* projectionStore.getThreadProjection(parentThreadId)).providerThreads,
+          0,
+        );
+        const historical = yield* projectionStore.getProviderSessionsByIds(parentThreadId, [
+          providerSessionId,
+        ]);
+        assert.deepEqual(
+          historical.map((value) => value.id),
+          [providerSessionId],
+        );
+        assert.deepEqual(
+          yield* projectionStore.getProviderSessionsByIds(unrelatedThreadId, [providerSessionId]),
+          [],
+        );
+      });
+
+      yield* test.pipe(Effect.provide(layerMemory));
+    }),
+);
+
+it.effect("replay suppresses provider-session attachments to archived threads", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:projection-archived-session-attachment");
+    const projectId = ProjectId.make("project:projection-archived-session-attachment");
+    const providerSessionId = ProviderSessionId.make(
+      "provider-session:projection-archived-session-attachment",
+    );
+    const thread = {
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      id: threadId,
+      projectId,
+      title: "Archived session attachment",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    const state = makeProjectionReplayState();
+    const providerSession = {
+      id: providerSessionId,
+      driver,
+      providerInstanceId,
+      status: "ready" as const,
+      cwd: "/workspace",
+      model: modelSelection.model,
+      capabilities: CodexProviderCapabilitiesV2,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    assert.isTrue(
+      applyToProjectionReplayState(state, {
+        id: EventId.make("event:projection-archived-session-attachment:created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: thread,
+      }),
+    );
+    assert.isTrue(
+      applyToProjectionReplayState(state, {
+        id: EventId.make("event:projection-archived-session-attachment:initial-attach"),
+        type: "provider-session.attached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: providerSession,
+      }),
+    );
+    assert.isTrue(
+      applyToProjectionReplayState(state, {
+        id: EventId.make("event:projection-archived-session-attachment:archived"),
+        type: "thread.archived",
+        threadId,
+        occurredAt: now,
+        payload: { ...thread, archivedAt: now },
+      }),
+    );
+    assert.isTrue(
+      applyToProjectionReplayState(state, {
+        id: EventId.make("event:projection-archived-session-attachment:detached"),
+        type: "provider-session.detached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { providerSessionId, detachedAt: now },
+      }),
+    );
+    assert.isTrue(
+      applyToProjectionReplayState(state, {
+        id: EventId.make("event:projection-archived-session-attachment:attached"),
+        type: "provider-session.attached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { ...providerSession, status: "error", lastError: "stale" },
+      }),
+    );
+    assert.lengthOf(state.projections.get(threadId)?.providerSessions ?? [], 0);
+    assert.isUndefined(state.providerSessionThreadIds.get(providerSessionId));
+    assert.equal(state.retainedProviderSessions.get(providerSessionId)?.status, "ready");
+  }),
+);
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
   it.effect("does not treat visited or marked-unread state as thread activity", () =>
@@ -528,6 +1099,200 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       assert.lengthOf(
         (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions,
         1,
+      );
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shared-provider-session:first-archived"),
+        type: "thread.archived",
+        threadId: firstThreadId,
+        occurredAt: now,
+        payload: { ...makeThread(firstThreadId), archivedAt: now },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shared-provider-session:first-stale-attach"),
+        type: "provider-session.attached",
+        threadId: firstThreadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { ...session, status: "ready", lastError: null },
+      });
+      assert.lengthOf(
+        (yield* projectionStore.getThreadProjection(firstThreadId)).providerSessions,
+        0,
+      );
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions[0]?.status,
+        "error",
+      );
+    }),
+  );
+
+  it.effect("retains detached provider sessions for historical id lookup", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:projection-historical-provider-session");
+      const threadId = ThreadId.make("thread:projection-historical-provider-session");
+      const unrelatedThreadId = ThreadId.make(
+        "thread:projection-historical-provider-session:unrelated",
+      );
+      const providerSessionId = ProviderSessionId.make(
+        "provider-session:projection-historical-provider-session",
+      );
+      const providerThreadId = ProviderThreadId.make(
+        "provider-thread:projection-historical-provider-session",
+      );
+      const session = {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "ready" as const,
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      };
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-historical-provider-session:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          id: threadId,
+          projectId,
+          title: "Historical provider session",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThreadId,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-historical-provider-session:unrelated-thread"),
+        type: "thread.created",
+        threadId: unrelatedThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          id: unrelatedThreadId,
+          projectId,
+          title: "Unrelated historical provider session",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: unrelatedThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-historical-provider-session:attached"),
+        type: "provider-session.attached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: session,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-historical-provider-session:thread-row"),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver,
+            nativeId: "native-historical-session",
+            strength: "strong" as const,
+          },
+          nativeConversationHeadRef: null,
+          status: "idle" as const,
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      assert.deepEqual(
+        (yield* projectionStore.getThreadProjection(threadId)).providerSessions.map(
+          (value) => value.id,
+        ),
+        [providerSessionId],
+      );
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-historical-provider-session:detached"),
+        type: "provider-session.detached",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { providerSessionId, detachedAt: now },
+      });
+
+      const live = yield* projectionStore.getThreadProjection(threadId);
+      assert.lengthOf(live.providerSessions, 0);
+      assert.equal(live.providerThreads[0]?.providerSessionId, providerSessionId);
+
+      const historical = yield* projectionStore.getProviderSessionsByIds(threadId, [
+        providerSessionId,
+      ]);
+      assert.deepEqual(
+        historical.map((value) => value.id),
+        [providerSessionId],
+      );
+      assert.equal(historical[0]?.status, "ready");
+      assert.equal(historical[0]?.cwd, "/workspace");
+      assert.deepEqual(
+        yield* projectionStore.getProviderSessionsByIds(unrelatedThreadId, [providerSessionId]),
+        [],
       );
     }),
   );
@@ -1211,6 +1976,10 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       const rolledBackShellThread = shell.threads.find((entry) => entry.id === threadId);
       assert.isDefined(rolledBackShellThread);
       assert.isNull(rolledBackShellThread.latestVisibleMessage);
+      assert.isNull(rolledBackShellThread.latestUserMessageAt);
+      const memoryShell = threadShellFromProjection(projection);
+      assert.isNull(memoryShell.latestVisibleMessage);
+      assert.isNull(memoryShell.latestUserMessageAt);
       assert.deepEqual(rolledBackShellThread?.pendingBackgroundTasks ?? [], []);
     }),
   );
@@ -1408,6 +2177,34 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       );
 
       yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:run-1-rolled-back"),
+        type: "run.updated",
+        threadId: sourceThreadId,
+        runId: sourceRun1Id,
+        nodeId: sourceRun1NodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: sourceRun1Id,
+          threadId: sourceThreadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: sourceProviderThreadId,
+          userMessageId: MessageId.make("message:projection-fork-source-rollback:user:1"),
+          rootNodeId: sourceRun1NodeId,
+          activeAttemptId: null,
+          status: "rolled_back",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      assert.equal((yield* projectionStore.getThreadShell(targetThreadId))?.visibleItemCount, 5);
+
+      yield* projectionStore.apply({
         id: EventId.make("event:projection-fork-source-rollback:run-2-rolled-back"),
         type: "run.updated",
         threadId: sourceThreadId,
@@ -1450,6 +2247,58 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           ["inherited", "assistant_message", "two"],
           ["synthetic", "fork", "Forked from conversation"],
         ],
+      );
+
+      const shellAfterRollback = yield* projectionStore.getThreadShell(targetThreadId);
+      assert.equal(shellAfterRollback?.visibleItemCount, 5);
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:target-archived"),
+        type: "thread.archived",
+        threadId: targetThreadId,
+        occurredAt: now,
+        payload: {
+          ...targetAfterRollback.thread,
+          archivedAt: now,
+          updatedAt: now,
+        },
+      });
+      const archiveSnapshot = yield* projectionStore.getShellSnapshot({ location: "archive" });
+      assert.isUndefined(
+        archiveSnapshot.archivedThreads.find((thread) => thread.id === sourceThreadId),
+      );
+      assert.equal(
+        archiveSnapshot.archivedThreads.find((thread) => thread.id === targetThreadId)
+          ?.visibleItemCount,
+        5,
+      );
+
+      const sourceProjection = yield* projectionStore.getThreadProjection(sourceThreadId);
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:source-deleted"),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: {
+          ...sourceProjection.thread,
+          archivedAt: sourceProjection.thread.archivedAt ?? now,
+          deletedAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const shellAfterSourceDelete = yield* projectionStore.getThreadShell(targetThreadId);
+      assert.equal(shellAfterSourceDelete?.visibleItemCount, 5);
+      assert.isNull(yield* projectionStore.getThreadShell(sourceThreadId));
+
+      const snapshotAfterSourceDelete = yield* projectionStore.getShellSnapshot();
+      assert.isUndefined(
+        snapshotAfterSourceDelete.threads.find((thread) => thread.id === sourceThreadId),
+      );
+      assert.equal(
+        snapshotAfterSourceDelete.archivedThreads.find((thread) => thread.id === targetThreadId)
+          ?.visibleItemCount,
+        5,
       );
     }),
   );

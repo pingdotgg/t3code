@@ -14,8 +14,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
-const LATEST_VERSION_TIMEOUT_MS = 4_000;
+const PROVIDER_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
+const PROVIDER_VERSION_TIMEOUT_MS = 4_000;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
@@ -40,6 +40,7 @@ const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(()
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  readonly npmDistTag?: string;
   readonly update: ProviderMaintenanceCommandAction | null;
 }
 
@@ -66,6 +67,8 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
+  readonly npmDistTag?: string;
+  readonly requiresInstallScripts?: boolean;
   readonly homebrewFormula: string | null;
   readonly nativeUpdate: {
     readonly executable: string;
@@ -86,7 +89,7 @@ export const ProviderVersionCache = Context.Reference<Map<string, ProviderVersio
     defaultValue: () => new Map(),
   },
 );
-const NpmLatestVersionResponse = Schema.Struct({
+const NpmDistTagVersionResponse = Schema.Struct({
   version: Schema.optional(Schema.String),
 });
 
@@ -97,6 +100,7 @@ function nonEmptyString(value: unknown): string | null {
 export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  readonly npmDistTag?: string | undefined;
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
@@ -113,6 +117,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   return {
     provider: input.provider,
     packageName: input.packageName,
+    ...(input.npmDistTag ? { npmDistTag: input.npmDistTag } : {}),
     update,
   };
 }
@@ -120,14 +125,20 @@ export function makeProviderMaintenanceCapabilities(input: {
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  readonly npmDistTag?: string | undefined;
 }): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: input.provider,
     packageName: input.packageName,
+    npmDistTag: input.npmDistTag,
     updateExecutable: null,
     updateArgs: [],
     updateLockKey: null,
   });
+}
+
+function npmPackageSpec(definition: PackageManagedProviderMaintenanceDefinition): string {
+  return `${definition.npmPackageName}@${definition.npmDistTag ?? "latest"}`;
 }
 
 function makeNpmGlobalProviderMaintenanceCapabilities(
@@ -136,6 +147,7 @@ function makeNpmGlobalProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    npmDistTag: definition.npmDistTag,
     updateExecutable: "npm",
     // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
     // and still exits 0, so a package whose postinstall finishes the install
@@ -146,7 +158,7 @@ function makeNpmGlobalProviderMaintenanceCapabilities(
       "install",
       "-g",
       `--allow-scripts=${definition.npmPackageName}`,
-      `${definition.npmPackageName}@latest`,
+      npmPackageSpec(definition),
     ],
     updateLockKey: "npm-global",
   });
@@ -158,8 +170,11 @@ function makeBunGlobalProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    npmDistTag: definition.npmDistTag,
     updateExecutable: "bun",
-    updateArgs: ["i", "-g", `${definition.npmPackageName}@latest`],
+    updateArgs: definition.requiresInstallScripts
+      ? ["add", "-g", "--trust", npmPackageSpec(definition)]
+      : ["i", "-g", npmPackageSpec(definition)],
     updateLockKey: "bun-global",
   });
 }
@@ -170,8 +185,14 @@ function makePnpmGlobalProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    npmDistTag: definition.npmDistTag,
     updateExecutable: "pnpm",
-    updateArgs: ["add", "-g", `${definition.npmPackageName}@latest`],
+    updateArgs: [
+      "add",
+      "-g",
+      npmPackageSpec(definition),
+      ...(definition.requiresInstallScripts ? [`--allow-build=${definition.npmPackageName}`] : []),
+    ],
     updateLockKey: "pnpm-global",
   });
 }
@@ -182,8 +203,13 @@ function makeVitePlusGlobalProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    npmDistTag: definition.npmDistTag,
     updateExecutable: "vp",
-    updateArgs: ["i", "-g", definition.npmPackageName],
+    updateArgs: [
+      "i",
+      "-g",
+      definition.npmDistTag ? npmPackageSpec(definition) : definition.npmPackageName,
+    ],
     updateLockKey: "vite-plus-global",
   });
 }
@@ -195,12 +221,14 @@ function makeHomebrewProviderMaintenanceCapabilities(
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName: definition.npmPackageName,
+      npmDistTag: definition.npmDistTag,
     });
   }
 
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    npmDistTag: definition.npmDistTag,
     updateExecutable: "brew",
     updateArgs: ["upgrade", definition.homebrewFormula],
     updateLockKey: "homebrew",
@@ -217,6 +245,7 @@ function makeNativeProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    npmDistTag: definition.npmDistTag,
     updateExecutable: definition.nativeUpdate.executable,
     updateArgs: definition.nativeUpdate.args,
     updateLockKey: definition.nativeUpdate.lockKey,
@@ -325,6 +354,7 @@ export function resolvePackageManagedProviderMaintenance(
   return makeManualOnlyProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    npmDistTag: definition.npmDistTag,
   });
 }
 
@@ -430,13 +460,16 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
-const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
+const fetchNpmDistTagVersion = Effect.fn("fetchNpmDistTagVersion")(function* (
+  packageName: string,
+  distTag: string,
+) {
   const client = yield* HttpClient.HttpClient;
   const request = HttpClientRequest.get(
-    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${encodeURIComponent(distTag)}`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
   const response = yield* client.execute(request).pipe(
-    Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
+    Effect.timeoutOption(PROVIDER_VERSION_TIMEOUT_MS),
     Effect.orElseSucceed(() => Option.none()),
   );
   if (Option.isNone(response)) {
@@ -447,11 +480,15 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
     return null;
   }
   const payload = yield* httpResponse.json.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
+    Effect.flatMap(Schema.decodeUnknownEffect(NpmDistTagVersionResponse)),
     Effect.orElseSucceed(() => null),
   );
   return payload ? nonEmptyString(payload.version) : null;
 });
+
+function providerVersionCacheKey(packageName: string, distTag: string): string {
+  return `${packageName}@${distTag}`;
+}
 
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
@@ -460,17 +497,19 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
   if (!packageName) {
     return null;
   }
+  const distTag = maintenanceCapabilities.npmDistTag ?? "latest";
+  const cacheKey = providerVersionCacheKey(packageName, distTag);
 
-  const latestVersionCache = yield* ProviderVersionCache;
-  const cached = latestVersionCache.get(packageName);
+  const providerVersionCache = yield* ProviderVersionCache;
+  const cached = providerVersionCache.get(cacheKey);
   const now = DateTime.toEpochMillis(yield* DateTime.now);
   if (cached && cached.expiresAt > now) {
     return cached.version;
   }
 
-  const version = yield* fetchNpmLatestVersion(packageName);
-  latestVersionCache.set(packageName, {
-    expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
+  const version = yield* fetchNpmDistTagVersion(packageName, distTag);
+  providerVersionCache.set(cacheKey, {
+    expiresAt: now + PROVIDER_VERSION_CACHE_TTL_MS,
     version,
   });
   return version;

@@ -5,6 +5,14 @@ export interface T3McpToolPresentation {
   readonly logo: T3McpToolLogo;
 }
 
+export interface ResolveT3McpToolPresentationOptions {
+  /**
+   * Projected tool input. OpenCode 2 bridges MCP through `execute` with a
+   * `code` string that calls `tools["t3-code"].toolName(...)`.
+   */
+  readonly input?: unknown;
+}
+
 const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);
 
 const T3_MCP_TOOL_DISPLAY_NAMES: Record<string, string> = {
@@ -45,8 +53,39 @@ function normalizeT3McpToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
+/**
+ * OpenCode 2's built-in `execute` tool runs JS that calls MCP as
+ * `tools["t3-code"].tool_name(...)`. Pull the first t3-code tool so the
+ * timeline can show the T3 logo and pretty name instead of bare "execute".
+ *
+ * @internal exported for tests
+ */
+export function extractOpenCode2ExecuteT3McpToolName(code: string): string | null {
+  const dot = /tools\s*\[\s*["']t3-code["']\s*\]\s*\.\s*([A-Za-z0-9_]+)\s*\(/.exec(code);
+  const bracket = /tools\s*\[\s*["']t3-code["']\s*\]\s*\[\s*["']([A-Za-z0-9_]+)["']\s*\]\s*\(/.exec(
+    code,
+  );
+  const candidates = [
+    dot?.[1] === undefined || dot.index === undefined ? null : { index: dot.index, name: dot[1] },
+    bracket?.[1] === undefined || bracket.index === undefined
+      ? null
+      : { index: bracket.index, name: bracket[1] },
+  ].filter((candidate): candidate is { index: number; name: string } => candidate !== null);
+  if (candidates.length === 0) return null;
+  return candidates.reduce((earliest, candidate) =>
+    candidate.index < earliest.index ? candidate : earliest,
+  ).name;
+}
+
+function codeFromToolInput(input: unknown): string | null {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return null;
+  const code = (input as { readonly code?: unknown }).code;
+  return typeof code === "string" && code.length > 0 ? code : null;
+}
+
 function resolveT3McpToolName(value: string): string | null {
   const label = normalizeT3McpToolLabel(value);
+  // Claude / Cursor-style MCP wire names: mcp__t3-code__tool_name
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/.exec(label);
   if (mcpMatch?.groups) {
     const { server, tool } = mcpMatch.groups;
@@ -57,7 +96,10 @@ function resolveT3McpToolName(value: string): string | null {
       : null;
   }
 
-  const namespaceMatch = /^(?<server>t3-code|t3_code|t3code)[.:/](?<tool>.+)$/i.exec(label);
+  // Provider-native server namespaces:
+  // - Codex-style: t3-code.tool_name (also :, /)
+  // - Grok ACP-style: t3-code__tool_name (double underscore, no mcp__ prefix)
+  const namespaceMatch = /^(?<server>t3-code|t3_code|t3code)(?:[.:/]|__)(?<tool>.+)$/i.exec(label);
   if (namespaceMatch?.groups) {
     return namespaceMatch.groups.tool ?? null;
   }
@@ -65,14 +107,7 @@ function resolveT3McpToolName(value: string): string | null {
   return Object.hasOwn(T3_MCP_TOOL_DISPLAY_NAMES, label) ? label : null;
 }
 
-export function resolveT3McpToolPresentation(
-  toolName: string | null | undefined,
-): T3McpToolPresentation | null {
-  const resolvedToolName =
-    toolName === undefined || toolName === null ? null : resolveT3McpToolName(toolName);
-  if (resolvedToolName === null) {
-    return null;
-  }
+function presentationForToolName(resolvedToolName: string): T3McpToolPresentation | null {
   const displayName = T3_MCP_TOOL_DISPLAY_NAMES[resolvedToolName];
   if (displayName === undefined) {
     return null;
@@ -81,4 +116,28 @@ export function resolveT3McpToolPresentation(
     displayName,
     logo: "t3-code",
   };
+}
+
+export function resolveT3McpToolPresentation(
+  toolName: string | null | undefined,
+  options?: ResolveT3McpToolPresentationOptions,
+): T3McpToolPresentation | null {
+  const resolvedToolName =
+    toolName === undefined || toolName === null ? null : resolveT3McpToolName(toolName);
+  if (resolvedToolName !== null) {
+    return presentationForToolName(resolvedToolName);
+  }
+
+  // OpenCode 2 execute bridge: toolName is "execute", real MCP call is in code.
+  const label =
+    toolName === undefined || toolName === null ? "" : normalizeT3McpToolLabel(toolName);
+  if (label.toLowerCase() !== "execute") {
+    return null;
+  }
+  const code = codeFromToolInput(options?.input);
+  if (code === null) {
+    return null;
+  }
+  const embedded = extractOpenCode2ExecuteT3McpToolName(code);
+  return embedded === null ? null : presentationForToolName(embedded);
 }

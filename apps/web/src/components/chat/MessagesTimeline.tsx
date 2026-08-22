@@ -113,7 +113,12 @@ import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { V2ItemInspector } from "./V2ItemInspector";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
-import { isV2LifecycleItem, V2LifecycleRow, type HandoffTimelineRun } from "./V2LifecycleRow";
+import {
+  formatCompactionTokenDetail,
+  isV2LifecycleItem,
+  V2LifecycleRow,
+  type HandoffTimelineRun,
+} from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import {
@@ -1491,13 +1496,10 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
         icon: GitForkIcon,
       };
     case "compaction": {
-      const tokenSummary =
-        item.beforeTokenCount === undefined && item.afterTokenCount === undefined
-          ? null
-          : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
+      const tokenSummary = formatCompactionTokenDetail(item);
       return {
         label: "Context compacted",
-        detail: item.summary ?? tokenSummary,
+        detail: tokenSummary ?? item.summary ?? null,
         tone: item.status === "failed" ? "danger" : "muted",
         icon: MinusIcon,
       };
@@ -2669,7 +2671,14 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = false;
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
-  const toolPresentation = resolveTimelineToolPresentation(workEntry.toolTitle ?? workEntry.label);
+  const toolPresentation = resolveTimelineToolPresentation(workEntry.toolTitle ?? workEntry.label, {
+    input:
+      workEntry.toolData !== null &&
+      typeof workEntry.toolData === "object" &&
+      "input" in workEntry.toolData
+        ? (workEntry.toolData as { input?: unknown }).input
+        : workEntry.toolData,
+  });
   const heading = toolPresentation?.displayName ?? toolWorkEntryHeading(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =

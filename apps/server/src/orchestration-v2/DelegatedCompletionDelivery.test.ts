@@ -6,6 +6,7 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  PlanId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -15,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -276,6 +278,103 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
+  it.effect("consumes one source plan at most once across target threads", () =>
+    Effect.gen(function* () {
+      const applicationEngine = yield* OrchestrationEngineService;
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:source-plan-single-consumer");
+      const sourceThreadId = ThreadId.make("thread:source-plan-single-consumer:source");
+      const firstTargetThreadId = ThreadId.make("thread:source-plan-single-consumer:aaa");
+      const secondTargetThreadId = ThreadId.make("thread:source-plan-single-consumer:zzz");
+      const planId = PlanId.make("plan:source-plan-single-consumer");
+
+      yield* applicationEngine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("command:source-plan-single-consumer:project"),
+        projectId,
+        title: "Source plan single consumer",
+        workspaceRoot: "/workspace/source-plan-single-consumer",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: DateTime.formatIso(now),
+      });
+      for (const [index, threadId] of [
+        sourceThreadId,
+        firstTargetThreadId,
+        secondTargetThreadId,
+      ].entries()) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:source-plan-single-consumer:thread:${index}`),
+          threadId,
+          projectId,
+          title: `Source plan thread ${index}`,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+      }
+      yield* eventSink.write({
+        commandId: CommandId.make("command:source-plan-single-consumer:plan"),
+        events: [
+          {
+            id: EventId.make("event:source-plan-single-consumer:plan"),
+            type: "plan.updated",
+            threadId: sourceThreadId,
+            nodeId: NodeId.make("node:source-plan-single-consumer:plan"),
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: planId,
+              threadId: sourceThreadId,
+              runId: null,
+              nodeId: NodeId.make("node:source-plan-single-consumer:plan"),
+              kind: "proposed_plan",
+              status: "active",
+              markdown: "Implement the plan once.",
+            },
+          },
+        ],
+      });
+
+      const results = yield* Effect.all(
+        [firstTargetThreadId, secondTargetThreadId].map((threadId, index) =>
+          orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:source-plan-single-consumer:dispatch:${index}`),
+              threadId,
+              messageId: MessageId.make(`message:source-plan-single-consumer:${index}`),
+              text: "Implement the proposed plan.",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+              sourcePlanRef: { threadId: sourceThreadId, planId },
+            })
+            .pipe(Effect.exit),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      assert.equal(results.filter(Exit.isSuccess).length, 1);
+      assert.equal(results.filter(Exit.isFailure).length, 1);
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(sourceThreadId)).plans.find(
+          (plan) => plan.id === planId,
+        )?.status,
+        "completed",
+      );
+    }),
+  );
+
   it.effect("builds completion text and metadata from the same live cohort", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -387,6 +486,121 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
             stored.event.payload.delegatedCompletion?.delivery !== undefined,
         ),
       );
+    }),
+  );
+
+  it.effect("retries only cancelled completion deliveries", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+
+      for (const [status, expectedState] of [
+        ["cancelled", "pending"],
+        ["completed", "delivered"],
+        ["failed", "delivered"],
+        ["interrupted", "delivered"],
+        ["rolled_back", "delivered"],
+      ] as const) {
+        const threadId = ThreadId.make(`thread:delegated-delivery-retry:${status}`);
+        const projectId = ProjectId.make(`project:delegated-delivery-retry:${status}`);
+        const parentRunId = RunId.make(`run:delegated-delivery-retry:${status}:parent`);
+        const deliveryRunId = RunId.make(`run:delegated-delivery-retry:${status}:delivery`);
+        const parentRootNodeId = NodeId.make(`node:delegated-delivery-retry:${status}:parent-root`);
+        const deliveryRootNodeId = NodeId.make(
+          `node:delegated-delivery-retry:${status}:delivery-root`,
+        );
+        const taskId = NodeId.make(`node:delegated-delivery-retry:${status}:task`);
+        const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId: parentRootNodeId,
+          taskId,
+          deliveryState: "claimed",
+          completionWake: "always",
+          deliveryTaskIds: [taskId],
+          now,
+        });
+        yield* eventSink.write({
+          commandId: CommandId.make(`command:delegated-delivery-retry:${status}`),
+          events: [
+            {
+              id: EventId.make(`event:delegated-delivery-retry:${status}:message`),
+              type: "message.updated",
+              threadId,
+              runId: deliveryRunId,
+              nodeId: deliveryRootNodeId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                createdBy: "agent",
+                creationSource: "server",
+                id: messageId,
+                threadId,
+                runId: deliveryRunId,
+                nodeId: deliveryRootNodeId,
+                role: "user",
+                text: `Delegated task ${taskId} reached a terminal state.`,
+                attachments: [],
+                streaming: false,
+                createdAt: now,
+                updatedAt: now,
+                delegatedCompletion: {
+                  parentRunId,
+                  generation: 1,
+                  taskIds: [taskId],
+                },
+              },
+            },
+            {
+              id: EventId.make(`event:delegated-delivery-retry:${status}:run`),
+              type: "run.updated",
+              threadId,
+              runId: deliveryRunId,
+              nodeId: deliveryRootNodeId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: deliveryRunId,
+                threadId,
+                ordinal: 2,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: ProviderThreadId.make(
+                  `provider-thread:${String(threadId).replace("thread:", "")}`,
+                ),
+                userMessageId: messageId,
+                rootNodeId: deliveryRootNodeId,
+                activeAttemptId: null,
+                status,
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+          ],
+        });
+
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+            (candidate) => candidate.id === taskId,
+          );
+          if (task?.completionDelivery?.state === expectedState) break;
+          yield* Effect.yieldNow;
+        }
+        const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+          (candidate) => candidate.id === taskId,
+        );
+        assert.deepEqual(task?.completionDelivery, {
+          state: expectedState,
+          observedByRunId: null,
+        });
+      }
     }),
   );
 

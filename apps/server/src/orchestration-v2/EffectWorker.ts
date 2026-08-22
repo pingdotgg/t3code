@@ -102,10 +102,26 @@ export const executorLayer: Layer.Layer<
               .detach({
                 providerSessionId: effect.request.providerSessionId,
                 threadId: effect.threadId,
+                requireExpectedRuntime: true,
                 ...(effect.request.detail === undefined ? {} : { detail: effect.request.detail }),
+                ...(effect.request.expectedArchivedAt === undefined
+                  ? {}
+                  : { expectedArchivedAt: effect.request.expectedArchivedAt }),
                 ...(effect.request.revokeMcpCredential === undefined
                   ? {}
                   : { revokeMcpCredential: effect.request.revokeMcpCredential }),
+                ...(effect.request.deleteProviderThread === undefined
+                  ? {}
+                  : { deleteProviderThread: effect.request.deleteProviderThread }),
+                ...(effect.request.providerInstanceId === undefined
+                  ? {}
+                  : { providerInstanceId: effect.request.providerInstanceId }),
+                ...(effect.request.providerSession === undefined
+                  ? {}
+                  : { providerSession: effect.request.providerSession }),
+                ...(effect.request.providerThreads === undefined
+                  ? {}
+                  : { providerThreads: effect.request.providerThreads }),
               })
               .pipe(
                 Effect.mapError(

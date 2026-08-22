@@ -22,6 +22,7 @@ import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  readonly refreshGeneration: number;
 }
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
@@ -57,6 +58,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
+    refreshGeneration: 0,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -112,13 +114,24 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean },
+    options?: {
+      readonly forceRefresh?: boolean;
+      readonly requestedGeneration?: number;
+    },
   ) {
     const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
+    const currentState = yield* Ref.get(snapshotStateRef);
+    if (
+      forceRefresh &&
+      options?.requestedGeneration !== undefined &&
+      currentState.refreshGeneration !== options.requestedGeneration
+    ) {
+      return currentState.snapshot;
+    }
     if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
       yield* Ref.set(settingsRef, nextSettings);
-      return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
+      return currentState.snapshot;
     }
 
     const nextSnapshot = yield* input.checkProvider;
@@ -131,6 +144,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         {
           snapshot: nextSnapshot,
           enrichmentGeneration: generation,
+          refreshGeneration: state.refreshGeneration + 1,
         },
       ] as const;
     });
@@ -139,12 +153,20 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
     return nextSnapshot;
   });
-  const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
-    refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+  const applySnapshot = (
+    nextSettings: Settings,
+    options?: {
+      readonly forceRefresh?: boolean;
+      readonly requestedGeneration?: number;
+    },
+  ) => refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
+    const requestedGeneration = yield* Ref.get(snapshotStateRef).pipe(
+      Effect.map((state) => state.refreshGeneration),
+    );
     const nextSettings = yield* input.getSettings;
-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
+    return yield* applySnapshot(nextSettings, { forceRefresh: true, requestedGeneration });
   });
 
   const hasProviderStatusDemand = Effect.gen(function* () {
@@ -213,7 +235,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     ),
   ).pipe(Effect.forkScoped);
 
-  yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
+  yield* applySnapshot(initialSettings, { forceRefresh: true, requestedGeneration: 0 }).pipe(
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );

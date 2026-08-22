@@ -192,6 +192,36 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
+  it.effect("coalesces a refresh requested during the initial provider check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const releaseCheck = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
+            Effect.flatMap(() => Deferred.await(releaseCheck)),
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Effect.yieldNow;
+        const refreshFiber = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+        yield* Deferred.succeed(releaseCheck, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(refreshFiber), refreshedSnapshot);
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -351,6 +381,65 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(updates, [refreshedSnapshot, refreshedSnapshotSecond]);
         assert.deepStrictEqual(latest, refreshedSnapshotSecond);
         assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  it.effect("does not reapply stale refresh settings after a streamed update", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settingsChanges = yield* PubSub.unbounded<TestSettings>();
+        const settingsStreamSubscribed = yield* Deferred.make<void>();
+        const staleRefreshRead = yield* Deferred.make<void>();
+        const releaseStaleRefresh = yield* Deferred.make<void>();
+        const initialCheckDone = yield* Deferred.make<void>();
+        const streamedCheckDone = yield* Deferred.make<void>();
+        const getSettingsCalls = yield* Ref.make(0);
+        const checkCalls = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Ref.updateAndGet(getSettingsCalls, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 2
+                ? Deferred.succeed(staleRefreshRead, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseStaleRefresh)),
+                    Effect.as({ enabled: true }),
+                  )
+                : Effect.succeed({ enabled: true }),
+            ),
+          ),
+          streamSettings: Stream.unwrap(
+            PubSub.subscribe(settingsChanges).pipe(
+              Effect.tap(() => Deferred.succeed(settingsStreamSubscribed, undefined)),
+              Effect.map((subscription) => Stream.fromSubscription(subscription)),
+            ),
+          ),
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined)
+                : Deferred.succeed(streamedCheckDone, undefined),
+            ),
+            Effect.map((count) => (count === 1 ? refreshedSnapshot : refreshedSnapshotSecond)),
+          ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(settingsStreamSubscribed);
+        yield* Deferred.await(initialCheckDone);
+
+        const staleRefresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(staleRefreshRead);
+
+        yield* PubSub.publish(settingsChanges, { enabled: false });
+        yield* Deferred.await(streamedCheckDone);
+        yield* Deferred.succeed(releaseStaleRefresh, undefined);
+
+        assert.deepStrictEqual(yield* Fiber.join(staleRefresh), refreshedSnapshotSecond);
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+        assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshotSecond);
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );

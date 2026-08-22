@@ -133,6 +133,7 @@ const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const OPENCODE2_DRIVER_KIND = ProviderDriverKind.make("opencode2");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -155,6 +156,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [GROK_DRIVER_KIND]: "grok-build",
   [ACP_REGISTRY_DRIVER_KIND]: "default",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [OPENCODE2_DRIVER_KIND]: "opencode/glm-5.2",
 };
 
 /** Per-provider text generation model defaults. */
@@ -225,4 +227,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [GROK_DRIVER_KIND]: "Grok",
   [ACP_REGISTRY_DRIVER_KIND]: "ACP Registry",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [OPENCODE2_DRIVER_KIND]: "OpenCode 2",
 };

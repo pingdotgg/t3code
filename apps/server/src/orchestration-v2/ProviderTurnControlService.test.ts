@@ -218,6 +218,7 @@ it.effect(
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThreadProjection: () => Ref.get(projection),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
+          getProviderSessionsByIds: () => Effect.die("unused getProviderSessionsByIds"),
         }),
       );
       const sessionManagerLayer = Layer.succeed(
@@ -229,6 +230,7 @@ it.effect(
             Effect.succeed(
               providerSessionId === oldSessionId ? Option.some(runtime) : Option.none(),
             ),
+          listAttached: () => Effect.succeed([]),
           close: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,

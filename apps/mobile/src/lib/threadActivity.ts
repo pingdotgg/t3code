@@ -256,7 +256,11 @@ function itemToolPresentation(item: OrchestrationV2TurnItem): T3McpToolPresentat
   if (item.type !== "dynamic_tool") {
     return null;
   }
-  return resolveT3McpToolPresentation(item.toolName) ?? resolveT3McpToolPresentation(item.title);
+  const input = item.type === "dynamic_tool" ? item.input : undefined;
+  return (
+    resolveT3McpToolPresentation(item.toolName, { input }) ??
+    resolveT3McpToolPresentation(item.title, { input })
+  );
 }
 
 function itemSummary(

@@ -144,13 +144,19 @@ The server exposes eleven orchestration tools.
 
 ### `orchestrator_capabilities`
 
-Returns:
+The default \`{}\` request returns:
 
 - the inherited provider instance and model;
 - the parent runtime and interaction modes;
-- registered provider instances and advertised models;
+- registered provider summaries without model catalogs;
 - whether each provider can run a child task; and
 - feature flags for polling, cancellation, and batch thread creation.
+
+Pass \`providerInstanceId\` to return that provider's models in pages of 50 by
+default and 100 at most. Continue with \`modelCursor\` set to the prior
+\`modelsNextCursor\`. Pass an exact \`model\` to return only that model, and add
+\`includeModelOptions: true\` when its option descriptors are needed. Catalog
+responses include \`modelsTotal\` and a nullable \`modelsNextCursor\`.
 
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.

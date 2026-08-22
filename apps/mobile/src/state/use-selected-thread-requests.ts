@@ -104,10 +104,11 @@ export function useSelectedThreadRequests() {
         return;
       }
 
+      if (!activePendingUserInput || activePendingUserInput.requestId !== requestId) return;
       const requestKey = scopedRequestKey(selectedThreadShell.environmentId, requestId);
       setUserInputDraftOption(requestKey, question, label);
     },
-    [selectedThreadShell],
+    [activePendingUserInput, selectedThreadShell],
   );
 
   const onChangeUserInputCustomAnswer = useCallback(

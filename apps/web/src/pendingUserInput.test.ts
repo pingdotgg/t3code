@@ -102,6 +102,18 @@ describe("togglePendingUserInputOptionSelection", () => {
       selectedOptionLabels: ["Web"],
     });
   });
+
+  it("normalizes option labels before toggling a selected value", () => {
+    const selected = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      undefined,
+      "  Server  ",
+    );
+
+    expect(
+      togglePendingUserInputOptionSelection(multiSelectQuestion, selected, " Server "),
+    ).toEqual({ customAnswer: "" });
+  });
 });
 
 describe("buildPendingUserInputAnswers", () => {

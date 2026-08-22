@@ -76,6 +76,9 @@ minimumReleaseAgeExclude:
   - alchemy@2.0.0-beta.65
   - effect@4.0.0-beta.103
   - "@legendapp/list@3.3.5"
+  - "@opencode-ai/client@0.0.0-beta-17823"
+  - "@opencode-ai/protocol@0.0.0-beta-17823"
+  - "@opencode-ai/schema@0.0.0-beta-17823"
 
 overrides:
   "@clerk/backend": "catalog:"

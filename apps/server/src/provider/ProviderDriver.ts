@@ -25,6 +25,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -71,6 +72,12 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly orchestrationAdapter: ProviderAdapterV2Shape;
   readonly textGeneration: TextGenerationShape;
+  /**
+   * Optional project-scoped `$` catalog. OpenCode 2 implements this with
+   * `skill.list` for the thread cwd. Other drivers omit it and the query
+   * falls back to the instance snapshot.
+   */
+  readonly listSkills?: (cwd: string) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 }
 
 export interface ProviderContinuationIdentity {

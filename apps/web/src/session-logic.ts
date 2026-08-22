@@ -391,18 +391,22 @@ export function providerErrorPresentation(
       detail: item.failure.message,
     };
   }
-  const progress =
-    item.retry.maxAttempts === null
-      ? `${item.retry.attempt}`
-      : `${item.retry.attempt}/${item.retry.maxAttempts}`;
-  const label =
-    item.status === "running"
-      ? `Retrying provider (${progress})`
-      : item.status === "completed"
-        ? `Provider recovered (${progress} retries)`
-        : item.status === "failed"
-          ? `Provider error after ${progress} retries`
-          : `Provider retry stopped (${progress})`;
+  const knownBudget = item.retry.maxAttempts !== null;
+  const progress = knownBudget
+    ? `${item.retry.attempt}/${item.retry.maxAttempts}`
+    : `attempt ${item.retry.attempt}`;
+  let label = `Provider retry stopped (${progress})`;
+  if (item.status === "running") {
+    label = `Retrying provider (${progress})`;
+  } else if (item.status === "completed") {
+    label = knownBudget
+      ? `Provider recovered (${progress} retries)`
+      : `Provider recovered (${progress})`;
+  } else if (item.status === "failed") {
+    label = knownBudget
+      ? `Provider error after ${progress} retries`
+      : `Provider error (${progress})`;
+  }
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
       ? item.retry.retryDelayMs < 1_000

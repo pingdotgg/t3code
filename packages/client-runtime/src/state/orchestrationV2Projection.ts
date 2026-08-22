@@ -205,6 +205,9 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...base, providerThreads: upsertEntity(base.providerThreads, event.payload) };
     case "provider-turn.updated":
       return { ...base, providerTurns: upsertEntity(base.providerTurns, event.payload) };
+    case "provider-turn.interrupt-requested":
+    case "run.interrupt-noop":
+      return base;
     case "runtime-request.updated":
       return { ...base, runtimeRequests: upsertEntity(base.runtimeRequests, event.payload) };
     case "message.updated":

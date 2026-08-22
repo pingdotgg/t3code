@@ -46,6 +46,10 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
+  it("compares prerelease identifiers containing hyphens", () => {
+    expect(compareSemverVersions("0.0.0-next-16691", "0.0.0-next-16694")).toBeLessThan(0);
+  });
+
   it("falls back to lexical comparison for malformed numeric segments", () => {
     expect(compareSemverVersions("1.2.3abc", "1.2.10")).toBeGreaterThan(0);
   });

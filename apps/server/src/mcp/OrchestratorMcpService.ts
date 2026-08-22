@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
+  type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
@@ -67,12 +68,15 @@ import {
   latestActiveRun,
   latestRun,
   ThreadManagementError,
+  type ThreadManagementInterruptResult,
   ThreadManagementService,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
+const DEFAULT_CAPABILITIES_MODEL_LIMIT = 50;
+const MAX_CAPABILITIES_MODEL_LIMIT = 100;
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_POLL_INTERVAL_MS = 50;
@@ -93,6 +97,7 @@ type TerminalTaskStatus = Extract<
 export interface OrchestratorMcpServiceShape {
   readonly capabilities: (
     scope: McpInvocationScope,
+    input: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
   readonly delegateTask: (
     scope: McpInvocationScope,
@@ -176,6 +181,31 @@ function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpF
   }
 }
 
+export function orchestratorMcpThreadInterruptResultFor(
+  threadId: ThreadId,
+  result: ThreadManagementInterruptResult,
+): OrchestratorMcpThreadInterruptResult {
+  if (result.type === "no_active_run") {
+    return {
+      threadId,
+      runId: null,
+      status: "no_active_run",
+    } satisfies OrchestratorMcpThreadInterruptResult;
+  }
+  if (result.type === "provider_interrupt_requested") {
+    return {
+      threadId,
+      runId: null,
+      status: "interrupt_requested",
+    } satisfies OrchestratorMcpThreadInterruptResult;
+  }
+  return {
+    threadId,
+    runId: result.run.id,
+    status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
+  } satisfies OrchestratorMcpThreadInterruptResult;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -228,6 +258,43 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+function capabilityModelCatalog(
+  provider: ServerProvider,
+  input: {
+    readonly model: string | undefined;
+    readonly modelCursor: number | undefined;
+    readonly modelLimit: number | undefined;
+    readonly includeModelOptions: boolean;
+  },
+) {
+  const matchingModels =
+    input.model === undefined
+      ? provider.models
+      : provider.models.filter((model) => model.slug === input.model);
+  const cursor = input.model === undefined ? (input.modelCursor ?? 0) : 0;
+  const requestedLimit = input.modelLimit ?? DEFAULT_CAPABILITIES_MODEL_LIMIT;
+  const limit =
+    input.model === undefined ? Math.min(requestedLimit, MAX_CAPABILITIES_MODEL_LIMIT) : 1;
+  const page = matchingModels.slice(cursor, cursor + limit);
+  const nextCursor = cursor + page.length < matchingModels.length ? cursor + page.length : null;
+  const models = page.map((model) => {
+    const summary = {
+      id: model.slug,
+      label: model.name ?? null,
+    };
+    const optionDescriptors = model.capabilities?.optionDescriptors;
+    if (!input.includeModelOptions || optionDescriptors === undefined) {
+      return summary;
+    }
+    return { ...summary, options: optionDescriptors };
+  });
+  return {
+    models,
+    modelsNextCursor: nextCursor,
+    modelsTotal: matchingModels.length,
+  };
 }
 
 /**
@@ -1072,14 +1139,58 @@ const make = Effect.gen(function* () {
           );
         return { scheduledTaskId: existing.id, deleted: true };
       }),
-    capabilities: (scope) =>
+    capabilities: (scope, input) =>
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
         const providers = yield* loadProviders;
+        const inheritedProviderInstanceId = parent.thread.modelSelection.instanceId;
+        const expandedProviderInstanceId = input.providerInstanceId ?? undefined;
+        const requestedModel = input.model ?? undefined;
+        const modelCursor = input.modelCursor ?? undefined;
+        const modelLimit = input.modelLimit ?? undefined;
+        const includeModelOptions = input.includeModelOptions ?? false;
+        const expandedProvider = providers.find(
+          (provider) => provider.instanceId === expandedProviderInstanceId,
+        );
+
+        if (
+          expandedProviderInstanceId === undefined &&
+          (requestedModel !== undefined ||
+            modelCursor !== undefined ||
+            modelLimit !== undefined ||
+            includeModelOptions)
+        ) {
+          return yield* failure(
+            "invalid_request",
+            "providerInstanceId is required to expand a model catalog.",
+          );
+        }
+        if (expandedProviderInstanceId !== undefined && expandedProvider === undefined) {
+          return yield* failure(
+            "provider_unavailable",
+            `Provider instance ${expandedProviderInstanceId} is not registered.`,
+          );
+        }
+        if (includeModelOptions && requestedModel === undefined) {
+          return yield* failure(
+            "invalid_request",
+            "includeModelOptions requires an exact model id.",
+          );
+        }
+        if (
+          requestedModel !== undefined &&
+          !expandedProvider?.models.some((model) => model.slug === requestedModel)
+        ) {
+          return yield* failure(
+            "model_unavailable",
+            `Model ${requestedModel} is not advertised by provider ${expandedProviderInstanceId}.`,
+          );
+        }
+
         return {
           parentThreadId: scope.threadId,
-          inheritedProviderInstanceId: parent.thread.modelSelection.instanceId,
+          inheritedProviderInstanceId,
           inheritedModel: parent.thread.modelSelection.model,
           runtimeMode: parent.thread.runtimeMode,
           interactionMode: parent.thread.interactionMode,
@@ -1088,18 +1199,20 @@ const make = Effect.gen(function* () {
               provider,
               isBuiltInProviderAdapterDriverV2(provider.driver),
             );
+            const modelCatalog =
+              provider.instanceId === expandedProviderInstanceId
+                ? capabilityModelCatalog(provider, {
+                    model: requestedModel,
+                    modelCursor,
+                    modelLimit,
+                    includeModelOptions,
+                  })
+                : undefined;
             return {
               providerInstanceId: provider.instanceId,
               driverKind: provider.driver,
-              displayName: provider?.displayName ?? null,
-              models:
-                provider?.models.map((model) => ({
-                  id: model.slug,
-                  label: model.name ?? null,
-                  ...(model.capabilities?.optionDescriptors === undefined
-                    ? {}
-                    : { options: model.capabilities.optionDescriptors }),
-                })) ?? [],
+              displayName: provider.displayName ?? null,
+              ...modelCatalog,
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
               constraints: [...constraints],
@@ -1658,18 +1771,7 @@ const make = Effect.gen(function* () {
                   ),
             ),
           );
-        if (result.type === "no_active_run") {
-          return {
-            threadId: input.threadId,
-            runId: null,
-            status: "no_active_run",
-          } satisfies OrchestratorMcpThreadInterruptResult;
-        }
-        return {
-          threadId: input.threadId,
-          runId: result.run.id,
-          status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
-        } satisfies OrchestratorMcpThreadInterruptResult;
+        return orchestratorMcpThreadInterruptResultFor(input.threadId, result);
       }),
   });
 });

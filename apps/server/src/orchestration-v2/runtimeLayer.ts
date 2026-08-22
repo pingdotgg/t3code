@@ -28,6 +28,8 @@ import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts"
 import { layerFromProviderInstanceRegistry as providerAdapterRegistryLayerFromProviderInstances } from "./ProviderAdapterRegistry.ts";
 import { layer as providerContinuationRequestsLayer } from "./ProviderContinuationRequests.ts";
 import { workerLive as providerContinuationWorkerLive } from "./ProviderContinuationService.ts";
+import { layer as providerInteractionModeReflectionsLayer } from "./ProviderInteractionModeReflections.ts";
+import { workerLive as providerInteractionModeReflectionWorkerLive } from "./ProviderInteractionModeReflectionService.ts";
 import { layer as threadTitleRegenerationServiceLayer } from "./ThreadTitleRegenerationService.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
@@ -172,6 +174,7 @@ const orchestratorProvided = orchestratorLayer.pipe(
       // Same layer reference as the continuation worker and the adapter
       // infrastructure so layer memoization yields one shared request queue.
       providerContinuationRequestsLayer,
+      providerInteractionModeReflectionsLayer,
       providerEventIngestorProvided,
       runtimePolicyProvided,
       providerSessionManagerProvided,
@@ -243,6 +246,11 @@ const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
   ),
 );
 
+const providerInteractionModeReflectionWorkerProvided =
+  providerInteractionModeReflectionWorkerLive.pipe(
+    Layer.provide(Layer.merge(providerInteractionModeReflectionsLayer, threadManagementProvided)),
+  );
+
 export const OrchestrationV2LayerLive = Layer.mergeAll(
   orchestratorProvided,
   threadManagementProvided,
@@ -261,4 +269,5 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   threadLifecycleProvided,
   scheduledTaskProvided,
   providerContinuationWorkerProvided,
+  providerInteractionModeReflectionWorkerProvided,
 );

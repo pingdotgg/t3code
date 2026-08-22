@@ -112,6 +112,38 @@ describe("buildThreadActivityInspector", () => {
     );
   });
 
+  it("shows durable compaction threshold diagnostics", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...itemBase("compaction"),
+      type: "compaction",
+      driver: ProviderDriverKind.make("opencode2"),
+      usedTokenCount: 902_000,
+      inputTokenCount: 272_000,
+      inputLimit: 922_000,
+      contextLimit: 1_050_000,
+      outputReserve: 32_000,
+      triggerThreshold: 902_000,
+      triggerReason: "auto",
+    };
+    const model = buildThreadActivityInspector(
+      activityFor(item),
+      { ...EMPTY_V2_ITEM_SUPPORT, item },
+      sourceThreadId,
+    );
+
+    expect(model.fields).toEqual(
+      expect.arrayContaining([
+        { label: "Used tokens", value: "902000" },
+        { label: "Input tokens", value: "272000" },
+        { label: "Input limit", value: "922000" },
+        { label: "Context limit", value: "1050000" },
+        { label: "Output reserve", value: "32000" },
+        { label: "Trigger threshold", value: "902000" },
+        { label: "Trigger reason", value: "auto" },
+      ]),
+    );
+  });
+
   it("exposes file and web result provenance plus dynamic structured data", () => {
     const fileSearch: OrchestrationV2TurnItem = {
       ...itemBase("file-search"),

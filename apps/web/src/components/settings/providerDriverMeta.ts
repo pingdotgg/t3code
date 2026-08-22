@@ -4,6 +4,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  OpenCode2Settings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import {
   GrokIcon,
   type Icon,
   OpenAI,
+  OpenCode2Icon,
   OpenCodeIcon,
 } from "../Icons";
 
@@ -101,6 +103,14 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("opencode2"),
+    label: "OpenCode 2",
+    icon: OpenCode2Icon,
+    badgeLabel: "Preview",
+    settingsSchema: OpenCode2Settings,
+    hasDefaultInstance: false,
   },
 ];
 

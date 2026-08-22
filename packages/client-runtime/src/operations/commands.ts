@@ -24,6 +24,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import { request } from "../rpc/client.ts";
+import { projectionHasInterruptibleProviderNativeBackgroundWork } from "../state/threadExecution.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -666,20 +667,32 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
   input: InterruptThreadTurnInput,
 ) {
   let runId = input.runId ?? (input.turnId as RunId | undefined);
+  let hasProviderNativeBackgroundWork = false;
   if (runId === undefined) {
     const projection = yield* getProjection(input.threadId);
+    hasProviderNativeBackgroundWork =
+      projectionHasInterruptibleProviderNativeBackgroundWork(projection);
     runId = projection.runs.findLast(
       (run) =>
         run.status === "preparing" ||
         run.status === "starting" ||
         run.status === "running" ||
-        run.status === "waiting",
+        (!hasProviderNativeBackgroundWork && run.status === "waiting"),
     )?.id;
+    if (runId === undefined && !hasProviderNativeBackgroundWork) return { sequence: 0 };
   }
-  if (runId === undefined) return { sequence: 0 };
+  const commandId = yield* allocateCommandId(input);
+  if (runId === undefined) {
+    return yield* dispatch({
+      type: "run.interrupt",
+      commandId,
+      threadId: input.threadId,
+      intent: "provider_native_only",
+    });
+  }
   return yield* dispatch({
     type: "run.interrupt",
-    commandId: yield* allocateCommandId(input),
+    commandId,
     threadId: input.threadId,
     runId,
   });

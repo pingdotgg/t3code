@@ -8,7 +8,7 @@ interface ParsedSemver {
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
 
 export function normalizeSemverVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const [main, prerelease] = splitSemverPrerelease(version.trim());
   const segments: string[] = [];
   for (const segment of (main ?? "").split(".")) {
     const trimmed = segment.trim();
@@ -29,9 +29,16 @@ export function normalizeSemverVersion(version: string): string {
   return prerelease ? `${segments.join(".")}-${prerelease}` : segments.join(".");
 }
 
+function splitSemverPrerelease(value: string): readonly [string, string?] {
+  const separatorIndex = value.indexOf("-");
+  return separatorIndex < 0
+    ? [value]
+    : [value.slice(0, separatorIndex), value.slice(separatorIndex + 1)];
+}
+
 export function parseSemver(value: string): ParsedSemver | null {
   const normalized = normalizeSemverVersion(value).replace(/^v/, "");
-  const [main = "", prerelease] = normalized.split("-", 2);
+  const [main, prerelease] = splitSemverPrerelease(normalized);
   const segments = main.split(".");
   if (segments.length !== 3) {
     return null;

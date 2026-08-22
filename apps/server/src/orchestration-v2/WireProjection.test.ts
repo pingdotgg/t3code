@@ -66,6 +66,7 @@ describe("orchestration V2 wire projection", () => {
       },
       runs: [],
       runtimeRequests: [],
+      subagents: [],
       messages: [
         {
           id: MessageId.make("message-shell-budget"),

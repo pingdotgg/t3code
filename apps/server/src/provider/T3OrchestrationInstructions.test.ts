@@ -14,6 +14,13 @@ describe("T3 orchestration provider instructions", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "different provider");
   });
 
+  it("documents slim and paginated capability discovery", () => {
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "orchestrator_capabilities({})");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "providerInstanceId");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "modelCursor");
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "includeModelOptions: true");
+  });
+
   it("documents structured schedules instead of JSON strings", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "structured object, never as JSON text");
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, '"everyMs":3600000');

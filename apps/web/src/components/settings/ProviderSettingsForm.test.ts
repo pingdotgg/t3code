@@ -37,6 +37,24 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("exposes the OpenCode 2 background-subagent default and external-server caveat", () => {
+    const opencode2 = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode2")];
+    expect(opencode2).toBeDefined();
+
+    const backgroundSubagents = deriveProviderSettingsFields(opencode2!).find(
+      (field) => field.key === "backgroundSubagents",
+    );
+
+    expect(backgroundSubagents).toMatchObject({
+      label: "Background subagents (experimental)",
+      control: "switch",
+      defaultBooleanValue: true,
+      description: expect.stringContaining(
+        "External servers must set OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS themselves.",
+      ),
+    });
+  });
+
   it("uses a dedicated environment field instead of legacy Cursor CLI settings", () => {
     const cursor = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("cursor")];
 

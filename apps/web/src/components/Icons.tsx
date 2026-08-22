@@ -647,19 +647,54 @@ export const AntigravityIcon: Icon = (props) => (
   </svg>
 );
 
+const OpenCodeFramePaths = () => (
+  <>
+    <path className="dark:hidden" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
+    <path className="hidden dark:block" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#F1ECEC" />
+  </>
+);
+
+const OpenCodeMarkPaths = () => (
+  <>
+    <path d="M24 32H8V16H24V32Z" fill="#CFCECD" className="dark:hidden" />
+    <path d="M24 32H8V16H24V32Z" fill="#4B4646" className="hidden dark:block" />
+    <OpenCodeFramePaths />
+  </>
+);
+
+// The OpenCode 2 preview borrows the blue inner field, highlight, and shadow
+// from OpenCode's official dev desktop icon while retaining a contrasting
+// neutral outer frame in both application themes.
+const OpenCode2MarkPaths = () => (
+  <>
+    <path d="M24 32H8V8H24V32Z" fill="#2E6CE9" />
+    <path d="M24 11H8V8H24V11Z" fill="#82C4FF" />
+    <path d="M24 32H8V29H24V32Z" fill="#0A2055" />
+    <OpenCodeFramePaths />
+  </>
+);
+
 export const OpenCodeIcon: Icon = (props) => (
-  <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <g clipPath="url(#opencode__clip0_1311_94969)">
-      <path className="dark:hidden" d="M24 32H8V16H24V32Z" fill="#CFCECD" />
-      <path className="dark:hidden" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#211E1E" />
-      <path className="hidden dark:block" d="M24 32H8V16H24V32Z" fill="#4B4646" />
-      <path className="hidden dark:block" d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#F1ECEC" />
-    </g>
-    <defs>
-      <clipPath id="opencode__clip0_1311_94969">
-        <rect width="32" height="40" fill="white" />
-      </clipPath>
-    </defs>
+  <svg
+    {...props}
+    viewBox="0 0 32 40"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    data-provider-icon="opencode"
+  >
+    <OpenCodeMarkPaths />
+  </svg>
+);
+
+export const OpenCode2Icon: Icon = (props) => (
+  <svg
+    {...props}
+    viewBox="0 0 32 40"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    data-provider-icon="opencode2"
+  >
+    <OpenCode2MarkPaths />
   </svg>
 );
 

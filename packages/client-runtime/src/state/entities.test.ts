@@ -248,6 +248,20 @@ describe("V2 client presentation", () => {
     ]);
   });
 
+  it("preserves provider-native background Stop visibility in shell runtime", () => {
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("run-provider-native-shell"),
+      status: "completed",
+      hasInterruptibleProviderNativeBackgroundWork: true,
+    });
+
+    expect(shell.runtime).toMatchObject({
+      status: "completed",
+      hasInterruptibleProviderNativeBackgroundWork: true,
+    });
+  });
+
   it("derives execution summaries without wrapping or copying the projection", () => {
     const runId = RunId.make("run-1");
     const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
@@ -420,5 +434,70 @@ describe("V2 client presentation", () => {
       },
     ]);
     expect(derivePendingThreadRequests(projection).userInputs).toEqual([]);
+  });
+
+  it("preserves multiselect questions in pending user input", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const requestId = RuntimeRequestId.make("request-user-input");
+    const item = {
+      id: TurnItemId.make("item-user-input"),
+      threadId: v2Projection.thread.id,
+      runId: null,
+      nodeId: NodeId.make("node-user-input"),
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "waiting" as const,
+      title: "User input",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "user_input_request" as const,
+      requestId,
+      questions: [
+        {
+          id: "question-areas",
+          header: "Areas",
+          question: "Which areas should this change cover?",
+          options: [
+            { label: "Server", description: "Server" },
+            { label: "Web", description: "Web" },
+          ],
+          multiSelect: true,
+        },
+      ],
+    };
+    const projection = {
+      ...v2Projection,
+      runtimeRequests: [
+        {
+          id: requestId,
+          nodeId: NodeId.make("node-user-input"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input" as const,
+          status: "pending" as const,
+          responseCapability: {
+            type: "not_resumable" as const,
+            reason: "provider disconnected",
+          },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      ],
+      turnItems: [item],
+      updatedAt: now,
+    };
+
+    expect(derivePendingThreadRequests(projection).userInputs).toEqual([
+      {
+        requestId,
+        createdAt: "2026-06-20T01:00:00.000Z",
+        questions: item.questions,
+        responseCapability: "not_resumable",
+      },
+    ]);
   });
 });

@@ -78,14 +78,19 @@ const makeManualProviderMaintenanceCapabilities = (provider: ProviderDriverKind)
 const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
+const OPEN_CODE_DRIVER_KINDS = new Set([
+  ProviderDriverKind.make("opencode"),
+  ProviderDriverKind.make("opencode2"),
+]);
+
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
-  if (provider.driver !== ProviderDriverKind.make("opencode")) {
+  if (!OPEN_CODE_DRIVER_KINDS.has(provider.driver)) {
     return true;
   }
 
-  // OpenCode's initial snapshot is deliberately non-authoritative while its
-  // first probe is still running. A probe error from an installed CLI/server
-  // is likewise partial: it could not establish the current inventory.
+  // OpenCode snapshots are deliberately non-authoritative while their first
+  // probe is still running. A probe error from an installed CLI/server is
+  // likewise partial: it could not establish the current inventory.
   // Conversely, disabled and missing-CLI snapshots are authoritative removals,
   // as are successful ready/warning inventories (including an empty one after
   // logout or plugin removal).
@@ -107,9 +112,16 @@ const mergeProviderModels = (
   }
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
+  const shouldClearSuccessfulOpenCode2Capabilities =
+    provider.driver === ProviderDriverKind.make("opencode2") && !shouldRetainMissingModels;
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+    if (
+      !previousModel ||
+      shouldClearSuccessfulOpenCode2Capabilities ||
+      hasModelCapabilities(model) ||
+      !hasModelCapabilities(previousModel)
+    ) {
       return model;
     }
     return {

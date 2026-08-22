@@ -261,7 +261,30 @@ export function buildThreadActivityInspector(
       addBlock(blocks, "Explanation", item.explanation, false);
       break;
     case "compaction":
-      addBlock(blocks, "Summary", item.summary, false);
+      if (item.usedTokenCount === undefined) {
+        addBlock(blocks, "Summary", item.summary, false);
+      }
+      if (item.usedTokenCount !== undefined) {
+        fields.push({ label: "Used tokens", value: String(item.usedTokenCount) });
+      }
+      if (item.inputTokenCount !== undefined) {
+        fields.push({ label: "Input tokens", value: String(item.inputTokenCount) });
+      }
+      if (item.inputLimit !== undefined) {
+        fields.push({ label: "Input limit", value: String(item.inputLimit) });
+      }
+      if (item.contextLimit !== undefined) {
+        fields.push({ label: "Context limit", value: String(item.contextLimit) });
+      }
+      if (item.outputReserve !== undefined) {
+        fields.push({ label: "Output reserve", value: String(item.outputReserve) });
+      }
+      if (item.triggerThreshold !== undefined) {
+        fields.push({ label: "Trigger threshold", value: String(item.triggerThreshold) });
+      }
+      if (item.triggerReason !== undefined) {
+        fields.push({ label: "Trigger reason", value: item.triggerReason });
+      }
       if (item.beforeTokenCount !== undefined || item.afterTokenCount !== undefined) {
         fields.push({
           label: "Context tokens",
