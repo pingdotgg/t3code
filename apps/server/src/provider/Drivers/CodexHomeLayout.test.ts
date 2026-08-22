@@ -210,6 +210,57 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
       }),
     );
 
+    it.effect("keeps a SQLite family local when Codex creates it between passes", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        yield* materializeCodexShadowHome(layout);
+
+        for (const suffix of ["", "-wal", "-shm"]) {
+          yield* writeTextFile(path.join(sharedHome, `queue_1.sqlite${suffix}`), `shared${suffix}`);
+          yield* writeTextFile(path.join(shadowHome, `queue_1.sqlite${suffix}`), `shadow${suffix}`);
+          yield* writeTextFile(
+            path.join(sharedHome, `future_runtime.sqlite${suffix}`),
+            `future-shared${suffix}`,
+          );
+        }
+        yield* writeTextFile(path.join(shadowHome, "future_runtime.sqlite"), "future-shadow");
+
+        yield* materializeCodexShadowHome(layout);
+        yield* materializeCodexShadowHome(layout);
+
+        for (const suffix of ["", "-wal", "-shm"]) {
+          const entryName = `queue_1.sqlite${suffix}`;
+          const sharedPath = path.join(sharedHome, entryName);
+          const shadowPath = path.join(shadowHome, entryName);
+
+          expect(yield* fileSystem.readFileString(sharedPath)).toBe(`shared${suffix}`);
+          expect(yield* fileSystem.readFileString(shadowPath)).toBe(`shadow${suffix}`);
+          expect((yield* fileSystem.readLink(shadowPath).pipe(Effect.result))._tag).toBe("Failure");
+        }
+
+        expect(
+          yield* fileSystem.readFileString(path.join(shadowHome, "future_runtime.sqlite")),
+        ).toBe("future-shadow");
+        expect(yield* fileSystem.exists(path.join(shadowHome, "future_runtime.sqlite-wal"))).toBe(
+          false,
+        );
+        expect(yield* fileSystem.exists(path.join(shadowHome, "future_runtime.sqlite-shm"))).toBe(
+          false,
+        );
+      }),
+    );
+
     it.effect("rejects shadow homes that point at the shared home", () =>
       Effect.gen(function* () {
         const sharedHome = yield* makeTempDir("t3code-codex-shared-");
@@ -235,6 +286,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
     it.effect("rejects shared entries that already exist in the shadow home as real files", () =>
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const sharedHome = yield* makeTempDir("t3code-codex-shared-");
         const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
@@ -261,6 +313,19 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         });
         expect(error.message).toBe(
           `Cannot create Codex shadow home entry 'config.toml' because '${path.join(shadowHome, "config.toml")}' already exists and is not a symlink.`,
+        );
+        expect(yield* fileSystem.readFileString(path.join(sharedHome, "config.toml"))).toBe(
+          'model = "gpt-5-codex"\n',
+        );
+        expect(yield* fileSystem.readFileString(path.join(shadowHome, "config.toml"))).toBe(
+          'model = "local"\n',
+        );
+
+        yield* fileSystem.remove(path.join(shadowHome, "config.toml"));
+        yield* materializeCodexShadowHome(layout);
+
+        expect(yield* fileSystem.readLink(path.join(shadowHome, "config.toml"))).toBe(
+          path.join(sharedHome, "config.toml"),
         );
       }),
     );

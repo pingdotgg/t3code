@@ -32,6 +32,12 @@ const KNOWN_SHARED_DIRECTORIES = [
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
 const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["mcp-oauth-locks"]);
+const SQLITE_FAMILY_SUFFIXES = ["", "-wal", "-shm"] as const;
+
+function sqliteFamilyBaseName(entryName: string): string | undefined {
+  const baseName = entryName.replace(/-(?:wal|shm)$/, "");
+  return baseName.endsWith(".sqlite") ? baseName : undefined;
+}
 
 function resolveHomePath(path: Path.Path, value: string | undefined): string {
   const expanded =
@@ -184,27 +190,27 @@ const readLinkState = Effect.fn("CodexHomeLayout.readLinkState")(function* (inpu
   );
 });
 
-const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(function* (input: {
+const removeSymlink = Effect.fn("CodexHomeLayout.removeSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
   readonly effectiveHomePath: string;
   readonly entryName: string;
 }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
   const path = yield* Path.Path;
-  const privatePath = path.join(input.effectiveHomePath, input.entryName);
+  const entryPath = path.join(input.effectiveHomePath, input.entryName);
   const state = yield* readLinkState({
     ...input,
-    linkPath: privatePath,
+    linkPath: entryPath,
   });
   if (state._tag === "Symlink") {
-    yield* input.fileSystem.remove(privatePath).pipe(
+    yield* input.fileSystem.remove(entryPath).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           new CodexShadowHomeFileSystemError({
             sharedHomePath: input.sharedHomePath,
             effectiveHomePath: input.effectiveHomePath,
             operation: "remove",
-            path: privatePath,
+            path: entryPath,
             entryName: input.entryName,
             cause,
           }),
@@ -377,12 +383,44 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     }
   }
 
+  const shadowLocalSqliteFamilies = new Set<string>();
+  for (const entryName of entries) {
+    const familyBaseName = sqliteFamilyBaseName(entryName);
+    if (familyBaseName === undefined || shadowLocalSqliteFamilies.has(familyBaseName)) {
+      continue;
+    }
+
+    const familyBaseState = yield* readLinkState({
+      fileSystem,
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName: familyBaseName,
+      linkPath: path.join(effectiveHomePath, familyBaseName),
+    });
+    if (familyBaseState._tag !== "NotSymlink") {
+      continue;
+    }
+
+    shadowLocalSqliteFamilies.add(familyBaseName);
+    yield* Effect.forEach(
+      SQLITE_FAMILY_SUFFIXES,
+      (suffix) =>
+        removeSymlink({
+          fileSystem,
+          sharedHomePath: layout.sharedHomePath,
+          effectiveHomePath,
+          entryName: `${familyBaseName}${suffix}`,
+        }),
+      { discard: true },
+    );
+  }
+
   yield* Effect.forEach(
     PRIVATE_ENTRY_NAMES,
     (entryName) =>
       entryName === "auth.json"
         ? Effect.void
-        : removePrivateSymlink({
+        : removeSymlink({
             fileSystem,
             sharedHomePath: layout.sharedHomePath,
             effectiveHomePath,
@@ -395,6 +433,10 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     entries,
     (entryName) => {
       if (PRIVATE_ENTRY_NAMES.has(entryName)) {
+        return Effect.void;
+      }
+      const familyBaseName = sqliteFamilyBaseName(entryName);
+      if (familyBaseName !== undefined && shadowLocalSqliteFamilies.has(familyBaseName)) {
         return Effect.void;
       }
       return ensureSymlink({
