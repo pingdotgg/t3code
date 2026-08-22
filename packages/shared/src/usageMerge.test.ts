@@ -1,4 +1,5 @@
 import {
+  ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageBucket,
@@ -8,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import { enabledUsageProviders, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -69,9 +70,33 @@ function summary(
   };
 }
 
-function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
-  return { environmentId: id as EnvironmentId, label: id, summary: usageSummary };
+function environment(
+  id: string,
+  usageSummary: UsageSummary,
+  providersInScope: readonly UsageProviderKind[] = [
+    ...new Set(usageSummary.sources.map((source) => source.fingerprint.provider)),
+  ],
+): EnvironmentUsage {
+  return {
+    environmentId: id as EnvironmentId,
+    label: id,
+    summary: usageSummary,
+    providersInScope,
+  };
 }
+
+describe("enabledUsageProviders", () => {
+  it("selects enabled Claude and Codex instances", () => {
+    expect(
+      enabledUsageProviders([
+        { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+        { driver: ProviderDriverKind.make("codex"), enabled: false },
+        { driver: ProviderDriverKind.make("codex"), enabled: true },
+        { driver: ProviderDriverKind.make("cursor"), enabled: true },
+      ]),
+    ).toEqual(["claude", "codex"]);
+  });
+});
 
 describe("mergeUsage", () => {
   it("sums environments that read different transcript directories", () => {
@@ -195,6 +220,32 @@ describe("mergeUsage", () => {
     expect(merged.costQuality.cacheSavingsUsd).toBe(4);
   });
 
+  it("excludes usage from providers disabled on an environment", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket(), bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 })],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+            ],
+          ),
+          ["claude"],
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.sessions).toBe(1);
+    expect(merged.providersInScope).toEqual(["claude"]);
+    expect(merged.providers.map((provider) => provider.provider)).toEqual(["claude"]);
+    expect(merged.models.map((model) => model.provider)).toEqual(["claude"]);
+    expect(merged.daily[0]?.byProvider.has("codex")).toBe(false);
+  });
+
   it("keeps two machines apart when hostname and home path collide", () => {
     // Every Mac resolves /Users/theo/.claude, so a hostname clash used to make
     // one machine's usage vanish. Filesystem identity separates them.
@@ -262,6 +313,7 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(0);
     expect(merged.daily).toHaveLength(0);
     expect(merged.hourly).toHaveLength(0);
+    expect(merged.providersInScope).toEqual([]);
   });
 
   it("omits providers with no sessions or usage", () => {
@@ -311,5 +363,27 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+
+  it("keeps providers in scope even when they have no usage", () => {
+    const merged = mergeUsage(
+      [environment("env-a", summary([], []), ["codex"])],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.providersInScope).toEqual(["codex"]);
+    expect(merged.providers).toEqual([]);
+  });
+
+  it("unions providers in scope across current environments", () => {
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([], []), ["codex"]),
+        environment("env-b", summary([], []), ["claude"]),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect([...merged.providersInScope].sort()).toEqual(["claude", "codex"]);
   });
 });

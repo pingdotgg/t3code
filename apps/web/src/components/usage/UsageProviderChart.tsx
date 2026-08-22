@@ -9,7 +9,7 @@ import {
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -23,6 +23,7 @@ interface UsageProviderChartProps {
   readonly daily: readonly DailyTotals[];
   readonly hours: readonly string[];
   readonly hourly: readonly HourlyTotals[];
+  readonly providers: readonly UsageProviderKind[];
   readonly metric: UsageChartMetric;
   readonly referenceTime: string | undefined;
   readonly resolution: "day" | "hour";
@@ -56,11 +57,12 @@ function valueFor(
 function buildPeriodColumns(
   periods: readonly string[],
   byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
+  providers: readonly UsageProviderKind[],
   metric: UsageChartMetric,
 ): readonly DayColumn[] {
   return periods.map((period) => {
     const entry = byPeriod.get(period);
-    const bands = PROVIDER_ORDER.map((provider) => ({
+    const bands = providers.map((provider) => ({
       provider,
       value: valueFor(entry, provider, metric),
     }));
@@ -181,9 +183,10 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
 export function buildDayColumns(
   days: readonly string[],
   byDay: ReadonlyMap<string, DailyTotals>,
+  providers: readonly UsageProviderKind[],
   metric: UsageChartMetric,
 ): readonly DayColumn[] {
-  return buildPeriodColumns(days, byDay, metric);
+  return buildPeriodColumns(days, byDay, providers, metric);
 }
 
 export function UsageProviderChart({
@@ -191,6 +194,7 @@ export function UsageProviderChart({
   daily,
   hours,
   hourly,
+  providers,
   metric,
   referenceTime,
   resolution,
@@ -220,7 +224,7 @@ export function UsageProviderChart({
       };
     }
 
-    const columns = buildPeriodColumns(periods, byPeriod, metric);
+    const columns = buildPeriodColumns(periods, byPeriod, providers, metric);
     // The scale tops out at the largest single provider-period, not the sum:
     // layered series each measure from zero, so a combined peak would leave
     // the plot permanently half empty.
@@ -235,7 +239,7 @@ export function UsageProviderChart({
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
+    const built = providers.map((provider, providerIndex) => {
       const line = curvePath(
         smoothCurve(
           columns.map((column, periodIndex) => ({
@@ -260,7 +264,7 @@ export function UsageProviderChart({
       ticks: tickValues,
       toY,
     };
-  }, [byPeriod, metric, periods]);
+  }, [byPeriod, metric, periods, providers]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
@@ -422,7 +426,7 @@ export function UsageProviderChart({
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
-              {PROVIDER_ORDER.map((provider) => {
+              {providers.map((provider) => {
                 const { label, mark: Mark } = PROVIDER_PRESENTATION[provider];
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">

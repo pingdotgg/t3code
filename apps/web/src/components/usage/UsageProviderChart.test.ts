@@ -42,6 +42,7 @@ describe("niceScale", () => {
 
 describe("buildDayColumns", () => {
   const days = ["2026-08-01", "2026-08-02", "2026-08-03"];
+  const providers = ["codex", "claude"] as const;
   const byDay = new Map([
     [
       "2026-08-01",
@@ -68,19 +69,21 @@ describe("buildDayColumns", () => {
   ]);
 
   it("plots each day on its own", () => {
-    expect(buildDayColumns(days, byDay, "cost").map((column) => column.total)).toEqual([30, 0, 5]);
+    expect(buildDayColumns(days, byDay, providers, "cost").map((column) => column.total)).toEqual([
+      30, 0, 5,
+    ]);
   });
 
   it("reads the requested metric", () => {
-    expect(buildDayColumns(days, byDay, "tokens").map((column) => column.total)).toEqual([
-      300, 0, 50,
-    ]);
+    expect(buildDayColumns(days, byDay, providers, "tokens").map((column) => column.total)).toEqual(
+      [300, 0, 50],
+    );
   });
 
   it("keeps band values absolute rather than cumulative", () => {
     // Regression: the bands were once stack offsets, which drew Claude Code
     // permanently above Codex regardless of which provider spent more.
-    const [first] = buildDayColumns(days, byDay, "cost");
+    const [first] = buildDayColumns(days, byDay, providers, "cost");
 
     expect(first?.bands).toEqual([
       { provider: "codex", value: 10 },
@@ -89,10 +92,17 @@ describe("buildDayColumns", () => {
   });
 
   it("reports the total as the sum of its bands", () => {
-    for (const column of buildDayColumns(days, byDay, "cost")) {
+    for (const column of buildDayColumns(days, byDay, providers, "cost")) {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+
+  it("omits providers outside the current usage scope", () => {
+    const [first] = buildDayColumns(days, byDay, ["codex"], "cost");
+
+    expect(first?.bands).toEqual([{ provider: "codex", value: 10 }]);
+    expect(first?.total).toBe(10);
   });
 });
 
@@ -115,6 +125,7 @@ describe("hourly chart columns", () => {
       buildDayColumns(
         ["2026-08-11T08:37:00.000Z", "2026-08-11T09:37:00.000Z", "2026-08-11T10:37:00.000Z"],
         byHour,
+        ["codex"],
         "cost",
       ).map((column) => column.total),
     ).toEqual([0, 4, 0]);

@@ -13,10 +13,16 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
+  type UsageProviderKind,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  enabledUsageProviders,
+  mergeUsage,
+  type EnvironmentUsage,
+  type MergedUsage,
+} from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
@@ -31,6 +37,7 @@ export interface EnvironmentUsageStatus {
   readonly isPending: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
+  readonly providersInScope: readonly UsageProviderKind[];
 }
 
 /**
@@ -48,12 +55,14 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      const providers = get(serverEnvironment.providersValueAtom(environmentId));
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
-        isPending: result.waiting,
+        isPending: providers === null || result.waiting,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
-        summary: Option.getOrNull(AsyncResult.value(result)),
+        summary: providers === null ? null : Option.getOrNull(AsyncResult.value(result)),
+        providersInScope: providers === null ? [] : enabledUsageProviders(providers),
       });
     }
     return statuses;
@@ -118,6 +127,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
               environmentId: environment.environmentId,
               label: environment.label,
               summary: environment.summary,
+              providersInScope: environment.providersInScope,
             },
           ],
     );

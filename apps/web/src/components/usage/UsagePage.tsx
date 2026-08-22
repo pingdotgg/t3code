@@ -74,6 +74,19 @@ export function UsagePage() {
     () => (isPast24Hours ? merged.hourly : merged.daily).toReversed(),
     [isPast24Hours, merged.daily, merged.hourly],
   );
+  const visibleProviders = useMemo(
+    () => PROVIDER_ORDER.filter((provider) => merged.providersInScope.includes(provider)),
+    [merged.providersInScope],
+  );
+  const skeletonProviders = useMemo(() => {
+    const reportingEnvironments = environments.filter((environment) => environment.error === null);
+    const providers = PROVIDER_ORDER.filter((provider) =>
+      reportingEnvironments.some((environment) => environment.providersInScope.includes(provider)),
+    );
+    return reportingEnvironments.some((environment) => environment.isProviderScopePending)
+      ? PROVIDER_ORDER
+      : providers;
+  }, [environments]);
 
   const selectWindow = (days: number) => {
     setWindowSelection({
@@ -200,7 +213,7 @@ export function UsagePage() {
             {settling ? (
               <>
                 {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}
-                <UsageSkeleton />
+                <UsageSkeleton providers={skeletonProviders} />
               </>
             ) : (
               <>
@@ -225,7 +238,7 @@ export function UsagePage() {
                       </span>
                     </div>
 
-                    {PROVIDER_ORDER.map((provider) => {
+                    {visibleProviders.map((provider) => {
                       const totals = merged.providers.find((entry) => entry.provider === provider);
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
@@ -280,6 +293,7 @@ export function UsagePage() {
                       daily={merged.daily}
                       hours={hours}
                       hourly={merged.hourly}
+                      providers={visibleProviders}
                       metric={metric}
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
@@ -378,7 +392,7 @@ export function UsagePage() {
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">{isPast24Hours ? "Hour" : "Day"}</th>
-                          {PROVIDER_ORDER.map((provider) => (
+                          {visibleProviders.map((provider) => (
                             <th key={provider} className="py-2 text-right font-normal">
                               {PROVIDER_PRESENTATION[provider].label}
                             </th>
@@ -390,7 +404,10 @@ export function UsagePage() {
                       <tbody>
                         {breakdownPeriods.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                            <td
+                              colSpan={visibleProviders.length + 3}
+                              className="py-6 text-center text-muted-foreground"
+                            >
                               No activity in this window.
                             </td>
                           </tr>
@@ -405,7 +422,7 @@ export function UsagePage() {
                                   ? formatHourShort(period.hourStart, window.timeZone)
                                   : formatDayShort(period.day)}
                               </td>
-                              {PROVIDER_ORDER.map((provider) => (
+                              {visibleProviders.map((provider) => (
                                 <td
                                   key={provider}
                                   className="py-2 text-right text-muted-foreground tabular-nums"
@@ -559,7 +576,7 @@ function UsageDeviceStrip({
  * Static stand-in with the loaded page's shape. No shimmer; blocks fill in
  * exactly once when the last device answers.
  */
-function UsageSkeleton() {
+function UsageSkeleton({ providers }: { readonly providers: readonly UsageProviderKind[] }) {
   return (
     <>
       <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
@@ -568,7 +585,7 @@ function UsageSkeleton() {
             <div className="h-10 w-36 rounded-sm bg-muted" />
             <div className="h-4 w-32 rounded-sm bg-muted" />
           </div>
-          {PROVIDER_ORDER.map((provider) => (
+          {providers.map((provider) => (
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
