@@ -69,6 +69,8 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               payload_json = excluded.payload_json,
               sequence = excluded.sequence,
               created_at = excluded.created_at
+              WHERE projection_thread_activities.thread_id = excluded.thread_id
+                AND projection_thread_activities.kind = excluded.kind
           `,
   });
 

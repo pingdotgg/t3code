@@ -46,6 +46,7 @@ const makeProjectionPendingApprovalRepository = Effect.gen(function* () {
           decision = excluded.decision,
           created_at = excluded.created_at,
           resolved_at = excluded.resolved_at
+          WHERE projection_pending_approvals.thread_id = excluded.thread_id
       `,
   });
 

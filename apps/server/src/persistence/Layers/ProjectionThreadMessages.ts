@@ -91,6 +91,8 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
+        WHERE projection_thread_messages.thread_id = excluded.thread_id
+          AND projection_thread_messages.role = excluded.role
       `;
     },
   });

@@ -26,6 +26,9 @@ export const GetProjectionStateInput = Schema.Struct({
 });
 export type GetProjectionStateInput = typeof GetProjectionStateInput.Type;
 
+export const UpsertManyProjectionStateInput = Schema.NonEmptyArray(ProjectionState);
+export type UpsertManyProjectionStateInput = typeof UpsertManyProjectionStateInput.Type;
+
 /**
  * ProjectionStateRepositoryShape - Service API for projector state records.
  */
@@ -36,6 +39,15 @@ export interface ProjectionStateRepositoryShape {
    * Upserts by projector name.
    */
   readonly upsert: (row: ProjectionState) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * Insert or replace projection cursor rows in a single SQL statement.
+   *
+   * Upserts by projector name.
+   */
+  readonly upsertMany: (
+    rows: UpsertManyProjectionStateInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
    * Read projection cursor state for a projector key.

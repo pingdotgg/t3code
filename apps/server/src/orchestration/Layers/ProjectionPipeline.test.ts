@@ -734,38 +734,37 @@ it.layer(
         END;
       `;
 
-      const result = yield* Effect.result(
-        appendAndProject({
-          type: "thread.message-sent",
-          eventId: EventId.make("evt-rollback-3"),
-          aggregateKind: "thread",
-          aggregateId: ThreadId.make("thread-rollback"),
-          occurredAt: now,
-          commandId: CommandId.make("cmd-rollback-3"),
-          causationEventId: null,
-          correlationId: CorrelationId.make("cmd-rollback-3"),
-          metadata: {},
-          payload: {
-            threadId: ThreadId.make("thread-rollback"),
-            messageId: MessageId.make("message-rollback"),
-            role: "user",
-            text: "Rollback me",
-            attachments: [
-              {
-                type: "image",
-                id: "thread-rollback-att-1",
-                name: "rollback.png",
-                mimeType: "image/png",
-                sizeBytes: 5,
-              },
-            ],
-            turnId: null,
-            streaming: false,
-            createdAt: now,
-            updatedAt: now,
-          },
-        }),
-      );
+      const savedEvent = yield* eventStore.append({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-rollback-3"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-rollback"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-rollback-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-rollback-3"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-rollback"),
+          messageId: MessageId.make("message-rollback"),
+          role: "user",
+          text: "Rollback me",
+          attachments: [
+            {
+              type: "image",
+              id: "thread-rollback-att-1",
+              name: "rollback.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const result = yield* Effect.result(projectionPipeline.projectEvent(savedEvent));
       assert.equal(result._tag, "Failure");
 
       const rows = yield* sql<{
@@ -780,7 +779,44 @@ it.layer(
       const { attachmentsDir } = yield* ServerConfig;
       const attachmentPath = path.join(attachmentsDir, "thread-rollback-att-1.png");
       assert.isFalse(yield* exists(attachmentPath));
+
+      const stateAfterFailure = yield* sql<{
+        readonly projector: string;
+        readonly lastAppliedSequence: number;
+      }>`
+        SELECT projector, last_applied_sequence AS "lastAppliedSequence"
+        FROM projection_state
+        ORDER BY projector ASC
+      `;
+      assert.lengthOf(stateAfterFailure, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
+      for (const row of stateAfterFailure) {
+        assert.equal(row.lastAppliedSequence, savedEvent.sequence - 1);
+      }
+
       yield* sql`DROP TRIGGER IF EXISTS fail_thread_messages_projection_state_update`;
+      yield* projectionPipeline.projectEvent(savedEvent);
+
+      const rowsAfterRetry = yield* sql<{
+        readonly text: string;
+      }>`
+        SELECT text
+        FROM projection_thread_messages
+        WHERE message_id = 'message-rollback'
+      `;
+      assert.deepEqual(rowsAfterRetry, [{ text: "Rollback me" }]);
+
+      const stateAfterRetry = yield* sql<{
+        readonly projector: string;
+        readonly lastAppliedSequence: number;
+      }>`
+        SELECT projector, last_applied_sequence AS "lastAppliedSequence"
+        FROM projection_state
+        ORDER BY projector ASC
+      `;
+      assert.lengthOf(stateAfterRetry, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
+      for (const row of stateAfterRetry) {
+        assert.equal(row.lastAppliedSequence, savedEvent.sequence);
+      }
     }),
   );
 });
@@ -1249,7 +1285,13 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 
       yield* projectionPipeline.bootstrap;
 
-      yield* eventStore.append({
+      yield* sql`
+        UPDATE projection_state
+        SET last_applied_sequence = 2
+        WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}
+      `;
+
+      const savedDelta = yield* eventStore.append({
         type: "thread.message-sent",
         eventId: EventId.make("evt-a4"),
         aggregateKind: "thread",
@@ -1270,6 +1312,30 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           updatedAt: now,
         },
       });
+
+      const liveResult = yield* Effect.result(projectionPipeline.projectEvent(savedDelta));
+      assert.equal(liveResult._tag, "Failure");
+
+      const messageBeforeResume = yield* sql<{ readonly text: string }>`
+        SELECT text FROM projection_thread_messages WHERE message_id = 'message-a'
+      `;
+      assert.deepEqual(messageBeforeResume, [{ text: "hello" }]);
+
+      const stateBeforeResume = yield* sql<{
+        readonly projector: string;
+        readonly lastAppliedSequence: number;
+      }>`
+        SELECT projector, last_applied_sequence AS "lastAppliedSequence"
+        FROM projection_state
+        ORDER BY projector ASC
+      `;
+      assert.lengthOf(stateBeforeResume, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
+      for (const row of stateBeforeResume) {
+        assert.equal(
+          row.lastAppliedSequence,
+          row.projector === ORCHESTRATION_PROJECTOR_NAMES.threadMessages ? 2 : 3,
+        );
+      }
 
       yield* projectionPipeline.bootstrap;
       yield* projectionPipeline.bootstrap;
@@ -1292,6 +1358,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         SELECT MAX(sequence) AS "maxSequence" FROM orchestration_events
       `;
       const maxSequence = maxSequenceRows[0]?.maxSequence ?? 0;
+      assert.lengthOf(stateRows, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, maxSequence);
       }

@@ -47,6 +47,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implementation_thread_id = excluded.implementation_thread_id,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
+        WHERE projection_thread_proposed_plans.thread_id = excluded.thread_id
     `,
   });
 
