@@ -94,6 +94,22 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.totals.outputTokens).toBe(100);
   });
 
+  it("keeps physical sources separate for cross-environment ownership", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    aggregator.add(record(), "/home/user/.kimi-code/sessions");
+    aggregator.add(record(), "/home/user/kimi-desktop/sessions");
+
+    expect(aggregator.finish().buckets.map((bucket) => bucket.sourcePath)).toEqual([
+      "/home/user/.kimi-code/sessions",
+      "/home/user/kimi-desktop/sessions",
+    ]);
+  });
+
   it("buckets by the day in the requested time zone", () => {
     const utc = aggregate([record()], "UTC");
     const losAngeles = aggregate([record()], "America/Los_Angeles");

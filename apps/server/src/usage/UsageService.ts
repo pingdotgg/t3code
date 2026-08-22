@@ -279,8 +279,16 @@ export const make = Effect.gen(function* () {
         ),
       },
     ];
+    const canonicalSources = yield* Effect.forEach(sources, (source) =>
+      source.provider === "kimi"
+        ? fileSystem.realPath(source.dir).pipe(
+            Effect.map((dir) => ({ ...source, dir })),
+            Effect.orElseSucceed(() => ({ ...source, dir: path.resolve(source.dir) })),
+          )
+        : Effect.succeed(source),
+    );
     const seenKimiDirs = new Set<string>();
-    return sources.filter((source) => {
+    return canonicalSources.filter((source) => {
       if (source.provider !== "kimi") return true;
 
       const resolvedDir = path.resolve(source.dir);
@@ -484,7 +492,7 @@ export const make = Effect.gen(function* () {
         for (const record of records) {
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
+          if (aggregator.add(record, dir) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }

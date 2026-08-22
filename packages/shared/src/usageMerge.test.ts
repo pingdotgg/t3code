@@ -272,7 +272,7 @@ describe("mergeUsage", () => {
     ]);
   });
 
-  it("chooses one environment when Kimi store winners would otherwise split", () => {
+  it("keeps split Kimi source winners without double counting attributed buckets", () => {
     const tui = {
       provider: "kimi" as const,
       hostId: "mac",
@@ -290,14 +290,40 @@ describe("mergeUsage", () => {
         environment(
           "env-a",
           summary(
-            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 3 })],
+            [
+              bucket({
+                provider: "kimi",
+                sourcePath: tui.homePath,
+                model: "kimi-code/k3",
+                costUsd: 1,
+              }),
+              bucket({
+                provider: "kimi",
+                sourcePath: desktop.homePath,
+                model: "kimi-code/k3",
+                costUsd: 2,
+              }),
+            ],
             [tui, { ...desktop, status: "partial" }],
           ),
         ),
         environment(
           "env-b",
           summary(
-            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 7 })],
+            [
+              bucket({
+                provider: "kimi",
+                sourcePath: tui.homePath,
+                model: "kimi-code/k3",
+                costUsd: 1,
+              }),
+              bucket({
+                provider: "kimi",
+                sourcePath: desktop.homePath,
+                model: "kimi-code/k3",
+                costUsd: 2,
+              }),
+            ],
             [{ ...tui, status: "partial" }, desktop],
           ),
         ),
@@ -306,7 +332,7 @@ describe("mergeUsage", () => {
     );
 
     expect(merged.costUsd).toBe(3);
-    expect(merged.contributingEnvironments).toEqual(["env-a"]);
+    expect(merged.contributingEnvironments).toEqual(["env-a", "env-b"]);
     expect(merged.providers.find((provider) => provider.provider === "kimi")?.sessions).toBe(2);
   });
 
@@ -359,7 +385,7 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toEqual([]);
   });
 
-  it("reports only fingerprints the winning environment actually shares", () => {
+  it("retains unique stores while de-duplicating one shared Kimi store", () => {
     const sharedTui = {
       provider: "kimi" as const,
       hostId: "mac",
@@ -371,7 +397,20 @@ describe("mergeUsage", () => {
         environment(
           "env-a",
           summary(
-            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 3 })],
+            [
+              bucket({
+                provider: "kimi",
+                sourcePath: sharedTui.homePath,
+                model: "kimi-code/k3",
+                costUsd: 2,
+              }),
+              bucket({
+                provider: "kimi",
+                sourcePath: "/machine-a/kimi-desktop",
+                model: "kimi-code/k3",
+                costUsd: 3,
+              }),
+            ],
             [
               sharedTui,
               {
@@ -386,7 +425,20 @@ describe("mergeUsage", () => {
         environment(
           "env-b",
           summary(
-            [bucket({ provider: "kimi", model: "kimi-code/k3", costUsd: 7 })],
+            [
+              bucket({
+                provider: "kimi",
+                sourcePath: sharedTui.homePath,
+                model: "kimi-code/k3",
+                costUsd: 2,
+              }),
+              bucket({
+                provider: "kimi",
+                sourcePath: "/machine-b/kimi-desktop",
+                model: "kimi-code/k3",
+                costUsd: 7,
+              }),
+            ],
             [
               { ...sharedTui, status: "partial" },
               {
@@ -402,7 +454,7 @@ describe("mergeUsage", () => {
       USAGE_CONTRACT_VERSION,
     );
 
-    expect(merged.costUsd).toBe(3);
+    expect(merged.costUsd).toBe(12);
     expect(merged.duplicateSources).toEqual(["env-b: /shared/.kimi-code/sessions"]);
   });
 
