@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import { formatServiceStatus } from "./service.ts";
+import { formatServicePruneResult, formatServiceStatus } from "./service.ts";
 
 const status = {
   supported: true,
@@ -33,5 +33,26 @@ it("explains where the service is supported", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
     "Supported on: Linux with systemd, macOS with launchd",
+  );
+});
+
+it("formats a service runtime prune preview", () => {
+  assert.equal(
+    formatServicePruneResult({ dryRun: true, versions: ["0.0.31", "0.0.32"] }),
+    ["Would prune 2 old T3 Code service runtimes:", "  t3@0.0.31", "  t3@0.0.32"].join("\n"),
+  );
+});
+
+it("formats a completed service runtime prune", () => {
+  assert.equal(
+    formatServicePruneResult({ dryRun: false, versions: ["0.0.31"] }),
+    ["Pruned 1 old T3 Code service runtime:", "  t3@0.0.31"].join("\n"),
+  );
+});
+
+it("reports when there are no old service runtimes", () => {
+  assert.equal(
+    formatServicePruneResult({ dryRun: false, versions: [] }),
+    "No old T3 Code service runtimes found.",
   );
 });

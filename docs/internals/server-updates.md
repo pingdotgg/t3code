@@ -54,6 +54,18 @@ snapshot, records rollback, and starts A. A durable restore marker makes an inte
 resume before either version can boot. After commit, B is active and the service manager's normal
 restart policy applies.
 
+## Runtime Pruning
+
+`t3 service prune` removes completed exact-version installs that are older than the active version
+and are not named by the latest update record. It ignores incomplete installs, staging directories,
+symlinks, unexpected directory names, and newer versions. `--dry-run` reports the same candidates
+without removing them.
+
+The command parses launcher-owned state before selecting candidates and refuses to run while an
+update is pending. It does not stop or restart the service. Restricting candidates to versions older
+than the active runtime also keeps a concurrently staged forward-update target outside the prune
+set.
+
 ## Database Rollback
 
 The launcher snapshots `state.sqlite`, `state.sqlite-wal`, and `state.sqlite-shm` after the old
