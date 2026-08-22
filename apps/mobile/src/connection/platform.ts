@@ -31,7 +31,7 @@ import * as MobileStorage from "../persistence/mobile-storage";
 import { appAtomRegistry } from "../state/atom-registry";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
-import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import { mobileApplicationActiveWakeup, mobileSuspensionStartedAtMs } from "./app-state-wakeups";
 import { connectionStorageLayer } from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -91,16 +91,16 @@ const wakeupsLayer = Wakeups.layer({
     Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
-          let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+          let backgroundedAtMs = mobileSuspensionStartedAtMs(
+            null,
+            AppState.currentState,
+            Date.now(),
+          );
           return AppState.addEventListener("change", (state) => {
-            if (state === "background") {
-              backgroundedAtMs = Date.now();
-              return;
-            }
             if (state === "active") {
               Queue.offerUnsafe(queue, mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()));
-              backgroundedAtMs = null;
             }
+            backgroundedAtMs = mobileSuspensionStartedAtMs(backgroundedAtMs, state, Date.now());
           });
         }),
         (subscription) => Effect.sync(() => subscription.remove()),

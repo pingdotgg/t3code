@@ -61,13 +61,12 @@ The supervisor is the only retry owner.
 
 Wakeup handling differs by phase, in [supervisor.ts][supervisor]:
 
-- During establishment, `waitForEstablishmentInterrupt` consumes and **ignores**
-  plain application activation. Restarting an in-flight attempt because the app
-  came to the foreground would only delay it. The exception is
-  `application-active-reconnect`, which mobile emits after a meaningful
-  background suspension; it interrupts establishment and resets the retry
-  ladder, because the OS may have silently killed the socket underneath the
-  attempt.
+- During establishment, `waitForEstablishmentInterrupt` interrupts and resets
+  the retry ladder on any application-active wakeup (`application-active`,
+  `application-active-probe`, or `application-active-reconnect`). A short
+  inactive blip such as an iOS Local Network permission sheet can leave the
+  in-flight attempt on a doomed socket; restarting from attempt 1 is cheaper
+  than waiting out the rest of the ladder.
 - Credential changes interrupt establishment only for relay targets, where a new
   credential changes what is being established.
 - Explicit disconnect, explicit retry, and going offline interrupt establishment

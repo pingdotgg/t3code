@@ -381,7 +381,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "ConnectRequested":
           break;
         case "Wakeup":
-          if (next.reason === "application-active-reconnect") {
+          if (ConnectionWakeups.isApplicationActiveWakeup(next.reason)) {
             return true;
           }
           if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
