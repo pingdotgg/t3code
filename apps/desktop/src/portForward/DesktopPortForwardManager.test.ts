@@ -7,7 +7,7 @@ import {
   TCP_PORT_FORWARD_INITIAL_CREDIT,
   type DesktopPortForwardAuthorizationRequest,
 } from "@t3tools/contracts";
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -54,7 +54,7 @@ const makeAckFrame = (bytes: number) => {
 const makeConnectionSocket = () => {
   const emitter = new EventEmitter();
   const socket = Object.assign(emitter, {
-    destroy: () => socket,
+    destroy: vi.fn(() => socket),
     end: () => socket,
     pause: () => socket,
     resume: () => socket,
@@ -67,11 +67,11 @@ const makeConnectionSocket = () => {
   return socket as unknown as NodeNet.Socket;
 };
 
-const makeConnectionWebSocket = () => {
+const makeConnectionWebSocket = (readyState: number = WebSocket.OPEN) => {
   const listeners = new Map<string, Set<(event: MessageEvent) => void>>();
   const sent: Array<Uint8Array> = [];
   const webSocket = {
-    readyState: WebSocket.OPEN,
+    readyState,
     send: (data: ArrayBuffer) => sent.push(new Uint8Array(data)),
     close: () => undefined,
     addEventListener: (type: string, listener: (event: MessageEvent) => void) => {
@@ -128,6 +128,17 @@ it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
       expect(dataBytes).toBe(TCP_PORT_FORWARD_INITIAL_CREDIT + 1);
       expect(webSocket.sent.at(-1)?.[0]).toBe(TCP_PORT_FORWARD_FRAME_WRITE_END);
       yield* Fiber.interrupt(connection);
+    }),
+  );
+
+  it.effect("closes a local socket when the bridge closed during handoff", () =>
+    Effect.gen(function* () {
+      const socket = makeConnectionSocket();
+      const webSocket = makeConnectionWebSocket(WebSocket.CLOSED);
+
+      yield* DesktopPortForwardManager.runConnection(socket, webSocket.webSocket);
+
+      expect(socket.destroy).toHaveBeenCalled();
     }),
   );
 

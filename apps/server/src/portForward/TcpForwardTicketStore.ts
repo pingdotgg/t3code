@@ -1,4 +1,8 @@
-import { AuthTerminalOperateScope, type TcpPortForwardHost } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  AuthTerminalOperateScope,
+  type TcpPortForwardHost,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -22,8 +26,16 @@ interface TicketRecord {
 
 export class TcpForwardTicketIssueError extends Schema.TaggedErrorClass<TcpForwardTicketIssueError>()(
   "TcpForwardTicketIssueError",
-  { cause: Schema.Defect() },
-) {}
+  {
+    stage: Schema.Literals(["generate-ticket", "issue-session-token"]),
+    sessionId: AuthSessionId,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `TCP forward ticket issuance failed during ${this.stage} for session ${this.sessionId}.`;
+  }
+}
 
 export class TcpForwardTicketInvalidError extends Schema.TaggedErrorClass<TcpForwardTicketInvalidError>()(
   "TcpForwardTicketInvalidError",
@@ -67,11 +79,25 @@ export const make = Effect.gen(function* () {
   const issue: TcpForwardTicketStore["Service"]["issue"] = Effect.fn("TcpForwardTicketStore.issue")(
     function* (input) {
       const ticket = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => new TcpForwardTicketIssueError({ cause })),
+        Effect.mapError(
+          (cause) =>
+            new TcpForwardTicketIssueError({
+              stage: "generate-ticket",
+              sessionId: input.sessionId,
+              cause,
+            }),
+        ),
       );
-      const issued = yield* sessions
-        .issueWebSocketToken(input.sessionId, { ttl: TICKET_TTL })
-        .pipe(Effect.mapError((cause) => new TcpForwardTicketIssueError({ cause })));
+      const issued = yield* sessions.issueWebSocketToken(input.sessionId, { ttl: TICKET_TTL }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TcpForwardTicketIssueError({
+              stage: "issue-session-token",
+              sessionId: input.sessionId,
+              cause,
+            }),
+        ),
+      );
       yield* Ref.update(records, (current) => {
         const next = new Map(
           [...current].filter(

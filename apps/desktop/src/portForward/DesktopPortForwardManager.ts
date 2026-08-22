@@ -181,7 +181,6 @@ const openWebSocket = (socketUrl: string) =>
     const webSocket = new WebSocket(url);
     webSocket.binaryType = "arraybuffer";
     const onOpen = () => {
-      webSocket.removeEventListener("error", onError);
       resume(Effect.succeed(webSocket));
     };
     const onError = (cause: Event) => {
@@ -357,6 +356,7 @@ export const runConnection = (
     webSocket.addEventListener("close", onWebSocketClose, { once: true });
     webSocket.addEventListener("error", onWebSocketError, { once: true });
     socket.setTimeout(IDLE_TIMEOUT_MS, finish);
+    if (webSocket.readyState !== WebSocket.OPEN) finish();
 
     return Effect.sync(() => {
       socket.off("data", onSocketData);
@@ -496,7 +496,8 @@ export const make = Effect.gen(function* () {
           0,
         );
         if (
-          !current.has(forward.snapshot.id) ||
+          current.get(forward.snapshot.id) !== forward ||
+          forward.generation !== generation ||
           forward.sockets.size >= MAX_CONNECTIONS_PER_FORWARD ||
           activeTotal >= MAX_CONNECTIONS_TOTAL
         ) {

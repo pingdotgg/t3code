@@ -210,8 +210,8 @@ export function DesktopPortForwardControl({
                     {forward.localHost}:{forward.localPort}
                   </p>
                   <p className="truncate text-muted-foreground tabular-nums">
-                    {environmentLabels.get(forward.environmentId) ?? "Unknown environment"} · →
-                    {forward.remoteHost}:{forward.remotePort} ·{" "}
+                    {environmentLabels.get(forward.environmentId) ?? "Unknown environment"} ·{" "}
+                    <span aria-hidden="true">→</span> {forward.remoteHost}:{forward.remotePort} ·{" "}
                     {portForwardConnectionSummary(forward)}
                   </p>
                   {forward.lastError === null ? null : (

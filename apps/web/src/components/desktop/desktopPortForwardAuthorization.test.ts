@@ -1,3 +1,9 @@
+import { EnvironmentNotRegisteredError } from "@t3tools/client-runtime/connection";
+import {
+  EnvironmentAuthInvalidError,
+  EnvironmentId,
+  EnvironmentScopeRequiredError,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -26,23 +32,47 @@ describe("desktop port-forward authorization", () => {
   });
 
   it("explains structured environment authorization failures", () => {
-    expect(portForwardAuthorizationErrorMessage({ _tag: "EnvironmentAuthInvalidError" })).toBe(
-      "The environment authorization expired or was rejected after reconnecting.",
-    );
-    expect(portForwardAuthorizationErrorMessage({ _tag: "EnvironmentScopeRequiredError" })).toBe(
-      "Port forwarding requires terminal access on this environment.",
-    );
+    expect(
+      portForwardAuthorizationErrorMessage(
+        new EnvironmentAuthInvalidError({
+          code: "auth_invalid",
+          reason: "invalid_credential",
+          traceId: "trace-a",
+        }),
+      ),
+    ).toBe("The environment authorization expired or was rejected after reconnecting.");
+    expect(
+      portForwardAuthorizationErrorMessage(
+        new EnvironmentScopeRequiredError({
+          code: "insufficient_scope",
+          requiredScope: "terminal:operate",
+          traceId: "trace-b",
+        }),
+      ),
+    ).toBe("Port forwarding requires terminal access on this environment.");
   });
 
   it("identifies renderers that do not own the requested environment", () => {
-    expect(isMissingPortForwardEnvironment({ _tag: "EnvironmentNotRegisteredError" })).toBe(true);
+    expect(
+      isMissingPortForwardEnvironment(
+        new EnvironmentNotRegisteredError({ environmentId: EnvironmentId.make("missing") }),
+      ),
+    ).toBe(true);
     expect(isMissingPortForwardEnvironment({ _tag: "RemoteEnvironmentAuthFetchError" })).toBe(
       false,
     );
   });
 
   it("identifies a rejected environment credential for one reconnect attempt", () => {
-    expect(isRejectedPortForwardAuthorization({ _tag: "EnvironmentAuthInvalidError" })).toBe(true);
+    expect(
+      isRejectedPortForwardAuthorization(
+        new EnvironmentAuthInvalidError({
+          code: "auth_invalid",
+          reason: "invalid_credential",
+          traceId: "trace-c",
+        }),
+      ),
+    ).toBe(true);
     expect(isRejectedPortForwardAuthorization({ _tag: "EnvironmentInternalError" })).toBe(false);
   });
 });

@@ -101,6 +101,15 @@ it("keeps IPv4 loopback as the first target when it is available", async () => {
   target.destroy();
 });
 
+it("keeps an error handler installed while handing off a connected target", async () => {
+  const target = await Effect.runPromise(
+    makeConnectTarget(() => createSocket("connect"))("127.0.0.1", 5173),
+  );
+
+  expect(() => target.emit("error", new Error("reset during handoff"))).not.toThrow();
+  expect(target.destroyed).toBe(true);
+});
+
 it("fails after both loopback addresses are unavailable", async () => {
   const attemptedHosts: Array<string> = [];
   const createConnection = vi.fn(({ host }: { host: string; port: number }) => {

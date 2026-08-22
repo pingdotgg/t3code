@@ -21,6 +21,17 @@ const sessionStoreLayer = SessionStore.layer.pipe(
 const testLayer = TcpForwardTicketStore.layer.pipe(Layer.provideMerge(sessionStoreLayer));
 
 it.layer(NodeServices.layer)("TcpForwardTicketStore", (it) => {
+  it("describes the failed issuance stage and session", () => {
+    const error = new TcpForwardTicketStore.TcpForwardTicketIssueError({
+      stage: "generate-ticket",
+      sessionId: AuthSessionId.make("session-a"),
+      cause: new Error("random source unavailable"),
+    });
+
+    expect(error.message).toContain("generate-ticket");
+    expect(error.message).toContain("session-a");
+  });
+
   it.effect("binds a ticket to its destination and consumes it only once", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;

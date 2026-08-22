@@ -80,14 +80,17 @@ const connectTargetAddress = (
 ) =>
   Effect.callback<NodeNet.Socket, TcpForwardTargetConnectError>((resume) => {
     const target = createConnection({ host, port, allowHalfOpen: true });
+    let connected = false;
     const onConnect = () => {
-      target.off("error", onError);
+      connected = true;
       resume(Effect.succeed(target));
     };
     const onError = (cause: Error) => {
       target.off("connect", onConnect);
       target.destroy();
-      resume(Effect.fail(new TcpForwardTargetConnectError({ host, port, cause })));
+      if (!connected) {
+        resume(Effect.fail(new TcpForwardTargetConnectError({ host, port, cause })));
+      }
     };
     target.once("connect", onConnect);
     target.once("error", onError);
@@ -225,6 +228,7 @@ export const runBridge = Effect.fn("TcpForwardBridge.run")(function* (
   target.once("error", onError);
   target.once("close", onClose);
   target.setTimeout(IDLE_TIMEOUT_MS, () => target.destroy());
+  if (target.destroyed) close();
 
   const protocolFailure = (reason: string) => {
     writeWebSocket(errorFrame(reason));

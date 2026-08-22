@@ -55,7 +55,9 @@ export function useDesktopPortForwards() {
         if (!disposed && !stateChangeReceived) setForwards(next);
       },
       (cause) => {
-        if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!disposed && !stateChangeReceived) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
       },
     );
     return () => {
