@@ -396,13 +396,23 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     mode: "command",
     openIntent: null,
   });
-  const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
-  const toggleMode = useCallback(
-    (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
-    [],
-  );
-  const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
-  const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const [dialogContentMounted, setDialogContentMounted] = useState(false);
+  const setOpen = useCallback((open: boolean) => {
+    if (open) setDialogContentMounted(true);
+    dispatch({ _tag: "SetOpen", open });
+  }, []);
+  const toggleMode = useCallback((mode: SearchOverlayMode) => {
+    setDialogContentMounted(true);
+    dispatch({ _tag: "ToggleMode", mode });
+  }, []);
+  const openAddProject = useCallback(() => {
+    setDialogContentMounted(true);
+    dispatch({ _tag: "OpenAddProject" });
+  }, []);
+  const openNewThreadIn = useCallback(() => {
+    setDialogContentMounted(true);
+    dispatch({ _tag: "OpenNewThreadIn" });
+  }, []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
@@ -496,15 +506,20 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           }
           setOpen(open);
         }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setDialogContentMounted(false);
+        }}
       >
         {children}
-        <CommandPaletteDialog
-          mode={state.mode}
-          openIntent={state.openIntent}
-          setOpen={setOpen}
-          openOverlayMode={toggleMode}
-          clearOpenIntent={clearOpenIntent}
-        />
+        {dialogContentMounted ? (
+          <CommandPaletteDialog
+            mode={state.mode}
+            openIntent={state.openIntent}
+            setOpen={setOpen}
+            openOverlayMode={toggleMode}
+            clearOpenIntent={clearOpenIntent}
+          />
+        ) : null}
       </CommandDialog>
     </ComposerHandleContext>
   );

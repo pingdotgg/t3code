@@ -271,6 +271,7 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
 }
 
 export interface PullRequestDialogState {
+  open: boolean;
   initialReference: string | null;
   key: number;
 }
