@@ -95,21 +95,11 @@ jobs:
             echo "EXPO_TOKEN is not available; skipping EAS production job."
           fi
 
-      - id: version_app_token
-        name: Mint release app token for version override
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != ''
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ steps.version_app_token.outputs.token || github.token }}
           # No sparse-checkout here: it makes actions/checkout fetch with
           # --filter=blob:none, and eas-cli archives the project via
           # `git clone --depth 1 file://<workspace>`, which fails (exit 128)
@@ -150,6 +140,20 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas env:pull production --non-interactive
+
+      # Minted immediately before use so the write-capable Release App token
+      # never exists during checkout or dependency setup, and is passed only
+      # to the push below instead of being persisted by actions/checkout.
+      - id: version_app_token
+        name: Mint release app token for version override
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       - name: Apply manual version override
         if: steps.version_app_token.outcome == 'success'
@@ -194,7 +198,14 @@ jobs:
           git commit \
             -m "chore(mobile): bump app version to $RELEASE_VERSION" \
             -m "Co-authored-by: codex <codex@users.noreply.github.com>"
-          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          # One-shot credential: the leading empty value resets the header list
+          # checkout persisted (extraheader is multi-valued), so the read-only
+          # github.token never reaches github.com and the App token is not
+          # persisted anywhere.
+          git \
+            -c http.https://github.com/.extraheader= \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+            push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
 
       - name: Summarize manual build version
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'
