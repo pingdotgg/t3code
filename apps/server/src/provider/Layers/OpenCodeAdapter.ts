@@ -221,6 +221,13 @@ function isOpenCodeDefaultTitle(title: string): boolean {
   return OPENCODE_DEFAULT_TITLE_PATTERN.test(title);
 }
 
+interface OpenCodeQuestionState {
+  readonly pendingQuestions: Map<string, QuestionRequest>;
+  readonly replyingQuestions: Map<string, QuestionRequest>;
+  readonly settlementCount: number;
+  readonly settlementVersion: number;
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -228,7 +235,7 @@ interface OpenCodeSessionContext {
   readonly directory: string;
   readonly openCodeSessionId: string;
   readonly pendingPermissions: Map<string, PermissionRequest>;
-  readonly pendingQuestions: Map<string, QuestionRequest>;
+  readonly questionState: Ref.Ref<OpenCodeQuestionState>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
@@ -557,24 +564,42 @@ function updateProviderSession(
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
+  beforeAbort: Effect.Effect<void, never> = Effect.void,
+  afterClose: Effect.Effect<void, never> = Effect.void,
 ) {
-  // Race-safe one-shot: first caller flips the flag, everyone else no-ops.
-  if (yield* Ref.getAndSet(context.stopped, true)) {
-    return false;
-  }
+  return yield* Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      // Race-safe one-shot: first caller flips the flag, everyone else no-ops.
+      if (yield* Ref.getAndSet(context.stopped, true)) {
+        return false;
+      }
+      yield* Ref.update(context.questionState, (state) => ({
+        ...state,
+        settlementCount: state.settlementCount + 1,
+        settlementVersion: state.settlementVersion + 1,
+      }));
 
-  // Best-effort remote abort. The scope close below tears down the local
-  // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
-  // but we still want to tell OpenCode that this session is done.
-  yield* runOpenCodeSdk("session.abort", () =>
-    context.client.session.abort({ sessionID: context.openCodeSessionId }),
-  ).pipe(Effect.ignore({ log: true }));
+      const cleanupExit = yield* restore(
+        Effect.gen(function* () {
+          yield* beforeAbort;
 
-  // Closing the session scope interrupts every fiber forked into it and
-  // runs each finalizer we registered — the `AbortController.abort()` call,
-  // the child-process termination, etc.
-  yield* Scope.close(context.sessionScope, Exit.void);
-  return true;
+          // Best-effort remote abort. The scope close below tears down the local
+          // handles, but we still want to tell OpenCode that this session is done.
+          yield* runOpenCodeSdk("session.abort", () =>
+            context.client.session.abort({ sessionID: context.openCodeSessionId }),
+          ).pipe(Effect.ignore({ log: true }));
+        }),
+      ).pipe(Effect.exit);
+
+      // The mask guarantees scope ownership is released after the one-shot
+      // guard flips, even when the caller interrupts the work above.
+      yield* Scope.close(context.sessionScope, Exit.void).pipe(Effect.ensuring(afterClose));
+      if (Exit.isFailure(cleanupExit)) {
+        return yield* Effect.failCause(cleanupExit.cause);
+      }
+      return true;
+    }),
+  );
 });
 
 export function makeOpenCodeAdapter(
@@ -653,7 +678,8 @@ export function makeOpenCodeAdapter(
         // the remaining cleanups.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) =>
+            Effect.ignoreCause(stopOpenCodeContext(context, settlePendingQuestions(context))),
           { concurrency: "unbounded", discard: true },
         );
         // Close the logger AFTER session teardown so any final lifecycle
@@ -668,6 +694,65 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+    const settlePendingQuestions = Effect.fn("settlePendingQuestions")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      const { rejectIds, resolveIds } = yield* Ref.modify(context.questionState, (state) => [
+        {
+          rejectIds: [...state.pendingQuestions.keys()],
+          resolveIds: [...state.pendingQuestions.keys(), ...state.replyingQuestions.keys()],
+        },
+        { ...state, pendingQuestions: new Map(), replyingQuestions: new Map() },
+      ]);
+      if (resolveIds.length === 0) {
+        return;
+      }
+
+      if (rejectIds.length > 0) {
+        const rejectionExit = yield* Effect.forEach(
+          rejectIds,
+          (requestId) =>
+            runOpenCodeSdk("question.reject", () =>
+              context.client.question.reject({ requestID: requestId }),
+            ),
+          { discard: true },
+        ).pipe(Effect.timeoutOption("5 seconds"), Effect.exit);
+        if (Exit.isFailure(rejectionExit)) {
+          yield* Effect.logWarning("opencode.pending-questions.reject-failed", {
+            threadId: context.session.threadId,
+            cause: Cause.squash(rejectionExit.cause),
+          });
+        } else if (Option.isNone(rejectionExit.value)) {
+          yield* Effect.logWarning("opencode.pending-questions.reject-timed-out", {
+            threadId: context.session.threadId,
+            timeout: "5 seconds",
+          });
+        }
+      }
+
+      for (const requestId of resolveIds) {
+        yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: context.activeTurnId,
+          requestId,
+        }).pipe(
+          Effect.flatMap((eventBase) =>
+            emit({
+              ...eventBase,
+              type: "user-input.resolved",
+              payload: { answers: {} },
+            }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("opencode.pending-questions.resolve-emit-failed", {
+              threadId: context.session.threadId,
+              requestId,
+              cause: Cause.squash(cause),
+            }),
+          ),
+        );
+      }
+    });
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -996,7 +1081,20 @@ export function makeOpenCodeAdapter(
         }
 
         case "question.asked": {
-          context.pendingQuestions.set(event.properties.id, event.properties);
+          if (yield* Ref.get(context.stopped)) {
+            break;
+          }
+          const accepted = yield* Ref.modify(context.questionState, (state) => {
+            if (state.settlementCount > 0) {
+              return [false, state];
+            }
+            const pendingQuestions = new Map(state.pendingQuestions);
+            pendingQuestions.set(event.properties.id, event.properties);
+            return [true, { ...state, pendingQuestions }];
+          });
+          if (!accepted) {
+            break;
+          }
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
@@ -1013,10 +1111,24 @@ export function makeOpenCodeAdapter(
         }
 
         case "question.replied": {
-          const request = context.pendingQuestions.get(event.properties.requestID);
-          context.pendingQuestions.delete(event.properties.requestID);
+          const request = yield* Ref.modify(context.questionState, (state) => {
+            const request =
+              state.pendingQuestions.get(event.properties.requestID) ??
+              state.replyingQuestions.get(event.properties.requestID);
+            if (!request) {
+              return [undefined, state];
+            }
+            const pendingQuestions = new Map(state.pendingQuestions);
+            const replyingQuestions = new Map(state.replyingQuestions);
+            pendingQuestions.delete(event.properties.requestID);
+            replyingQuestions.delete(event.properties.requestID);
+            return [request, { ...state, pendingQuestions, replyingQuestions }];
+          });
+          if (!request) {
+            break;
+          }
           const answers = Object.fromEntries(
-            (request?.questions ?? []).map((question, index) => [
+            request.questions.map((question, index) => [
               openCodeQuestionId(index, question),
               event.properties.answers[index]?.join(", ") ?? "",
             ]),
@@ -1035,7 +1147,22 @@ export function makeOpenCodeAdapter(
         }
 
         case "question.rejected": {
-          context.pendingQuestions.delete(event.properties.requestID);
+          const wasPending = yield* Ref.modify(context.questionState, (state) => {
+            if (
+              !state.pendingQuestions.has(event.properties.requestID) &&
+              !state.replyingQuestions.has(event.properties.requestID)
+            ) {
+              return [false, state];
+            }
+            const pendingQuestions = new Map(state.pendingQuestions);
+            const replyingQuestions = new Map(state.replyingQuestions);
+            pendingQuestions.delete(event.properties.requestID);
+            replyingQuestions.delete(event.properties.requestID);
+            return [true, { ...state, pendingQuestions, replyingQuestions }];
+          });
+          if (!wasPending) {
+            break;
+          }
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
@@ -1210,8 +1337,15 @@ export function makeOpenCodeAdapter(
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
         const existing = sessions.get(input.threadId);
         if (existing) {
-          yield* stopOpenCodeContext(existing);
-          sessions.delete(input.threadId);
+          yield* stopOpenCodeContext(
+            existing,
+            settlePendingQuestions(existing),
+            Effect.sync(() => {
+              if (sessions.get(input.threadId) === existing) {
+                sessions.delete(input.threadId);
+              }
+            }),
+          );
         }
 
         const started = yield* Effect.gen(function* () {
@@ -1351,7 +1485,7 @@ export function makeOpenCodeAdapter(
         // Guard against a concurrent startSession call that may have raced
         // and already inserted a session while we were awaiting async work.
         const raceWinner = sessions.get(input.threadId);
-        if (raceWinner) {
+        if (raceWinner && !(yield* Ref.get(raceWinner.stopped))) {
           // Another call won the race — clean up. Only abort the remote
           // session if we created it here; a resumed one is shared upstream
           // state the winner is now using.
@@ -1364,6 +1498,9 @@ export function makeOpenCodeAdapter(
           }
           yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
           return raceWinner.session;
+        }
+        if (raceWinner && sessions.get(input.threadId) === raceWinner) {
+          sessions.delete(input.threadId);
         }
 
         const createdAt = yield* nowIso;
@@ -1393,7 +1530,12 @@ export function makeOpenCodeAdapter(
           directory,
           openCodeSessionId: started.openCodeSession.id,
           pendingPermissions: new Map(),
-          pendingQuestions: new Map(),
+          questionState: yield* Ref.make({
+            pendingQuestions: new Map(),
+            replyingQuestions: new Map(),
+            settlementCount: 0,
+            settlementVersion: 0,
+          }),
           partById: new Map(),
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
@@ -1558,9 +1700,24 @@ export function makeOpenCodeAdapter(
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        yield* runOpenCodeSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
+        yield* Effect.gen(function* () {
+          yield* Ref.update(context.questionState, (state) => ({
+            ...state,
+            settlementCount: state.settlementCount + 1,
+            settlementVersion: state.settlementVersion + 1,
+          }));
+          yield* settlePendingQuestions(context);
+          yield* runOpenCodeSdk("session.abort", () =>
+            context.client.session.abort({ sessionID: context.openCodeSessionId }),
+          ).pipe(Effect.mapError(toRequestError));
+        }).pipe(
+          Effect.ensuring(
+            Ref.update(context.questionState, (state) => ({
+              ...state,
+              settlementCount: Math.max(0, state.settlementCount - 1),
+            })),
+          ),
+        );
         if (turnId ?? context.activeTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
@@ -1600,21 +1757,60 @@ export function makeOpenCodeAdapter(
       "respondToUserInput",
     )(function* (threadId, requestId, answers) {
       const context = yield* ensureSessionContext(sessions, threadId);
-      const request = context.pendingQuestions.get(requestId);
-      if (!request) {
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "question.reply",
-          detail: `Unknown pending user-input request: ${requestId}`,
-        });
-      }
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const claim = yield* Ref.modify(context.questionState, (state) => {
+            if (state.settlementCount > 0) {
+              return [undefined, state];
+            }
+            const request = state.pendingQuestions.get(requestId);
+            if (!request) {
+              return [undefined, state];
+            }
+            const pendingQuestions = new Map(state.pendingQuestions);
+            const replyingQuestions = new Map(state.replyingQuestions);
+            pendingQuestions.delete(requestId);
+            replyingQuestions.set(requestId, request);
+            return [
+              { request, settlementVersion: state.settlementVersion },
+              { ...state, pendingQuestions, replyingQuestions },
+            ];
+          });
+          if (!claim) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "question.reply",
+              detail: `Unknown pending user-input request: ${requestId}`,
+            });
+          }
 
-      yield* runOpenCodeSdk("question.reply", () =>
-        context.client.question.reply({
-          requestID: requestId,
-          answers: toOpenCodeQuestionAnswers(request, answers),
+          const replyExit = yield* restore(
+            runOpenCodeSdk("question.reply", () =>
+              context.client.question.reply({
+                requestID: requestId,
+                answers: toOpenCodeQuestionAnswers(claim.request, answers),
+              }),
+            ).pipe(Effect.mapError(toRequestError)),
+          ).pipe(Effect.exit);
+          if (Exit.isFailure(replyExit)) {
+            yield* Ref.update(context.questionState, (state) => {
+              if (
+                state.settlementCount > 0 ||
+                state.settlementVersion !== claim.settlementVersion ||
+                state.replyingQuestions.get(requestId) !== claim.request
+              ) {
+                return state;
+              }
+              const pendingQuestions = new Map(state.pendingQuestions);
+              const replyingQuestions = new Map(state.replyingQuestions);
+              replyingQuestions.delete(requestId);
+              pendingQuestions.set(requestId, claim.request);
+              return { ...state, pendingQuestions, replyingQuestions };
+            });
+            return yield* Effect.failCause(replyExit.cause);
+          }
         }),
-      ).pipe(Effect.mapError(toRequestError));
+      );
     });
 
     const stopSession: OpenCodeAdapterShape["stopSession"] = Effect.fn("stopSession")(
@@ -1626,9 +1822,18 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context);
-        sessions.delete(threadId);
-        if (!stopped) {
+        let removed = false;
+        const stopped = yield* stopOpenCodeContext(
+          context,
+          settlePendingQuestions(context),
+          Effect.sync(() => {
+            if (sessions.get(threadId) === context) {
+              sessions.delete(threadId);
+              removed = true;
+            }
+          }),
+        );
+        if (!stopped || !removed) {
           return;
         }
         yield* emit({
@@ -1710,7 +1915,8 @@ export function makeOpenCodeAdapter(
         // interrupt the sibling fibers. Same pattern as the layer finalizer.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) =>
+            Effect.ignoreCause(stopOpenCodeContext(context, settlePendingQuestions(context))),
           { concurrency: "unbounded", discard: true },
         );
       });
