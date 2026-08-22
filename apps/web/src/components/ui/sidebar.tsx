@@ -318,18 +318,30 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  onClick,
+  unreadCount,
+  "aria-label": ariaLabel,
+  ...props
+}: React.ComponentProps<typeof Button> & { unreadCount?: number | undefined }) {
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
+  const resolvedAriaLabel =
+    ariaLabel ??
+    (unreadCount !== undefined && unreadCount > 0
+      ? `Toggle Sidebar (${unreadCount} unread)`
+      : undefined);
 
   return (
     <Button
       className={cn(
-        "size-[var(--workspace-titlebar-control-size)]! [-webkit-app-region:no-drag]",
+        "relative size-[var(--workspace-titlebar-control-size)]! [-webkit-app-region:no-drag]",
         className,
       )}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
+      aria-label={resolvedAriaLabel}
       aria-pressed={isOpen}
       onClick={(event) => {
         onClick?.(event);
@@ -340,6 +352,15 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      {unreadCount !== undefined && unreadCount > 0 ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-semibold tabular-nums text-white shadow-xs"
+          data-testid="sidebar-unread-badge"
+        >
+          {unreadCount > 9 ? "9+" : unreadCount}
+        </span>
+      ) : null}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
