@@ -8,11 +8,45 @@ import {
   parsePermissionRequest,
   parseSessionModeState,
   parseSessionUpdateEvent,
+  resolveAcpSessionModeId,
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
 } from "./AcpRuntimeModel.ts";
 
 describe("AcpRuntimeModel", () => {
+  it("maps T3 interaction and permission modes onto negotiated ACP modes", () => {
+    const modeState = {
+      currentModeId: "ask",
+      availableModes: [
+        { id: "ask", name: "Ask" },
+        { id: "architect", name: "Architect" },
+        { id: "code", name: "Code" },
+      ],
+    };
+
+    expect(
+      resolveAcpSessionModeId({
+        interactionMode: "plan",
+        runtimeMode: "full-access",
+        modeState,
+      }),
+    ).toBe("architect");
+    expect(
+      resolveAcpSessionModeId({
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        modeState,
+      }),
+    ).toBe("code");
+    expect(
+      resolveAcpSessionModeId({
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        modeState,
+      }),
+    ).toBe("ask");
+  });
+
   it("parses session mode state from typed ACP session setup responses", () => {
     const modeState = parseSessionModeState({
       sessionId: "session-1",
