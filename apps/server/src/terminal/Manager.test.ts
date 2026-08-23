@@ -1909,6 +1909,57 @@ it.layer(
     }),
   );
 
+  it.effect("discards failed persistence state when an inactive session is evicted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const failedWrite = yield* Deferred.make<void>();
+      const exited = yield* Deferred.make<void>();
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "writeFileString",
+        pathOrDescriptor: "terminal-history",
+      });
+      let rejectHistoryWrites = true;
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (path, contents, options) => {
+          if (path.endsWith(".log") && rejectHistoryWrites) {
+            return Deferred.succeed(failedWrite, undefined).pipe(
+              Effect.andThen(Effect.fail(cause)),
+            );
+          }
+          return fileSystem.writeFileString(path, contents, options);
+        },
+      });
+      const { manager, ptyAdapter } = yield* createManager(100, {
+        maxRetainedInactiveSessions: 1,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem));
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited" && event.threadId === "thread-1"
+          ? Deferred.succeed(exited, undefined)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* manager.open(openInput({ threadId: "thread-1" }));
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("discarded after eviction\n");
+      yield* Deferred.await(failedWrite);
+      process.emitExit({ exitCode: 0, signal: 0 });
+      yield* Deferred.await(exited);
+      yield* manager.open(openInput({ threadId: "thread-2" }));
+
+      rejectHistoryWrites = false;
+      const reopened = yield* manager.open(openInput({ threadId: "thread-1" }));
+
+      expect(reopened.history).toBe("");
+    }),
+  );
+
   it.effect("migrates legacy transcript filenames to terminal-scoped history path on open", () =>
     Effect.gen(function* () {
       const { manager, logsDir } = yield* createManager();

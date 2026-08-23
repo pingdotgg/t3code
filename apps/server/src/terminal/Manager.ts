@@ -1509,8 +1509,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         .pipe(
           Effect.matchEffect({
             onFailure: (error) =>
-              Effect.sync(() => {
-                failedPersistByKey.set(sessionKey, nextRequest);
+              modifyManagerState((state) => {
+                if (state.sessions.has(sessionKey)) {
+                  failedPersistByKey.set(sessionKey, nextRequest);
+                } else {
+                  failedPersistByKey.delete(sessionKey);
+                }
+                return [undefined, state] as const;
               }).pipe(
                 Effect.andThen(
                   Effect.logWarning("failed to persist terminal history", {
@@ -1853,6 +1858,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         for (const session of inactiveSessions.slice(0, toEvict)) {
           const key = toSessionKey(session.threadId, session.terminalId);
           sessions.delete(key);
+          failedPersistByKey.delete(key);
         }
 
         return [undefined, { ...state, sessions }] as const;
