@@ -252,6 +252,7 @@ export function SidebarThreadBoard(props: {
         return (
           <li
             ref={bag.setNodeRef}
+            aria-hidden={content === null || entry.section === "regular" || undefined}
             data-sidebar-thread-section-boundary={entry.section}
             className={cn("relative list-none", content === null && "h-0")}
             style={{
