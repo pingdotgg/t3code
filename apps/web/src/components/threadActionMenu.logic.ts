@@ -128,6 +128,7 @@ export function buildThreadActionMenuItems(
       id: "archive",
       label: "Archive thread",
       icon: "archive",
+      tone: "warning",
       disabled: state.isRunning,
       separatorBefore: true,
     },

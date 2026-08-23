@@ -1,8 +1,10 @@
+import { useEffect } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHosts";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
+import { installGlobalTextContextMenu } from "./contextMenuFallback";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
 
@@ -12,6 +14,10 @@ import type { AppRouter } from "./router";
  * share the same atom registry as routed UI.
  */
 export function AppRoot({ router }: { readonly router: AppRouter }) {
+  useEffect(() => {
+    return installGlobalTextContextMenu();
+  }, []);
+
   return (
     <AppAtomRegistryProvider>
       <RouterProvider router={router} />

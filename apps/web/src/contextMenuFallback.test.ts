@@ -34,12 +34,11 @@ class FakeElement {
 
   constructor(readonly tagName: string) {}
 
-  get isConnected() {
-    let current: FakeElement | null = this;
-    while (current?.parent) {
-      current = current.parent;
+  get isConnected(): boolean {
+    for (let current: FakeElement | null = this as FakeElement; current; current = current.parent) {
+      if (current.tagName === "body") return true;
     }
-    return current?.tagName === "body";
+    return false;
   }
 
   appendChild(child: FakeElement) {
@@ -67,6 +66,9 @@ class FakeElement {
 
   setAttribute(name: string, value: string) {
     this.attributes.set(name, value);
+    if (name === "class") {
+      this.className = value;
+    }
   }
 
   dispatchEvent(event: FakeDomEvent) {
@@ -157,6 +159,10 @@ class FakeDocument {
     return new FakeElement(tagName);
   }
 
+  createElementNS(_ns: string, tagName: string) {
+    return new FakeElement(tagName);
+  }
+
   addEventListener(type: string, listener: FakeListener) {
     const existing = this.listeners.get(type) ?? [];
     existing.push(listener);
@@ -230,6 +236,46 @@ describe("showContextMenuFallback", () => {
 
     expect(separators).toHaveLength(1);
     expect(separators[0]?.attributes.get("role")).toBe("separator");
+    dismissContextMenu();
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
+  it("renders icons and applies appropriate tone classes and colors", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename", icon: "pencil" },
+      { id: "archive", label: "Archive", tone: "warning", icon: "archive" },
+      { id: "delete", label: "Delete", destructive: true, icon: "trash" },
+      { id: "disabled-item", label: "Disabled", disabled: true, icon: "clock" },
+    ]);
+
+    const renameButton = findButton("Rename");
+    const archiveButton = findButton("Archive");
+    const deleteButton = findButton("Delete");
+    const disabledButton = findButton("Disabled");
+
+    expect(renameButton).toBeTruthy();
+    expect(archiveButton).toBeTruthy();
+    expect(deleteButton).toBeTruthy();
+    expect(disabledButton).toBeTruthy();
+
+    const renameSvg = renameButton?.querySelectorAll("svg")[0];
+    const archiveSvg = archiveButton?.querySelectorAll("svg")[0];
+    const deleteSvg = deleteButton?.querySelectorAll("svg")[0];
+    const disabledSvg = disabledButton?.querySelectorAll("svg")[0];
+
+    expect(renameSvg).toBeTruthy();
+    expect(renameSvg?.className).toContain("text-muted-foreground");
+    expect(archiveSvg).toBeTruthy();
+    expect(archiveSvg?.className).toContain("text-warning-foreground");
+    expect(deleteSvg).toBeTruthy();
+    expect(deleteSvg?.className).toContain("text-destructive-foreground");
+    expect(disabledSvg).toBeTruthy();
+
+    expect(archiveButton?.style.color).toBe("var(--warning-foreground)");
+    expect(deleteButton?.style.color).toBe("var(--destructive-foreground)");
+    expect(disabledButton?.style.color).toBe("var(--contrast-muted-foreground)");
+    expect(disabledButton?.style.opacity).toBe("0.64");
+
     dismissContextMenu();
     await expect(selectionPromise).resolves.toBeNull();
   });

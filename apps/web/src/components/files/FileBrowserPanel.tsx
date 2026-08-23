@@ -155,8 +155,8 @@ export default function FileBrowserPanel({
     try {
       const clicked = await api.contextMenu.show(
         [
-          { id: "copy-mention", label: "Copy mention" },
-          { id: "add-to-chat", label: "Add to chat" },
+          { id: "copy-mention", label: "Copy mention", icon: "copy" },
+          { id: "add-to-chat", label: "Add to chat", icon: "message-square-plus" },
         ],
         position,
       );

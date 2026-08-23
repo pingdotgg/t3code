@@ -478,8 +478,10 @@ export const make = Effect.gen(function* () {
     });
 
     window.webContents.on("context-menu", (event, params) => {
-      event.preventDefault();
-
+      // Build a native menu only for Electron-exclusive capabilities that the
+      // web renderer cannot provide: spellcheck suggestions, Copy Link, and
+      // Copy Image. Standard text editing (Cut / Copy / Paste / Select All)
+      // is handled by the themed web-side context menu instead.
       const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
       if (params.misspelledWord) {
@@ -515,14 +517,18 @@ export const make = Effect.gen(function* () {
         menuTemplate.push({ type: "separator" });
       }
 
-      menuTemplate.push(
-        { role: "cut", enabled: params.editFlags.canCut },
-        { role: "copy", enabled: params.editFlags.canCopy },
-        { role: "paste", enabled: params.editFlags.canPaste },
-        { role: "selectAll", enabled: params.editFlags.canSelectAll },
-      );
+      if (menuTemplate.length > 0) {
+        // Strip trailing separator before showing.
+        const last = menuTemplate[menuTemplate.length - 1];
+        if (last?.type === "separator") {
+          menuTemplate.pop();
+        }
+        void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+      }
 
-      void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+      // Always suppress the default native menu so the web-side themed menu
+      // can handle standard text operations (Cut, Copy, Paste, Select All).
+      event.preventDefault();
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
