@@ -97,6 +97,7 @@ import {
 } from "../ui/dialog";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupText } from "../ui/input-group";
 import {
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
@@ -2285,9 +2286,10 @@ export function GeneralSettingsPanel() {
                 ) : null
               }
               control={
-                <div className="flex w-full items-center gap-1.5 sm:w-auto">
+                <InputGroup className="w-full sm:w-44">
                   <DraftInput
-                    className="w-full font-mono sm:w-44"
+                    unstyled
+                    className="font-mono"
                     value={settings.worktreeBranchPrefix}
                     onCommit={(next) =>
                       updateSettings({
@@ -2299,10 +2301,10 @@ export function GeneralSettingsPanel() {
                     autoCorrect="off"
                     spellCheck={false}
                   />
-                  <span className="font-mono text-xs text-muted-foreground" aria-hidden>
-                    /
-                  </span>
-                </div>
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupText>/</InputGroupText>
+                  </InputGroupAddon>
+                </InputGroup>
               }
             />
           </>
