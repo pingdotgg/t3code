@@ -17,8 +17,12 @@ import * as NodeOS from "node:os";
 
 import {
   AgentSessionScanError,
+  ClaudeSettings,
+  CodexSettings,
+  ProviderDriverKind,
   type AgentSessionProjectCandidate,
   type AgentSessionScanResult,
+  type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -27,6 +31,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -56,6 +61,9 @@ const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
  * indefinitely.
  */
 const MAX_STATS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
+
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
@@ -224,12 +232,12 @@ export const make = Effect.gen(function* () {
    * `CLAUDE_CONFIG_DIR`), then a `CLAUDE_CONFIG_DIR` already in the
    * environment, then `~/.claude`.
    */
-  const resolveClaudeConfigDir = (homePath: string): string => {
+  const resolveClaudeConfigDir = (homePath: string, environmentHome?: string): string => {
     const configured = homePath.trim();
     if (configured.length > 0) {
       return path.resolve(expandHomePath(configured));
     }
-    const fromEnvironment = hostEnvironment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+    const fromEnvironment = environmentHome?.trim() ?? "";
     if (fromEnvironment.length > 0) {
       return path.resolve(expandHomePath(fromEnvironment));
     }
@@ -243,7 +251,7 @@ export const make = Effect.gen(function* () {
    * transcript inside it.
    */
   const scanClaude = Effect.fn("AgentSessionScanner.scanClaude")(function* (homePath: string) {
-    const projectsDir = path.join(resolveClaudeConfigDir(homePath), "projects");
+    const projectsDir = path.join(homePath, "projects");
     const projectDirectories = yield* listDirectory(projectsDir);
     const candidates: Array<RawCandidate> = [];
     let readBudget = MAX_TRANSCRIPTS_PER_SOURCE;
@@ -303,13 +311,8 @@ export const make = Effect.gen(function* () {
    * Codex writes `sessions/YYYY/MM/DD/rollout-*.jsonl`. Always scan the shared
    * home: in auth-overlay mode the effective home only symlinks to it.
    */
-  const scanCodex = Effect.fn("AgentSessionScanner.scanCodex")(function* (
-    codexSettings: Parameters<typeof resolveCodexHomeLayout>[0],
-  ) {
-    const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
-      Effect.provideService(Path.Path, path),
-    );
-    const sessionsDir = path.join(layout.sharedHomePath, "sessions");
+  const scanCodex = Effect.fn("AgentSessionScanner.scanCodex")(function* (homePath: string) {
+    const sessionsDir = path.join(homePath, "sessions");
 
     const rollouts: Array<string> = [];
     // Date-partitioned directories sort chronologically, so walking them in
@@ -363,10 +366,55 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-settings", cause })),
     );
 
-    const raw = [
-      ...(yield* scanClaude(settings.providers.claudeAgent.homePath)),
-      ...(yield* scanCodex(settings.providers.codex)),
-    ];
+    const raw: Array<RawCandidate> = [];
+    const scannedHomes = new Set<string>();
+
+    for (const source of ["claudeAgent", "codex"] as const) {
+      const instances: Array<ProviderInstanceConfig> = Object.values(
+        settings.providerInstances,
+      ).filter((instance) => instance.driver === source);
+      if (!Object.hasOwn(settings.providerInstances, source)) {
+        instances.push({
+          driver: ProviderDriverKind.make(source),
+          config: settings.providers[source],
+        });
+      }
+
+      for (const instance of instances) {
+        const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+        const environmentHome =
+          instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
+          hostEnvironment[homeVariable];
+
+        let homePath: string;
+        if (source === "claudeAgent") {
+          const config = decodeClaudeSettings(instance.config ?? {});
+          if (Option.isNone(config)) continue;
+          homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
+        } else {
+          const config = decodeCodexSettings(instance.config ?? {});
+          if (Option.isNone(config)) continue;
+          const codexSettings =
+            config.value.homePath.trim().length === 0 &&
+            config.value.shadowHomePath.trim().length === 0 &&
+            environmentHome?.trim()
+              ? { ...config.value, homePath: environmentHome }
+              : config.value;
+          const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
+            Effect.provideService(Path.Path, path),
+          );
+          homePath = layout.sharedHomePath;
+        }
+
+        const realHomePath = yield* fileSystem
+          .realPath(homePath)
+          .pipe(Effect.orElseSucceed(() => homePath));
+        const homeKey = `${source}\0${normalizeProjectPathForComparison(realHomePath)}`;
+        if (scannedHomes.has(homeKey)) continue;
+        scannedHomes.add(homeKey);
+        raw.push(...(yield* source === "claudeAgent" ? scanClaude(homePath) : scanCodex(homePath)));
+      }
+    }
 
     // Merge by resolved path first so both sources agree on a key, then by
     // realpath so a symlinked home and its target collapse into one candidate.
@@ -382,7 +430,9 @@ export const make = Effect.gen(function* () {
     const realPathKeys = new Map<string, string>();
 
     for (const candidate of raw) {
-      const resolved = path.resolve(expandHomePath(candidate.cwd.trim()));
+      const expanded = expandHomePath(candidate.cwd.trim());
+      if (!path.isAbsolute(expanded)) continue;
+      const resolved = path.resolve(expanded);
       if (isExcludedProjectPath(resolved)) continue;
       let key = realPathKeys.get(resolved);
       if (key === undefined) {

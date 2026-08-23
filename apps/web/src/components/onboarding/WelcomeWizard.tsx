@@ -28,11 +28,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { APP_BASE_NAME } from "../../branding";
+import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import { partitionOnboardingProjects } from "../../onboarding/projectImport.logic";
+import {
+  getOnboardingProviderState,
+  selectOnboardingProvidersByDriver,
+} from "../../onboarding/providerReadiness.logic";
+import { resolveOnboardingTargetEnvironment } from "../../onboarding/targetEnvironment.logic";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { resolveDefaultProviderModelSelection } from "../../providerInstances";
@@ -51,6 +57,7 @@ import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -79,22 +86,18 @@ type ConnectionMode = "local" | "connect" | "direct";
  * "primary machine" concept — just whichever machine fits the chosen path
  * right now, labeled inline on each step.
  */
-function useOnboardingTargetEnvironment(mode: ConnectionMode) {
+function useOnboardingTargetEnvironment(
+  mode: ConnectionMode,
+  pairedEnvironmentId: EnvironmentId | null,
+) {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
-  const connectedRemotes = environments.filter(
-    (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.entry.target._tag !== "PrimaryConnectionTarget",
-  );
-  if (mode !== "local" && connectedRemotes.length > 0) {
-    // Registry order is append-order, so the last entry is the newest link.
-    return connectedRemotes[connectedRemotes.length - 1] ?? null;
-  }
-  if (primaryEnvironment !== null && primaryEnvironment.connection.phase === "connected") {
-    return primaryEnvironment;
-  }
-  return mode === "local" ? null : (connectedRemotes[0] ?? null);
+  return resolveOnboardingTargetEnvironment({
+    mode,
+    environments,
+    primaryEnvironment,
+    pairedEnvironmentId,
+  });
 }
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
@@ -116,7 +119,8 @@ export function WelcomeWizard({
   const completeOnboarding = useCompleteOnboarding();
   const [step, setStep] = useState<WizardStep>("connection");
   const [mode, setMode] = useState<ConnectionMode>("local");
-  const targetEnvironment = useOnboardingTargetEnvironment(mode);
+  const [pairedEnvironmentId, setPairedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
   const finish = useCallback(() => {
     completeOnboarding();
@@ -124,8 +128,14 @@ export function WelcomeWizard({
   }, [completeOnboarding, onDone]);
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-white [--accent-foreground:#fff] [--accent:#171717] [--background:#000] [--border:#262626] [--foreground:#fff] [--input:#262626] [--muted-foreground:#a1a1aa] [--muted:#171717] [--placeholder:#71717a] [--ring:#737373] [color-scheme:dark]">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-6 sm:px-10">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-white [--accent-foreground:#fff] [--accent:#171717] [--background:#000] [--border:#262626] [--card-foreground:#fff] [--card:#000] [--foreground:#fff] [--input:#262626] [--muted-foreground:#a1a1aa] [--muted:#171717] [--placeholder:#71717a] [--popover-foreground:#fff] [--popover:#171717] [--ring:#737373] [--secondary-foreground:#fff] [--secondary:#171717] [--terminal-background:#000] [--terminal-cursor:#fff] [--terminal-foreground:#fff] [--terminal-selection-background:rgb(255_255_255_/_0.2)] [color-scheme:dark]">
+      <WorkspacePageHeader
+        electron={isElectron}
+        className={cn(
+          "justify-between border-b border-white/10 px-6 sm:px-10",
+          isElectron ? "wco:pl-[calc(env(titlebar-area-x)+1.5rem)]" : "h-16 min-h-16",
+        )}
+      >
         <div className="flex items-center gap-2.5">
           <span className="font-mono text-lg font-semibold text-white">t3</span>
           <span className="text-sm font-medium text-white/85">{APP_BASE_NAME}</span>
@@ -133,7 +143,7 @@ export function WelcomeWizard({
         <span className="font-mono text-xs text-white/45">
           {stageIndex + 1} / {ONBOARDING_STAGES.length}
         </span>
-      </header>
+      </WorkspacePageHeader>
 
       <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <div className="mx-auto grid min-h-full w-full max-w-5xl content-center gap-10 px-6 py-12 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-14 sm:px-10 lg:px-12">
@@ -176,14 +186,17 @@ export function WelcomeWizard({
                 localLabel={targetEnvironment?.label ?? "This computer"}
                 onLocal={() => {
                   setMode("local");
+                  setPairedEnvironmentId(null);
                   setStep("agents");
                 }}
                 onConnect={() => {
                   setMode("connect");
+                  setPairedEnvironmentId(null);
                   setStep("connect-machines");
                 }}
                 onDirect={() => {
                   setMode("direct");
+                  setPairedEnvironmentId(null);
                   setStep("pair-direct");
                 }}
               />
@@ -195,11 +208,15 @@ export function WelcomeWizard({
             ) : step === "pair-direct" ? (
               <PairDirectStep
                 onBack={() => setStep("connection")}
-                onPaired={() => setStep("agents")}
+                onPaired={(environmentId) => {
+                  setPairedEnvironmentId(environmentId);
+                  setStep("agents");
+                }}
               />
             ) : step === "agents" ? (
               <AgentsStep
                 mode={mode}
+                pairedEnvironmentId={pairedEnvironmentId}
                 onBack={() =>
                   setStep(
                     mode === "local"
@@ -213,7 +230,12 @@ export function WelcomeWizard({
                 onSkip={() => setStep("import")}
               />
             ) : (
-              <ImportStep mode={mode} onBack={() => setStep("agents")} onDone={finish} />
+              <ImportStep
+                mode={mode}
+                pairedEnvironmentId={pairedEnvironmentId}
+                onBack={() => setStep("agents")}
+                onDone={finish}
+              />
             )}
           </section>
         </div>
@@ -457,7 +479,7 @@ function PairDirectStep({
   onPaired,
 }: {
   readonly onBack: () => void;
-  readonly onPaired: () => void;
+  readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
   const connectPairingEnvironment = useAtomCommand(connectPairing, { reportFailure: false });
   const [pairingUrl, setPairingUrl] = useState("");
@@ -466,6 +488,7 @@ function PairDirectStep({
   const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
@@ -478,7 +501,7 @@ function PairDirectStep({
     if (!mountedRef.current) return;
     setIsPairing(false);
     if (result._tag === "Success") {
-      onPaired();
+      onPaired(result.value);
       return;
     }
     if (isAtomCommandInterrupted(result)) return;
@@ -568,16 +591,18 @@ const AGENT_LOGIN_COMMANDS: Record<string, string> = {
  */
 function AgentsStep({
   mode,
+  pairedEnvironmentId,
   onBack,
   onContinue,
   onSkip,
 }: {
   readonly mode: ConnectionMode;
+  readonly pairedEnvironmentId: EnvironmentId | null;
   readonly onBack: () => void;
   readonly onContinue: () => void;
   readonly onSkip: () => void;
 }) {
-  const targetEnvironment = useOnboardingTargetEnvironment(mode);
+  const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   if (targetEnvironment === null) {
     return (
       <StepShell
@@ -629,33 +654,14 @@ function ConnectedAgentsStep({
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  // A driver can have several instances; the card should reflect the most
-  // usable one (ready beats needs-login beats installed beats present), not
-  // whichever happened to be listed first.
-  const byDriver = useMemo(() => {
-    const usability = (provider: ServerProvider): number => {
-      if (!provider.enabled) return 0;
-      if (!provider.installed) return 1;
-      if (provider.auth.status !== "authenticated") return 2;
-      return 3;
-    };
-    const map = new Map<string, ServerProvider>();
-    for (const provider of providers ?? []) {
-      const existing = map.get(provider.driver);
-      if (existing === undefined || usability(provider) > usability(existing)) {
-        map.set(provider.driver, provider);
-      }
-    }
-    return map;
-  }, [providers]);
+  const byDriver = useMemo(() => selectOnboardingProvidersByDriver(providers), [providers]);
 
   const primaryAgents = PRIMARY_AGENT_DRIVERS.map((driver) => ({
     driver,
     provider: byDriver.get(driver),
   }));
   const readyCount = primaryAgents.filter(
-    ({ provider }) =>
-      provider?.enabled === true && provider.installed && provider.auth.status === "authenticated",
+    ({ provider }) => getOnboardingProviderState(provider) === "ready",
   ).length;
   const otherAgents = [...byDriver.keys()].filter(
     (driver) => !PRIMARY_AGENT_DRIVERS.includes(driver as (typeof PRIMARY_AGENT_DRIVERS)[number]),
@@ -728,19 +734,13 @@ function AgentCard({
   const Icon = meta?.icon;
   const displayName = driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver);
   const summary = getProviderSummary(provider);
-  // `undefined` means the probe hasn't reported yet — offering Install
-  // against unknown state would be wrong either way it resolves.
-  const pending = provider === undefined;
-  // A provider disabled in settings is neither ready nor installable from
-  // here; the summary already reads "Disabled" and the card offers no action.
-  const disabled = provider !== undefined && !provider.enabled;
-  const usable = provider?.enabled === true && provider.installed;
-  const ready = usable && provider.auth.status === "authenticated";
-  const needsLogin = usable && provider.auth.status !== "authenticated";
+  const providerState = getOnboardingProviderState(provider);
 
   return (
     <div className="flex min-h-20 items-center gap-4 border-b border-white/12 py-3">
-      {Icon ? <Icon className="size-6 shrink-0" /> : null}
+      {Icon ? (
+        <Icon className={cn("size-6 shrink-0", driver !== "claudeAgent" && "fill-white")} />
+      ) : null}
       <div className="min-w-0 flex-1">
         <span className="block text-sm font-medium text-white">{displayName}</span>
         <p className="mt-1 truncate text-xs text-white/50">
@@ -749,19 +749,21 @@ function AgentCard({
         </p>
       </div>
       <div className="shrink-0">
-        {ready ? (
+        {providerState === "ready" ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
             <CheckIcon className="size-3.5" />
             Ready
           </span>
-        ) : pending ? (
+        ) : providerState === "checking" ? (
           <span className="text-xs text-white/45">Checking...</span>
-        ) : disabled ? (
+        ) : providerState === "disabled" ? (
           <span className="text-xs text-white/45">Disabled</span>
+        ) : providerState === "attention" ? (
+          <span className="text-xs text-white/55">{summary.headline}</span>
         ) : (
           <Button size="xs" variant="ghost" onClick={onOpenTerminal} disabled={terminalOpen}>
             <TerminalIcon className="size-3.5" />
-            {needsLogin ? "Sign in" : "Install"}
+            {providerState === "signIn" ? "Sign in" : "Install"}
           </Button>
         )}
       </div>
@@ -875,7 +877,7 @@ function AgentInstallTerminal({
   }
 
   return (
-    <div className="mt-4 overflow-hidden rounded-lg border border-border/70">
+    <div className="thread-terminal-drawer mt-4 overflow-hidden rounded-lg border border-border/70 bg-black text-white">
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-[11px] font-medium text-muted-foreground">
           {preTypeFailed ? (
@@ -922,14 +924,16 @@ function AgentInstallTerminal({
  */
 function ImportStep({
   mode,
+  pairedEnvironmentId,
   onBack,
   onDone,
 }: {
   readonly mode: ConnectionMode;
+  readonly pairedEnvironmentId: EnvironmentId | null;
   readonly onBack: () => void;
   readonly onDone: () => void;
 }) {
-  const targetEnvironment = useOnboardingTargetEnvironment(mode);
+  const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const environmentId = targetEnvironment?.environmentId ?? null;
   const machineLabel = targetEnvironment?.label ?? "this machine";
   const providers = useAtomValue(

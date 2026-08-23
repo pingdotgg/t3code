@@ -1,7 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
-import { type OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
+import {
+  type OrchestrationProjectShell,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerSettings as ContractServerSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -58,6 +64,7 @@ const runScan = (input: {
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
+  readonly providerInstances?: ContractServerSettings["providerInstances"];
 }) =>
   Effect.gen(function* () {
     const scanner = yield* AgentSessionScanner.AgentSessionScanner;
@@ -72,6 +79,9 @@ const runScan = (input: {
                 claudeAgent: { homePath: input.claudeHomePath },
                 codex: { homePath: input.codexHomePath },
               },
+              ...(input.providerInstances === undefined
+                ? {}
+                : { providerInstances: input.providerInstances }),
             }),
             ServerConfig.layerTest(
               input.claudeHomePath,
@@ -253,6 +263,206 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             alreadyImported: true,
           },
         ]);
+      }),
+    );
+
+    it.effect("uses explicit provider instance homes instead of overridden legacy homes", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-legacy-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-legacy-");
+        const claudeInstanceHome = yield* makeTempDir("t3code-claude-instance-");
+        const codexInstanceHome = yield* makeTempDir("t3code-codex-instance-");
+        const legacyWorkspace = yield* makeTempDir("t3code-workspace-legacy-");
+        const claudeWorkspace = yield* makeTempDir("t3code-workspace-claude-");
+        const codexWorkspace = yield* makeTempDir("t3code-workspace-codex-");
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-legacy", "session.jsonl"),
+          contents: claudeSessionLine(legacyWorkspace),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeInstanceHome, "projects", "-actual", "session.jsonl"),
+          contents: claudeSessionLine(claudeWorkspace),
+          mtimeMs: Date.parse("2026-02-01T00:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(
+            codexInstanceHome,
+            "sessions",
+            "2026",
+            "03",
+            "01",
+            "rollout-instance.jsonl",
+          ),
+          contents: codexRolloutLine(codexWorkspace),
+          mtimeMs: Date.parse("2026-03-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: claudeInstanceHome },
+            },
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { homePath: codexInstanceHome },
+            },
+          },
+        });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([
+          codexWorkspace,
+          claudeWorkspace,
+        ]);
+      }),
+    );
+
+    it.effect("scans each distinct home across multiple instances once", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const otherCodexHome = yield* makeTempDir("t3code-codex-other-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const otherWorkspace = yield* makeTempDir("t3code-workspace-other-");
+
+        for (const [home, cwd] of [
+          [codexHomePath, workspace],
+          [otherCodexHome, otherWorkspace],
+        ] as const) {
+          yield* writeTranscript({
+            filePath: path.join(home, "sessions", "2026", "01", "01", "rollout-session.jsonl"),
+            contents: codexRolloutLine(cwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
+        }
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("codex-personal")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { homePath: codexHomePath },
+            },
+            [ProviderInstanceId.make("codex-work")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { homePath: otherCodexHome },
+            },
+          },
+        });
+
+        expect(result.candidates).toHaveLength(2);
+        expect(result.candidates.map((candidate) => candidate.threadCount)).toEqual([1, 1]);
+        expect(result.candidates.map((candidate) => candidate.path).sort()).toEqual(
+          [workspace, otherWorkspace].sort(),
+        );
+      }),
+    );
+
+    it.effect("honors provider instance home directory environment variables", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-legacy-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-legacy-");
+        const claudeEnvironmentHome = yield* makeTempDir("t3code-claude-env-");
+        const codexEnvironmentHome = yield* makeTempDir("t3code-codex-env-");
+        const claudeWorkspace = yield* makeTempDir("t3code-workspace-claude-");
+        const codexWorkspace = yield* makeTempDir("t3code-workspace-codex-");
+
+        yield* writeTranscript({
+          filePath: path.join(claudeEnvironmentHome, "projects", "-actual", "session.jsonl"),
+          contents: claudeSessionLine(claudeWorkspace),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(
+            codexEnvironmentHome,
+            "sessions",
+            "2026",
+            "01",
+            "01",
+            "rollout-session.jsonl",
+          ),
+          contents: codexRolloutLine(codexWorkspace),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              environment: [
+                { name: "CLAUDE_CONFIG_DIR", value: claudeEnvironmentHome, sensitive: false },
+              ],
+              config: {},
+            },
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "CODEX_HOME", value: codexEnvironmentHome, sensitive: false }],
+              config: {},
+            },
+          },
+        });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([
+          codexWorkspace,
+          claudeWorkspace,
+        ]);
+      }),
+    );
+
+    it.effect("ignores invalid provider instances while scanning the remaining providers", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-actual", "session.jsonl"),
+          contents: claudeSessionLine(workspace),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { homePath: 123 },
+            },
+          },
+        });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+      }),
+    );
+
+    it.effect("ignores relative working directories from malformed transcripts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-relative", "session.jsonl"),
+          contents: claudeSessionLine(path.relative(path.resolve(), workspace)),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates).toEqual([]);
       }),
     );
 

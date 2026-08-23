@@ -172,16 +172,23 @@ function terminalFontOptions(family: string, size: number): { family?: string; s
 }
 
 export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
-  const isDark = document.documentElement.classList.contains("dark");
-  const fallbackBackground = isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)";
-  const fallbackForeground = isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)";
   const drawerSurface =
     mountElement?.closest(".thread-terminal-drawer") ??
     document.querySelector(".thread-terminal-drawer") ??
     document.body;
   const drawerStyles = getComputedStyle(drawerSurface);
+  const themeStyles = mountElement ? getComputedStyle(mountElement) : drawerStyles;
+  const colorScheme = themeStyles.colorScheme;
+  const isDark =
+    colorScheme === "dark"
+      ? true
+      : colorScheme === "light"
+        ? false
+        : document.documentElement.classList.contains("dark");
+  const fallbackBackground = isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)";
+  const fallbackForeground = isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)";
   const bodyStyles = getComputedStyle(document.body);
-  const themeStyles = getComputedStyle(document.documentElement);
+  const rootThemeStyles = getComputedStyle(document.documentElement);
   const background = normalizeComputedColor(
     drawerStyles.backgroundColor,
     normalizeComputedColor(bodyStyles.backgroundColor, fallbackBackground),
@@ -190,8 +197,16 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     drawerStyles.color,
     normalizeComputedColor(bodyStyles.color, fallbackForeground),
   );
-  const terminalBackground = readThemeColor(themeStyles, "--terminal-background", background);
-  const terminalForeground = readThemeColor(themeStyles, "--terminal-foreground", foreground);
+  const terminalBackground = readThemeColor(
+    themeStyles,
+    "--terminal-background",
+    readThemeColor(rootThemeStyles, "--terminal-background", background),
+  );
+  const terminalForeground = readThemeColor(
+    themeStyles,
+    "--terminal-foreground",
+    readThemeColor(rootThemeStyles, "--terminal-foreground", foreground),
+  );
   const terminalCursor = readThemeColor(
     themeStyles,
     "--terminal-cursor",
