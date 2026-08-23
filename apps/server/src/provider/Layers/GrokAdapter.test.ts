@@ -409,7 +409,15 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const configured = runtimeEvents.find((event) => event.type === "session.configured");
       assert.deepStrictEqual(
         configured?.type === "session.configured" ? configured.payload.config : undefined,
-        { model: "grok-mock-alt", effort: "high" },
+        {
+          model: "grok-mock-alt",
+          effort: "high",
+          modelSelection: {
+            instanceId: "grok",
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        },
       );
       const usageUpdated = runtimeEvents.find(
         (event) => event.type === "thread.token-usage.updated",

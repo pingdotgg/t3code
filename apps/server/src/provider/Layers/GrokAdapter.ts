@@ -13,7 +13,7 @@ import {
   type ThreadTokenUsageSnapshot,
   TurnId,
 } from "@t3tools/contracts";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { createModelSelection, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -220,6 +220,18 @@ function completedStopReasonFromPromptResponse(
     return null;
   }
   return response.stopReason;
+}
+
+function grokRuntimeModelSelection(
+  instanceId: ProviderInstanceId,
+  modelId: string,
+  reasoningEffort: string | undefined,
+) {
+  return createModelSelection(
+    instanceId,
+    resolveGrokAcpBaseModelId(modelId),
+    reasoningEffort ? [{ id: "reasoningEffort", value: reasoningEffort }] : undefined,
+  );
 }
 
 export function grokPromptSettlementBelongsToContext(input: {
@@ -693,6 +705,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     return;
                   }
                   const updatedAt = yield* nowIso;
+                  const modelSelection = grokRuntimeModelSelection(
+                    boundInstanceId,
+                    modelChanged.modelId,
+                    modelChanged.reasoningEffort,
+                  );
                   ctx.currentModelId = modelChanged.modelId;
                   ctx.currentReasoningEffort = modelChanged.reasoningEffort;
                   ctx.currentContextWindow = ctx.contextWindowByModelId.get(modelChanged.modelId);
@@ -711,6 +728,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       config: {
                         model: modelChanged.modelId,
                         effort: modelChanged.reasoningEffort ?? null,
+                        modelSelection,
                       },
                     },
                     raw: {
@@ -1300,13 +1318,24 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   ctx.currentModelId = xAiMetadata.modelId;
                   ctx.currentReasoningEffort = undefined;
                   ctx.currentContextWindow = ctx.contextWindowByModelId.get(xAiMetadata.modelId);
+                  const modelSelection = grokRuntimeModelSelection(
+                    boundInstanceId,
+                    xAiMetadata.modelId,
+                    undefined,
+                  );
                   yield* offerRuntimeEvent({
                     type: "session.configured",
                     ...(yield* makeEventStamp()),
                     provider: PROVIDER,
                     threadId: input.threadId,
                     turnId: prepared.turnId,
-                    payload: { config: { model: xAiMetadata.modelId, effort: null } },
+                    payload: {
+                      config: {
+                        model: xAiMetadata.modelId,
+                        effort: null,
+                        modelSelection,
+                      },
+                    },
                     raw: {
                       source: "acp.grok.extension",
                       method: "session/prompt",

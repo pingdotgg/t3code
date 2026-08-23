@@ -368,6 +368,40 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("persists provider-confirmed model selections from session configuration", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("evt-session-configured-model"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        config: {
+          model: "grok-4.6",
+          effort: "high",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "grok-4.6",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.modelSelection.model === "grok-4.6",
+    );
+    expect(thread.modelSelection).toEqual({
+      instanceId: "grok",
+      model: "grok-4.6",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+
   it("persists a usage-limit wait with provider reset grace", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
