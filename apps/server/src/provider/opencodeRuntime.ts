@@ -34,6 +34,15 @@ import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { stripTerminalEscapes } from "@t3tools/shared/stripTerminalEscapes";
+
+// Control bytes are escaped as text (e.g. `\u001b`) inside JSON.stringify
+// output, so escapes embedded in CLI-printed values only become visible after
+// JSON decoding. This reviver strips them from every decoded string, at any
+// depth, while leaving non-string values and object/array structure untouched.
+const stripTerminalEscapesJsonReviver = (_key: string, value: unknown): unknown =>
+  typeof value === "string" ? stripTerminalEscapes(value) : value;
+
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
@@ -133,9 +142,7 @@ const OpenCodeSkillSchema = Schema.Struct({
   location: Schema.optionalKey(Schema.NullOr(Schema.String)),
   content: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
-const decodeOpenCodeSkillsCliOutputExit = Schema.decodeUnknownExit(
-  Schema.fromJsonString(Schema.Array(OpenCodeSkillSchema)),
-);
+const decodeOpenCodeSkillsArrayExit = Schema.decodeUnknownExit(Schema.Array(OpenCodeSkillSchema));
 
 export interface OpenCodeRuntimeShape {
   /**
@@ -186,7 +193,9 @@ export interface OpenCodeRuntimeShape {
 }
 
 function parseServerUrlFromOutput(output: string): string | null {
-  for (const line of output.split("\n")) {
+  // The opencode CLI can prepend an OSC title sequence to its output; strip it
+  // so the ready line still matches.
+  for (const line of stripTerminalEscapes(output).split("\n")) {
     if (!line.startsWith(OPENCODE_SERVER_READY_PREFIX)) {
       continue;
     }
@@ -216,7 +225,7 @@ export function parseModelsCliOutput(stdout: string): {
     string,
     { id: string; name: string; models: { [key: string]: Model } }
   >();
-  const lines = stdout.split("\n");
+  const lines = stripTerminalEscapes(stdout).split("\n");
   let currentSlug: string | null = null;
   const jsonLines: Array<string> = [];
 
@@ -225,7 +234,7 @@ export function parseModelsCliOutput(stdout: string): {
       const jsonStr = jsonLines.join("\n").trim();
       if (jsonStr.length > 0) {
         try {
-          const model = JSON.parse(jsonStr) as Model;
+          const model = JSON.parse(jsonStr, stripTerminalEscapesJsonReviver) as Model;
           const separator = currentSlug.indexOf("/");
           if (separator > 0) {
             const providerID = currentSlug.slice(0, separator);
@@ -269,7 +278,7 @@ export function parseModelsCliOutput(stdout: string): {
 /** @internal */
 export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
   const agents: Array<Agent> = [];
-  const lines = stdout.split("\n");
+  const lines = stripTerminalEscapes(stdout).split("\n");
   let currentHeader: { name: string; mode: string } | null = null;
   const blockLines: Array<string> = [];
 
@@ -278,7 +287,7 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
       const jsonStr = blockLines.join("\n").trim();
       if (jsonStr.length > 0) {
         try {
-          const permission = JSON.parse(jsonStr);
+          const permission = JSON.parse(jsonStr, stripTerminalEscapesJsonReviver);
           agents.push({
             name: currentHeader.name,
             mode: currentHeader.mode as Agent["mode"],
@@ -311,7 +320,15 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
 
 /** @internal */
 export function parseSkillsCliOutput(stdout: string): ReadonlyArray<OpenCodeSkill> {
-  const result = decodeOpenCodeSkillsCliOutputExit(stdout);
+  let parsed: unknown;
+  try {
+    // The reviver strips escapes embedded in skill strings before validation,
+    // so schema-decoded values can never carry raw control bytes.
+    parsed = JSON.parse(stripTerminalEscapes(stdout), stripTerminalEscapesJsonReviver);
+  } catch {
+    return [];
+  }
+  const result = decodeOpenCodeSkillsArrayExit(parsed);
   return Exit.isSuccess(result) ? result.value : [];
 }
 
