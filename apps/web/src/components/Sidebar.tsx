@@ -677,6 +677,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Applied to the exact row root measured and transformed by dnd-kit.
   dnd?: SidebarThreadDndRowBag | undefined;
   dndDragView: SidebarThreadDragView | null;
+  dndHidden: boolean;
   dndInert: boolean;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
@@ -1217,16 +1218,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         data-thread-item
         data-thread-key={threadKey}
         data-sidebar-thread-section={dnd?.section}
-        data-dnd-source={dragView !== null || undefined}
+        data-dnd-source={props.dndHidden || dragView !== null || undefined}
         data-dnd-transformed={(dnd?.isSortable === true && dnd.transform !== null) || undefined}
         ref={dnd?.setNodeRef}
         inert={props.dndInert ? true : undefined}
         style={
           dnd?.isSortable
             ? {
-                transform: dragView === null ? CSS.Translate.toString(dnd.transform) : undefined,
-                transition: dragView === null ? dnd.transition : undefined,
-                height: dragView?.flowPlaceholderHeight,
+                transform: props.dndHidden ? undefined : CSS.Translate.toString(dnd.transform),
+                transition: props.dndHidden ? undefined : dnd.transition,
               }
             : undefined
         }
@@ -1237,6 +1237,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           dragView === null && "[content-visibility:auto] [contain-intrinsic-size:auto_36px]",
           dnd && "touch-pan-y cursor-grab active:cursor-grabbing",
           dragView !== null && "z-20 cursor-grabbing",
+          props.dndHidden && "opacity-0",
           props.dndInert && "pointer-events-none",
         )}
       >
@@ -1383,16 +1384,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       data-thread-item
       data-thread-key={threadKey}
       data-sidebar-thread-section={dnd?.section}
-      data-dnd-source={dragView !== null || undefined}
+      data-dnd-source={props.dndHidden || dragView !== null || undefined}
       data-dnd-transformed={(dnd?.isSortable === true && dnd.transform !== null) || undefined}
       ref={dnd?.setNodeRef}
       inert={props.dndInert ? true : undefined}
       style={
         dnd?.isSortable
           ? {
-              transform: dragView === null ? CSS.Translate.toString(dnd.transform) : undefined,
-              transition: dragView === null ? dnd.transition : undefined,
-              height: dragView?.flowPlaceholderHeight,
+              transform: props.dndHidden ? undefined : CSS.Translate.toString(dnd.transform),
+              transition: props.dndHidden ? undefined : dnd.transition,
             }
           : undefined
       }
@@ -1404,6 +1404,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           ? "py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]"
           : "z-20 cursor-grabbing",
         dnd && "touch-pan-y cursor-grab active:cursor-grabbing",
+        props.dndHidden && "opacity-0",
         props.dndInert && "pointer-events-none",
       )}
     >
@@ -3314,6 +3315,7 @@ export default function Sidebar() {
         isPinned={thread.pinnedAt != null}
         dnd={state.dnd}
         dndDragView={state.dragView}
+        dndHidden={state.hidden}
         dndInert={state.inert}
         snoozeWakeLabelText={
           section === "snoozed" && thread.snoozedUntil != null

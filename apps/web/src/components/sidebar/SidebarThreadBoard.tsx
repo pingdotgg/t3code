@@ -1,4 +1,10 @@
-import { DndContext, type DndContextProps } from "@dnd-kit/core";
+import {
+  defaultDropAnimation,
+  DndContext,
+  DragOverlay,
+  type DndContextProps,
+  type DropAnimation,
+} from "@dnd-kit/core";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   SortableContext,
@@ -33,6 +39,7 @@ type SidebarThreadDndContextProps = Pick<
   DndContextProps,
   | "sensors"
   | "collisionDetection"
+  | "cancelDrop"
   | "onDragStart"
   | "onDragMove"
   | "onDragOver"
@@ -41,8 +48,9 @@ type SidebarThreadDndContextProps = Pick<
 >;
 
 export interface SidebarThreadRenderState {
-  readonly dnd: SidebarThreadDndRowBag;
+  readonly dnd: SidebarThreadDndRowBag | undefined;
   readonly dragView: SidebarThreadDragView | null;
+  readonly hidden: boolean;
   readonly inert: boolean;
 }
 
@@ -293,52 +301,15 @@ export function SidebarThreadBoard(props: {
         onNodeChange={dnd.layout.handleEntryNodeChange}
       >
         {(rowDnd) => {
-          let dragView: SidebarThreadDragView | null = null;
-          if (
-            rowDnd.isDragging &&
-            sourceTransaction?.phase === "dragging" &&
-            dnd.dragPreviewVariant !== null
-          ) {
-            dragView = {
-              kind: "dragging",
-              variant: dnd.dragPreviewVariant,
-              flowPlaceholderHeight: sourceTransaction.sourceRect.height,
-              sourceRect: sourceTransaction.sourceRect,
-              translation: sourceTransaction.dragTranslation,
-              pointerAnchor: sourceTransaction.pointerAnchor,
-            };
-          } else if (
-            sourceTransaction?.phase === "awaiting-snooze-choice" &&
-            sourceTransaction.dropAnimation !== null
-          ) {
-            dragView = {
-              kind: "holding",
-              variant: sourceTransaction.dropAnimation.variant,
-              flowPlaceholderHeight:
-                SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[sourceTransaction.dropAnimation.variant],
-              sourceRect: sourceTransaction.sourceRect,
-              translation: sourceTransaction.dropAnimation.translation,
-              pointerAnchor: sourceTransaction.pointerAnchor,
-            };
-          } else if (
-            sourceTransaction?.phase === "dropping" &&
-            sourceTransaction.dropAnimation !== null
-          ) {
-            dragView = {
-              kind: "dropping",
-              variant: sourceTransaction.dropAnimation.variant,
-              flowPlaceholderHeight:
-                SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[sourceTransaction.dropAnimation.variant],
-              sourceRect: sourceTransaction.sourceRect,
-              translation: sourceTransaction.dropAnimation.translation,
-              pointerAnchor: sourceTransaction.pointerAnchor,
-              targetNode: dnd.layout.getEntryNode(threadKey),
-              onAnimationEnd: dnd.completeDropAnimation,
-            };
-          }
+          const hidden =
+            sourceTransaction !== null &&
+            (sourceTransaction.phase === "dragging" ||
+              sourceTransaction.phase === "awaiting-snooze-choice" ||
+              sourceTransaction.phase === "dropping");
           return props.renderThread(thread, section, {
             dnd: rowDnd,
-            dragView,
+            dragView: null,
+            hidden,
             inert: sourceTransaction !== null && sourceTransaction.phase !== "dragging",
           });
         }}
@@ -398,12 +369,81 @@ export function SidebarThreadBoard(props: {
   );
   const sortableItems = useMemo(() => dnd.entries.map((entry) => entry.id), [dnd.entries]);
   const listRef = useRef<HTMLUListElement>(null);
+  const overlayTransaction =
+    dnd.transaction?.phase === "dragging" || dnd.transaction?.phase === "awaiting-snooze-choice"
+      ? dnd.transaction
+      : null;
+  const overlayVariant = dnd.dragPreviewVariant;
+  const overlayHeight =
+    overlayVariant === null ? null : SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[overlayVariant];
+  const overlay =
+    overlayTransaction === null || overlayVariant === null || overlayHeight === null
+      ? null
+      : props.renderThread(overlayTransaction.sourceThread, overlayTransaction.sourceSection, {
+          dnd: undefined,
+          dragView: {
+            variant: overlayVariant,
+            pointerAnchor: overlayTransaction.pointerAnchor,
+          },
+          hidden: false,
+          inert: true,
+        });
+  const overlayStyle = {
+    margin: 0,
+    padding: 0,
+    pointerEvents: "none",
+    ...(overlayTransaction === null || overlayHeight === null
+      ? {}
+      : {
+          top:
+            overlayTransaction.sourceRect.top +
+            overlayTransaction.pointerAnchor.y *
+              (overlayTransaction.sourceRect.height - overlayHeight),
+          left: overlayTransaction.sourceRect.left,
+          width: overlayTransaction.sourceRect.width,
+          height: overlayHeight,
+          transformOrigin: `${overlayTransaction.pointerAnchor.x * 100}% ${overlayTransaction.pointerAnchor.y * 100}%`,
+        }),
+  } satisfies CSSProperties;
+  const dropAnimation = useMemo<DropAnimation>(
+    () => ({
+      ...defaultDropAnimation,
+      duration: 160,
+      easing: "cubic-bezier(0.2, 0, 0, 1)",
+      keyframes: (args) => {
+        const keyframes = defaultDropAnimation.keyframes(args);
+        const first = keyframes[0];
+        const last = keyframes[keyframes.length - 1];
+        if (
+          first === undefined ||
+          last === undefined ||
+          JSON.stringify(first) === JSON.stringify(last) ||
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ) {
+          queueMicrotask(dnd.completeDropAnimation);
+          return last === undefined ? keyframes : [last, last];
+        }
+        return keyframes;
+      },
+      sideEffects: (args) => {
+        const cleanup = defaultDropAnimation.sideEffects?.(args);
+        return () => {
+          cleanup?.();
+          dnd.completeDropAnimation();
+        };
+      },
+    }),
+    [dnd.completeDropAnimation],
+  );
+  const dragSessionActive =
+    dnd.transaction?.phase === "dragging" || dnd.transaction?.phase === "awaiting-snooze-choice";
 
   return (
     <DndContext
       {...dnd.contextProps}
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
       autoScroll={{
+        enabled: dnd.transaction?.phase === "dragging",
         layoutShiftCompensation: false,
         canScroll: (element) => element === dnd.layout.viewportRef.current,
       }}
@@ -411,10 +451,7 @@ export function SidebarThreadBoard(props: {
       <ul
         ref={listRef}
         role="list"
-        className={cn(
-          "relative flex flex-col gap-px",
-          dnd.transaction?.phase === "dragging" && "pointer-events-none",
-        )}
+        className={cn("relative flex flex-col gap-px", dragSessionActive && "pointer-events-none")}
       >
         {props.drafts}
         <SortableContext items={sortableItems} strategy={sortingStrategy}>
@@ -450,6 +487,15 @@ export function SidebarThreadBoard(props: {
           </li>
         ) : null}
       </ul>
+      <DragOverlay
+        adjustScale={false}
+        dropAnimation={dropAnimation}
+        style={overlayStyle}
+        wrapperElement="ul"
+        zIndex={20}
+      >
+        {overlay}
+      </DragOverlay>
     </DndContext>
   );
 }

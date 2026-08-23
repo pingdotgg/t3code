@@ -348,7 +348,6 @@ export function useSidebarThreadDnd(input: {
         const committing: SidebarThreadDragTransaction = {
           ...current,
           phase: "committing",
-          dropAnimation: null,
           receiptSequencesByEnvironment: null,
         };
         setTransaction(committing);
@@ -453,7 +452,6 @@ export function useSidebarThreadDnd(input: {
         const committing: SidebarThreadDragTransaction = {
           ...current,
           phase: "committing",
-          dropAnimation: null,
           receiptSequencesByEnvironment: null,
         };
         setTransaction(committing);
@@ -508,12 +506,12 @@ export function useSidebarThreadDnd(input: {
     ],
   );
   const openSnoozeDropMenu = useCallback(
-    (current: SidebarThreadDragTransaction, position: { x: number; y: number }) => {
+    async (
+      current: SidebarThreadDragTransaction,
+      position: { x: number; y: number },
+    ): Promise<boolean> => {
       const target = current.target;
-      if (target === null) {
-        finishTransaction();
-        return;
-      }
+      if (target === null) return false;
       const entries = moveSidebarDndBoardThread({
         entries: current.initialEntries,
         threadKey: current.sourceThreadKey,
@@ -529,52 +527,46 @@ export function useSidebarThreadDnd(input: {
         target,
         receiptSequencesByEnvironment: null,
       });
-      void (async () => {
-        const api = readLocalApi();
-        if (api === undefined) {
-          finishTransaction();
-          return;
-        }
-        const menuPresets = resolveSnoozePresets(new Date(), input.timestampFormat);
-        const selected = await settlePromise(() =>
-          api.contextMenu.show(
-            menuPresets.map((preset) => ({
-              id: `snooze:${preset.id}`,
-              label: `${preset.label} (${preset.whenLabel})`,
-            })),
-            position,
-          ),
-        );
-        if (snoozeDropEpochRef.current !== epoch) return;
-        if (selected._tag === "Failure" || selected.value === null) {
-          finishTransaction();
-          return;
-        }
-        const preset = menuPresets.find((candidate) => `snooze:${candidate.id}` === selected.value);
-        if (preset === undefined || !dropStillValid(current, target)) {
-          finishTransaction();
-          return;
-        }
-        const projectedTarget = resolveSortedTarget(current, "snoozed", preset.snoozedUntil);
-        const entries = moveSidebarDndBoardThread({
-          entries: current.initialEntries,
-          threadKey: current.sourceThreadKey,
-          target: projectedTarget,
-        });
-        pendingSnoozePresetRef.current = preset;
-        captureInsertionPosition(entries, current.sourceThreadKey);
-        setTransaction({
-          ...current,
-          phase: "dropping",
-          entries,
-          target: projectedTarget,
-          receiptSequencesByEnvironment: null,
-        });
-      })();
+      const api = readLocalApi();
+      if (api === undefined) return false;
+      const menuPresets = resolveSnoozePresets(new Date(), input.timestampFormat);
+      const selected = await settlePromise(() =>
+        api.contextMenu.show(
+          menuPresets.map((preset) => ({
+            id: `snooze:${preset.id}`,
+            label: `${preset.label} (${preset.whenLabel})`,
+          })),
+          position,
+        ),
+      );
+      if (
+        snoozeDropEpochRef.current !== epoch ||
+        selected._tag === "Failure" ||
+        selected.value === null
+      ) {
+        return false;
+      }
+      const preset = menuPresets.find((candidate) => `snooze:${candidate.id}` === selected.value);
+      if (preset === undefined || !dropStillValid(current, target)) return false;
+      const projectedTarget = resolveSortedTarget(current, "snoozed", preset.snoozedUntil);
+      const projectedEntries = moveSidebarDndBoardThread({
+        entries: current.initialEntries,
+        threadKey: current.sourceThreadKey,
+        target: projectedTarget,
+      });
+      pendingSnoozePresetRef.current = preset;
+      captureInsertionPosition(projectedEntries, current.sourceThreadKey);
+      setTransaction({
+        ...current,
+        phase: "awaiting-snooze-choice",
+        entries: projectedEntries,
+        target: projectedTarget,
+        receiptSequencesByEnvironment: null,
+      });
+      return true;
     },
     [
       captureInsertionPosition,
-      finishTransaction,
       input.timestampFormat,
       resolveSortedTarget,
       setTransaction,
@@ -630,7 +622,6 @@ export function useSidebarThreadDnd(input: {
         sourceThread,
         sourceThreadKey: threadKey,
         sourceSection,
-        dragTranslation: { x: 0, y: 0 },
         sourceRect: {
           top: sourceRect.top,
           left: sourceRect.left,
@@ -654,7 +645,6 @@ export function useSidebarThreadDnd(input: {
           SIDEBAR_DND_SECTIONS.filter((section) => sectionCounts[section] === 0),
         ),
         target: { section: sourceSection, threadKey, edge: null },
-        dropAnimation: null,
         receiptSequencesByEnvironment: null,
       });
     },
@@ -714,46 +704,15 @@ export function useSidebarThreadDnd(input: {
     },
     [canDropThreadInSection, input.reorderablePinnedKeys, layout],
   );
-  const resolveDragTranslation = useCallback(
-    (
-      current: SidebarThreadDragTransaction,
-      pointer: { readonly x: number; readonly y: number } | null,
-    ) => {
-      if (pointer === null) return current.dragTranslation;
-      const activationPointer = {
-        x: current.sourceRect.left + current.pointerAnchor.x * current.sourceRect.width,
-        y: current.sourceRect.top + current.pointerAnchor.y * current.sourceRect.height,
-      };
-      const pointerDeltaY = pointer.y - activationPointer.y;
-      const viewport = layout.viewportRef.current;
-      const viewportRect = viewport === null ? null : getClientRect(viewport);
-      return {
-        x: 0,
-        y:
-          viewportRect === null
-            ? pointerDeltaY
-            : Math.min(
-                viewportRect.bottom - current.sourceRect.top - current.sourceRect.height,
-                Math.max(viewportRect.top - current.sourceRect.top, pointerDeltaY),
-              ),
-      };
-    },
-    [layout],
-  );
   const updateDragTarget = useCallback(
     (over: DragMoveEvent["over"]) => {
       const current = transactionRef.current;
       if (current === null || current.phase !== "dragging") return;
-      const nextDragTranslation = resolveDragTranslation(current, pointerCoordinatesRef.current);
-      const translationChanged =
-        current.dragTranslation.x !== nextDragTranslation.x ||
-        current.dragTranslation.y !== nextDragTranslation.y;
       const target = resolveDropTarget(current, over);
       if (target === null) {
-        if (current.target === null && !translationChanged) return;
+        if (current.target === null) return;
         setTransaction({
           ...current,
-          dragTranslation: nextDragTranslation,
           target: null,
         });
         return;
@@ -761,19 +720,36 @@ export function useSidebarThreadDnd(input: {
       if (
         current.target?.section === target.section &&
         current.target.threadKey === target.threadKey &&
-        current.target.edge === target.edge &&
-        !translationChanged
+        current.target.edge === target.edge
       ) {
         return;
       }
       setTransaction({
         ...current,
-        dragTranslation: nextDragTranslation,
         target,
       });
     },
-    [resolveDragTranslation, resolveDropTarget, setTransaction],
+    [resolveDropTarget, setTransaction],
   );
+  const handleCancelDrop = useCallback(async () => {
+    const current = transactionRef.current;
+    const target = current?.target ?? null;
+    if (
+      current === null ||
+      current.phase !== "dragging" ||
+      target === null ||
+      !dropStillValid(current, target) ||
+      resolveSidebarDndAction({
+        source: current.sourceSection,
+        destination: target.section,
+      }) !== "snooze"
+    ) {
+      return false;
+    }
+    const releasePoint = pointerCoordinatesRef.current;
+    if (releasePoint === null) return true;
+    return !(await openSnoozeDropMenu(current, releasePoint));
+  }, [dropStillValid, openSnoozeDropMenu]);
   const completeDropAnimation = useCallback(() => {
     const current = transactionRef.current;
     if (current === null || current.phase !== "dropping" || current.target === null) return;
@@ -830,12 +806,11 @@ export function useSidebarThreadDnd(input: {
   const handleDragEnd = useCallback(
     (_event: DragEndEvent) => {
       const current = transactionRef.current;
-      const releasePoint = pointerCoordinatesRef.current;
       pointerCoordinatesRef.current = null;
       const target = current?.target ?? null;
       if (
         current === null ||
-        current.phase !== "dragging" ||
+        (current.phase !== "dragging" && current.phase !== "awaiting-snooze-choice") ||
         target === null ||
         !dropStillValid(current, target)
       ) {
@@ -850,35 +825,32 @@ export function useSidebarThreadDnd(input: {
         finishTransaction();
         return;
       }
-      const releaseTranslation = resolveDragTranslation(current, releasePoint);
-      const released: SidebarThreadDragTransaction = {
-        ...current,
-        target,
-        dropAnimation: {
-          variant: resolveSidebarDndPreviewVariant({
-            source: current.sourceSection,
-            destination: target.section,
-          }),
-          translation: releaseTranslation,
-        },
-      };
-      if (action === "snooze") {
-        if (releasePoint === null) finishTransaction();
-        else openSnoozeDropMenu(released, releasePoint);
+      if (
+        action === "snooze" &&
+        (current.phase !== "awaiting-snooze-choice" || pendingSnoozePresetRef.current === null)
+      ) {
+        finishTransaction();
         return;
       }
       const projectedTarget =
-        target.section === "pinned" ? target : resolveSortedTarget(current, target.section);
-      const projectedEntries = moveSidebarDndBoardThread({
-        entries: current.initialEntries,
-        threadKey: current.sourceThreadKey,
-        target: projectedTarget,
-      });
-      if (action !== "reorder-pinned") {
+        action === "snooze"
+          ? target
+          : target.section === "pinned"
+            ? target
+            : resolveSortedTarget(current, target.section);
+      const projectedEntries =
+        action === "snooze"
+          ? current.entries
+          : moveSidebarDndBoardThread({
+              entries: current.initialEntries,
+              threadKey: current.sourceThreadKey,
+              target: projectedTarget,
+            });
+      if (action !== "reorder-pinned" && current.phase === "dragging") {
         captureInsertionPosition(projectedEntries, current.sourceThreadKey);
       }
       setTransaction({
-        ...released,
+        ...current,
         phase: "dropping",
         entries: projectedEntries,
         target: projectedTarget,
@@ -888,8 +860,6 @@ export function useSidebarThreadDnd(input: {
       captureInsertionPosition,
       dropStillValid,
       finishTransaction,
-      openSnoozeDropMenu,
-      resolveDragTranslation,
       resolveSortedTarget,
       setTransaction,
     ],
@@ -935,7 +905,8 @@ export function useSidebarThreadDnd(input: {
   ]);
 
   const dragPreviewVariant =
-    transaction !== null && transaction.phase === "dragging"
+    transaction !== null &&
+    (transaction.phase === "dragging" || transaction.phase === "awaiting-snooze-choice")
       ? resolveSidebarDndPreviewVariant({
           source: transaction.sourceSection,
           destination: transaction.target?.section ?? null,
@@ -964,6 +935,7 @@ export function useSidebarThreadDnd(input: {
       contextProps: {
         sensors,
         collisionDetection,
+        cancelDrop: handleCancelDrop,
         onDragStart: handleDragStart,
         onDragMove: (event: DragMoveEvent) => updateDragTarget(event.over),
         onDragOver: (event: DragOverEvent) => updateDragTarget(event.over),

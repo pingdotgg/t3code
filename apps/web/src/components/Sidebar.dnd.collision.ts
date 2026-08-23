@@ -144,7 +144,14 @@ export function detectSidebarThreadCollision(input: SidebarThreadCollisionInput)
     settledBoundary === undefined
       ? null
       : (visualDroppableRects.get(settledBoundary.id)?.top ?? null);
-  const cardCenterY = args.collisionRect.top + args.collisionRect.height / 2;
+  // DragOverlay is allowed to morph between the card and slim presentations.
+  // Shelf ownership must stay based on the source row geometry, otherwise the
+  // overlay resize changes the collision result that selected its own shape.
+  const cardCenterY =
+    args.pointerCoordinates === null
+      ? args.collisionRect.top + args.collisionRect.height / 2
+      : args.pointerCoordinates.y +
+        (0.5 - transaction.pointerAnchor.y) * transaction.sourceRect.height;
   const shelfSection =
     settledBoundaryTop !== null && cardCenterY >= settledBoundaryTop
       ? "settled"

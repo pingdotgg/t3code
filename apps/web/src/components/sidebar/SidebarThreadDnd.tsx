@@ -103,35 +103,10 @@ export function SidebarThreadDndBoundary(props: {
   });
 }
 
-interface SidebarThreadDragViewBase {
+export interface SidebarThreadDragView {
   readonly variant: SidebarDndPreviewVariant;
-  readonly flowPlaceholderHeight: number;
-  readonly sourceRect: {
-    readonly top: number;
-    readonly left: number;
-    readonly width: number;
-    readonly height: number;
-  };
-  readonly translation: {
-    readonly x: number;
-    readonly y: number;
-  };
-  readonly pointerAnchor: {
-    readonly x: number;
-    readonly y: number;
-  };
+  readonly pointerAnchor: { readonly x: number; readonly y: number };
 }
-
-export type SidebarThreadDragView = SidebarThreadDragViewBase &
-  (
-    | { readonly kind: "dragging" }
-    | { readonly kind: "holding" }
-    | {
-        readonly kind: "dropping";
-        readonly targetNode: HTMLElement | null;
-        readonly onAnimationEnd: () => void;
-      }
-  );
 
 export function SidebarThreadDragMorph(props: {
   dragView: SidebarThreadDragView | null;
@@ -139,16 +114,11 @@ export function SidebarThreadDragMorph(props: {
 }) {
   const innerRef = useRef<HTMLDivElement>(null);
   const morphAnimationRef = useRef<Animation | null>(null);
-  const dropAnimationRef = useRef<Animation | null>(null);
-  const geometryRef = useRef<{
-    readonly width: number;
-    readonly height: number;
-  } | null>(null);
+  const previousHeightRef = useRef<number | null>(null);
   const previewHeight =
     props.dragView === null
       ? null
       : SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[props.dragView.variant];
-  const previewWidth = props.dragView?.sourceRect.width ?? null;
   const pointerAnchorX = props.dragView?.pointerAnchor.x ?? null;
   const pointerAnchorY = props.dragView?.pointerAnchor.y ?? null;
 
@@ -157,19 +127,17 @@ export function SidebarThreadDragMorph(props: {
     if (
       node === null ||
       previewHeight === null ||
-      previewWidth === null ||
       pointerAnchorX === null ||
       pointerAnchorY === null
     ) {
       morphAnimationRef.current?.cancel();
       morphAnimationRef.current = null;
-      geometryRef.current = null;
+      previousHeightRef.current = null;
       return;
     }
-    const nextGeometry = { width: previewWidth, height: previewHeight };
-    const previousGeometry = geometryRef.current;
-    geometryRef.current = nextGeometry;
-    if (previousGeometry === null) return;
+    const previousHeight = previousHeightRef.current;
+    previousHeightRef.current = previewHeight;
+    if (previousHeight === null) return;
 
     const interruptedRect =
       morphAnimationRef.current?.playState === "running" ? node.getBoundingClientRect() : null;
@@ -177,16 +145,9 @@ export function SidebarThreadDragMorph(props: {
     const settledRect = node.getBoundingClientRect();
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
-    const fromWidth = interruptedRect?.width ?? previousGeometry.width;
-    const fromHeight = interruptedRect?.height ?? previousGeometry.height;
-    const scaleX = settledRect.width > 0 ? fromWidth / settledRect.width : 1;
+    const fromHeight = interruptedRect?.height ?? previousHeight;
     const scaleY = settledRect.height > 0 ? fromHeight / settledRect.height : 1;
-    const settledAnchorX = settledRect.left + pointerAnchorX * settledRect.width;
     const settledAnchorY = settledRect.top + pointerAnchorY * settledRect.height;
-    const translateX =
-      interruptedRect === null
-        ? 0
-        : interruptedRect.left + pointerAnchorX * interruptedRect.width - settledAnchorX;
     const translateY =
       interruptedRect === null
         ? 0
@@ -194,114 +155,35 @@ export function SidebarThreadDragMorph(props: {
     morphAnimationRef.current = node.animate(
       [
         {
-          transform: `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`,
+          transform: `translateY(${translateY}px) scaleY(${scaleY})`,
           opacity: 0.88,
         },
-        { transform: "translate(0, 0) scale(1, 1)", opacity: 1 },
+        { transform: "translateY(0) scaleY(1)", opacity: 1 },
       ],
       { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "both" },
     );
-  }, [pointerAnchorX, pointerAnchorY, previewHeight, previewWidth]);
-  const dragKind = props.dragView?.kind ?? null;
-  const dropTargetNode = props.dragView?.kind === "dropping" ? props.dragView.targetNode : null;
-  const onDropAnimationEnd =
-    props.dragView?.kind === "dropping" ? props.dragView.onAnimationEnd : null;
-
-  useLayoutEffect(() => {
-    if (dragKind !== "dropping" || onDropAnimationEnd === null) return;
-    const node = innerRef.current;
-    if (node === null || dropTargetNode === null) {
-      onDropAnimationEnd();
-      return;
-    }
-
-    const fromRect = node.getBoundingClientRect();
-    morphAnimationRef.current?.cancel();
-    morphAnimationRef.current = null;
-    const settledRect = node.getBoundingClientRect();
-    const targetRect = dropTargetNode.getBoundingClientRect();
-    if (
-      settledRect.width === 0 ||
-      settledRect.height === 0 ||
-      targetRect.width === 0 ||
-      targetRect.height === 0 ||
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    ) {
-      onDropAnimationEnd();
-      return;
-    }
-
-    const transform = (rect: Pick<DOMRect, "left" | "top" | "width" | "height">) =>
-      `translate(${rect.left - settledRect.left}px, ${rect.top - settledRect.top}px) scale(${rect.width / settledRect.width}, ${rect.height / settledRect.height})`;
-    const animation = node.animate(
-      [
-        { transformOrigin: "0 0", transform: transform(fromRect) },
-        { transformOrigin: "0 0", transform: transform(targetRect) },
-      ],
-      { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "both" },
-    );
-    dropAnimationRef.current = animation;
-    void animation.finished.then(
-      () => {
-        if (dropAnimationRef.current !== animation) return;
-        dropAnimationRef.current = null;
-        onDropAnimationEnd();
-      },
-      () => undefined,
-    );
-    return () => {
-      if (dropAnimationRef.current !== animation) return;
-      dropAnimationRef.current = null;
-      animation.cancel();
-    };
-  }, [dragKind, dropTargetNode, onDropAnimationEnd]);
+  }, [pointerAnchorX, pointerAnchorY, previewHeight]);
   useEffect(
     () => () => {
       morphAnimationRef.current?.cancel();
-      dropAnimationRef.current?.cancel();
     },
     [],
   );
 
-  if (
-    props.dragView === null ||
-    previewHeight === null ||
-    previewWidth === null ||
-    pointerAnchorX === null ||
-    pointerAnchorY === null
-  ) {
+  if (props.dragView === null || pointerAnchorX === null || pointerAnchorY === null) {
     return props.children;
   }
 
-  const left = pointerAnchorX * props.dragView.sourceRect.width - pointerAnchorX * previewWidth;
-  const top = pointerAnchorY * props.dragView.sourceRect.height - pointerAnchorY * previewHeight;
-
   return (
     <div
-      className="pointer-events-none fixed z-20"
+      ref={innerRef}
+      className="h-full w-full"
       style={{
-        top: props.dragView.sourceRect.top,
-        left: props.dragView.sourceRect.left,
-        width: props.dragView.sourceRect.width,
-        height: props.dragView.sourceRect.height,
-        transform: `translate3d(${props.dragView.translation.x}px, ${props.dragView.translation.y}px, 0)`,
-        willChange: "transform",
+        transformOrigin: `${pointerAnchorX * 100}% ${pointerAnchorY * 100}%`,
+        willChange: "transform, opacity",
       }}
     >
-      <div
-        ref={innerRef}
-        className={props.dragView.variant === "card" ? "absolute py-0.5" : "absolute"}
-        style={{
-          left,
-          top,
-          width: previewWidth,
-          height: previewHeight,
-          transformOrigin: `${pointerAnchorX * 100}% ${pointerAnchorY * 100}%`,
-          willChange: "transform, opacity",
-        }}
-      >
-        {props.children}
-      </div>
+      {props.children}
     </div>
   );
 }
