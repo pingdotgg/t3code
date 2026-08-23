@@ -42,6 +42,8 @@ export type AndroidAnchoredMenuProps = {
   readonly actions: readonly MenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
+  /** Optional Android-only content rendered before the standard trailing state glyph. */
+  readonly renderActionTrailing?: (action: MenuAction) => ReactNode;
   /** Applied to the anchor wrapper — call sites flex these to fill toolbars. */
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
@@ -276,6 +278,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                     const destructive = action.attributes?.destructive ?? false;
                     const disabled = action.attributes?.disabled ?? false;
                     const hasSubmenu = (action.subactions?.length ?? 0) > 0;
+                    const customTrailing = props.renderActionTrailing?.(action);
                     return (
                       <Pressable
                         key={action.id ?? `${index}-${action.title}`}
@@ -303,6 +306,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                             </Text>
                           ) : null}
                         </View>
+                        {customTrailing}
                         {hasSubmenu ? (
                           <SymbolView
                             name="chevron.right"

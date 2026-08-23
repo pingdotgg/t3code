@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 
@@ -8,8 +9,20 @@ describe("buildHomeListFilterMenu", () => {
     const menu = buildHomeListFilterMenu({
       environments: [],
       projects: [
-        { key: "environment-1:project-1", label: "Codething" },
-        { key: "environment-1:project-2", label: "Website" },
+        {
+          key: "environment-1:project-1",
+          label: "Codething",
+          environmentId: EnvironmentId.make("environment-1"),
+          workspaceRoot: "/workspace/codething",
+          faviconPath: null,
+        },
+        {
+          key: "environment-1:project-2",
+          label: "Website",
+          environmentId: EnvironmentId.make("environment-1"),
+          workspaceRoot: "/workspace/website",
+          faviconPath: null,
+        },
       ],
       selectedEnvironmentId: null,
       selectedProjectKey: "environment-1:project-1",

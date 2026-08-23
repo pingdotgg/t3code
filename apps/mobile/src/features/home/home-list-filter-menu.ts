@@ -11,6 +11,9 @@ export interface HomeListFilterMenuEnvironment {
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+  readonly environmentId: EnvironmentId;
+  readonly workspaceRoot: string;
+  readonly faviconPath: string | null;
 }
 
 type HomeListFilterMenuAction = {

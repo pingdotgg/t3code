@@ -21,6 +21,8 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import type { HomeProjectSortOrder } from "./homeThreadList";
+import { buildAndroidProjectFilterActions } from "./android-home-list-filter-menu";
+import { AndroidProjectFilterIcon } from "./AndroidProjectFilterIcon";
 import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import {
   buildHomeListFilterMenu,
@@ -101,18 +103,10 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
             {
               id: "project",
               title: "Project",
-              subactions: [
-                {
-                  id: "project:all",
-                  title: "All projects",
-                  state: checkedMenuState(props.selectedProjectKey === null),
-                },
-                ...props.projects.map((project) => ({
-                  id: `project:${project.key}`,
-                  title: project.label,
-                  state: checkedMenuState(props.selectedProjectKey === project.key),
-                })),
-              ],
+              subactions: buildAndroidProjectFilterActions(
+                props.projects,
+                props.selectedProjectKey,
+              ),
             },
           ] satisfies MenuAction[])),
       ...(threadListV2Enabled
@@ -235,6 +229,9 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               actions={menuActions}
               isAnchoredToRight
               onPressAction={handleMenuAction}
+              renderActionTrailing={(action) => (
+                <AndroidProjectFilterIcon action={action} projects={props.projects} />
+              )}
             >
               <Pressable
                 accessibilityLabel="Filter and sort threads"

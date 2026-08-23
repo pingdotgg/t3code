@@ -47,6 +47,7 @@ import {
   useHomeListOptions,
 } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
+import { AndroidProjectFilterIcon } from "../home/AndroidProjectFilterIcon";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
@@ -284,6 +285,9 @@ function ThreadNavigationSidebarPane(
       projectScopes.map((scope) => ({
         key: scope.key,
         label: scope.title,
+        environmentId: scope.representative.environmentId,
+        workspaceRoot: scope.representative.workspaceRoot,
+        faviconPath: scope.representative.faviconPath ?? null,
       })),
     [projectScopes],
   );
@@ -1383,7 +1387,13 @@ function ThreadNavigationSidebarPane(
             }
           />
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>
-            <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
+            <ControlPillMenu
+              actions={listMenuActions}
+              onPressAction={handleListMenuAction}
+              renderActionTrailing={(action) => (
+                <AndroidProjectFilterIcon action={action} projects={projectFilterOptions} />
+              )}
+            >
               <SidebarFilterButton
                 grouped
                 accessibilityLabel="Filter and sort threads"

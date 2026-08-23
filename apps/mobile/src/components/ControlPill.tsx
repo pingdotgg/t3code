@@ -13,7 +13,7 @@ import { useThemeColor } from "../lib/useThemeColor";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
 import { cn } from "../lib/cn";
-import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
+import { AndroidAnchoredMenu, type AndroidAnchoredMenuProps } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 
@@ -116,6 +116,7 @@ export function ControlPillMenu(
   props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> & {
     readonly children: ReactNode;
     readonly className?: string;
+    readonly renderActionTrailing?: AndroidAnchoredMenuProps["renderActionTrailing"];
   },
 ) {
   const { themeAppearance } = useAppearancePreferences();
@@ -134,6 +135,7 @@ export function ControlPillMenu(
           title={props.title}
           style={props.style}
           onPressAction={props.onPressAction}
+          renderActionTrailing={props.renderActionTrailing}
         >
           {(open) =>
             cloneElement(child, {
@@ -153,13 +155,18 @@ export function ControlPillMenu(
         title={props.title}
         style={props.style}
         onPressAction={props.onPressAction}
+        renderActionTrailing={props.renderActionTrailing}
       >
         {props.children}
       </AndroidAnchoredMenu>
     );
   }
 
-  const { className: _className, ...menuProps } = props;
+  const {
+    className: _className,
+    renderActionTrailing: _renderActionTrailing,
+    ...menuProps
+  } = props;
   let children = menuProps.children;
   // In long-press mode the wrapped pressable still receives the touch (the
   // patched MenuView button is touch-transparent) and RN's Fabric touch

@@ -88,6 +88,9 @@ export function HomeRouteScreen() {
       }).map((scope) => ({
         key: scope.key,
         label: scope.title,
+        environmentId: scope.representative.environmentId,
+        workspaceRoot: scope.representative.workspaceRoot,
+        faviconPath: scope.representative.faviconPath ?? null,
       })),
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
