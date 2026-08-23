@@ -881,6 +881,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     props.onChangeDraftMessage,
     props.selectedThread.id,
     props.selectedThread.latestTurn,
+    props.selectedThread.session,
     props.selectedThreadQueueCount,
     selectedThreadFeed,
     selectedThreadKey,
