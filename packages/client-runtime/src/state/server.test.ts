@@ -124,6 +124,30 @@ describe("update restart reconnect nudges", () => {
       yield* Fiber.join(fiber);
     }).pipe(Effect.provide(TestClock.layer())),
   );
+
+  it.effect("retries rejected credentials only while the update restart is in progress", () =>
+    Effect.gen(function* () {
+      const retries = yield* Ref.make(0);
+
+      yield* nudgeReconnectDuringUpdateRestart({
+        stateChanges: Stream.fromIterable([
+          { phase: "blocked", lastFailure: { reason: "permission" } },
+          {
+            phase: "blocked",
+            lastFailure: {
+              reason: "authentication",
+              detail: "The environment credential is invalid.",
+            },
+          },
+          { phase: "blocked", lastFailure: { reason: "configuration" } },
+        ]),
+        retryNow: Ref.update(retries, (count) => count + 1),
+        interval: Duration.zero,
+      });
+
+      expect(yield* Ref.get(retries)).toBe(1);
+    }),
+  );
 });
 
 describe("server state projection", () => {
