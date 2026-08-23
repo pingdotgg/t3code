@@ -1214,6 +1214,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => new Set(nonPersistedComposerImageIds),
     [nonPersistedComposerImageIds],
   );
+  const visibleComposerImages = useMemo(
+    () =>
+      composerImages.filter(
+        (image) => !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
+      ),
+    [composerImages, composerPreviewAnnotations],
+  );
 
   const isComposerApprovalState = activePendingApproval !== null;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
@@ -3358,21 +3365,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
 
               {!isComposerCollapsedMobile &&
-                !isComposerApprovalState &&
-                pendingUserInputs.length === 0 &&
-                composerImages.some(
-                  (image) =>
-                    !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
-                ) && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {composerImages
-                      .filter(
-                        (image) =>
-                          !composerPreviewAnnotations.some(
-                            (annotation) => annotation.id === image.id,
-                          ),
-                      )
-                      .map((image) => (
+              !isComposerApprovalState &&
+              pendingUserInputs.length === 0 ? (
+                <div
+                  data-chat-composer-image-attachments="true"
+                  className={cn(
+                    "grid transition-[grid-template-rows,margin-bottom,opacity] duration-200 ease-out motion-reduce:transition-none",
+                    visibleComposerImages.length > 0
+                      ? "mb-3 grid-rows-[1fr] opacity-100"
+                      : "mb-0 grid-rows-[0fr] opacity-0",
+                  )}
+                >
+                  <div className="min-h-0 overflow-hidden">
+                    <div className="flex flex-wrap gap-2">
+                      {visibleComposerImages.map((image) => (
                         <div
                           key={image.id}
                           className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
@@ -3432,8 +3438,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           </Button>
                         </div>
                       ))}
+                    </div>
                   </div>
-                )}
+                </div>
+              ) : null}
 
               <div className="relative">
                 <ComposerPromptEditor
