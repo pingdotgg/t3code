@@ -605,7 +605,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                 new ProviderAdapterProcessError({
                   provider: PROVIDER,
                   threadId: input.threadId,
-                  detail: cause.message,
+                  detail: "Failed to start the Kimi ACP session.",
                   cause,
                 }),
             ),
@@ -1054,7 +1054,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                           new ProviderAdapterRequestError({
                             provider: PROVIDER,
                             method: "session/prompt",
-                            detail: cause.message,
+                            detail: "Failed to read a turn attachment.",
                             cause,
                           }),
                       ),
