@@ -67,6 +67,7 @@ import {
   type ReactNode,
 } from "react";
 import { useParams, useRouter } from "@tanstack/react-router";
+import { useShallow } from "zustand/react/shallow";
 
 import {
   isAtomCommandInterrupted,
@@ -131,6 +132,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planPinnedReorder,
+  resolveProjectAttentionStatus,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
@@ -141,6 +143,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  type ProjectAttentionStatus,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -194,6 +197,92 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Keep the v2 key so existing preferences survive the v2-to-default rename.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
+const EMPTY_PROJECT_ATTENTION_THREADS: readonly EnvironmentThreadShell[] = [];
+
+const PROJECT_ATTENTION_PRESENTATION: Record<
+  ProjectAttentionStatus,
+  { label: string; dotClassName: string }
+> = {
+  failed: { label: "Failed", dotClassName: "bg-red-500 dark:bg-red-400" },
+  input: { label: "Awaiting input", dotClassName: "bg-indigo-500 dark:bg-indigo-300" },
+  done: { label: "Done", dotClassName: "bg-emerald-500 dark:bg-emerald-300" },
+};
+
+const ProjectScopeMenuItem = memo(function ProjectScopeMenuItem(props: {
+  project: SidebarProjectSnapshot;
+  attentionThreads: readonly EnvironmentThreadShell[];
+  onProjectSettings: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    project: SidebarProjectSnapshot,
+  ) => void;
+}) {
+  const { attentionThreads, onProjectSettings, project } = props;
+  const lastVisitedAts = useUiStateStore(
+    useShallow((state) =>
+      attentionThreads.map(
+        (thread) =>
+          state.threadLastVisitedAtById[
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+          ] ?? null,
+      ),
+    ),
+  );
+  const attentionStatus = useMemo(
+    () =>
+      resolveProjectAttentionStatus(
+        attentionThreads.map((thread, index) => ({
+          ...thread,
+          lastVisitedAt: lastVisitedAts[index] ?? undefined,
+        })),
+      ),
+    [attentionThreads, lastVisitedAts],
+  );
+  const presentation = attentionStatus ? PROJECT_ATTENTION_PRESENTATION[attentionStatus] : null;
+
+  return (
+    <MenuRadioItem
+      value={project.projectKey}
+      closeOnClick
+      aria-label={
+        presentation ? `${project.displayName}, ${presentation.label}` : project.displayName
+      }
+      className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+    >
+      <span className="relative inline-flex size-4 shrink-0">
+        <ProjectFavicon
+          environmentId={project.environmentId}
+          cwd={project.workspaceRoot}
+          faviconPath={project.faviconPath}
+          className="size-4 shrink-0"
+        />
+        {presentation ? (
+          <span
+            aria-hidden="true"
+            data-testid={`project-attention-${attentionStatus}`}
+            className={cn(
+              "pointer-events-none absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-popover",
+              presentation.dotClassName,
+            )}
+          />
+        ) : null}
+      </span>
+      <span className="min-w-0 truncate text-sm">{project.displayName}</span>
+      <Button
+        size="icon-xs"
+        variant="ghost-muted"
+        aria-label={`Project settings for ${project.displayName}`}
+        title={`Project settings for ${project.displayName}`}
+        className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          onProjectSettings(event, project);
+        }}
+      >
+        <SettingsIcon className="size-3.5" />
+      </Button>
+    </MenuRadioItem>
+  );
+});
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -1912,6 +2001,18 @@ export default function Sidebar() {
       ),
     [projectGroups],
   );
+  const logicalProjectKeyByPhysicalKey = useMemo<Map<string, string>>(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjectRefs.map(
+            (projectRef) =>
+              [`${projectRef.environmentId}:${projectRef.projectId}`, group.projectKey] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
   // churn on every render; auto-settle thresholds are day-granular anyway.
@@ -2010,6 +2111,7 @@ export default function Sidebar() {
     snoozedThreads,
     settledThreads,
     snoozeNow,
+    projectAttentionThreadsByKey,
   } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
     // Snooze classification uses a REAL clock, not the quantized minute:
@@ -2018,17 +2120,17 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
-    for (const thread of visible) {
+    const attentionThreadsByProjectKey = new Map<string, EnvironmentThreadShell[]>();
+    for (const thread of threads) {
+      if (thread.archivedAt !== null) continue;
+      const physicalProjectKey = `${thread.environmentId}:${thread.projectId}`;
+      const visibleInCurrentScope =
+        scopedProjectKeys === null || scopedProjectKeys.has(physicalProjectKey);
+      if (!visibleInCurrentScope && !projectScopeMenuOpen) continue;
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
       // could neither un-settle nor pin them, so auto-settling them would
@@ -2043,13 +2145,36 @@ export default function Sidebar() {
         snapshot != null && (thread.worktreePath === null || snapshot.branch === thread.branch)
           ? snapshot.pr
           : null;
+      const isSnoozed = supportsSnooze && effectiveSnoozed(thread, { now: preciseNow });
+      const isSettled =
+        !isSnoozed &&
+        thread.pinnedAt === null &&
+        supportsSettlement &&
+        effectiveSettled(thread, {
+          now,
+          autoSettleAfterDays,
+          autoSettleOnMerge,
+          changeRequest,
+        });
+      if (projectScopeMenuOpen && !isSnoozed && !isSettled) {
+        const logicalProjectKey = logicalProjectKeyByPhysicalKey.get(physicalProjectKey);
+        if (logicalProjectKey !== undefined) {
+          const projectThreads = attentionThreadsByProjectKey.get(logicalProjectKey);
+          if (projectThreads) {
+            projectThreads.push(thread);
+          } else {
+            attentionThreadsByProjectKey.set(logicalProjectKey, [thread]);
+          }
+        }
+      }
+      if (!visibleInCurrentScope) continue;
       // Snooze outranks everything, including a pin: "hide until Tuesday"
       // temporarily suspends "keep on top". The pin survives underneath —
       // and so does its pinOrderKey, so on wake the thread reappears at
       // its exact slot in the pinned block. (For unpinned threads
       // this is also the snooze-beats-auto-settle rule: the wake time is a
       // stronger statement about when the thread matters again.)
-      if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
+      if (isSnoozed) {
         snoozed.push(thread);
         // A pin otherwise overrides the lifecycle: pinned threads never
         // auto-settle out of sight. (The decider clears settled state on
@@ -2057,15 +2182,7 @@ export default function Sidebar() {
         // arise from stale or raced writes.)
       } else if (thread.pinnedAt != null) {
         pinned.push(thread);
-      } else if (
-        supportsSettlement &&
-        effectiveSettled(thread, {
-          now,
-          autoSettleAfterDays,
-          autoSettleOnMerge,
-          changeRequest,
-        })
-      ) {
+      } else if (isSettled) {
         settled.push(thread);
       } else {
         active.push(thread);
@@ -2096,12 +2213,15 @@ export default function Sidebar() {
       ),
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
+      projectAttentionThreadsByKey: attentionThreadsByProjectKey,
     };
   }, [
     autoSettleAfterDays,
     autoSettleOnMerge,
     changeRequestSnapshotByKey,
+    logicalProjectKeyByPhysicalKey,
     nowMinute,
+    projectScopeMenuOpen,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
@@ -3520,38 +3640,17 @@ export default function Sidebar() {
                         <FolderIcon className="size-4 shrink-0" />
                         <span className="min-w-0 truncate text-sm">All projects</span>
                       </MenuRadioItem>
-                      {projectGroups.map((project) => {
-                        const scopeKey = project.projectKey;
-                        return (
-                          <MenuRadioItem
-                            key={scopeKey}
-                            value={scopeKey}
-                            closeOnClick
-                            className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-                          >
-                            <ProjectFavicon
-                              environmentId={project.environmentId}
-                              cwd={project.workspaceRoot}
-                              faviconPath={project.faviconPath}
-                              className="size-4 shrink-0"
-                            />
-                            <span className="min-w-0 truncate text-sm">{project.displayName}</span>
-                            <Button
-                              size="icon-xs"
-                              variant="ghost-muted"
-                              aria-label={`Project settings for ${project.displayName}`}
-                              title={`Project settings for ${project.displayName}`}
-                              className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                void handleProjectSettings(event, project);
-                              }}
-                            >
-                              <SettingsIcon className="size-3.5" />
-                            </Button>
-                          </MenuRadioItem>
-                        );
-                      })}
+                      {projectGroups.map((project) => (
+                        <ProjectScopeMenuItem
+                          key={project.projectKey}
+                          project={project}
+                          attentionThreads={
+                            projectAttentionThreadsByKey.get(project.projectKey) ??
+                            EMPTY_PROJECT_ATTENTION_THREADS
+                          }
+                          onProjectSettings={handleProjectSettings}
+                        />
+                      ))}
                     </MenuRadioGroup>
                   </MenuPopup>
                 </Menu>

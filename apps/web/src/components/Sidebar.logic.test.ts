@@ -17,6 +17,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  resolveProjectAttentionStatus,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -1174,6 +1175,89 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+});
+
+describe("resolveProjectAttentionStatus", () => {
+  const makeStatusThread = (
+    overrides: Partial<Parameters<typeof resolveProjectAttentionStatus>[0][number]> = {},
+  ): Parameters<typeof resolveProjectAttentionStatus>[0][number] => ({
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default",
+    latestTurn: makeLatestTurn(),
+    lastVisitedAt: "2026-03-09T10:04:00.000Z",
+    session: {
+      threadId: ThreadId.make("thread-project-status"),
+      status: "ready",
+      providerName: "Codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    },
+    backgroundLiveness: null,
+    ...overrides,
+  });
+
+  it("returns null when project threads have no attention state", () => {
+    expect(
+      resolveProjectAttentionStatus([
+        makeStatusThread({ lastVisitedAt: "2026-03-09T10:06:00.000Z" }),
+        makeStatusThread({
+          session: {
+            ...makeStatusThread().session!,
+            status: "running",
+          },
+        }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("surfaces failed before input and unseen completion", () => {
+    expect(
+      resolveProjectAttentionStatus([
+        makeStatusThread(),
+        makeStatusThread({ hasPendingUserInput: true }),
+        makeStatusThread({
+          hasPendingUserInput: true,
+          session: {
+            ...makeStatusThread().session!,
+            status: "error",
+          },
+        }),
+      ]),
+    ).toBe("failed");
+  });
+
+  it("surfaces input before unseen completion", () => {
+    expect(
+      resolveProjectAttentionStatus([
+        makeStatusThread(),
+        makeStatusThread({ hasPendingUserInput: true }),
+      ]),
+    ).toBe("input");
+  });
+
+  it("surfaces an unseen completion as done", () => {
+    expect(resolveProjectAttentionStatus([makeStatusThread()])).toBe("done");
+  });
+
+  it("keeps never-visited historical completions read", () => {
+    expect(
+      resolveProjectAttentionStatus([makeStatusThread({ lastVisitedAt: undefined })]),
+    ).toBeNull();
+  });
+
+  it("does not turn approval or background work into switcher attention", () => {
+    expect(
+      resolveProjectAttentionStatus([
+        makeStatusThread({ hasPendingApprovals: true }),
+        makeStatusThread({ backgroundLiveness: "working" }),
+      ]),
+    ).toBeNull();
   });
 });
 

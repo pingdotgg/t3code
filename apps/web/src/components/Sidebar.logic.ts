@@ -474,6 +474,8 @@ export type SidebarThreadStatus =
   | "failed"
   | "ready";
 
+export type ProjectAttentionStatus = "failed" | "input" | "done";
+
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
@@ -503,6 +505,24 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return "monitoring";
   }
   return "ready";
+}
+
+export function resolveProjectAttentionStatus(
+  threads: ReadonlyArray<ThreadStatusInput>,
+): ProjectAttentionStatus | null {
+  let hasInput = false;
+  let hasDone = false;
+
+  for (const thread of threads) {
+    if (thread.session?.status === "error") return "failed";
+    if (thread.hasPendingUserInput) hasInput = true;
+    const status = resolveSidebarThreadStatus(thread);
+    if (status === "ready" && hasUnseenCompletion(thread)) hasDone = true;
+  }
+
+  if (hasInput) return "input";
+  if (hasDone) return "done";
+  return null;
 }
 
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
