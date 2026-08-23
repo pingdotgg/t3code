@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   sidebarThreadKey,
-  type SidebarThreadDragTransaction,
+  type SidebarThreadDroppingTransaction,
 } from "../components/Sidebar.dnd.logic";
 import { orderItemsByPreferredIds, planPinnedReorder } from "../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -172,8 +172,8 @@ export function useSidebarPinnedDnd(input: {
     [input.reorderPinnedThread, input.reorderablePinnedKeys, orderedPinnedThreads],
   );
   const planPinnedInsertion = useCallback(
-    (transaction: SidebarThreadDragTransaction): SidebarPinnedInsertionPlan | null => {
-      if (transaction.sourceSection === "pinned" || transaction.target?.section !== "pinned") {
+    (transaction: SidebarThreadDroppingTransaction): SidebarPinnedInsertionPlan | null => {
+      if (transaction.sourceSection === "pinned" || transaction.target.section !== "pinned") {
         return null;
       }
       const existingKeys = input.allPinnedThreads.map(sidebarThreadKey);

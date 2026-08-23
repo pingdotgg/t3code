@@ -40,7 +40,10 @@ import {
   SIDEBAR_DND_SECTIONS,
   type SidebarDndAction,
   type SidebarDndSection,
+  type SidebarThreadCommittingTransaction,
   type SidebarThreadDropTarget,
+  type SidebarThreadDroppingTransaction,
+  type SidebarThreadDraggingTransaction,
   type SidebarThreadDragTransaction,
 } from "../components/Sidebar.dnd.logic";
 import {
@@ -126,9 +129,7 @@ export function useSidebarThreadDnd(input: {
   const canonicalSectionByThreadKeyRef = useRef(input.canonicalSectionByThreadKey);
   canonicalSectionByThreadKeyRef.current = input.canonicalSectionByThreadKey;
   const pointerCoordinatesRef = useRef<{ x: number; y: number } | null>(null);
-  const pendingSnoozePresetRef = useRef<SnoozePreset | null>(null);
   const snoozeDropEpochRef = useRef(0);
-  const dragScopeKeyRef = useRef<string | null>(null);
 
   const canPinWithOrder = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -275,10 +276,6 @@ export function useSidebarThreadDnd(input: {
     }
     return source;
   }, []);
-  const sourceStillMatchesDragStart = useCallback(
-    (current: SidebarThreadDragTransaction) => currentSourceThread(current) !== null,
-    [currentSourceThread],
-  );
   const dropStillValid = useCallback(
     (current: SidebarThreadDragTransaction, target: SidebarThreadDropTarget) => {
       const source = currentSourceThread(current);
@@ -295,8 +292,6 @@ export function useSidebarThreadDnd(input: {
       void readLocalApi()?.contextMenu.close();
     }
     pointerCoordinatesRef.current = null;
-    pendingSnoozePresetRef.current = null;
-    dragScopeKeyRef.current = null;
     setTransaction(null);
   }, [setTransaction]);
   const finishTransaction = useCallback(() => {
@@ -306,7 +301,7 @@ export function useSidebarThreadDnd(input: {
   }, [captureInsertionPosition, clearTransaction]);
   const beginReconciliation = useCallback(
     (reconciliation: {
-      transaction: SidebarThreadDragTransaction;
+      transaction: SidebarThreadCommittingTransaction;
       receiptSequencesByEnvironment: ReadonlyMap<EnvironmentThreadShell["environmentId"], number>;
     }) => {
       setTransaction({
@@ -336,19 +331,19 @@ export function useSidebarThreadDnd(input: {
   );
   const commitLifecycleDrop = useCallback(
     (
-      current: SidebarThreadDragTransaction,
+      current: SidebarThreadDroppingTransaction,
       action: Exclude<SidebarDndAction, "noop" | "reorder-pinned" | "snooze">,
       pinnedPlan: SidebarPinnedInsertionPlan | null,
     ) => {
       void (async () => {
-        if (current.target === null || !dropStillValid(current, current.target)) {
+        if (!dropStillValid(current, current.target)) {
           finishTransaction();
           return;
         }
-        const committing: SidebarThreadDragTransaction = {
+        const committing: SidebarThreadCommittingTransaction = {
           ...current,
           phase: "committing",
-          receiptSequencesByEnvironment: null,
+          action,
         };
         setTransaction(committing);
         const threadRef = scopeThreadRef(
@@ -443,23 +438,23 @@ export function useSidebarThreadDnd(input: {
     ],
   );
   const commitSnoozeDrop = useCallback(
-    (current: SidebarThreadDragTransaction, preset: SnoozePreset) => {
+    (current: Extract<SidebarThreadDroppingTransaction, { readonly action: "snooze" }>) => {
       void (async () => {
-        if (current.target === null || !dropStillValid(current, current.target)) {
+        if (!dropStillValid(current, current.target)) {
           finishTransaction();
           return;
         }
-        const committing: SidebarThreadDragTransaction = {
-          ...current,
+        const { snoozePreset, ...drop } = current;
+        const committing: SidebarThreadCommittingTransaction = {
+          ...drop,
           phase: "committing",
-          receiptSequencesByEnvironment: null,
         };
         setTransaction(committing);
         const threadRef = scopeThreadRef(
           current.sourceThread.environmentId,
           current.sourceThread.id,
         );
-        const outcome = await input.performSnooze(threadRef, preset);
+        const outcome = await input.performSnooze(threadRef, snoozePreset);
         if (outcome.status === "failure") {
           finishTransaction();
           toastManager.add(
@@ -479,7 +474,7 @@ export function useSidebarThreadDnd(input: {
         toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), input.timestampFormat)}`,
+            title: `Snoozed until ${snoozeWakeDescription(snoozePreset.snoozedUntil, new Date(), input.timestampFormat)}`,
             timeout: 5_000,
             actionProps: {
               children: "Wake",
@@ -507,7 +502,7 @@ export function useSidebarThreadDnd(input: {
   );
   const openSnoozeDropMenu = useCallback(
     async (
-      current: SidebarThreadDragTransaction,
+      current: SidebarThreadDraggingTransaction,
       position: { x: number; y: number },
     ): Promise<boolean> => {
       const target = current.target;
@@ -525,7 +520,7 @@ export function useSidebarThreadDnd(input: {
         phase: "awaiting-snooze-choice",
         entries,
         target,
-        receiptSequencesByEnvironment: null,
+        snoozePreset: null,
       });
       const api = readLocalApi();
       if (api === undefined) return false;
@@ -554,14 +549,13 @@ export function useSidebarThreadDnd(input: {
         threadKey: current.sourceThreadKey,
         target: projectedTarget,
       });
-      pendingSnoozePresetRef.current = preset;
       captureInsertionPosition(projectedEntries, current.sourceThreadKey);
       setTransaction({
         ...current,
         phase: "awaiting-snooze-choice",
         entries: projectedEntries,
         target: projectedTarget,
-        receiptSequencesByEnvironment: null,
+        snoozePreset: preset,
       });
       return true;
     },
@@ -614,12 +608,12 @@ export function useSidebarThreadDnd(input: {
         settled: input.settledThreads.length,
       } satisfies Readonly<Record<SidebarDndSection, number>>;
       const initialEntries = canonicalEntriesRef.current;
-      dragScopeKeyRef.current = input.scopeKey;
       setTransaction({
         phase: "dragging",
         sourceThread,
         sourceThreadKey: threadKey,
         sourceSection,
+        scopeKey: input.scopeKey,
         sourceRect: {
           top: sourceRect.top,
           left: sourceRect.left,
@@ -643,7 +637,6 @@ export function useSidebarThreadDnd(input: {
           SIDEBAR_DND_SECTIONS.filter((section) => sectionCounts[section] === 0),
         ),
         target: { section: sourceSection, threadKey, edge: null },
-        receiptSequencesByEnvironment: null,
       });
     },
     [
@@ -660,7 +653,7 @@ export function useSidebarThreadDnd(input: {
   );
   const resolveDropTarget = useCallback(
     (
-      current: SidebarThreadDragTransaction,
+      current: SidebarThreadDraggingTransaction,
       over: DragMoveEvent["over"],
     ): SidebarThreadDropTarget | null => {
       if (over === null) return null;
@@ -750,21 +743,13 @@ export function useSidebarThreadDnd(input: {
   }, [dropStillValid, openSnoozeDropMenu]);
   const completeDropAnimation = useCallback(() => {
     const current = transactionRef.current;
-    if (current === null || current.phase !== "dropping" || current.target === null) return;
+    if (current === null || current.phase !== "dropping") return;
     if (!dropStillValid(current, current.target)) {
       finishTransaction();
       return;
     }
 
-    const action = resolveSidebarDndAction({
-      source: current.sourceSection,
-      destination: current.target.section,
-    });
-    if (action === "noop") {
-      finishTransaction();
-      return;
-    }
-    if (action === "reorder-pinned") {
+    if (current.action === "reorder-pinned") {
       const firstPinnedThread = current.entries.find(
         (entry) =>
           entry.kind === "thread" &&
@@ -779,19 +764,16 @@ export function useSidebarThreadDnd(input: {
       clearTransaction();
       return;
     }
-    if (action === "snooze") {
-      const preset = pendingSnoozePresetRef.current;
-      pendingSnoozePresetRef.current = null;
-      if (preset === null) finishTransaction();
-      else commitSnoozeDrop(current, preset);
+    if (current.action === "snooze") {
+      commitSnoozeDrop(current);
       return;
     }
-    const pinnedPlan = action === "pin" ? planPinnedInsertion(current) : null;
-    if (action === "pin" && pinnedPlan === null) {
+    const pinnedPlan = current.action === "pin" ? planPinnedInsertion(current) : null;
+    if (current.action === "pin" && pinnedPlan === null) {
       finishTransaction();
       return;
     }
-    commitLifecycleDrop(current, action, pinnedPlan);
+    commitLifecycleDrop(current, current.action, pinnedPlan);
   }, [
     clearTransaction,
     commitLifecycleDrop,
@@ -823,33 +805,33 @@ export function useSidebarThreadDnd(input: {
         finishTransaction();
         return;
       }
-      if (
-        action === "snooze" &&
-        (current.phase !== "awaiting-snooze-choice" || pendingSnoozePresetRef.current === null)
-      ) {
-        finishTransaction();
+      if (action === "snooze") {
+        if (current.phase !== "awaiting-snooze-choice" || current.snoozePreset === null) {
+          finishTransaction();
+          return;
+        }
+        setTransaction({
+          ...current,
+          phase: "dropping",
+          action,
+          snoozePreset: current.snoozePreset,
+        });
         return;
       }
       const projectedTarget =
-        action === "snooze"
-          ? target
-          : target.section === "pinned"
-            ? target
-            : resolveSortedTarget(current, target.section);
-      const projectedEntries =
-        action === "snooze"
-          ? current.entries
-          : moveSidebarDndBoardThread({
-              entries: current.initialEntries,
-              threadKey: current.sourceThreadKey,
-              target: projectedTarget,
-            });
+        target.section === "pinned" ? target : resolveSortedTarget(current, target.section);
+      const projectedEntries = moveSidebarDndBoardThread({
+        entries: current.initialEntries,
+        threadKey: current.sourceThreadKey,
+        target: projectedTarget,
+      });
       if (action !== "reorder-pinned" && current.phase === "dragging") {
         captureInsertionPosition(projectedEntries, current.sourceThreadKey);
       }
       setTransaction({
         ...current,
         phase: "dropping",
+        action,
         entries: projectedEntries,
         target: projectedTarget,
       });
@@ -864,13 +846,7 @@ export function useSidebarThreadDnd(input: {
   );
 
   useLayoutEffect(() => {
-    if (
-      transaction === null ||
-      transaction.phase !== "reconciling" ||
-      transaction.receiptSequencesByEnvironment === null
-    ) {
-      return;
-    }
+    if (transaction === null || transaction.phase !== "reconciling") return;
     for (const [environmentId, receiptSequence] of transaction.receiptSequencesByEnvironment) {
       const snapshot = appAtomRegistry.get(environmentSnapshotAtom(environmentId));
       if (snapshot === null || snapshot.snapshotSequence < receiptSequence) return;
@@ -888,8 +864,8 @@ export function useSidebarThreadDnd(input: {
     }
     if (
       input.isSearchingThreads ||
-      input.scopeKey !== dragScopeKeyRef.current ||
-      !sourceStillMatchesDragStart(transaction)
+      input.scopeKey !== transaction.scopeKey ||
+      currentSourceThread(transaction) === null
     ) {
       finishTransaction();
     }
@@ -898,7 +874,7 @@ export function useSidebarThreadDnd(input: {
     input.isSearchingThreads,
     input.scopeKey,
     input.threads,
-    sourceStillMatchesDragStart,
+    currentSourceThread,
     transaction,
   ]);
 

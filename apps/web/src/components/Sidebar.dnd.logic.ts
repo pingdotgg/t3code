@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import type { SidebarDndBoardEntry } from "./Sidebar.dnd.board";
@@ -29,24 +30,17 @@ export interface SidebarDndPointerAnchor {
   readonly y: number;
 }
 
-export type SidebarThreadDragPhase =
-  | "dragging"
-  | "dropping"
-  | "awaiting-snooze-choice"
-  | "committing"
-  | "reconciling";
-
 export interface SidebarThreadDropTarget {
   readonly section: SidebarDndSection;
   readonly threadKey: string | null;
   readonly edge: "before" | "after" | null;
 }
 
-export interface SidebarThreadDragTransaction {
-  readonly phase: SidebarThreadDragPhase;
+interface SidebarThreadDragTransactionBase {
   readonly sourceThread: EnvironmentThreadShell;
   readonly sourceThreadKey: string;
   readonly sourceSection: SidebarDndSection;
+  readonly scopeKey: string | null;
   readonly sourceRect: {
     readonly top: number;
     readonly left: number;
@@ -58,12 +52,56 @@ export interface SidebarThreadDragTransaction {
   readonly entries: readonly SidebarDndBoardEntry[];
   readonly sectionCounts: Readonly<Record<SidebarDndSection, number>>;
   readonly emptySections: ReadonlySet<SidebarDndSection>;
+}
+
+interface SidebarThreadTargetedTransaction extends SidebarThreadDragTransactionBase {
+  readonly target: SidebarThreadDropTarget;
+}
+
+export interface SidebarThreadDraggingTransaction extends SidebarThreadDragTransactionBase {
+  readonly phase: "dragging";
   readonly target: SidebarThreadDropTarget | null;
+}
+
+export interface SidebarThreadSnoozeChoiceTransaction extends SidebarThreadTargetedTransaction {
+  readonly phase: "awaiting-snooze-choice";
+  readonly snoozePreset: SnoozePreset | null;
+}
+
+export type SidebarThreadDropAction = Exclude<SidebarDndAction, "noop">;
+export type SidebarThreadCommitAction = Exclude<SidebarThreadDropAction, "reorder-pinned">;
+
+export type SidebarThreadDroppingTransaction =
+  | (SidebarThreadTargetedTransaction & {
+      readonly phase: "dropping";
+      readonly action: Exclude<SidebarThreadDropAction, "snooze">;
+    })
+  | (SidebarThreadTargetedTransaction & {
+      readonly phase: "dropping";
+      readonly action: "snooze";
+      readonly snoozePreset: SnoozePreset;
+    });
+
+export interface SidebarThreadCommittingTransaction extends SidebarThreadTargetedTransaction {
+  readonly phase: "committing";
+  readonly action: SidebarThreadCommitAction;
+}
+
+export interface SidebarThreadReconcilingTransaction extends SidebarThreadTargetedTransaction {
+  readonly phase: "reconciling";
+  readonly action: SidebarThreadCommitAction;
   readonly receiptSequencesByEnvironment: ReadonlyMap<
     EnvironmentThreadShell["environmentId"],
     number
-  > | null;
+  >;
 }
+
+export type SidebarThreadDragTransaction =
+  | SidebarThreadDraggingTransaction
+  | SidebarThreadSnoozeChoiceTransaction
+  | SidebarThreadDroppingTransaction
+  | SidebarThreadCommittingTransaction
+  | SidebarThreadReconcilingTransaction;
 
 const DND_SECTION_ID_PREFIX = "sidebar-thread-section:";
 

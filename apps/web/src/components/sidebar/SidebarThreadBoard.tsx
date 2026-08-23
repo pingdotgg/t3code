@@ -173,7 +173,7 @@ export function SidebarThreadBoard(props: {
     const transaction = dnd.transaction;
     if (transaction === null) return canonicalCount;
     const initialCount = transaction.sectionCounts[section];
-    if (transaction.phase === "dragging" || transaction.target === null) return initialCount;
+    if (transaction.phase === "dragging") return initialCount;
     return Math.max(
       0,
       initialCount -

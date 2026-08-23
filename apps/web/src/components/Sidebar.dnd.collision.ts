@@ -12,14 +12,14 @@ import {
   parseSidebarDndSectionId,
   SIDEBAR_DND_SECTIONS,
   type SidebarDndSection,
-  type SidebarThreadDragTransaction,
+  type SidebarThreadDraggingTransaction,
 } from "./Sidebar.dnd.logic";
 
 type CollisionArguments = Parameters<CollisionDetection>[0];
 
 interface SidebarThreadCollisionInput {
   readonly args: CollisionArguments;
-  readonly transaction: SidebarThreadDragTransaction;
+  readonly transaction: SidebarThreadDraggingTransaction;
   readonly sourceThread: EnvironmentThreadShell;
   readonly reorderablePinnedKeys: ReadonlySet<string>;
   readonly canDropThreadInSection: (
