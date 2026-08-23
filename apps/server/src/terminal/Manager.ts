@@ -249,6 +249,8 @@ export interface TerminalSessionState {
   pid: number | null;
   history: string;
   historyBytes: number;
+  persistenceHistory: string;
+  persistenceHistoryBytes: number;
   pendingHistoryControlSequence: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
@@ -280,7 +282,7 @@ interface PersistHistoryRequest extends HistoryWrite {
 }
 
 type PendingProcessEvent =
-  | { type: "output"; data: string }
+  | { type: "output"; data: string; visibleText: string }
   | { type: "exit"; event: PtyAdapter.PtyExitEvent };
 
 type DrainProcessEventAction =
@@ -1240,24 +1242,33 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     });
 
-  const applyHistoryOutput = (session: TerminalSessionState, data: string): HistoryWrite | null => {
+  const applyHistoryOutput = (
+    session: TerminalSessionState,
+    data: string,
+  ): { visibleText: string; write: HistoryWrite | null } => {
     const sanitized = sanitizeTerminalHistoryChunk(session.pendingHistoryControlSequence, data);
     session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
     if (sanitized.visibleText.length === 0) {
-      return null;
+      return { visibleText: "", write: null };
     }
 
     const visibleBytes = Buffer.byteLength(sanitized.visibleText);
-    const nextHistory = `${session.history}${sanitized.visibleText}`;
-    if (session.historyBytes + visibleBytes <= historyMaxBytes) {
-      session.history = nextHistory;
-      session.historyBytes += visibleBytes;
-      return { contents: sanitized.visibleText, mode: "append" };
+    const nextHistory = `${session.persistenceHistory}${sanitized.visibleText}`;
+    if (session.persistenceHistoryBytes + visibleBytes <= historyMaxBytes) {
+      session.persistenceHistory = nextHistory;
+      session.persistenceHistoryBytes += visibleBytes;
+      return {
+        visibleText: sanitized.visibleText,
+        write: { contents: sanitized.visibleText, mode: "append" },
+      };
     }
 
-    session.history = capHistoryByBytes(nextHistory, historyTargetBytes);
-    session.historyBytes = Buffer.byteLength(session.history);
-    return { contents: session.history, mode: "truncate" };
+    session.persistenceHistory = capHistoryByBytes(nextHistory, historyTargetBytes);
+    session.persistenceHistoryBytes = Buffer.byteLength(session.persistenceHistory);
+    return {
+      visibleText: sanitized.visibleText,
+      write: { contents: session.persistenceHistory, mode: "truncate" },
+    };
   };
 
   const historyPath = (threadId: string, terminalId: string) => {
@@ -1750,6 +1761,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (nextEvent.type === "output") {
+          if (nextEvent.visibleText.length > 0) {
+            const visibleBytes = Buffer.byteLength(nextEvent.visibleText);
+            const nextHistory = `${session.history}${nextEvent.visibleText}`;
+            if (session.historyBytes + visibleBytes <= historyMaxBytes) {
+              session.history = nextHistory;
+              session.historyBytes += visibleBytes;
+            } else {
+              session.history = capHistoryByBytes(nextHistory, historyTargetBytes);
+              session.historyBytes = Buffer.byteLength(session.history);
+            }
+          }
           const eventStamp = advanceEventSequence(session);
 
           return {
@@ -1959,14 +1981,25 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 return;
               }
 
-              const historyWrite = applyHistoryOutput(session, data);
-              if (historyWrite !== null) {
+              const historyOutput = applyHistoryOutput(session, data);
+              if (historyOutput.write !== null) {
                 runSync(
-                  queuePersist(session.threadId, session.terminalId, historyWrite, session.history),
+                  queuePersist(
+                    session.threadId,
+                    session.terminalId,
+                    historyOutput.write,
+                    session.persistenceHistory,
+                  ),
                 );
               }
 
-              if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
+              if (
+                !enqueueProcessEvent(session, processPid, {
+                  type: "output",
+                  data,
+                  visibleText: historyOutput.visibleText,
+                })
+              ) {
                 return;
               }
               runFork(drainProcessEvents(session, processPid));
@@ -2253,6 +2286,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         pid: null,
         history,
         historyBytes: Buffer.byteLength(history),
+        persistenceHistory: history,
+        persistenceHistoryBytes: Buffer.byteLength(history),
         pendingHistoryControlSequence: "",
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
@@ -2315,6 +2350,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history = "";
       liveSession.historyBytes = 0;
+      liveSession.persistenceHistory = "";
+      liveSession.persistenceHistoryBytes = 0;
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
@@ -2325,6 +2362,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.worktreePath = nextWorktreePath;
       liveSession.history = "";
       liveSession.historyBytes = 0;
+      liveSession.persistenceHistory = "";
+      liveSession.persistenceHistoryBytes = 0;
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
@@ -2631,6 +2670,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const session = yield* requireSession(input.threadId, terminalId);
         session.history = "";
         session.historyBytes = 0;
+        session.persistenceHistory = "";
+        session.persistenceHistoryBytes = 0;
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
@@ -2669,6 +2710,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             pid: null,
             history: "",
             historyBytes: 0,
+            persistenceHistory: "",
+            persistenceHistoryBytes: 0,
             pendingHistoryControlSequence: "",
             pendingProcessEvents: [],
             pendingProcessEventIndex: 0,
@@ -2706,6 +2749,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
         session.history = "";
         session.historyBytes = 0;
+        session.persistenceHistory = "";
+        session.persistenceHistoryBytes = 0;
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;

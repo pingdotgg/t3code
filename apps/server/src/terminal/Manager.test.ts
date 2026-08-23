@@ -1982,6 +1982,43 @@ it.layer(
     }),
   );
 
+  it.effect("does not duplicate pending output between attach history and live events", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager({
+        ptyAdapter: new FakePtyAdapter("async"),
+      });
+      yield* manager.open(openInput());
+
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("pending\n");
+
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "output" && event.data === "pending\n"),
+        ),
+        "1200 millis",
+      );
+
+      const replayedText = (yield* Ref.get(attachEvents))
+        .map((event) => {
+          if (event.type === "snapshot") return event.snapshot.history;
+          if (event.type === "output") return event.data;
+          return "";
+        })
+        .join("");
+      expect(replayedText.split("pending\n")).toHaveLength(2);
+    }),
+  );
+
   it.effect("preserves queued PTY output ordering through exit callbacks", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, getEvents } = yield* createManager({
