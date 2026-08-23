@@ -9,7 +9,10 @@ const testState = vi.hoisted(() => ({
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useCallback: <Value,>(value: Value) => value,
+  // Effects never run: renderTree does a single render-only pass.
+  useEffect: () => {},
   useMemo: <Value,>(factory: () => Value) => factory(),
+  useRef: <Value,>(initial: Value) => ({ current: initial }),
   useState: <Value,>(initial: Value | (() => Value)) => [
     typeof initial === "function" ? (initial as () => Value)() : initial,
     vi.fn(),
@@ -20,6 +23,7 @@ vi.mock("react-native", () => ({
   Image: "Image",
   RefreshControl: "RefreshControl",
   ScrollView: "ScrollView",
+  StyleSheet: { absoluteFill: {} },
   Text: "Text",
   View: "View",
 }));
