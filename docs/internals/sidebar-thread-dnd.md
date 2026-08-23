@@ -93,21 +93,21 @@ presentation height. Same-category Pinned reorder bypasses the projected index a
 after, and the first slot after a category boundary, while dnd-kit's strategy receives only an
 `overIndex`.
 
-Pointer movement updates only the semantic target, dragged-row variant, and dnd-kit's reported drag
-translation. It does not change DOM order, row height, scroll range, or measured rectangles. The
+Pointer movement updates only the semantic target, dragged-row variant, and dragged-row translation.
+It does not change DOM order, row height, scroll range, or measured rectangles. The
 `SortableContext.items` array keeps the same identity while the snapshot is unchanged; otherwise
 dnd-kit disables transitions for one frame on every pointer update. A layout revision therefore
 cannot create another collision under the same sensor event.
 
 The active sortable row is the pointer visual. Its outer element keeps the dimensions measured at
 activation, while the normal `SidebarThreadRow` renderer changes between card and compact layouts
-around the captured pointer offset. Dragging does not use a second, simplified copy of the row. The
-row renderer applies the latest `DragMoveEvent.delta` to a fixed child and compensates for sidebar
-scroll so the card cannot increase the list's scroll range. It does not depend on the sortable
-collision transform, which becomes unavailable when the pointer leaves the viewport. While dragging,
-`restrictToFirstScrollableAncestor` keeps the row inside the sidebar viewport. The board ignores
-pointer hit-testing so rows under the active row do not show hover actions or tooltips. The active
-sensor keeps tracking pointer movement at the document level.
+around the captured pointer offset. Dragging does not use a second, simplified copy of the row.
+dnd-kit's delta includes compensation for movement of the source placeholder. The row renderer adds
+the placeholder's current viewport offset back before applying the delta to its fixed child. This
+keeps dnd-kit's viewport restriction and auto-scroll behavior without letting list layout changes
+move the card away from the pointer. The fixed card cannot increase the list's scroll range. The board
+ignores pointer hit-testing so rows under the active row do not show hover actions or tooltips. The
+active sensor keeps tracking pointer movement at the document level.
 
 dnd-kit's derived layout transform is disabled only for an active row that crosses categories. Its
 source placeholder is not the card's visible release position, so that transform would replay a move

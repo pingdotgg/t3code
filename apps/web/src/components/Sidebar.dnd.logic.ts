@@ -42,7 +42,6 @@ export interface SidebarThreadDropAnimation {
     readonly x: number;
     readonly y: number;
   };
-  readonly scrollDeltaY: number;
 }
 
 export interface SidebarThreadDropTarget {
@@ -66,7 +65,6 @@ export interface SidebarThreadDragTransaction {
     readonly width: number;
     readonly height: number;
   };
-  readonly sourceScrollTop: number;
   readonly pointerAnchor: SidebarDndPointerAnchor;
   readonly initialEntries: readonly SidebarDndBoardEntry[];
   readonly entries: readonly SidebarDndBoardEntry[];

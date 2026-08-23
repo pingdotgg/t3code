@@ -305,9 +305,6 @@ export function SidebarThreadBoard(props: {
               flowPlaceholderHeight: sourceTransaction.sourceRect.height,
               sourceRect: sourceTransaction.sourceRect,
               translation: sourceTransaction.dragTranslation,
-              scrollDeltaY:
-                (dnd.layout.viewportRef.current?.scrollTop ?? sourceTransaction.sourceScrollTop) -
-                sourceTransaction.sourceScrollTop,
               pointerAnchor: sourceTransaction.pointerAnchor,
             };
           } else if (
@@ -320,7 +317,6 @@ export function SidebarThreadBoard(props: {
               flowPlaceholderHeight: sourceTransaction.sourceRect.height,
               sourceRect: sourceTransaction.sourceRect,
               translation: sourceTransaction.dropAnimation.translation,
-              scrollDeltaY: sourceTransaction.dropAnimation.scrollDeltaY,
               pointerAnchor: sourceTransaction.pointerAnchor,
             };
           } else if (
@@ -334,7 +330,6 @@ export function SidebarThreadBoard(props: {
                 SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[sourceTransaction.dropAnimation.variant],
               sourceRect: sourceTransaction.sourceRect,
               translation: sourceTransaction.dropAnimation.translation,
-              scrollDeltaY: sourceTransaction.dropAnimation.scrollDeltaY,
               pointerAnchor: sourceTransaction.pointerAnchor,
               targetNode: dnd.layout.getEntryNode(threadKey),
               onAnimationEnd: dnd.completeDropAnimation,

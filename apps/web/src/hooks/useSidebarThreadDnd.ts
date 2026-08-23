@@ -754,7 +754,6 @@ export function useSidebarThreadDnd(input: {
           width: sourceRect.width,
           height: sourceRect.height,
         },
-        sourceScrollTop: layout.viewportRef.current?.scrollTop ?? 0,
         pointerAnchor: {
           x:
             sourceRect.width === 0
@@ -831,11 +830,26 @@ export function useSidebarThreadDnd(input: {
     },
     [canDropThreadInSection, input.reorderablePinnedKeys, layout],
   );
+  const resolveDragTranslation = useCallback(
+    (current: SidebarThreadDragTransaction, delta: DragMoveEvent["delta"]) => {
+      const sourceNode = layout.getEntryNode(current.sourceThreadKey);
+      if (sourceNode === null) return current.dragTranslation;
+      const sourceRect = getClientRect(sourceNode);
+      return {
+        x: delta.x + sourceRect.left - current.sourceRect.left,
+        y: delta.y + sourceRect.top - current.sourceRect.top,
+      };
+    },
+    [layout],
+  );
   const updateDragTarget = useCallback(
     (over: DragMoveEvent["over"], dragTranslation?: DragMoveEvent["delta"]) => {
       const current = transactionRef.current;
       if (current === null || current.phase !== "dragging") return;
-      const nextDragTranslation = dragTranslation ?? current.dragTranslation;
+      const nextDragTranslation =
+        dragTranslation === undefined
+          ? current.dragTranslation
+          : resolveDragTranslation(current, dragTranslation);
       const translationChanged =
         current.dragTranslation.x !== nextDragTranslation.x ||
         current.dragTranslation.y !== nextDragTranslation.y;
@@ -863,7 +877,7 @@ export function useSidebarThreadDnd(input: {
         target,
       });
     },
-    [resolveDropTarget, setTransaction],
+    [resolveDragTranslation, resolveDropTarget, setTransaction],
   );
   const completeDropAnimation = useCallback(() => {
     const current = transactionRef.current;
@@ -931,6 +945,7 @@ export function useSidebarThreadDnd(input: {
         finishTransaction();
         return;
       }
+      const releaseTranslation = resolveDragTranslation(current, event.delta);
       const released: SidebarThreadDragTransaction = {
         ...current,
         target,
@@ -939,10 +954,7 @@ export function useSidebarThreadDnd(input: {
             source: current.sourceSection,
             destination: target.section,
           }),
-          translation: event.delta,
-          scrollDeltaY:
-            (layout.viewportRef.current?.scrollTop ?? current.sourceScrollTop) -
-            current.sourceScrollTop,
+          translation: releaseTranslation,
         },
       };
       if (action === "snooze") {
@@ -973,8 +985,8 @@ export function useSidebarThreadDnd(input: {
     [
       captureInsertionPosition,
       finishTransaction,
-      layout.viewportRef,
       openSnoozeDropMenu,
+      resolveDragTranslation,
       resolveSortedTarget,
       setTransaction,
     ],

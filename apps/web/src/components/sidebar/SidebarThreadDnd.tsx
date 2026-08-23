@@ -116,7 +116,6 @@ interface SidebarThreadDragViewBase {
     readonly x: number;
     readonly y: number;
   };
-  readonly scrollDeltaY: number;
   readonly pointerAnchor: {
     readonly x: number;
     readonly y: number;
@@ -285,7 +284,7 @@ export function SidebarThreadDragMorph(props: {
         left: props.dragView.sourceRect.left,
         width: props.dragView.sourceRect.width,
         height: props.dragView.sourceRect.height,
-        transform: `translate3d(${props.dragView.translation.x}px, ${props.dragView.translation.y - props.dragView.scrollDeltaY}px, 0)`,
+        transform: `translate3d(${props.dragView.translation.x}px, ${props.dragView.translation.y}px, 0)`,
         willChange: "transform",
       }}
     >
