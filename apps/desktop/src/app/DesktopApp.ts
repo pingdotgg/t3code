@@ -22,6 +22,7 @@ import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
+import * as DesktopUrlRouting from "./DesktopUrlRouting.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
@@ -224,6 +225,7 @@ const startup = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
   const linuxUrlHandler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
+  const urlRouting = yield* DesktopUrlRouting.DesktopUrlRouting;
   const clerk = yield* DesktopClerk.DesktopClerk;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
@@ -271,6 +273,11 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* lifecycle.register;
   yield* clerk.configure;
+  // BEFORE whenReady, deliberately. On macOS a cold-start `open-url` (the OS
+  // launching the app because the user opened a t3code:// link) can fire before
+  // the ready event, and a listener installed after it would never see the URL
+  // that caused the launch.
+  yield* urlRouting.register;
 
   yield* electronApp.whenReady.pipe(
     Effect.withSpan("desktop.electron.whenReady"),

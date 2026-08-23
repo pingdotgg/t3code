@@ -45,6 +45,7 @@ import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
+import * as DesktopUrlRouting from "./app/DesktopUrlRouting.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
@@ -63,6 +64,11 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+
+// Synchronously, before any Effect runs: macOS dispatches the `open-url` that
+// LAUNCHED the app during early startup, and Electron buffers nothing. See
+// DesktopUrlRouting for why registering inside the Effect startup is too late.
+DesktopUrlRouting.captureLaunchUrlsSync(Electron.app);
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -186,6 +192,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
+  DesktopUrlRouting.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
 ).pipe(

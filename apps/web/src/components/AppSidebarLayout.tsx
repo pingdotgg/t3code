@@ -24,6 +24,7 @@ import {
   useSidebarStageBackdropVariant,
 } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
+import { resolveMenuActionNavigation } from "../menuActionNavigation.ts";
 import {
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
@@ -200,6 +201,15 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         if (!isSettingsRoute) {
           void navigate({ to: "/settings" });
         }
+        return;
+      }
+      // Deep links (t3code://threads/<environmentId>/<threadId>) arrive as a
+      // navigate action rather than on a channel of their own: the main process
+      // has already resolved them to a renderer path, and this listener is the
+      // one place the router is reachable from it.
+      const target = resolveMenuActionNavigation(action, pathname);
+      if (target !== null) {
+        void navigate({ to: target });
       }
     });
 

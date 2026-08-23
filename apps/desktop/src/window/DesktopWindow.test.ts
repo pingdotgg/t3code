@@ -1235,4 +1235,36 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(scenario.layer));
     }),
   );
+
+  /**
+   * The park-and-replay path, which is what makes a URL that LAUNCHED the app
+   * work: at that moment there is no window and the backend is not ready, and
+   * the action has no second chance the way a menu item does. The test above
+   * only asserts that nothing is sent in that state, which passes equally well
+   * if the action is silently dropped.
+   */
+  it.effect("replays a menu action parked before the backend was ready", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window, main.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+
+        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.dispatchMenuAction("navigate:/env/thread");
+        assert.equal(main.send.mock.calls.length, 0);
+
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "navigate:/env/thread"]]);
+
+        // Taken, not read: a second readiness (a backend restart) must not
+        // resurrect a navigation the user asked for minutes ago.
+        yield* desktopWindow.handleBackendNotReady;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(main.send.mock.calls.length, 1);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
 });

@@ -27,6 +27,24 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
 
+// Menu actions that arrived before the renderer subscribed.
+//
+// `onMenuAction` attaches its IPC listener lazily, when the app calls it, and
+// the only caller renders inside the authenticated app shell. Authentication is
+// resolved by an async bootstrap, while the main process sends on
+// `did-finish-load`, which is the page load event and does not wait for it. In
+// the steady state that gap does not exist, because the subscriber has been
+// live for a long time. It exists exactly once, on the path this buffer was
+// added for: the OS launching the app from a deep link, where the navigation
+// would otherwise be sent into a channel nobody is listening on and lost.
+//
+// The preload runs before any page script, so a listener installed here cannot
+// miss anything.
+const pendingMenuActions: string[] = [];
+ipcRenderer.on(IpcChannels.MENU_ACTION_CHANNEL, (_event, action: unknown) => {
+  if (typeof action === "string") pendingMenuActions.push(action);
+});
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);

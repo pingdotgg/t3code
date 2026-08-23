@@ -280,6 +280,15 @@ export const make = Effect.gen(function* () {
   // createMainIfBackendReady, which gates the post-readiness window
   // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
+  // A menu action that arrives before there is anywhere to send it. Until now
+  // dispatchMenuAction returned silently in that state, which is invisible for
+  // a menu item (the user can just click it again) and fatal for a URL the OS
+  // used to LAUNCH the app: that is exactly the moment when no window exists
+  // and the backend is not ready yet, and the action has no second chance.
+  // Held as a single slot rather than a queue on purpose: these are navigation
+  // intents, and replaying a backlog of them would land on whichever happened
+  // to be last anyway.
+  const pendingMenuActionRef = yield* Ref.make<Option.Option<string>>(Option.none());
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -779,6 +788,30 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
+  // Send an action to the renderer, creating and revealing the window as
+  // needed. Extracted from dispatchMenuAction so a parked action can be
+  // replayed through exactly the same path once the backend comes up, rather
+  // than a second, subtly different one.
+  const deliverMenuAction = Effect.fn("desktop.window.deliverMenuAction")(function* (
+    action: string,
+  ) {
+    const existingWindow = yield* focusedMainWindow;
+    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+
+    const send = () => {
+      if (targetWindow.isDestroyed()) return;
+      targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
+      void runPromise(electronWindow.reveal(targetWindow));
+    };
+
+    if (targetWindow.webContents.isLoadingMainFrame()) {
+      targetWindow.webContents.once("did-finish-load", send);
+      return;
+    }
+
+    send();
+  });
+
   const createMainIfBackendReady = Effect.gen(function* () {
     const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
@@ -863,7 +896,26 @@ export const make = Effect.gen(function* () {
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
-      yield* createMainIfBackendReady;
+      // Replay whatever arrived before there was anywhere to send it. Taken
+      // rather than read, so a parked action fires once and never survives into
+      // a later backend restart.
+      //
+      // `ensuring`, because createMainIfBackendReady can FAIL and the pool
+      // swallows that failure: without this the slot would stay full for ever
+      // and the deep link would be silently lost even though the user goes on
+      // to open a window by hand. Delivery re-resolves the window itself, so it
+      // is still correct on the path where creation failed here and succeeded
+      // later.
+      yield* createMainIfBackendReady.pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            const pending = yield* Ref.getAndSet(pendingMenuActionRef, Option.none());
+            if (Option.isSome(pending)) {
+              yield* deliverMenuAction(pending.value).pipe(Effect.catchCause(() => Effect.void));
+            }
+          }),
+        ),
+      );
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
@@ -875,22 +927,11 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ action });
       const existingWindow = yield* focusedMainWindow;
       if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
+        // Park it for handleBackendReady rather than dropping it.
+        yield* Ref.set(pendingMenuActionRef, Option.some(action));
         return;
       }
-      const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-
-      const send = () => {
-        if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
-      };
-
-      if (targetWindow.webContents.isLoadingMainFrame()) {
-        targetWindow.webContents.once("did-finish-load", send);
-        return;
-      }
-
-      send();
+      yield* deliverMenuAction(action);
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
