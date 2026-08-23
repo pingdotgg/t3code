@@ -52,8 +52,8 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
 
   if (isInstalled && isAuth) {
     return (
-      <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs">
-        <div className="flex items-center gap-2 font-medium text-emerald-600 dark:text-emerald-400">
+      <div className="rounded-lg border border-success/32 bg-success/4 p-3 text-xs">
+        <div className="flex items-center gap-2 font-medium text-success">
           <CheckCircle2Icon className="size-4 shrink-0" />
           <span>Antigravity CLI is installed and authenticated</span>
         </div>

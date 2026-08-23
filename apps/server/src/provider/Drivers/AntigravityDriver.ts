@@ -155,7 +155,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Antigravity snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build Antigravity snapshot",
               cause,
             }),
         ),
