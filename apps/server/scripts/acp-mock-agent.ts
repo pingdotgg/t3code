@@ -21,6 +21,8 @@ const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
 const emitSessionInfoUpdate = process.env.T3_ACP_EMIT_SESSION_INFO_UPDATE === "1";
 const emitConfigOptionUpdate = process.env.T3_ACP_EMIT_CONFIG_OPTION_UPDATE === "1";
 const emitPromptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE === "1";
+const emitXAiPromptMetadata = process.env.T3_ACP_EMIT_XAI_PROMPT_METADATA === "1";
+const emitXAiModelChanged = process.env.T3_ACP_EMIT_XAI_MODEL_CHANGED === "1";
 const supportsImages = process.env.T3_ACP_SUPPORTS_IMAGES === "1";
 const failAuthentication = process.env.T3_ACP_FAIL_AUTHENTICATION === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -882,6 +884,22 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitXAiModelChanged) {
+        currentModelId = "grok-mock-alt";
+        currentReasoning = "high";
+        writeJsonRpcNotification("_x.ai/session_notification", {
+          method: "x.ai/session_notification",
+          params: {
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "model_changed",
+              model_id: currentModelId,
+              reasoning_effort: currentReasoning,
+            },
+          },
+        });
+      }
+
       if (emitConfigOptionUpdate) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -974,6 +992,46 @@ const program = Effect.gen(function* () {
                 totalTokens: 1_024,
                 cachedReadTokens: 300,
                 thoughtTokens: 24,
+              },
+            }
+          : {}),
+        ...(emitXAiPromptMetadata
+          ? {
+              _meta: {
+                sessionId: requestedSessionId,
+                requestId: promptIdFromRequestMeta(request) ?? "mock-prompt-1",
+                promptId: promptIdFromRequestMeta(request) ?? "mock-prompt-1",
+                totalTokens: 2_048,
+                modelId: currentModelId,
+                inputTokens: 900,
+                outputTokens: 124,
+                cachedReadTokens: 300,
+                reasoningTokens: 24,
+                usage: {
+                  inputTokens: 1_900,
+                  outputTokens: 148,
+                  totalTokens: 2_048,
+                  cachedReadTokens: 600,
+                  cacheCreationTokens: 50,
+                  reasoningTokens: 48,
+                  modelCalls: 2,
+                  apiDurationMs: 800,
+                  costUsdTicks: 125_000_000,
+                  modelUsage: {
+                    [currentModelId]: {
+                      inputTokens: 1_900,
+                      outputTokens: 148,
+                      totalTokens: 2_048,
+                      cachedReadTokens: 600,
+                      cacheCreationTokens: 50,
+                      reasoningTokens: 48,
+                      modelCalls: 2,
+                      apiDurationMs: 800,
+                      costUsdTicks: 125_000_000,
+                    },
+                  },
+                  numTurns: 2,
+                },
               },
             }
           : {}),

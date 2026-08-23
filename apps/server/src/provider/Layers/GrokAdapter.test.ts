@@ -369,6 +369,119 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("maps Grok Build prompt metadata and remote model changes", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-xai-prompt-metadata");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_XAI_MODEL_CHANGED: "1",
+          T3_ACP_EMIT_XAI_PROMPT_METADATA: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "report xAI metadata", attachments: [] });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+
+      const sessions = yield* adapter.listSessions();
+      assert.equal(sessions[0]?.model, "grok-mock-alt");
+      const configured = runtimeEvents.find((event) => event.type === "session.configured");
+      assert.deepStrictEqual(
+        configured?.type === "session.configured" ? configured.payload.config : undefined,
+        { model: "grok-mock-alt", effort: "high" },
+      );
+      const usageUpdated = runtimeEvents.find(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.deepStrictEqual(
+        usageUpdated?.type === "thread.token-usage.updated"
+          ? usageUpdated.payload.usage
+          : undefined,
+        {
+          usedTokens: 2_048,
+          maxTokens: 262_144,
+          lastUsedTokens: 1_024,
+          lastInputTokens: 900,
+          lastCachedInputTokens: 300,
+          lastOutputTokens: 124,
+          lastReasoningOutputTokens: 24,
+        },
+      );
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.deepStrictEqual(
+        completed?.type === "turn.completed" ? completed.payload.usage : undefined,
+        {
+          inputTokens: 1_900,
+          outputTokens: 148,
+          totalTokens: 2_048,
+          cachedReadTokens: 600,
+          cacheCreationTokens: 50,
+          reasoningTokens: 48,
+          modelCalls: 2,
+          apiDurationMs: 800,
+          costUsdTicks: 125_000_000,
+          modelUsage: {
+            "grok-mock-alt": {
+              inputTokens: 1_900,
+              outputTokens: 148,
+              totalTokens: 2_048,
+              cachedReadTokens: 600,
+              cacheCreationTokens: 50,
+              reasoningTokens: 48,
+              modelCalls: 2,
+              apiDurationMs: 800,
+              costUsdTicks: 125_000_000,
+            },
+          },
+          numTurns: 2,
+        },
+      );
+      assert.deepStrictEqual(
+        completed?.type === "turn.completed" ? completed.payload.modelUsage : undefined,
+        {
+          "grok-mock-alt": {
+            inputTokens: 1_900,
+            outputTokens: 148,
+            totalTokens: 2_048,
+            cachedReadTokens: 600,
+            cacheCreationTokens: 50,
+            reasoningTokens: 48,
+            modelCalls: 2,
+            apiDurationMs: 800,
+            costUsdTicks: 125_000_000,
+          },
+        },
+      );
+      assert.equal(
+        completed?.type === "turn.completed" ? completed.payload.totalCostUsd : undefined,
+        0.0125,
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
