@@ -249,6 +249,55 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("maps Grok ACP thought chunks to canonical reasoning events", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-thought-chunks");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_THOUGHT_CHUNKS: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "think first", attachments: [] });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+
+      assert.exists(
+        runtimeEvents.find(
+          (event) => event.type === "item.started" && event.payload.itemType === "reasoning",
+        ),
+      );
+      const reasoningDelta = runtimeEvents.find(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+      );
+      assert.equal(
+        reasoningDelta?.type === "content.delta" ? reasoningDelta.payload.delta : undefined,
+        "checking the workspace",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");

@@ -33,6 +33,7 @@ import {
   type SessionLoadGate,
   type AcpParsedSessionEvent,
   type AcpSessionModeState,
+  type AcpTextItemType,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
 
@@ -260,6 +261,7 @@ type AcpStartState =
 interface AcpAssistantSegmentState {
   readonly nextSegmentIndex: number;
   readonly activeItemId?: string;
+  readonly activeItemType?: AcpTextItemType;
 }
 
 interface EnsureActiveAssistantSegmentResult {
@@ -893,17 +895,30 @@ const handleSessionUpdate = ({
         continue;
       }
       if (event._tag === "ContentDelta") {
+        const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
         if (event.text.trim().length === 0) {
-          const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
-          if (!assistantSegmentState.activeItemId) {
+          if (
+            !assistantSegmentState.activeItemId ||
+            assistantSegmentState.activeItemType !== event.itemType
+          ) {
             continue;
           }
+        }
+        if (
+          assistantSegmentState.activeItemId &&
+          assistantSegmentState.activeItemType !== event.itemType
+        ) {
+          yield* closeActiveAssistantSegment({
+            queue,
+            assistantSegmentRef,
+          });
         }
         const itemId = yield* ensureActiveAssistantSegment({
           queue,
           assistantSegmentRef,
           sessionId: params.sessionId,
           assistantItemRuntimeId,
+          itemType: event.itemType,
         });
         yield* Queue.offer(queue, {
           ...event,
@@ -941,38 +956,52 @@ function shouldEmitToolCallUpdate(
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
-const assistantItemId = (sessionId: string, runtimeId: string, segmentIndex: number) =>
-  `assistant:${sessionId}:runtime:${runtimeId}:segment:${segmentIndex}`;
+const assistantItemId = (
+  sessionId: string,
+  runtimeId: string,
+  segmentIndex: number,
+  itemType: AcpTextItemType,
+) =>
+  `${itemType === "reasoning" ? "reasoning" : "assistant"}:${sessionId}:runtime:${runtimeId}:segment:${segmentIndex}`;
 
 const ensureActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
   sessionId,
   assistantItemRuntimeId,
+  itemType,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
   readonly assistantItemRuntimeId: string;
+  readonly itemType: AcpTextItemType;
 }) =>
   Ref.modify<AcpAssistantSegmentState, EnsureActiveAssistantSegmentResult>(
     assistantSegmentRef,
     (current) => {
-      if (current.activeItemId) {
+      if (current.activeItemId && current.activeItemType === itemType) {
         return [{ itemId: current.activeItemId }, current] as const;
       }
-      const itemId = assistantItemId(sessionId, assistantItemRuntimeId, current.nextSegmentIndex);
+      const itemId = assistantItemId(
+        sessionId,
+        assistantItemRuntimeId,
+        current.nextSegmentIndex,
+        itemType,
+      );
       return [
         {
           itemId,
           startedEvent: {
             _tag: "AssistantItemStarted",
             itemId,
+            itemType,
           } satisfies Extract<AcpParsedSessionEvent, { readonly _tag: "AssistantItemStarted" }>,
         },
         {
           nextSegmentIndex: current.nextSegmentIndex + 1,
           activeItemId: itemId,
+          activeItemType: itemType,
         } satisfies AcpAssistantSegmentState,
       ] as const;
     },
@@ -999,6 +1028,7 @@ const closeActiveAssistantSegment = ({
       {
         _tag: "AssistantItemCompleted",
         itemId: current.activeItemId,
+        itemType: current.activeItemType ?? "assistant_message",
       } satisfies AcpParsedSessionEvent,
       {
         nextSegmentIndex: current.nextSegmentIndex,

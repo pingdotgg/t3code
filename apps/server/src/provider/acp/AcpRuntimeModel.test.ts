@@ -321,6 +321,8 @@ describe("AcpRuntimeModel", () => {
     expect(contentResult.events).toEqual([
       {
         _tag: "ContentDelta",
+        itemType: "assistant_message",
+        streamKind: "assistant_text",
         text: "hello from acp",
         rawPayload: {
           sessionId: "session-1",
@@ -332,6 +334,23 @@ describe("AcpRuntimeModel", () => {
             },
           },
         },
+      },
+    ]);
+
+    const thoughtResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "considering options" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(thoughtResult.events).toMatchObject([
+      {
+        _tag: "ContentDelta",
+        itemType: "reasoning",
+        streamKind: "reasoning_text",
+        text: "considering options",
       },
     ]);
   });

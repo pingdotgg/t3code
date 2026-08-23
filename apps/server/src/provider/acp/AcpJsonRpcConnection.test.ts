@@ -369,6 +369,61 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("segments ACP thought chunks separately from assistant messages", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 7)));
+      expect(notes.map((note) => note._tag)).toEqual([
+        "PlanUpdated",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+      ]);
+      expect(notes[1]).toMatchObject({
+        _tag: "AssistantItemStarted",
+        itemType: "reasoning",
+      });
+      expect(notes[2]).toMatchObject({
+        _tag: "ContentDelta",
+        itemType: "reasoning",
+        streamKind: "reasoning_text",
+      });
+      expect(notes[4]).toMatchObject({
+        _tag: "AssistantItemStarted",
+        itemType: "assistant_message",
+      });
+      expect(notes[5]).toMatchObject({
+        _tag: "ContentDelta",
+        itemType: "assistant_message",
+        streamKind: "assistant_text",
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_EMIT_THOUGHT_CHUNKS: "1" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("suppresses generic placeholder tool updates until completion", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

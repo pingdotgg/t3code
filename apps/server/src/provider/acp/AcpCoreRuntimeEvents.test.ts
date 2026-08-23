@@ -163,6 +163,7 @@ describe("AcpCoreRuntimeEvents", () => {
         threadId: "thread-1" as never,
         turnId,
         itemId: "assistant:session-1:segment:0",
+        streamKind: "assistant_text",
         text: "hello",
         rawPayload: { sessionId: "session-1" },
       }),
@@ -181,6 +182,7 @@ describe("AcpCoreRuntimeEvents", () => {
         threadId: "thread-1" as never,
         turnId,
         itemId: "assistant:session-1:segment:0",
+        itemType: "assistant_message",
         lifecycle: "item.started",
       }),
     ).toMatchObject({
@@ -190,6 +192,22 @@ describe("AcpCoreRuntimeEvents", () => {
         itemType: "assistant_message",
         status: "inProgress",
       },
+    });
+
+    expect(
+      makeAcpContentDeltaEvent({
+        stamp,
+        provider: ProviderDriverKind.make("grok"),
+        threadId: "thread-1" as never,
+        turnId,
+        itemId: "reasoning:session-1:segment:1",
+        streamKind: "reasoning_text",
+        text: "thinking",
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      type: "content.delta",
+      payload: { streamKind: "reasoning_text", delta: "thinking" },
     });
   });
 });

@@ -80,6 +80,9 @@ export interface AcpPermissionRequest {
   readonly toolCall?: AcpToolCallState;
 }
 
+export type AcpTextItemType = "assistant_message" | "reasoning";
+export type AcpTextStreamKind = "assistant_text" | "reasoning_text";
+
 export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ModeChanged";
@@ -88,10 +91,12 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "AssistantItemStarted";
       readonly itemId: string;
+      readonly itemType: AcpTextItemType;
     }
   | {
       readonly _tag: "AssistantItemCompleted";
       readonly itemId: string;
+      readonly itemType: AcpTextItemType;
     }
   | {
       readonly _tag: "PlanUpdated";
@@ -106,6 +111,8 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
+      readonly itemType: AcpTextItemType;
+      readonly streamKind: AcpTextStreamKind;
       readonly text: string;
       readonly rawPayload: unknown;
     };
@@ -564,10 +571,14 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
-    case "agent_message_chunk": {
+    case "agent_message_chunk":
+    case "agent_thought_chunk": {
       if (upd.content.type === "text" && upd.content.text.length > 0) {
+        const isReasoning = upd.sessionUpdate === "agent_thought_chunk";
         events.push({
           _tag: "ContentDelta",
+          itemType: isReasoning ? "reasoning" : "assistant_message",
+          streamKind: isReasoning ? "reasoning_text" : "assistant_text",
           text: upd.content.text,
           rawPayload: params,
         });
