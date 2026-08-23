@@ -59,6 +59,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1791,6 +1792,25 @@ export default function Sidebar() {
     },
   });
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
+  // Refs for the project-scope menu's open-focus redirect (see the
+  // useLayoutEffect next to its MenuPopup).
+  const projectScopePopupRef = useRef<HTMLDivElement | null>(null);
+  const projectScopeOpenedWithPointerRef = useRef(false);
+
+  // Base UI focuses the first tabbable element when a menu opens. Inside the
+  // project-scope menu that is the settings gear inside the first project
+  // row, so opening with the mouse rendered that row as highlighted without
+  // any hover. When the menu was opened with a pointer, focus the popup
+  // itself during commit instead — Base UI's queued autofocus then sees
+  // focus is already inside the popup and skips. Keyboard opens keep the
+  // default behavior, which pre-highlights the checked row.
+  useLayoutEffect(() => {
+    if (!projectScopeMenuOpen || !projectScopeOpenedWithPointerRef.current) {
+      return;
+    }
+    projectScopePopupRef.current?.focus();
+  }, [projectScopeMenuOpen]);
+
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -3487,6 +3507,12 @@ export default function Sidebar() {
                       <SidebarMenuButton
                         aria-label="Filter threads by project"
                         className="min-w-0 flex-1 ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                        onPointerDown={() => {
+                          projectScopeOpenedWithPointerRef.current = true;
+                        }}
+                        onKeyDown={() => {
+                          projectScopeOpenedWithPointerRef.current = false;
+                        }}
                       />
                     }
                   >
@@ -3505,7 +3531,11 @@ export default function Sidebar() {
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
-                  <MenuPopup align="start" className="w-(--anchor-width)">
+                  <MenuPopup
+                    ref={projectScopePopupRef}
+                    align="start"
+                    className="w-(--anchor-width)"
+                  >
                     <MenuRadioGroup
                       value={projectScopeKey ?? "all"}
                       onValueChange={(value) =>
