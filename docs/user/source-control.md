@@ -79,6 +79,10 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
 
 You can now clone, publish, and create pull requests.
 
+**GitHub Enterprise Server** works the same way, whatever your install is called. Sign in with
+`gh auth login --hostname git.example.com`, and T3 Code recognizes projects on that host as GitHub
+even when the hostname says nothing about GitHub.
+
 ### For GitLab
 
 1. Install the GitLab CLI:
