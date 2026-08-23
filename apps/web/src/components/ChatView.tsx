@@ -1400,6 +1400,9 @@ function ChatViewContent(props: ChatViewProps) {
     () => feedbackSubmissionsByThreadKey[routeThreadKey] ?? [],
     [feedbackSubmissionsByThreadKey, routeThreadKey],
   );
+  const feedbackUploading = feedbackSubmissions.some(
+    (submission) => submission.status === "uploading",
+  );
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -6760,7 +6763,13 @@ function ChatViewContent(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
-                            sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
+                            sendDisabledReason={
+                              feedbackUploading
+                                ? "Sending feedback"
+                                : threadDetailLoading
+                                  ? "Messages loading"
+                                  : null
+                            }
                             isPreparingWorktree={isPreparingWorktree}
                             externalDrawerAttached={externalComposerDrawerAttached}
                             environmentUnavailable={activeEnvironmentUnavailableState}
