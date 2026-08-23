@@ -1,7 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off - Electron app paths define local model storage.
+// @effect-diagnostics nodeBuiltinImport:off - native model storage uses the resolved desktop data path.
 import type { DesktopSpeechEvent, DesktopSpeechStatus } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { app } from "electron";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as NodePath from "node:path";
 
+import * as DesktopAppIdentity from "../app/DesktopAppIdentity.ts";
 import { DesktopMicrophoneCapture } from "./DesktopMicrophoneCapture.ts";
 import { DesktopSpeechController } from "./DesktopSpeechController.ts";
 import { DesktopTranscriptionBackend } from "./DesktopTranscriptionBackend.ts";
@@ -84,8 +85,9 @@ function attempt<A>(
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
+  const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
   const availability = support(platform, architecture);
-  const directory = NodePath.join(app.getPath("userData"), "speech", "models");
+  const directory = NodePath.join(yield* appIdentity.resolveUserDataPath, "speech", "models");
   const listeners = yield* Ref.make<ReadonlySet<SpeechEventListener>>(new Set());
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
