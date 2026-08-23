@@ -13,7 +13,7 @@ describe("button geometry tokens", () => {
     );
 
     expect(html).toContain("rounded-[var(--control-radius)]");
-    expect(html).toContain("[--control-icon-color:var(--muted-foreground)]");
+    expect(html).toContain("[--control-icon-color:var(--contrast-muted-foreground)]");
     expect(html).toContain("text-[var(--control-icon-color)]");
     expect(html).not.toContain("opacity-80");
   });
