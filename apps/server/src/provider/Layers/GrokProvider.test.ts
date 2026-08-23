@@ -5,8 +5,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildGrokDiscoveredModelsFromSessionModelState,
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -44,6 +49,127 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.requiresNewThreadForModelChange).toBe(true);
     }),
   );
+});
+
+describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
+  it("maps Grok reasoning metadata and marks the ACP current model as default", () => {
+    const models = buildGrokDiscoveredModelsFromSessionModelState({
+      currentModelId: "grok-4.6",
+      availableModels: [
+        {
+          modelId: "grok-4.6",
+          name: "Grok 4.6",
+          _meta: {
+            supportsReasoningEffort: true,
+            reasoningEffort: "high",
+            reasoningEfforts: [
+              {
+                id: "deep",
+                value: "xhigh",
+                label: "Deep",
+                description: "Spend the most time reasoning.",
+                default: false,
+              },
+              {
+                id: "high",
+                value: "high",
+                label: "High",
+                description: "Balance speed and depth.",
+                default: true,
+              },
+              { id: "low", value: "low", label: "Low", default: false },
+            ],
+          },
+        },
+        {
+          modelId: "grok-4.5",
+          name: "Grok 4.5",
+          _meta: {
+            supportsReasoningEffort: true,
+            reasoningEffort: "medium",
+            reasoningEfforts: [
+              { value: "medium", label: "Medium", default: true },
+              { value: "low", label: "Low", default: false },
+            ],
+          },
+        },
+      ],
+    } satisfies EffectAcpSchema.SessionModelState);
+
+    expect(models).toHaveLength(2);
+    expect(models[0]).toMatchObject({
+      slug: "grok-4.6",
+      name: "Grok 4.6",
+      isDefault: true,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            currentValue: "high",
+            options: [
+              {
+                id: "xhigh",
+                label: "Deep",
+                description: "Spend the most time reasoning.",
+              },
+              {
+                id: "high",
+                label: "High",
+                description: "Balance speed and depth.",
+                isDefault: true,
+              },
+              { id: "low", label: "Low" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(models[1]?.isDefault).toBeUndefined();
+  });
+
+  it("keeps models with malformed effort metadata and drops invalid duplicates", () => {
+    const models = buildGrokDiscoveredModelsFromSessionModelState({
+      currentModelId: "grok-4.6",
+      availableModels: [
+        {
+          modelId: "grok-4.6",
+          name: "Grok 4.6",
+          _meta: {
+            supportsReasoningEffort: true,
+            reasoningEffort: "high",
+            reasoningEfforts: [
+              null,
+              { value: " ", label: "Blank" },
+              { value: "high", label: "High", default: true },
+              { value: "high", label: "Duplicate" },
+            ],
+          },
+        },
+        {
+          modelId: "grok-4.6",
+          name: "Duplicate model",
+        },
+        {
+          modelId: " ",
+          name: "Blank model",
+        },
+        {
+          modelId: "grok-4.5",
+          name: "Grok 4.5",
+          _meta: { supportsReasoningEffort: "yes", reasoningEfforts: {} },
+        },
+      ],
+    } as EffectAcpSchema.SessionModelState);
+
+    expect(models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-4.5"]);
+    expect(models[0]?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+      currentValue: "high",
+      options: [{ id: "high", label: "High", isDefault: true }],
+    });
+    expect(models[1]?.capabilities?.optionDescriptors).toEqual([]);
+  });
 });
 
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {

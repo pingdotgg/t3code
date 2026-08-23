@@ -1,6 +1,7 @@
 import {
   type GrokSettings,
   type ModelCapabilities,
+  type ProviderOptionChoice,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -99,16 +100,94 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function trimmedString(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() || undefined : undefined;
+}
+
+function buildGrokModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
+  const meta = model._meta;
+  if (
+    !isRecord(meta) ||
+    (meta.supportsReasoningEffort !== undefined && meta.supportsReasoningEffort !== true)
+  ) {
+    return EMPTY_CAPABILITIES;
+  }
+
+  const rawEfforts = meta.reasoningEfforts;
+  if (!Array.isArray(rawEfforts)) {
+    return EMPTY_CAPABILITIES;
+  }
+
+  const seen = new Set<string>();
+  const efforts = rawEfforts.flatMap((raw) => {
+    if (!isRecord(raw)) {
+      return [];
+    }
+    const value = trimmedString(raw.value);
+    if (!value || seen.has(value)) {
+      return [];
+    }
+    seen.add(value);
+    return [
+      {
+        value,
+        label: trimmedString(raw.label) ?? value,
+        description: trimmedString(raw.description),
+        isDefault: raw.default === true,
+      },
+    ];
+  });
+  if (efforts.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+
+  const currentValue = trimmedString(meta.reasoningEffort);
+  const defaultValue =
+    efforts.find((effort) => effort.isDefault)?.value ??
+    efforts.find((effort) => effort.value === currentValue)?.value;
+  const options: ReadonlyArray<ProviderOptionChoice> = efforts.map((effort) => ({
+    id: effort.value,
+    label: effort.label,
+    ...(effort.description ? { description: effort.description } : {}),
+    ...(effort.value === defaultValue ? { isDefault: true } : {}),
+  }));
+
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options,
+        ...(currentValue && options.some((option) => option.id === currentValue)
+          ? { currentValue }
+          : {}),
+      },
+    ],
+  });
+}
+
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
     return [];
   }
+  const currentModelId = modelState.currentModelId.trim()
+    ? resolveGrokAcpBaseModelId(modelState.currentModelId)
+    : undefined;
   const seen = new Set<string>();
   return modelState.availableModels
     .map((model): ServerProviderModel | undefined => {
-      const slug = resolveGrokAcpBaseModelId(model.modelId);
+      const rawModelId = model.modelId.trim();
+      if (!rawModelId) {
+        return undefined;
+      }
+      const slug = resolveGrokAcpBaseModelId(rawModelId);
       if (!slug || seen.has(slug)) {
         return undefined;
       }
@@ -117,7 +196,8 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        ...(slug === currentModelId ? { isDefault: true } : {}),
+        capabilities: buildGrokModelCapabilities(model),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
