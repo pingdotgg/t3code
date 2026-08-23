@@ -113,7 +113,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
-      const projectRoot = process.cwd();
+      const { cwd: projectRoot } = yield* ServerConfig;
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, projectRoot).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),

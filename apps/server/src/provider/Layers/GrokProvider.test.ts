@@ -79,6 +79,31 @@ it.layer(NodeServices.layer)("buildInitialGrokProviderSnapshot workflows", (it) 
       );
     }),
   );
+
+  it.effect("discovers user workflow scripts from USERPROFILE when HOME is unset", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-userprofile-wf-" });
+          const home = path.join(dir, "home");
+          yield* fs.makeDirectory(path.join(home, ".grok", "workflows"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(home, ".grok", "workflows", "from-profile.rhai"),
+            `let meta = #{ name: "from-profile", description: "userprofile script" };\n`,
+          );
+          return yield* buildInitialGrokProviderSnapshot(decodeGrokSettings({ enabled: true }), {
+            environment: { USERPROFILE: home },
+          });
+        }),
+      );
+
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(
+        expect.arrayContaining(["workflow pause", "workflow from-profile"]),
+      );
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {

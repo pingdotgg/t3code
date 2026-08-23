@@ -38,7 +38,10 @@ import {
   parseGrokAcpModelMeta,
   resolveGrokAcpBaseModelId,
 } from "../acp/GrokAcpSupport.ts";
-import { readGrokWorkflowSlashCommands } from "../acp/GrokWorkflowCommands.ts";
+import {
+  grokWorkflowHomeDirFromEnvironment,
+  readGrokWorkflowSlashCommands,
+} from "../acp/GrokWorkflowCommands.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -59,7 +62,7 @@ const buildGrokServerProvider = (
     const slashCommands =
       input.slashCommands ??
       (yield* readGrokWorkflowSlashCommands({
-        homeDir: discovery.environment.HOME,
+        homeDir: grokWorkflowHomeDirFromEnvironment(discovery.environment),
         projectRoot: discovery.projectRoot,
       }));
     return buildServerProvider({

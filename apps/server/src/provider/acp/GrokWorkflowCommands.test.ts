@@ -6,9 +6,36 @@ import * as Path from "effect/Path";
 
 import {
   GROK_WORKFLOW_CONTROL_COMMANDS,
+  grokWorkflowHomeDirFromEnvironment,
   parseGrokWorkflowScriptMeta,
   readGrokWorkflowSlashCommands,
 } from "./GrokWorkflowCommands.ts";
+
+describe("grokWorkflowHomeDirFromEnvironment", () => {
+  it("prefers HOME over USERPROFILE", () => {
+    expect(
+      grokWorkflowHomeDirFromEnvironment({
+        HOME: "/home/ada",
+        USERPROFILE: "C:\\Users\\ada",
+      }),
+    ).toBe("/home/ada");
+  });
+
+  it("uses USERPROFILE when HOME is unset", () => {
+    expect(grokWorkflowHomeDirFromEnvironment({ USERPROFILE: "C:\\Users\\ada" })).toBe(
+      "C:\\Users\\ada",
+    );
+  });
+
+  it("ignores blank HOME so Windows profiles still resolve", () => {
+    expect(
+      grokWorkflowHomeDirFromEnvironment({
+        HOME: "  ",
+        USERPROFILE: "C:\\Users\\ada",
+      }),
+    ).toBe("C:\\Users\\ada");
+  });
+});
 
 describe("parseGrokWorkflowScriptMeta", () => {
   it("reads name and description from the Rhai meta block", () => {
@@ -97,6 +124,25 @@ it.layer(NodeServices.layer)("readGrokWorkflowSlashCommands", (it) => {
           name: "workflow huge",
           description: "from prefix",
         });
+      }),
+    ),
+  );
+
+  it.effect("does not parse workflow meta past the 64 KiB prefix", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "grok-wf-cap-tail-" });
+        yield* fs.makeDirectory(path.join(root, ".grok", "workflows"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, ".grok", "workflows", "late.rhai"),
+          "x".repeat(80 * 1024) + `\nlet meta = #{ name: "late", description: "after prefix" };\n`,
+        );
+        const commands = yield* readGrokWorkflowSlashCommands({ homeDir: root });
+        expect(commands.find((command) => command.name === "workflow late")?.description).not.toBe(
+          "after prefix",
+        );
       }),
     ),
   );

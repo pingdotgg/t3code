@@ -1,6 +1,7 @@
 import type { ServerProviderSlashCommand } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 const SCRIPT_BYTE_CAP = 64 * 1024;
@@ -29,6 +30,13 @@ export interface GrokWorkflowScriptMeta {
 function trimmed(value: string | undefined): string | undefined {
   const text = value?.trim();
   return text && text.length > 0 ? text : undefined;
+}
+
+/** HOME on Unix; USERPROFILE when HOME is unset (Windows / stripped instance env). */
+export function grokWorkflowHomeDirFromEnvironment(
+  environment: NodeJS.ProcessEnv,
+): string | undefined {
+  return trimmed(environment.HOME) ?? trimmed(environment.USERPROFILE);
 }
 
 function quotedField(source: string, field: string): string | undefined {
@@ -82,11 +90,16 @@ const readWorkflowDir = Effect.fn("grok.readWorkflowDir")(function* (
     if (!info || info.type !== "File" || info.size <= 0n) {
       continue;
     }
-    const bytes = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => undefined));
-    if (!bytes) {
+    const length = info.size > BigInt(SCRIPT_BYTE_CAP) ? SCRIPT_BYTE_CAP : Number(info.size);
+    const bytes = yield* Effect.scoped(
+      fileSystem
+        .open(filePath, { flag: "r" })
+        .pipe(Effect.flatMap((file) => file.readAlloc(length))),
+    ).pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(bytes)) {
       continue;
     }
-    const source = new TextDecoder("utf8").decode(bytes.subarray(0, SCRIPT_BYTE_CAP));
+    const source = new TextDecoder("utf8").decode(bytes.value);
     const fallbackName = entry.endsWith(".rhai") ? entry.slice(0, -".rhai".length) : entry;
     const meta = parseGrokWorkflowScriptMeta(source, fallbackName);
     if (!meta) {
@@ -113,7 +126,7 @@ export const readGrokWorkflowSlashCommands = Effect.fn("grok.readWorkflowSlashCo
     for (const command of GROK_WORKFLOW_CONTROL_COMMANDS) {
       byName.set(command.name, command);
     }
-    const homeDir = trimmed(input.homeDir);
+    const homeDir = trimmed(input.homeDir) ?? grokWorkflowHomeDirFromEnvironment(process.env);
     if (homeDir) {
       yield* readWorkflowDir(path.join(homeDir, ".grok", "workflows"), byName);
     }
