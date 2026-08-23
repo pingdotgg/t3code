@@ -103,10 +103,11 @@ without that projected-index override.
 
 On release, React renders the projected target order. The destination copy remains invisible and
 acts as the overlay's drop target. dnd-kit's `DragOverlay` drop animation moves the visible row from
-its release rectangle to that target. Other rows use dnd-kit's sortable FLIP. The destination copy
-disables its own cross-category layout transition so it does not replay a second source-to-target
-move. The lifecycle command starts after the overlay animation completes. Reduced-motion clients
-complete the handoff immediately.
+its release rectangle to that target. Before measuring the target, the drop animation yields through
+the current commit so temporary empty rails can disappear and viewport compensation can finish.
+Other rows use dnd-kit's sortable FLIP. The destination copy disables its own cross-category layout
+transition so it does not replay a second source-to-target move. The lifecycle command starts after
+the overlay animation completes. Reduced-motion clients complete the handoff immediately.
 
 The sortable gap is the insertion feedback. There is no separate line indicator. Snoozed and
 Settled use an absolutely positioned category outline during hover; it takes no list space.

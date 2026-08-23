@@ -90,10 +90,7 @@ export function useSidebarPinnedDnd(input: {
     const allAssignmentsLanded = [...optimisticPinnedOrder.assignedKeys].every(
       ([threadKey, orderKey]) => currentKeyByThreadKey.get(threadKey) === orderKey,
     );
-    const orderConfirmed =
-      !membershipChanged &&
-      canonicalKeys.every((key, index) => key === optimisticPinnedOrder.order[index]);
-    if (membershipChanged || foreignKeyLanded || allAssignmentsLanded || orderConfirmed) {
+    if (membershipChanged || foreignKeyLanded || allAssignmentsLanded) {
       pinnedReorderInFlightRef.current = false;
       setOptimisticPinnedOrder(null);
     }

@@ -396,33 +396,70 @@ export function SidebarThreadBoard(props: {
         }),
   } satisfies CSSProperties;
   const dropAnimation = useMemo<DropAnimation>(
-    () => ({
-      ...defaultDropAnimation,
-      duration: 160,
-      easing: "cubic-bezier(0.2, 0, 0, 1)",
-      keyframes: (args) => {
-        const keyframes = defaultDropAnimation.keyframes(args);
-        const first = keyframes[0];
-        const last = keyframes[keyframes.length - 1];
-        if (
-          first === undefined ||
-          last === undefined ||
-          JSON.stringify(first) === JSON.stringify(last) ||
-          window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        ) {
-          queueMicrotask(dnd.completeDropAnimation);
-          return last === undefined ? keyframes : [last, last];
-        }
-        return keyframes;
-      },
-      sideEffects: (args) => {
-        const cleanup = defaultDropAnimation.sideEffects?.(args);
-        return () => {
-          cleanup?.();
-          dnd.completeDropAnimation();
-        };
-      },
-    }),
+    () => async (args) => {
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      if (!args.active.node.isConnected || !args.dragOverlay.node.isConnected) {
+        dnd.completeDropAnimation();
+        return;
+      }
+
+      const activeRect = args.measuringConfiguration.draggable.measure(args.active.node);
+      const dragOverlayRect = args.dragOverlay.rect;
+      const delta = {
+        x: dragOverlayRect.left - activeRect.left,
+        y: dragOverlayRect.top - activeRect.top,
+      };
+      const measuredArgs = {
+        ...args,
+        active: { ...args.active, rect: activeRect },
+        dragOverlay: { ...args.dragOverlay, rect: dragOverlayRect },
+      };
+      const keyframes = defaultDropAnimation.keyframes({
+        ...measuredArgs,
+        transform: {
+          initial: args.transform,
+          final: {
+            x: args.transform.x - delta.x,
+            y: args.transform.y - delta.y,
+            scaleX:
+              args.transform.scaleX === 1
+                ? 1
+                : (activeRect.width * args.transform.scaleX) / dragOverlayRect.width,
+            scaleY:
+              args.transform.scaleY === 1
+                ? 1
+                : (activeRect.height * args.transform.scaleY) / dragOverlayRect.height,
+          },
+        },
+      });
+      const first = keyframes[0];
+      const last = keyframes[keyframes.length - 1];
+      if (
+        first === undefined ||
+        last === undefined ||
+        JSON.stringify(first) === JSON.stringify(last) ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        dnd.completeDropAnimation();
+        return;
+      }
+
+      const cleanup = defaultDropAnimation.sideEffects?.(measuredArgs);
+      try {
+        const animation = args.dragOverlay.node.animate(keyframes, {
+          duration: 160,
+          easing: "cubic-bezier(0.2, 0, 0, 1)",
+          fill: "forwards",
+        });
+        await animation.finished.then(
+          () => undefined,
+          () => undefined,
+        );
+      } finally {
+        cleanup?.();
+        dnd.completeDropAnimation();
+      }
+    },
     [dnd.completeDropAnimation],
   );
   const dragSessionActive =
