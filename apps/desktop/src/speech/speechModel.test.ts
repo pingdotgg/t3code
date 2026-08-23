@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - model downloader tests use local Node fixtures.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - model downloader tests use local Node fixtures.
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
@@ -8,6 +8,16 @@ import * as NodePath from "node:path";
 import { downloadVerifiedModel } from "./speechModel.ts";
 
 const directories: string[] = [];
+
+async function request(url: string, signal?: AbortSignal) {
+  const response = await fetch(url, { ...(signal ? { signal } : {}) });
+  if (!response.body) throw new Error("test response has no body");
+  return {
+    status: response.status,
+    headers: Object.fromEntries(response.headers.entries()),
+    body: response.body as AsyncIterable<Uint8Array>,
+  };
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -33,6 +43,7 @@ describe("downloadVerifiedModel", () => {
         url: `http://127.0.0.1:${address.port}/model.gguf`,
         size: bytes.length,
         sha256: "03cfa25d83f5eaa1faac98ed6ceaaf0e7afe3c273a1e1502c2714ebe10b8263e",
+        request,
       });
 
       expect(await NodeFSP.readFile(path)).toEqual(bytes);
@@ -59,6 +70,7 @@ describe("downloadVerifiedModel", () => {
           url: `http://127.0.0.1:${address.port}/model.gguf`,
           size: 7,
           sha256: "0".repeat(64),
+          request,
         }),
       ).rejects.toThrow("verification failed");
       await expect(NodeFSP.stat(NodePath.join(directory, "model.gguf"))).rejects.toMatchObject({
@@ -90,6 +102,7 @@ describe("downloadVerifiedModel", () => {
           url: `http://127.0.0.1:${address.port}/model.gguf`,
           size: 7,
           sha256: "0".repeat(64),
+          request,
         }),
       ).rejects.toThrow(/exceeded expected size|size mismatch/);
       await expect(NodeFSP.stat(NodePath.join(directory, "model.gguf"))).rejects.toMatchObject({

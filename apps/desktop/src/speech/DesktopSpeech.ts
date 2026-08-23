@@ -9,6 +9,8 @@ import * as Ref from "effect/Ref";
 
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as NodePath from "node:path";
 
 import * as DesktopAppIdentity from "../app/DesktopAppIdentity.ts";
@@ -86,11 +88,25 @@ export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
+  const httpClient = yield* HttpClient.HttpClient;
   const availability = support(platform, architecture);
   const directory = NodePath.join(yield* appIdentity.resolveUserDataPath, "speech", "models");
   const listeners = yield* Ref.make<ReadonlySet<SpeechEventListener>>(new Set());
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
+  const runPromise = Effect.runPromiseWith(context);
+
+  const requestModel = async (url: string, signal?: AbortSignal) => {
+    const response = await runPromise(
+      httpClient.get(url).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk)),
+      signal ? { signal } : undefined,
+    );
+    return {
+      status: response.status,
+      headers: response.headers,
+      body: Stream.toAsyncIterableWith(response.stream, Context.empty()),
+    };
+  };
 
   const emit = (event: DesktopSpeechEvent): void => {
     runFork(
@@ -114,6 +130,7 @@ export const make = Effect.gen(function* () {
         url: SPEECH_MODEL.url,
         size: SPEECH_MODEL.size,
         sha256: SPEECH_MODEL.sha256,
+        request: requestModel,
         onProgress,
       }),
     removeModel: () => removeSpeechModel(directory),

@@ -1,11 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalDate:off - low-level streaming download boundary.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - low-level streaming download boundary.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
-import type * as NodeStreamWeb from "node:stream/web";
 
 export const SPEECH_MODEL = {
   id: "moonshine-streaming-tiny",
@@ -23,6 +22,14 @@ type DownloadInput = {
   url: string;
   size: number;
   sha256: string;
+  request: (
+    url: string,
+    signal?: AbortSignal,
+  ) => Promise<{
+    status: number;
+    headers: Readonly<Record<string, string | undefined>>;
+    body: AsyncIterable<Uint8Array>;
+  }>;
   signal?: AbortSignal;
   onProgress?: (downloaded: number, total: number) => void;
 };
@@ -46,7 +53,7 @@ async function hasExpectedDigest(path: string, size: number, sha256: string): Pr
 }
 
 export async function downloadVerifiedModel(input: DownloadInput): Promise<string> {
-  const { directory, filename, url, size, sha256, signal, onProgress } = input;
+  const { directory, filename, url, size, sha256, request, signal, onProgress } = input;
   const finalPath = NodePath.join(directory, filename);
   signal?.throwIfAborted();
   await NodeFSP.mkdir(directory, { recursive: true });
@@ -56,14 +63,11 @@ export async function downloadVerifiedModel(input: DownloadInput): Promise<strin
   }
 
   const partialPath = `${finalPath}.${process.pid}.${NodeCrypto.randomUUID()}.part`;
-  const response = await fetch(url, {
-    redirect: "follow",
-    ...(signal ? { signal } : {}),
-  });
-  if (!response.ok || !response.body) {
+  const response = await request(url, signal);
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(`speech model download failed with status ${response.status}`);
   }
-  const contentLengthHeader = response.headers.get("content-length");
+  const contentLengthHeader = response.headers["content-length"];
   const contentLength = contentLengthHeader === null ? null : Number(contentLengthHeader);
   if (contentLength !== null && Number.isFinite(contentLength) && contentLength !== size) {
     throw new Error(`speech model download size mismatch: expected ${size}, got ${contentLength}`);
@@ -92,7 +96,7 @@ export async function downloadVerifiedModel(input: DownloadInput): Promise<strin
   onProgress?.(0, size);
   try {
     await NodeStreamPromises.pipeline(
-      NodeStream.Readable.fromWeb(response.body as NodeStreamWeb.ReadableStream<Uint8Array>),
+      NodeStream.Readable.from(response.body),
       progress,
       NodeFS.createWriteStream(partialPath, { mode: 0o600 }),
       { signal },
