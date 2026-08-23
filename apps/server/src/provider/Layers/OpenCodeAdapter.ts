@@ -930,7 +930,12 @@ export function makeOpenCodeAdapter(
               part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
             const command =
               itemType === "command_execution" ? commandFromToolInput(part) : undefined;
-            const detail = command ?? detailFromToolPart(part);
+            // Failed commands surface the failure reason; the invocation
+            // itself stays in data.command for the row preview.
+            const detail =
+              part.state.status === "error"
+                ? (detailFromToolPart(part) ?? command)
+                : (command ?? detailFromToolPart(part));
             const payload = {
               itemType,
               ...(part.state.status === "error"
