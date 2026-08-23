@@ -626,30 +626,36 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // structurally just a string): NaN fails every comparison, and an
       // unparseable snoozedUntil must never persist.
       if (!(Date.parse(command.snoozedUntil) > Date.parse(occurredAt))) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future`,
-        });
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future`,
+          }),
+        );
       }
       // Blocked-on-you work must not be snoozed away: a pending approval or
       // user-input request is the agent waiting on the user, and hiding it
       // defeats the request. (A running session IS snoozable — snooze only
       // affects visibility, never the agent.)
       if (hasOpenBlockingRequest(thread)) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed`,
-        });
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed`,
+          }),
+        );
       }
       // A queued turn start — a user message no turn has adopted yet — is
       // invisible pending work: no session, no pending flags. Snoozing in
       // that window would hide a just-requested turn exactly the way settle
       // would.
       if (threadHasQueuedTurnStart(thread, occurredAt)) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `thread ${command.threadId} has a queued turn start and cannot be snoozed`,
-        });
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a queued turn start and cannot be snoozed`,
+          }),
+        );
       }
       // Re-snoozing an already-snoozed thread to the SAME wake time is a
       // duplicate (double-click, raced clients): re-emit with the original
@@ -802,10 +808,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // (rather than silently pinning) keeps a raced reorder-after-unpin
       // from resurrecting a pin the user just cleared.
       if (thread.pinnedAt == null) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `thread ${command.threadId} is not pinned and cannot be reordered`,
-        });
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is not pinned and cannot be reordered`,
+          }),
+        );
       }
       // Idempotent by re-emission (see thread.settle): a duplicate drop on
       // the same slot keeps the existing updatedAt so it projects as a no-op.
