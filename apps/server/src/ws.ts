@@ -81,6 +81,7 @@ import {
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -431,6 +432,12 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const threadDeletionReactor = yield* ThreadDeletionReactor;
+      // A draft retry re-creates the thread id its failed bootstrap deleted.
+      // Session stop and terminal close are keyed by that id and run in the
+      // deletion reactor's queue, so let the old incarnation's cleanup finish
+      // before the new one can own those resources.
+      const awaitThreadDeletionCleanup = threadDeletionReactor.drain;
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Every command dispatched on this connection carries the connecting
       // client's origin, including server-generated bootstrap sub-commands:
@@ -998,6 +1005,7 @@ const makeWsRpcLayer = (
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
+              yield* awaitThreadDeletionCleanup;
               yield* dispatchFromClient({
                 type: "thread.create",
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
@@ -1097,7 +1105,11 @@ const makeWsRpcLayer = (
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
-            : dispatchFromClient(normalizedCommand).pipe(
+            : (normalizedCommand.type === "thread.create"
+                ? awaitThreadDeletionCleanup
+                : Effect.void
+              ).pipe(
+                Effect.andThen(dispatchFromClient(normalizedCommand)),
                 Effect.mapError((cause) =>
                   toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
                 ),
