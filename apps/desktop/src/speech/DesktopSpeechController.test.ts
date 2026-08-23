@@ -5,6 +5,7 @@ import { DesktopSpeechController } from "./DesktopSpeechController.ts";
 
 function makeController(maxRecordingMs?: number) {
   const events: unknown[] = [];
+  let modelReady = false;
   const capture = {
     start: vi.fn(),
     stop: vi.fn().mockResolvedValue(new Float32Array([0.25, -0.25])),
@@ -15,20 +16,23 @@ function makeController(maxRecordingMs?: number) {
     transcribe: vi.fn().mockResolvedValue("hello from speech"),
     dispose: vi.fn().mockResolvedValue(undefined),
   };
+  const downloadModel = vi.fn().mockImplementation(async (onProgress) => {
+    onProgress(5, 10);
+    modelReady = true;
+    return "/tmp/model.gguf";
+  });
   const controller = new DesktopSpeechController({
     supported: true,
-    modelReady: vi.fn().mockResolvedValue(false),
-    downloadModel: vi.fn().mockImplementation(async (onProgress) => {
-      onProgress(5, 10);
-      return "/tmp/model.gguf";
-    }),
+    modelPath: "/tmp/model.gguf",
+    modelReady: vi.fn().mockImplementation(async () => modelReady),
+    downloadModel,
     removeModel: vi.fn().mockResolvedValue(undefined),
     createCapture: () => capture,
     createBackend: () => backend,
     emit: (event) => events.push(event),
     ...(maxRecordingMs === undefined ? {} : { maxRecordingMs }),
   });
-  return { controller, capture, backend, events };
+  return { controller, capture, backend, downloadModel, events };
 }
 
 describe("DesktopSpeechController", () => {
@@ -61,5 +65,38 @@ describe("DesktopSpeechController", () => {
     await controller.start();
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(backend.transcribe).toHaveBeenCalledOnce();
+  });
+
+  it("suppresses a transcript when cancellation arrives during stop", async () => {
+    const { controller, backend, events } = makeController();
+    let resolveTranscription!: (text: string) => void;
+    backend.transcribe.mockImplementation(
+      () => new Promise<string>((resolve) => (resolveTranscription = resolve)),
+    );
+    await controller.start();
+
+    const stopping = controller.stop();
+    await vi.waitFor(() => expect(backend.transcribe).toHaveBeenCalledOnce());
+    const cancelling = controller.cancel();
+    resolveTranscription("discard this text");
+    await Promise.all([stopping, cancelling]);
+
+    expect(events).not.toContainEqual({ type: "transcript", text: "discard this text" });
+  });
+
+  it("does not open the microphone when cancelled during model download", async () => {
+    const { controller, capture, downloadModel } = makeController();
+    let finishDownload!: (path: string) => void;
+    downloadModel.mockImplementation(
+      () => new Promise<string>((resolve) => (finishDownload = resolve)),
+    );
+
+    const starting = controller.start();
+    await vi.waitFor(() => expect(downloadModel).toHaveBeenCalledOnce());
+    const cancelling = controller.cancel();
+    finishDownload("/tmp/model.gguf");
+    await Promise.all([starting, cancelling]);
+
+    expect(capture.start).not.toHaveBeenCalled();
   });
 });

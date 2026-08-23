@@ -3,14 +3,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../localApi";
 
-export function useDesktopSpeechInput(onTranscript: (text: string) => void) {
+export function useDesktopSpeechInput(onTranscript: (text: string) => void, ownerKey: string) {
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge?.speech;
   const [status, setStatus] = useState<DesktopSpeechStatus | null>(null);
   const [progress, setProgress] = useState<{ downloaded: number; total: number } | null>(null);
   const [level, setLevel] = useState(0);
   const activeRef = useRef(false);
   const transcriptRef = useRef(onTranscript);
+  const currentOwnerRef = useRef(ownerKey);
+  const recordingOwnerRef = useRef<string | null>(null);
   transcriptRef.current = onTranscript;
+  currentOwnerRef.current = ownerKey;
 
   useEffect(() => {
     if (!bridge) return;
@@ -27,7 +30,10 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void) {
       } else if (event.type === "level") {
         setLevel(event.level);
       } else if (event.type === "transcript") {
-        transcriptRef.current(event.text);
+        if (recordingOwnerRef.current === currentOwnerRef.current) {
+          transcriptRef.current(event.text);
+        }
+        recordingOwnerRef.current = null;
       } else if (event.type === "error") {
         setStatus({ supported: true, state: "error", message: event.message });
       }
@@ -35,9 +41,18 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void) {
     return () => {
       disposed = true;
       unsubscribe();
+      recordingOwnerRef.current = null;
       if (activeRef.current) void bridge.cancel();
     };
   }, [bridge]);
+
+  useEffect(() => {
+    if (!bridge || recordingOwnerRef.current === null) return;
+    if (recordingOwnerRef.current === ownerKey) return;
+    recordingOwnerRef.current = null;
+    activeRef.current = false;
+    void bridge.cancel();
+  }, [bridge, ownerKey]);
 
   useEffect(() => {
     if (!bridge || !status?.supported || status.state !== "recording") return;
@@ -56,17 +71,18 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void) {
 
   const start = useCallback(async () => {
     if (!bridge) return;
-    if (status?.supported && status.state === "missing-model") {
+    if (!status || (status.supported && status.state === "missing-model")) {
       const confirmed = await ensureLocalApi().dialogs.confirm(
         "Download a 48 MiB English speech model? Voice input is processed locally and microphone audio is not saved.",
       );
       if (!confirmed) return;
     }
     setProgress(null);
+    recordingOwnerRef.current = ownerKey;
     const next = await bridge.start();
     activeRef.current = next.supported && next.state === "recording";
     setStatus(next);
-  }, [bridge, status]);
+  }, [bridge, ownerKey, status]);
 
   const stop = useCallback(async () => {
     if (!bridge) return;
@@ -77,6 +93,7 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void) {
   const cancel = useCallback(async () => {
     if (!bridge) return;
     activeRef.current = false;
+    recordingOwnerRef.current = null;
     setStatus(await bridge.cancel());
   }, [bridge]);
 

@@ -34,12 +34,23 @@ async function hasExpectedSize(path: string, size: number): Promise<boolean> {
   );
 }
 
+async function hasExpectedDigest(path: string, size: number, sha256: string): Promise<boolean> {
+  if (!(await hasExpectedSize(path, size))) return false;
+  const digest = NodeCrypto.createHash("sha256");
+  try {
+    for await (const chunk of NodeFS.createReadStream(path)) digest.update(chunk);
+    return digest.digest("hex") === sha256;
+  } catch {
+    return false;
+  }
+}
+
 export async function downloadVerifiedModel(input: DownloadInput): Promise<string> {
   const { directory, filename, url, size, sha256, signal, onProgress } = input;
   const finalPath = NodePath.join(directory, filename);
   signal?.throwIfAborted();
   await NodeFSP.mkdir(directory, { recursive: true });
-  if (await hasExpectedSize(finalPath, size)) {
+  if (await hasExpectedDigest(finalPath, size, sha256)) {
     onProgress?.(size, size);
     return finalPath;
   }
@@ -102,5 +113,5 @@ export function speechModelPath(directory: string): string {
 }
 
 export async function isSpeechModelReady(directory: string): Promise<boolean> {
-  return hasExpectedSize(speechModelPath(directory), SPEECH_MODEL.size);
+  return hasExpectedDigest(speechModelPath(directory), SPEECH_MODEL.size, SPEECH_MODEL.sha256);
 }

@@ -13,10 +13,12 @@ type Backend = {
   dispose(): Promise<void>;
 };
 
+type BackendPreparation = { readonly ok: true } | { readonly ok: false; readonly error: unknown };
+
 type ControllerOptions = {
   supported: boolean;
   unsupportedReason?: string;
-  modelPath?: string;
+  modelPath: string;
   modelReady(): Promise<boolean>;
   downloadModel(onProgress: (downloaded: number, total: number) => void): Promise<string>;
   removeModel(): Promise<void>;
@@ -30,7 +32,7 @@ export class DesktopSpeechController {
   private readonly options: ControllerOptions;
   private capture: Capture | undefined;
   private backend: Backend | undefined;
-  private backendReady: Promise<void> | undefined;
+  private backendReady: Promise<BackendPreparation> | undefined;
   private modelPath: string | undefined;
   private state:
     | "missing-model"
@@ -41,10 +43,10 @@ export class DesktopSpeechController {
     | "error" = "missing-model";
   private operation: Promise<DesktopSpeechStatus> | undefined;
   private recordingTimer: ReturnType<typeof setTimeout> | undefined;
+  private cancelRequested = false;
 
   constructor(options: ControllerOptions) {
     this.options = options;
-    this.modelPath = options.modelPath;
   }
 
   async getStatus(): Promise<DesktopSpeechStatus> {
@@ -57,24 +59,33 @@ export class DesktopSpeechController {
 
   start(): Promise<DesktopSpeechStatus> {
     return this.exclusive(async () => {
+      this.cancelRequested = false;
       const initial = await this.getStatus();
       if (!initial.supported) return initial;
       if (this.capture) throw new Error("voice input is already recording");
 
-      if (!(await this.options.modelReady())) {
+      if (await this.options.modelReady()) {
+        this.modelPath = this.options.modelPath;
+      } else {
         this.setState("downloading");
         this.modelPath = await this.options.downloadModel((downloaded, total) =>
           this.options.emit({ type: "download-progress", downloaded, total }),
         );
       }
-      if (!this.modelPath) this.modelPath = this.options.modelPath;
+      if (this.cancelRequested) {
+        this.setState((await this.options.modelReady()) ? "ready" : "missing-model");
+        return { supported: true, state: this.state };
+      }
       if (!this.modelPath) throw new Error("speech model path is unavailable");
 
       const capture = this.options.createCapture();
       const backend = this.options.createBackend(this.modelPath);
       this.capture = capture;
       this.backend = backend;
-      this.backendReady = backend.prepare();
+      this.backendReady = backend.prepare().then<BackendPreparation, BackendPreparation>(
+        () => ({ ok: true }),
+        (error: unknown) => ({ ok: false, error }),
+      );
       try {
         capture.start();
       } catch (error) {
@@ -105,9 +116,14 @@ export class DesktopSpeechController {
       this.setState("transcribing");
       try {
         const pcm = await capture.stop();
-        await ready;
+        const preparation = await ready;
+        if (!preparation.ok) throw preparation.error;
+        if (this.cancelRequested) {
+          this.setState("ready");
+          return { supported: true, state: "ready" };
+        }
         const text = (await backend.transcribe(pcm)).trim();
-        if (text) this.options.emit({ type: "transcript", text });
+        if (!this.cancelRequested && text) this.options.emit({ type: "transcript", text });
         this.setState("ready");
         return { supported: true, state: "ready" };
       } finally {
@@ -119,6 +135,7 @@ export class DesktopSpeechController {
   }
 
   cancel(): Promise<DesktopSpeechStatus> {
+    this.cancelRequested = true;
     return this.exclusive(async () => {
       const capture = this.capture;
       const backend = this.backend;
@@ -128,9 +145,9 @@ export class DesktopSpeechController {
       this.backendReady = undefined;
       await capture?.cancel().catch(() => undefined);
       await backend?.dispose().catch(() => undefined);
-      this.setState(
-        this.modelPath || (await this.options.modelReady()) ? "ready" : "missing-model",
-      );
+      this.modelPath = (await this.options.modelReady()) ? this.options.modelPath : undefined;
+      this.setState(this.modelPath ? "ready" : "missing-model");
+      this.cancelRequested = false;
       return { supported: true, state: this.state };
     });
   }
@@ -160,8 +177,9 @@ export class DesktopSpeechController {
   }
 
   private exclusive(task: () => Promise<DesktopSpeechStatus>): Promise<DesktopSpeechStatus> {
-    if (this.operation) return this.operation;
-    const operation = task()
+    const previous = this.operation;
+    const operation = (previous ?? Promise.resolve())
+      .then(task)
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         this.state = "error";

@@ -20,6 +20,7 @@ describe("downloadVerifiedModel", () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-speech-model-"));
     directories.push(directory);
     const bytes = Buffer.from("verified model bytes");
+    await NodeFSP.writeFile(NodePath.join(directory, "model.gguf"), Buffer.alloc(bytes.length));
     const server = NodeHttp.createServer((_request, response) => response.end(bytes));
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
