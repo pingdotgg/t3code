@@ -75,7 +75,7 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
     },
   });
 
-  if (driverKind !== "antigravity") {
+  if (driverKind !== "antigravity" || provider?.enabled === false) {
     return null;
   }
 
