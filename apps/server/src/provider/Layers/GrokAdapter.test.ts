@@ -270,6 +270,60 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not set reasoning effort while steering an active prompt", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-steer-keeps-active-effort");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-steer-effort-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_PROMPT_DELAY_MS: "250",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("grok"),
+        model: "grok-build",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const firstPromptFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "start long-running work",
+          attachments: [],
+          modelSelection,
+        })
+        .pipe(Effect.forkChild);
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "steer the active work",
+        attachments: [],
+        modelSelection,
+      });
+      yield* Fiber.join(firstPromptFiber);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      yield* adapter.stopSession(threadId);
+      assert.lengthOf(
+        requests.filter((request) => request.method === "session/set_model"),
+        1,
+      );
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("restores ready without completing an unstarted turn when preparation fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-preparation-failure-while-connecting");

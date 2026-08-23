@@ -95,18 +95,18 @@ describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
     });
 
     expect(models.map((model) => model.slug)).toEqual(["model-a", "model-b"]);
-    expect(models[0]?.capabilities.optionDescriptors?.[0]).toMatchObject({
+    const modelADescriptor = models[0]?.capabilities?.optionDescriptors?.[0];
+    const modelBDescriptor = models[1]?.capabilities?.optionDescriptors?.[0];
+    expect(modelADescriptor).toMatchObject({
       id: "reasoningEffort",
       currentValue: "effort-b",
     });
-    expect(models[1]?.capabilities.optionDescriptors?.[0]).toMatchObject({
+    expect(modelBDescriptor).toMatchObject({
       id: "reasoningEffort",
       currentValue: "only",
     });
-    if (models[1]?.capabilities.optionDescriptors?.[0]?.type === "select") {
-      expect(models[1].capabilities.optionDescriptors[0].options.map((o) => o.id)).toEqual([
-        "only",
-      ]);
+    if (modelBDescriptor?.type === "select") {
+      expect(modelBDescriptor.options.map((option) => option.id)).toEqual(["only"]);
     }
   });
 });

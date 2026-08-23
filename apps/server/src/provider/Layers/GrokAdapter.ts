@@ -949,11 +949,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               const requestedTurnModelId = turnModelSelection?.model
                 ? resolveGrokAcpBaseModelId(turnModelSelection.model)
                 : undefined;
+              // Grok cannot apply effort through set_model while an existing prompt is active.
+              const turnOptionsToApply =
+                steeringTurnId === undefined ? turnModelSelection?.options : undefined;
               const currentModelId = yield* applyGrokAcpModelSelection({
                 runtime: ctx.acp,
                 currentModelId: ctx.currentModelId,
                 requestedModelId: requestedTurnModelId,
-                selections: turnModelSelection?.options,
+                selections: turnOptionsToApply,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
