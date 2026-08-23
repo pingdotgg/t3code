@@ -254,6 +254,28 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+/**
+ * Focus the enclosing menu popup as soon as it mounts. Rendered only for
+ * pointer-opened project-scope menus: Base UI's open-time autofocus would
+ * otherwise land on the first tabbable descendant — the settings gear inside
+ * the first project row — making that row render as highlighted without any
+ * hover. React runs this sentinel's layout effect before the popup's own
+ * focus manager effect (child-first), so the manager snapshots focus already
+ * inside the popup and skips its autofocus entirely. Keyboard opens never
+ * mount the sentinel and keep Base UI's default pre-highlighted-row focus.
+ */
+function ProjectScopeOpenFocusRedirect({ enabled }: { enabled: boolean }) {
+  const sentinelRef = useRef<HTMLSpanElement | null>(null);
+  useLayoutEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const popup = sentinelRef.current?.closest<HTMLElement>("div[data-slot='menu-popup']");
+    popup?.focus();
+  }, [enabled]);
+  return <span ref={sentinelRef} hidden aria-hidden="true" />;
+}
+
 function SidebarThreadTooltip({
   thread,
   projectTitle,
@@ -1792,25 +1814,9 @@ export default function Sidebar() {
     },
   });
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
-  // Refs for the project-scope menu's open-focus redirect (see the
-  // useLayoutEffect next to its MenuPopup).
-  const projectScopePopupRef = useRef<HTMLDivElement | null>(null);
+  // Whether the project-scope menu was last activated with a pointer; see
+  // ProjectScopeOpenFocusRedirect for why it matters.
   const projectScopeOpenedWithPointerRef = useRef(false);
-
-  // Base UI focuses the first tabbable element when a menu opens. Inside the
-  // project-scope menu that is the settings gear inside the first project
-  // row, so opening with the mouse rendered that row as highlighted without
-  // any hover. When the menu was opened with a pointer, focus the popup
-  // itself during commit instead — Base UI's queued autofocus then sees
-  // focus is already inside the popup and skips. Keyboard opens keep the
-  // default behavior, which pre-highlights the checked row.
-  useLayoutEffect(() => {
-    if (!projectScopeMenuOpen || !projectScopeOpenedWithPointerRef.current) {
-      return;
-    }
-    projectScopePopupRef.current?.focus();
-  }, [projectScopeMenuOpen]);
-
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -3531,11 +3537,10 @@ export default function Sidebar() {
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
-                  <MenuPopup
-                    ref={projectScopePopupRef}
-                    align="start"
-                    className="w-(--anchor-width)"
-                  >
+                  <MenuPopup align="start" className="w-(--anchor-width)">
+                    <ProjectScopeOpenFocusRedirect
+                      enabled={projectScopeOpenedWithPointerRef.current}
+                    />
                     <MenuRadioGroup
                       value={projectScopeKey ?? "all"}
                       onValueChange={(value) =>
