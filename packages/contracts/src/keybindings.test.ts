@@ -115,7 +115,7 @@ it.effect("rejects invalid command values", () =>
     const result = yield* Effect.exit(
       decode(KeybindingRule, {
         key: "mod+j",
-        command: "script.Test.run",
+        command: "script..run",
       }),
     );
     assert.strictEqual(result._tag, "Failure");
@@ -129,6 +129,12 @@ it.effect("accepts dynamic script run commands", () =>
       command: "script.setup.run",
     });
     assert.strictEqual(parsed.command, "script.setup.run");
+
+    const parsedExternalId = yield* decode(KeybindingRule, {
+      key: "mod+r",
+      command: "script.123e4567-e89b-42d3-a456-426614174000.run",
+    });
+    assert.strictEqual(parsedExternalId.command, "script.123e4567-e89b-42d3-a456-426614174000.run");
   }),
 );
 

@@ -58,6 +58,12 @@ describe("projectScripts helpers", () => {
     const command = commandForProjectScript("lint");
     expect(command).toBe("script.lint.run");
     expect(projectScriptIdFromCommand(command)).toBe("lint");
+
+    const externalId = "123e4567-e89b-42d3-a456-426614174000";
+    const externalCommand = commandForProjectScript(externalId);
+    expect(externalCommand).toBe(`script.${externalId}.run`);
+    expect(projectScriptIdFromCommand(externalCommand)).toBe(externalId);
+
     expect(projectScriptIdFromCommand("terminal.toggle")).toBeNull();
   });
 

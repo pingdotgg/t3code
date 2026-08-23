@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ForwardCompatibleArray, TrimmedString } from "./baseSchemas.ts";
+import { ForwardCompatibleArray, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 
 export const MAX_KEYBINDING_VALUE_LENGTH = 64;
 export const MAX_KEYBINDING_WHEN_LENGTH = 256;
@@ -77,10 +77,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal("script."),
-  Schema.NonEmptyString.check(
-    Schema.isMaxLength(MAX_SCRIPT_ID_LENGTH),
-    Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
-  ),
+  TrimmedNonEmptyString,
   Schema.Literal(".run"),
 ]);
 
