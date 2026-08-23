@@ -7,6 +7,7 @@ import {
   type ChangeRequest,
   type ChangeRequestState,
 } from "@t3tools/contracts";
+import { parseHostName } from "@t3tools/shared/sourceControl";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
@@ -18,6 +19,7 @@ import {
   providerAuth,
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
+  type SourceControlUnknownRemoteRefinementInput,
 } from "./SourceControlProviderDiscovery.ts";
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
@@ -92,6 +94,30 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+// A GitHub Enterprise host is named by whoever installed it, so hostname guessing misses
+// installs like `git.example.edu`. When detection lands on `unknown`, let a host `gh` is
+// signed in to claim the remote. Any signed-in account counts rather than only the host's
+// active one, so a second login on the same host still resolves the remote; whether `gh`
+// knows the host at all is the question, not which account is currently selected.
+function refineUnknownGitHubRemote(input: SourceControlUnknownRemoteRefinementInput) {
+  // Unknown contexts carry the raw remote host in `name`, which keeps any port, while `gh`
+  // keys its hosts by bare hostname.
+  const host = parseHostName(input.context.provider.name);
+  const authenticated = parseGitHubAuthStatus(input.auth.stdout).accounts.some(
+    (account) => account.authenticated && parseHostName(account.host) === host,
+  );
+
+  if (!authenticated) {
+    return null;
+  }
+
+  return {
+    kind: "github",
+    name: "GitHub Self-Hosted",
+    baseUrl: input.context.provider.baseUrl,
+  } as const;
+}
+
 export const discovery = {
   type: "cli",
   kind: "github",
@@ -100,6 +126,7 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--json", "hosts"],
   parseAuth: parseGitHubAuth,
+  refineUnknownRemote: refineUnknownGitHubRemote,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
