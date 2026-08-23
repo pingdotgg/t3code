@@ -1941,6 +1941,28 @@ describe("ProviderCommandReactor", () => {
         expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
           modelSelection: { instanceId, model: "grok-codex" },
         });
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-grok-session-ready"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "ready",
+            providerName: "grok",
+            providerInstanceId: instanceId,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+        yield* Effect.promise(() => harness.drain());
+        const readModelBeforeRejection = yield* Effect.promise(() => harness.readModel());
+        const modelSelectionBeforeRejection = readModelBeforeRejection.threads.find(
+          (candidate) => candidate.id === ThreadId.make("thread-1"),
+        )?.modelSelection;
+        expect(modelSelectionBeforeRejection).toEqual({ instanceId, model: "grok-build" });
 
         yield* harness.engine.dispatch({
           type: "thread.turn.start",
@@ -1970,6 +1992,17 @@ describe("ProviderCommandReactor", () => {
         );
 
         expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        const thread = readModel.threads.find(
+          (candidate) => candidate.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.session).toMatchObject({
+          status: "ready",
+          providerName: "grok",
+          providerInstanceId: instanceId,
+          lastError: null,
+        });
+        expect(thread?.modelSelection).toEqual(modelSelectionBeforeRejection);
       }),
   );
 
