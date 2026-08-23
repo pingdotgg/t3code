@@ -17,6 +17,7 @@ import {
   type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  type ProviderRequestKind,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -298,7 +299,7 @@ function sessionStatusAllowsActiveTurn(
 
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
-): "command" | "file-read" | "file-change" | undefined {
+): ProviderRequestKind | undefined {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -308,6 +309,8 @@ function requestKindFromCanonicalRequestType(
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "permission_approval":
+      return "permission";
     default:
       return undefined;
   }
@@ -388,7 +391,9 @@ export function runtimeEventToActivities(
                 ? "File-read approval requested"
                 : requestKind === "file-change"
                   ? "File-change approval requested"
-                  : "Approval requested",
+                  : requestKind === "permission"
+                    ? "App permission approval requested"
+                    : "Approval requested",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
