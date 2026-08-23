@@ -2,6 +2,7 @@ import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -18,6 +19,8 @@ const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const GROK_LEGACY_DEFAULT_MODEL_ID = "grok-build";
+const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
+const isUnknownRecord = Schema.is(UnknownRecord);
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
@@ -83,10 +86,6 @@ export function resolveGrokAcpBaseModelId(model: string | null | undefined): str
   return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? GROK_LEGACY_DEFAULT_MODEL_ID;
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function trimmedString(value: unknown): string | undefined {
   return typeof value === "string" ? value.trim() || undefined : undefined;
 }
@@ -106,7 +105,7 @@ export interface GrokAcpModelMetadata {
 }
 
 export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
-  if (!isRecord(meta)) {
+  if (!isUnknownRecord(meta)) {
     return {
       supportsReasoningEffort: undefined,
       reasoningEffort: undefined,
@@ -118,7 +117,7 @@ export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
   const seen = new Set<string>();
   const reasoningEfforts = Array.isArray(meta.reasoningEfforts)
     ? meta.reasoningEfforts.flatMap((raw) => {
-        if (!isRecord(raw)) {
+        if (!isUnknownRecord(raw)) {
           return [];
         }
         const value = trimmedString(raw.value);

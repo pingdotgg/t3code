@@ -25,6 +25,8 @@ interface PendingXAiPromptCompletion {
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
 const usdTicksPerUsd = 10_000_000_000;
+const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
+const isUnknownRecord = Schema.is(UnknownRecord);
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -65,10 +67,6 @@ function trimmed(value: string | undefined): string | undefined {
   return text && text.length > 0 ? text : undefined;
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function trimmedUnknownString(value: unknown): string | undefined {
   return typeof value === "string" ? trimmed(value) : undefined;
 }
@@ -95,9 +93,9 @@ export interface XAiPromptResponseMetadata {
 export function extractXAiPromptResponseMetadata(
   response: EffectAcpSchema.PromptResponse,
 ): XAiPromptResponseMetadata {
-  const meta = isRecord(response._meta) ? response._meta : undefined;
-  const usage = isRecord(meta?.usage) ? meta.usage : undefined;
-  const modelUsage = isRecord(usage?.modelUsage) ? usage.modelUsage : undefined;
+  const meta = isUnknownRecord(response._meta) ? response._meta : undefined;
+  const usage = isUnknownRecord(meta?.usage) ? meta.usage : undefined;
+  const modelUsage = isUnknownRecord(usage?.modelUsage) ? usage.modelUsage : undefined;
   const costUsdTicks = nonNegativeSafeInteger(usage?.costUsdTicks);
   const totalCostUsd =
     costUsdTicks !== undefined &&
@@ -131,7 +129,7 @@ export function extractXAiModelChangedNotification(
   method: string,
   payload: unknown,
 ): XAiModelChangedNotification | undefined {
-  if (!isRecord(payload)) {
+  if (!isUnknownRecord(payload)) {
     return undefined;
   }
   const notification =
@@ -139,14 +137,14 @@ export function extractXAiModelChangedNotification(
       ? payload
       : method === "_x.ai/session_notification" &&
           payload.method === "x.ai/session_notification" &&
-          isRecord(payload.params)
+          isUnknownRecord(payload.params)
         ? payload.params
         : undefined;
   if (!notification) {
     return undefined;
   }
   const sessionId = trimmedUnknownString(notification.sessionId);
-  const update = isRecord(notification.update) ? notification.update : undefined;
+  const update = isUnknownRecord(notification.update) ? notification.update : undefined;
   const modelId = trimmedUnknownString(update?.model_id);
   const rawReasoningEffort = update?.reasoning_effort;
   const reasoningEffort = trimmedUnknownString(rawReasoningEffort);
