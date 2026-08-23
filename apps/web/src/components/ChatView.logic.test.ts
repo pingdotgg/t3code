@@ -9,6 +9,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
+import { createEmptyThreadDraft } from "../composerDraftStore";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -29,6 +30,7 @@ import {
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
+  snapshotDraftModelSelectionForSend,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -38,6 +40,24 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("draft model selection send snapshots", () => {
+  it("preserves the raw Grok draft when dispatch adds a default reasoning effort", () => {
+    const instanceId = ProviderInstanceId.make("grok");
+    const draftSelection = { instanceId, model: "grok-4.6" };
+    const draft = {
+      ...createEmptyThreadDraft(),
+      modelSelectionByProvider: { [instanceId]: draftSelection },
+    };
+
+    expect(
+      snapshotDraftModelSelectionForSend(draft, {
+        ...draftSelection,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      }),
+    ).toEqual(draftSelection);
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());

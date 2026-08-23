@@ -335,6 +335,7 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  snapshotDraftModelSelectionForSend,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   waitForStartedServerThread,
@@ -5171,6 +5172,10 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    const draftModelSelectionForSend = snapshotDraftModelSelectionForSend(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      ctxSelectedModelSelection,
+    );
     const composerImages =
       directAnnotation?.image &&
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
@@ -5227,6 +5232,7 @@ function ChatViewContent(props: ChatViewProps) {
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        draftModelSelectionForSend,
       });
       return;
     }
@@ -5518,7 +5524,7 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        acknowledgeComposerDraftModelSelection(composerDraftTarget, ctxSelectedModelSelection);
+        acknowledgeComposerDraftModelSelection(composerDraftTarget, draftModelSelectionForSend);
         acknowledgeActiveThreadWoke();
       }
     }
@@ -5757,9 +5763,11 @@ function ChatViewContent(props: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      draftModelSelectionForSend,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      draftModelSelectionForSend: ModelSelection;
     }) => {
       if (
         !activeThread ||
@@ -5882,7 +5890,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (failure === null) {
         acknowledgeComposerDraftModelSelection(
           scopeThreadRef(activeThread.environmentId, threadIdForSend),
-          ctxSelectedModelSelection,
+          draftModelSelectionForSend,
         );
         acknowledgeActiveThreadWoke();
         sendInFlightRef.current = false;
