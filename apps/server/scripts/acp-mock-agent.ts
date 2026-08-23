@@ -52,6 +52,7 @@ const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const promptMetadataModelId = process.env.T3_ACP_PROMPT_METADATA_MODEL_ID?.trim();
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -1019,7 +1020,7 @@ const program = Effect.gen(function* () {
                 requestId: promptIdFromRequestMeta(request) ?? "mock-prompt-1",
                 promptId: promptIdFromRequestMeta(request) ?? "mock-prompt-1",
                 totalTokens: 2_048,
-                modelId: currentModelId,
+                modelId: promptMetadataModelId || currentModelId,
                 inputTokens: 900,
                 outputTokens: 124,
                 cachedReadTokens: 300,
@@ -1035,7 +1036,7 @@ const program = Effect.gen(function* () {
                   apiDurationMs: 800,
                   costUsdTicks: 125_000_000,
                   modelUsage: {
-                    [currentModelId]: {
+                    [promptMetadataModelId || currentModelId]: {
                       inputTokens: 1_900,
                       outputTokens: 148,
                       totalTokens: 2_048,

@@ -455,6 +455,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         makeMockGrokWrapper({
           T3_ACP_EMIT_XAI_MODEL_CHANGED: "1",
           T3_ACP_EMIT_XAI_PROMPT_METADATA: "1",
+          T3_ACP_PROMPT_METADATA_MODEL_ID: "xai-routing-model",
         }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
@@ -532,7 +533,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           apiDurationMs: 800,
           costUsdTicks: 125_000_000,
           modelUsage: {
-            "grok-mock-alt": {
+            "xai-routing-model": {
               inputTokens: 1_900,
               outputTokens: 148,
               totalTokens: 2_048,
@@ -550,7 +551,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.deepStrictEqual(
         completed?.type === "turn.completed" ? completed.payload.modelUsage : undefined,
         {
-          "grok-mock-alt": {
+          "xai-routing-model": {
             inputTokens: 1_900,
             outputTokens: 148,
             totalTokens: 2_048,

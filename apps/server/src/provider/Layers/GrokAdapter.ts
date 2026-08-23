@@ -165,6 +165,28 @@ function applyGrokModelChangedSelection(
   return true;
 }
 
+function applyAcceptedGrokModelSelection(
+  ctx: GrokSessionContext,
+  modelSelection: {
+    readonly modelId: string | undefined;
+    readonly reasoningEffort: string | undefined;
+  },
+): boolean {
+  if (
+    ctx.currentModelId === modelSelection.modelId &&
+    ctx.currentReasoningEffort === modelSelection.reasoningEffort
+  ) {
+    return false;
+  }
+  ctx.modelSelectionRevision += 1;
+  ctx.currentModelId = modelSelection.modelId;
+  ctx.currentReasoningEffort = modelSelection.reasoningEffort;
+  ctx.currentContextWindow = modelSelection.modelId
+    ? ctx.contextWindowByModelId.get(modelSelection.modelId)
+    : undefined;
+  return true;
+}
+
 function settlePendingApprovalsAsCancelled(
   pendingApprovals: ReadonlyMap<ApprovalRequestId, PendingApproval>,
 ): Effect.Effect<void> {
@@ -921,8 +943,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
           if (ctx.modelSelectionRevision === modelSelectionRevision) {
-            ctx.currentModelId = optimisticModelSelection.modelId;
-            ctx.currentReasoningEffort = optimisticModelSelection.reasoningEffort;
+            applyAcceptedGrokModelSelection(ctx, optimisticModelSelection);
           }
           ctx.currentContextWindow =
             (ctx.currentModelId ? contextWindowByModelId.get(ctx.currentModelId) : undefined) ??
@@ -1228,8 +1249,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
               if (ctx.modelSelectionRevision === modelSelectionRevision) {
-                ctx.currentModelId = optimisticModelSelection.modelId;
-                ctx.currentReasoningEffort = optimisticModelSelection.reasoningEffort;
+                applyAcceptedGrokModelSelection(ctx, optimisticModelSelection);
               }
               ctx.currentContextWindow = ctx.currentModelId
                 ? ctx.contextWindowByModelId.get(ctx.currentModelId)
@@ -1387,41 +1407,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 extractedXAiMetadata.sessionId === ctx.acpSessionId
                   ? extractedXAiMetadata
                   : undefined;
-              let completedDisplayModel = ctx.currentModelId
+              const completedDisplayModel = ctx.currentModelId
                 ? resolveGrokAcpBaseModelId(ctx.currentModelId)
                 : prepared.displayModel;
-              if (xAiMetadata?.modelId !== undefined) {
-                completedDisplayModel = resolveGrokAcpBaseModelId(xAiMetadata.modelId);
-                if (ctx.currentModelId !== xAiMetadata.modelId) {
-                  ctx.currentModelId = xAiMetadata.modelId;
-                  ctx.currentReasoningEffort = undefined;
-                  ctx.currentContextWindow = ctx.contextWindowByModelId.get(xAiMetadata.modelId);
-                  const modelSelection = grokRuntimeModelSelection(
-                    boundInstanceId,
-                    xAiMetadata.modelId,
-                    undefined,
-                  );
-                  yield* offerRuntimeEvent({
-                    type: "session.configured",
-                    ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    turnId: prepared.turnId,
-                    payload: {
-                      config: {
-                        model: xAiMetadata.modelId,
-                        effort: null,
-                        modelSelection,
-                      },
-                    },
-                    raw: {
-                      source: "acp.grok.extension",
-                      method: "session/prompt",
-                      payload: result._meta,
-                    },
-                  });
-                }
-              }
               if (xAiMetadata?.totalTokens !== undefined) {
                 const lastUsedTokens =
                   xAiMetadata.inputTokens !== undefined || xAiMetadata.outputTokens !== undefined
