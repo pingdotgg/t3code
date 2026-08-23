@@ -87,12 +87,7 @@ export function buildComposerPromptHistoryEntries(
         ? recallableComposerPrompt(message.text)
         : message.promptHistoryText.trim();
     if (prompt.length === 0) continue;
-    const entry = { id: message.id, prompt };
-    if (entries.at(-1)?.prompt === prompt) {
-      entries[entries.length - 1] = entry;
-      continue;
-    }
-    entries.push(entry);
+    entries.push({ id: message.id, prompt });
   }
   return entries;
 }

@@ -81,7 +81,7 @@ describe("recallableComposerPrompt", () => {
 });
 
 describe("buildComposerPromptHistoryEntries", () => {
-  it("includes optimistic prompt text and collapses consecutive duplicates", () => {
+  it("includes optimistic prompt text and keeps stable message identities", () => {
     expect(
       buildComposerPromptHistoryEntries([
         { id: "assistant-1", role: "assistant", text: "Answer" },
@@ -95,6 +95,7 @@ describe("buildComposerPromptHistoryEntries", () => {
         },
       ]),
     ).toEqual([
+      { id: "user-1", prompt: "First" },
       { id: "user-2", prompt: "First" },
       { id: "user-3", prompt: "Second as typed" },
     ]);
