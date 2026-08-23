@@ -26,12 +26,14 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
+  resolveProviderInteractionModeForDispatch,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
   snapshotDraftModelSelectionForSend,
   startNewThreadForProject,
+  shouldShowPlanFollowUpPrompt,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -56,6 +58,63 @@ describe("draft model selection send snapshots", () => {
         options: [{ id: "reasoningEffort", value: "high" }],
       }),
     ).toEqual(draftSelection);
+  });
+});
+
+describe("provider-gated Plan follow-ups", () => {
+  const codexInstanceId = ProviderInstanceId.make("codex");
+  const grokInstanceId = ProviderInstanceId.make("grok");
+  const providers = [
+    { instanceId: codexInstanceId, showInteractionModeToggle: true },
+    { instanceId: grokInstanceId, showInteractionModeToggle: false },
+  ];
+
+  it("hides and coerces a legacy Grok Plan follow-up", () => {
+    const modelSelection = { instanceId: grokInstanceId };
+
+    expect(
+      shouldShowPlanFollowUpPrompt({
+        pendingUserInputCount: 0,
+        interactionMode: "plan",
+        latestTurnSettled: true,
+        hasActionablePlan: true,
+        planModeEnabled: true,
+        providers,
+        modelSelection,
+      }),
+    ).toBe(false);
+    expect(
+      resolveProviderInteractionModeForDispatch({
+        interactionMode: "plan",
+        planModeEnabled: true,
+        providers,
+        modelSelection,
+      }),
+    ).toBe("default");
+  });
+
+  it("keeps Plan follow-ups for a provider that supports them", () => {
+    const modelSelection = { instanceId: codexInstanceId };
+
+    expect(
+      shouldShowPlanFollowUpPrompt({
+        pendingUserInputCount: 0,
+        interactionMode: "plan",
+        latestTurnSettled: true,
+        hasActionablePlan: true,
+        planModeEnabled: true,
+        providers,
+        modelSelection,
+      }),
+    ).toBe(true);
+    expect(
+      resolveProviderInteractionModeForDispatch({
+        interactionMode: "plan",
+        planModeEnabled: true,
+        providers,
+        modelSelection,
+      }),
+    ).toBe("plan");
   });
 });
 

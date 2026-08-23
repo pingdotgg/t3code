@@ -3,6 +3,7 @@ import {
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
+  type ProviderInteractionMode,
   type ProviderDriverKind,
   type ServerProvider,
   type ScopedProjectRef,
@@ -25,7 +26,10 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import { modelChangeRequiresNewThread } from "@t3tools/shared/model";
+import {
+  modelChangeRequiresNewThread,
+  providerInteractionModeControlsEnabled,
+} from "@t3tools/shared/model";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -37,6 +41,36 @@ export function snapshotDraftModelSelectionForSend(
   dispatchedSelection: ModelSelection,
 ): ModelSelection {
   return draft?.modelSelectionByProvider[dispatchedSelection.instanceId] ?? dispatchedSelection;
+}
+
+export function resolveProviderInteractionModeForDispatch(input: {
+  readonly interactionMode: ProviderInteractionMode;
+  readonly planModeEnabled: boolean;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">
+  >;
+  readonly modelSelection: Pick<ModelSelection, "instanceId"> | null | undefined;
+}): ProviderInteractionMode {
+  return providerInteractionModeControlsEnabled(input) ? input.interactionMode : "default";
+}
+
+export function shouldShowPlanFollowUpPrompt(input: {
+  readonly pendingUserInputCount: number;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly latestTurnSettled: boolean;
+  readonly hasActionablePlan: boolean;
+  readonly planModeEnabled: boolean;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">
+  >;
+  readonly modelSelection: Pick<ModelSelection, "instanceId"> | null | undefined;
+}): boolean {
+  return (
+    input.pendingUserInputCount === 0 &&
+    resolveProviderInteractionModeForDispatch(input) === "plan" &&
+    input.latestTurnSettled &&
+    input.hasActionablePlan
+  );
 }
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
