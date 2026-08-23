@@ -1037,6 +1037,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/merged-branch-deleted",
         state: "merged",
+        updatedAt: "2026-04-02T15:00:00.000Z",
       });
       expect(ghCalls.filter((call) => call.startsWith("pr list ")).length).toBeGreaterThan(0);
     }),
