@@ -16,7 +16,7 @@ type UsageProviderPresentation = {
 export const PROVIDER_PRESENTATION = {
   codex: {
     label: "Codex",
-    color: "var(--foreground)",
+    color: "var(--contrast-foreground)",
     mark: OpenAI,
   },
   claude: {
