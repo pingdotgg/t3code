@@ -46,6 +46,7 @@ export function ComposerSpeechButton(props: {
               aria-label={label}
               aria-pressed={recording}
               aria-disabled={inactive}
+              onPointerDown={(event) => event.preventDefault()}
               onClick={() => {
                 if (inactive) return;
                 if (recording) props.onStop();
@@ -87,6 +88,7 @@ export function ComposerSpeechButton(props: {
                 size="icon-xs"
                 variant="ghost"
                 aria-label="Discard voice input"
+                onPointerDown={(event) => event.preventDefault()}
                 onClick={props.onCancel}
               >
                 <XIcon />
