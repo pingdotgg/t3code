@@ -65,6 +65,45 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("forwards metadata with session model changes", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.setSessionModel("grok-mock-alt", {
+        reasoningEffort: "low",
+      });
+
+      const setModelStarted = requestEvents.find(
+        (event) => event.method === "session/set_model" && event.status === "started",
+      );
+      expect(setModelStarted?.payload).toEqual({
+        sessionId: "mock-session-1",
+        modelId: "grok-mock-alt",
+        _meta: { reasoningEffort: "low" },
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
   it.effect("starts a session, prompts, and emits normalized events against the mock agent", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
