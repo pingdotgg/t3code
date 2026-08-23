@@ -59,6 +59,7 @@ import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
+import { useUiStateStore } from "~/uiStateStore";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -453,7 +454,10 @@ export function PullRequestDetailPanel({
     compensationRef.current = null;
     if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
   }, [condensed]);
-  const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>("merge");
+  // The last method the reader picked, remembered across pull requests and sessions. A
+  // repository that refuses it still falls back below, so nothing here can force a bad merge.
+  const mergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
+  const setMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
   const [confirmation, setConfirmation] = useState<{
     readonly open: boolean;
     readonly action: "merge" | "close" | "enable-auto-merge";
@@ -1418,9 +1422,7 @@ export function PullRequestDetailPanel({
                           {showsDraftToggle ? <MenuSeparator /> : null}
                           <MenuRadioGroup
                             value={selectedMergeMethod}
-                            onValueChange={(method) =>
-                              setMergeMethod(method as PullRequestMergeMethod)
-                            }
+                            onValueChange={setMergeMethod}
                           >
                             {allowedMergeMethods.map((method) => (
                               <MenuRadioItem key={method} value={method} disabled={actionPending}>

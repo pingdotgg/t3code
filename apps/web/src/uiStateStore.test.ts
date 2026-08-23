@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type PullRequestMergeMethod } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setPullRequestMergeMethod,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -24,6 +25,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
+    pullRequestMergeMethod: "merge",
     ...overrides,
   };
 }
@@ -144,6 +146,24 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("stores the last merge method a reader picked", () => {
+    const next = setPullRequestMergeMethod(makeUiState(), "squash");
+
+    expect(next.pullRequestMergeMethod).toBe("squash");
+    expect(setPullRequestMergeMethod(next, "squash")).toBe(next);
+    expect(setPullRequestMergeMethod(next, "rebase").pullRequestMergeMethod).toBe("rebase");
+  });
+
+  it("ignores unknown merge methods", () => {
+    const state = makeUiState({ pullRequestMergeMethod: "squash" });
+
+    expect(setPullRequestMergeMethod(state, "fast-forward" as PullRequestMergeMethod)).toBe(state);
+    expect(parsePersistedState({ pullRequestMergeMethod: "fast-forward" })).toMatchObject({
+      pullRequestMergeMethod: "merge",
+    });
+    expect(parsePersistedState({})).toMatchObject({ pullRequestMergeMethod: "merge" });
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -183,6 +203,7 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      pullRequestMergeMethod: "merge",
     });
   });
 
@@ -280,6 +301,7 @@ describe("uiStateStore persistence", () => {
         },
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      pullRequestMergeMethod: "squash",
     });
 
     persistState(state);
@@ -303,6 +325,7 @@ describe("uiStateStore persistence", () => {
           "turn-2": true,
         },
       },
+      pullRequestMergeMethod: "squash",
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
