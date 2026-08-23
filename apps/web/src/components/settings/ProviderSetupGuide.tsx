@@ -5,6 +5,7 @@ import { type ProviderDriverKind, type ServerProvider } from "@t3tools/contracts
 import { useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { toastManager } from "../ui/toast";
@@ -12,6 +13,42 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+
+interface CopyableCommandRowProps {
+  readonly command: string;
+  readonly label: string;
+  readonly tooltip: string;
+  readonly onCopy: (command: string, meta: { label: string }) => void;
+}
+
+function CopyableCommandRow({ command, label, tooltip, onCopy }: CopyableCommandRowProps) {
+  return (
+    <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/80 py-0.5 pr-0.5 pl-2 font-mono text-[11px]">
+      <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
+        <code className="flex h-full w-max select-all items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
+          {command}
+        </code>
+      </ScrollArea>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+              onClick={() => onCopy(command, { label })}
+              aria-label={tooltip}
+            >
+              <CopyIcon className="size-3" />
+            </Button>
+          }
+        />
+        <TooltipPopup side="top">{tooltip}</TooltipPopup>
+      </Tooltip>
+    </div>
+  );
+}
 
 interface ProviderSetupGuideProps {
   readonly driverKind: ProviderDriverKind | null;
@@ -52,13 +89,11 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
 
   if (isInstalled && isAuth) {
     return (
-      <div className="rounded-lg border border-success/32 bg-success/4 p-3 text-xs">
-        <div className="flex items-center gap-2 font-medium text-success">
-          <CheckCircle2Icon className="size-4 shrink-0" />
-          <span>Antigravity CLI is installed and authenticated</span>
-        </div>
+      <Alert variant="success" className="text-xs">
+        <CheckCircle2Icon className="size-4" />
+        <AlertTitle>Antigravity CLI is installed and authenticated</AlertTitle>
         {authEmail ? (
-          <p className="mt-1 flex items-center gap-1 text-muted-foreground">
+          <AlertDescription className="mt-1 flex items-center gap-1">
             <span>Signed in as</span>
             <RedactedSensitiveText
               value={authEmail}
@@ -67,9 +102,9 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
               hideTooltip="Click to hide account email"
               className="text-foreground"
             />
-          </p>
+          </AlertDescription>
         ) : null}
-      </div>
+      </Alert>
     );
   }
 
@@ -102,34 +137,12 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
             </ToggleGroup>
           </div>
 
-          <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/80 py-0.5 pr-0.5 pl-2 font-mono text-[11px]">
-            <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
-              <code className="flex h-full w-max select-all items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
-                {platformTab === "unix" ? unixInstallCmd : winInstallCmd}
-              </code>
-            </ScrollArea>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() =>
-                      copyToClipboard(platformTab === "unix" ? unixInstallCmd : winInstallCmd, {
-                        label: "Install",
-                      })
-                    }
-                    aria-label="Copy install command"
-                  >
-                    <CopyIcon className="size-3" />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Copy install command</TooltipPopup>
-            </Tooltip>
-          </div>
+          <CopyableCommandRow
+            command={platformTab === "unix" ? unixInstallCmd : winInstallCmd}
+            label="Install"
+            tooltip="Copy install command"
+            onCopy={copyToClipboard}
+          />
         </div>
       ) : null}
 
@@ -142,30 +155,12 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
           Run <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">agy</code> in
           your terminal and complete the Google login prompt in your browser:
         </p>
-        <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/80 py-0.5 pr-0.5 pl-2 font-mono text-[11px]">
-          <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
-            <code className="flex h-full w-max select-all items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
-              {authCmd}
-            </code>
-          </ScrollArea>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => copyToClipboard(authCmd, { label: "Login" })}
-                  aria-label="Copy login command"
-                >
-                  <CopyIcon className="size-3" />
-                </Button>
-              }
-            />
-            <TooltipPopup side="top">Copy login command</TooltipPopup>
-          </Tooltip>
-        </div>
+        <CopyableCommandRow
+          command={authCmd}
+          label="Login"
+          tooltip="Copy login command"
+          onCopy={copyToClipboard}
+        />
       </div>
     </div>
   );
