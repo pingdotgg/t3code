@@ -329,6 +329,11 @@ function projectAcpContent(value: unknown): Record<string, unknown> | undefined 
   return summary ? { content: summary } : undefined;
 }
 
+function hasSuccessfulMcpResult(data: Record<string, unknown>): boolean {
+  const item = asRecord(data.item);
+  return item?.type === "mcpToolCall" && item.result != null && item.error == null;
+}
+
 /**
  * Removes activity payload fields that no current client reads while retaining
  * the full payload in persistence and the event store.
@@ -344,7 +349,9 @@ export function projectActivityPayload(
 
   const itemStatus = asRecord(data.item)?.status;
   const projectedPayload =
-    payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
+    payload.status === "completed" &&
+    (itemStatus === "failed" || itemStatus === "declined") &&
+    !hasSuccessfulMcpResult(data)
       ? { ...payload, status: itemStatus }
       : payload;
 

@@ -168,6 +168,25 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it("does not restore a failed status for a successful Codex MCP result", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        status: "completed",
+        data: {
+          item: {
+            type: "mcpToolCall",
+            status: "failed",
+            result: { content: [{ type: "text", text: "diff details" }] },
+            error: null,
+          },
+        },
+      }),
+    );
+
+    expect((projected.payload as Record<string, unknown>).status).toBe("completed");
+  });
+
   it("slims Claude-shaped mcp_tool_call data (toolName/input/result block)", () => {
     const projected = projectActivityPayload(
       activity({
