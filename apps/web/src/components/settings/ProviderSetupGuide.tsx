@@ -93,7 +93,7 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
         <CheckCircle2Icon className="size-4" />
         <AlertTitle>Antigravity CLI is installed and authenticated</AlertTitle>
         {authEmail ? (
-          <AlertDescription className="mt-1 flex items-center gap-1">
+          <AlertDescription className="mt-1 flex flex-row items-center gap-1">
             <span>Signed in as</span>
             <RedactedSensitiveText
               value={authEmail}
@@ -121,7 +121,9 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground flex items-center gap-1.5 font-medium">
-              <DownloadIcon className="size-3.5" /> Step 1: Install `agy` CLI
+              <DownloadIcon className="size-3.5" /> Step 1: Install{" "}
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">agy</code>{" "}
+              CLI
             </span>
             <ToggleGroup
               aria-label="Platform selection"
