@@ -290,8 +290,18 @@ function mergePersistHistoryRequests(
       immediate: current.immediate || next.immediate,
     };
   }
-  const contents = `${current.contents}${next.contents}`;
   const contentsBytes = current.contentsBytes + next.contentsBytes;
+  if (current.mode === "truncate") {
+    return {
+      authoritativeHistory: next.authoritativeHistory,
+      contents: next.authoritativeHistory,
+      contentsBytes,
+      mode: "truncate",
+      immediate:
+        current.immediate || next.immediate || contentsBytes >= DEFAULT_PERSIST_CHUNK_BYTES,
+    };
+  }
+  const contents = `${current.contents}${next.contents}`;
   return {
     authoritativeHistory: next.authoritativeHistory,
     contents,
@@ -2161,6 +2171,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const session = yield* getSession(threadId, terminalId);
 
     if (Option.isSome(session)) {
+      cleanupProcessHandles(session.value);
       yield* queuePendingProcessHistory(session.value);
       yield* stopProcess(session.value);
       yield* unregisterTerminal({ threadId, terminalId });

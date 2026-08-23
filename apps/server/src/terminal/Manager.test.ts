@@ -44,6 +44,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   writeFailure: unknown | undefined;
   resizeFailure: unknown | undefined;
   killObserver: ((signal: string | undefined) => void) | undefined;
+  dataUnsubscribeObserver: (() => void) | undefined;
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
@@ -75,6 +76,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   onData(callback: (data: string) => void): () => void {
     this.dataListeners.add(callback);
     return () => {
+      this.dataUnsubscribeObserver?.();
       this.dataListeners.delete(callback);
     };
   }
@@ -816,6 +818,24 @@ it.layer(
     }),
   );
 
+  it.effect("flushes output received while close unsubscribes from the PTY", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.dataUnsubscribeObserver = () => {
+        process.emitData("last output during close\r");
+      };
+      yield* manager.close({ threadId: "thread-1" });
+
+      const historyPath = yield* historyLogPath(logsDir);
+      expect(yield* readFileString(historyPath)).toBe("last output during close\r");
+    }),
+  );
+
   it.effect("drops delayed output from a closed session after recreation", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1371,6 +1391,48 @@ it.layer(
 
       const historyPath = yield* historyLogPath(logsDir);
       expect(yield* readFileString(historyPath)).toBe("survives retry\r");
+    }),
+  );
+
+  it.effect("recovers a failed truncate with the latest capped history", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const failedTruncate = yield* Deferred.make<void>();
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "writeFileString",
+        pathOrDescriptor: "terminal-history",
+      });
+      let shouldFailTruncate = true;
+      const recoveringFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (path, contents, options) => {
+          if (path.endsWith(".log") && options?.flag === "w" && shouldFailTruncate) {
+            shouldFailTruncate = false;
+            return Deferred.succeed(failedTruncate, undefined).pipe(
+              Effect.andThen(Effect.fail(cause)),
+            );
+          }
+          return fileSystem.writeFileString(path, contents, options);
+        },
+      });
+      const { manager, ptyAdapter, logsDir } = yield* createManager(1, {
+        historyTargetBytes: 4,
+        historyMaxBytes: 12,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, recoveringFileSystem));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("old-long-line");
+      yield* Deferred.await(failedTruncate);
+      process.emitData("\nnew\n");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const historyPath = yield* historyLogPath(logsDir);
+      expect(yield* readFileString(historyPath)).toBe("new\n");
     }),
   );
 
