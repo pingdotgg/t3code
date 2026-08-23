@@ -73,6 +73,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { ScheduledTasksSection } from "./ScheduledTasksSection";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
@@ -1143,6 +1144,16 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             />
           ) : null}
         </SettingsSection>
+
+        <ScheduledTasksSection
+          environmentId={representative.environmentId}
+          projectId={representative.id}
+          threads={threads.filter(
+            (thread) =>
+              thread.environmentId === representative.environmentId &&
+              thread.projectId === representative.id,
+          )}
+        />
 
         <SettingsSection title="Danger">
           <SettingsRow

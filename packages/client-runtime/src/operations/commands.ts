@@ -51,6 +51,8 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type ScheduleTaskInput = CommandInput<"task.schedule">;
+export type CancelTaskInput = CommandInput<"task.cancel">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -329,5 +331,28 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     type: "thread.session.stop",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
+  });
+});
+
+export const scheduleTask: (input: ScheduleTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.scheduleTask",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "task.schedule",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const cancelTask: (input: CancelTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.cancelTask",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "task.cancel",
+    commandId: metadata.commandId,
   });
 });

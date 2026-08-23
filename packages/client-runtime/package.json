@@ -51,6 +51,10 @@
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
     },
+    "./state/taskCommands": {
+      "types": "./src/state/taskCommands.ts",
+      "default": "./src/state/taskCommands.ts"
+    },
     "./state/assets": {
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"

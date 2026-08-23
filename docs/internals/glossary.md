@@ -48,12 +48,16 @@ Orchestration is the server-side domain layer that turns runtime activity into s
 
 #### Aggregate
 
-The domain object a command or event belongs to. In [the contracts][1], that is usually `project` or `thread`. See [decider.ts][8].
+The domain object a command or event belongs to. In [the contracts][1], that is `project`, `thread`, or `task`. See [decider.ts][8].
 
 #### Command
 
 A typed request to change domain state. In [the contracts][1], commands are validated in [commandInvariants.ts][9] and turned into events by [decider.ts][8].
 Examples include `thread.create`, `thread.turn.start`, and `thread.checkpoint.revert`.
+
+#### Scheduled task
+
+A server-side automation that starts a turn on an existing thread at a due time. Created with `task.schedule` (one-shot `at` or interval `everyMs`), fired by the scheduler layer in [TaskScheduler.ts][25] via internal `task.fire` commands whose deterministic ids make retries idempotent, and turned into a normal `thread.turn.start` by [TaskFireReactor.ts][26]. Missed intervals coalesce: one fire steps over every overdue slot. See [scheduled-tasks.md][27].
 
 #### Domain Event
 
@@ -173,6 +177,9 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [16]: ./providers.md
 [17]: ../../apps/server/src/provider/Layers/CodexAdapter.ts
 [18]: ../user/permission-modes.md
+[25]: ../../apps/server/src/orchestration/Layers/TaskScheduler.ts
+[26]: ../../apps/server/src/orchestration/Layers/TaskFireReactor.ts
+[27]: ../user/scheduled-tasks.md
 [19]: ../../apps/server/src/checkpointing/CheckpointStore.ts
 [20]: ../../apps/server/src/checkpointing/CheckpointDiffQuery.ts
 [21]: ../../apps/server/src/persistence/Services/ProjectionCheckpoints.ts

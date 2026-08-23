@@ -33,6 +33,7 @@ function makeReadModel(
   return {
     snapshotSequence: 0,
     projects: [],
+    tasks: [],
     threads: [
       {
         id: ThreadId.make("thread-1"),

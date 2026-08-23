@@ -30,6 +30,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
+  listTasks: "orchestration.listTasks",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -423,10 +424,56 @@ export const OrchestrationThread = Schema.Struct({
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
+export const TaskId = TrimmedNonEmptyString;
+export type TaskId = typeof TaskId.Type;
+
+/**
+ * One-shot schedule: fire once at an absolute time. The decider rejects times
+ * in the past at creation, so a scheduled task always starts armed.
+ */
+export const TaskScheduleOnce = Schema.Struct({
+  kind: Schema.Literal("once"),
+  at: IsoDateTime,
+});
+export type TaskScheduleOnce = typeof TaskScheduleOnce.Type;
+
+/**
+ * Recurring schedule: fire every `everyMs`, anchored at the previous due time
+ * so repeated fires never drift. Missed intervals (server downtime) coalesce:
+ * the next fire advances past all overdue slots in one step.
+ */
+export const TaskScheduleInterval = Schema.Struct({
+  kind: Schema.Literal("interval"),
+  everyMs: PositiveInt.check(Schema.isGreaterThanOrEqualTo(60_000)),
+});
+export type TaskScheduleInterval = typeof TaskScheduleInterval.Type;
+
+export const TaskScheduleSpec = Schema.Union([TaskScheduleOnce, TaskScheduleInterval]);
+export type TaskScheduleSpec = typeof TaskScheduleSpec.Type;
+
+export const OrchestrationTask = Schema.Struct({
+  taskId: TaskId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  name: Schema.optional(TrimmedNonEmptyString),
+  prompt: TrimmedNonEmptyString,
+  schedule: TaskScheduleSpec,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  lastFiredAt: Schema.NullOr(IsoDateTime),
+  // Next due time; null once a "once" task fired or any task was cancelled.
+  nextFireAt: Schema.NullOr(IsoDateTime),
+  cancelledAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationTask = typeof OrchestrationTask.Type;
+
 export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
+  // Defaulted so read models persisted/decoded before scheduled tasks shipped
+  // still decode as taskless.
+  tasks: Schema.Array(OrchestrationTask).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -910,6 +957,42 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+const TaskScheduleCommand = Schema.Struct({
+  type: Schema.Literal("task.schedule"),
+  commandId: CommandId,
+  taskId: TaskId,
+  projectId: ProjectId,
+  // Tasks anchor to an existing thread: each fire appends a turn there, like
+  // a user message arriving on schedule. Unanchored tasks would need a
+  // default model-resolution policy to auto-create threads — deliberately
+  // out of scope for v1.
+  threadId: ThreadId,
+  name: Schema.optional(TrimmedNonEmptyString),
+  prompt: TrimmedNonEmptyString,
+  schedule: TaskScheduleSpec,
+  createdAt: IsoDateTime,
+});
+
+const TaskCancelCommand = Schema.Struct({
+  type: Schema.Literal("task.cancel"),
+  commandId: CommandId,
+  taskId: TaskId,
+});
+
+// Server-internal only (never dispatchable by clients): the scheduler emits
+// these when a task's nextFireAt passes. commandIds are deterministic
+// (`server:task-fire:<taskId>:<dueAt>`), so a crash-retry collapses into the
+// existing idempotent-command receipt instead of double-firing.
+const TaskFireCommand = Schema.Struct({
+  type: Schema.Literal("task.fire"),
+  commandId: CommandId,
+  taskId: TaskId,
+  // The tick time that observed the task as due. The decider rejects fires
+  // that run ahead of nextFireAt, so a stray or replayed command cannot make
+  // a task fire early.
+  dueAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -934,6 +1017,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  TaskScheduleCommand,
+  TaskCancelCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -962,6 +1047,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  TaskScheduleCommand,
+  TaskCancelCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1047,6 +1134,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  TaskFireCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1086,10 +1174,13 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "task.scheduled",
+  "task.fired",
+  "task.cancelled",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "task"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1233,6 +1324,45 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const TaskScheduledPayload = Schema.Struct({
+  taskId: TaskId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  name: Schema.optional(TrimmedNonEmptyString),
+  prompt: TrimmedNonEmptyString,
+  schedule: TaskScheduleSpec,
+  // First fire time, derived from the schedule at creation. Interval tasks
+  // anchor here so later fires never drift.
+  nextFireAt: IsoDateTime,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+// Denormalized enough for the turn-starting reactor to build the fire's
+// `thread.turn.start` without a read-model lookup: prompt, thread, and the
+// anchor thread's modes travel with the event.
+export const TaskFiredPayload = Schema.Struct({
+  taskId: TaskId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  prompt: TrimmedNonEmptyString,
+  firedAt: IsoDateTime,
+  dueAt: IsoDateTime,
+  // Null once a "once" task has spent its single fire.
+  nextFireAt: Schema.NullOr(IsoDateTime),
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+  updatedAt: IsoDateTime,
+});
+
+export const TaskCancelledPayload = Schema.Struct({
+  taskId: TaskId,
+  cancelledAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
 export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
@@ -1346,7 +1476,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, TaskId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1500,6 +1630,21 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.scheduled"),
+    payload: TaskScheduledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.fired"),
+    payload: TaskFiredPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.cancelled"),
+    payload: TaskCancelledPayload,
+  }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
@@ -1644,6 +1789,18 @@ export const OrchestrationGetWorkflowScriptResult = Schema.Struct({
 });
 export type OrchestrationGetWorkflowScriptResult = typeof OrchestrationGetWorkflowScriptResult.Type;
 
+export const OrchestrationListTasksInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type OrchestrationListTasksInput = typeof OrchestrationListTasksInput.Type;
+
+// Includes cancelled tasks so clients can render (and clear) recent history
+// without a second query.
+export const OrchestrationListTasksResult = Schema.Struct({
+  tasks: Schema.Array(OrchestrationTask),
+});
+export type OrchestrationListTasksResult = typeof OrchestrationListTasksResult.Type;
+
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
   "root-unavailable": "Script root unavailable.",
@@ -1698,6 +1855,10 @@ export const OrchestrationRpcSchemas = {
     input: OrchestrationSearchThreadsInput,
     output: OrchestrationSearchThreadsResult,
   },
+  listTasks: {
+    input: OrchestrationListTasksInput,
+    output: OrchestrationListTasksResult,
+  },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationShellSnapshot,
@@ -1747,6 +1908,14 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
 
 export class OrchestrationSearchThreadsError extends Schema.TaggedErrorClass<OrchestrationSearchThreadsError>()(
   "OrchestrationSearchThreadsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationListTasksError extends Schema.TaggedErrorClass<OrchestrationListTasksError>()(
+  "OrchestrationListTasksError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

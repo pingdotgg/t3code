@@ -268,6 +268,16 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   );
 }
 
+/** Whether the environment's server understands task.schedule/task.cancel and
+    runs the scheduler that fires due tasks. Same version-skew contract as
+    settlement. */
+export function readEnvironmentSupportsTaskScheduling(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .taskScheduling === true
+  );
+}
+
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
   return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
 }

@@ -1,4 +1,9 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  OrchestrationTask,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -33,6 +38,9 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  TaskCancelledPayload,
+  TaskFiredPayload,
+  TaskScheduledPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -190,6 +198,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     threads: [],
+    tasks: [],
     updatedAt: nowIso,
   };
 }
@@ -390,6 +399,66 @@ export function projectEvent(
             snoozedAt: payload.snoozedAt,
             updatedAt: payload.updatedAt,
           }),
+        })),
+      );
+
+    case "task.scheduled":
+      return decodeForEvent(TaskScheduledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const existing = nextBase.tasks.find((entry) => entry.taskId === payload.taskId);
+          const nextTask: OrchestrationTask = {
+            taskId: payload.taskId,
+            projectId: payload.projectId,
+            threadId: payload.threadId,
+            ...(payload.name !== undefined ? { name: payload.name } : {}),
+            prompt: payload.prompt,
+            schedule: payload.schedule,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            lastFiredAt: null,
+            nextFireAt: payload.nextFireAt,
+            cancelledAt: null,
+          };
+          return {
+            ...nextBase,
+            tasks: existing
+              ? nextBase.tasks.map((entry) => (entry.taskId === payload.taskId ? nextTask : entry))
+              : [...nextBase.tasks, nextTask],
+          };
+        }),
+      );
+
+    case "task.fired":
+      return decodeForEvent(TaskFiredPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: nextBase.tasks.map((task) =>
+            task.taskId === payload.taskId
+              ? {
+                  ...task,
+                  lastFiredAt: payload.firedAt,
+                  nextFireAt: payload.nextFireAt,
+                  updatedAt: payload.updatedAt,
+                }
+              : task,
+          ),
+        })),
+      );
+
+    case "task.cancelled":
+      return decodeForEvent(TaskCancelledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: nextBase.tasks.map((task) =>
+            task.taskId === payload.taskId
+              ? {
+                  ...task,
+                  nextFireAt: null,
+                  cancelledAt: payload.cancelledAt,
+                  updatedAt: payload.updatedAt,
+                }
+              : task,
+          ),
         })),
       );
 

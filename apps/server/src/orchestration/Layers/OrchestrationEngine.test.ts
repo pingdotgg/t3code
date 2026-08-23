@@ -116,6 +116,7 @@ describe("OrchestrationEngine", () => {
     };
 
     const projectionSnapshot = {
+      tasks: [],
       snapshotSequence: 7,
       updatedAt: "2026-03-03T00:00:04.000Z",
       projects: [
@@ -208,6 +209,8 @@ describe("OrchestrationEngine", () => {
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           searchThreads: () => Effect.succeed({ matches: [] }),
+          listTasks: () => Effect.succeed([]),
+          listDueTasks: () => Effect.succeed([]),
         }),
       ),
       Layer.provide(

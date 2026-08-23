@@ -30,6 +30,7 @@ import {
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  OrchestrationListTasksError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
@@ -1261,6 +1262,21 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new OrchestrationSearchThreadsError({
                     message: "Failed to search threads",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.listTasks]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.listTasks,
+            projectionSnapshotQuery.listTasks(input.projectId).pipe(
+              Effect.map((tasks) => ({ tasks })),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationListTasksError({
+                    message: "Failed to list scheduled tasks",
                     cause,
                   }),
               ),

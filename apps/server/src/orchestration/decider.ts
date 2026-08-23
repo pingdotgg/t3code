@@ -15,6 +15,8 @@ import {
   requireActiveProjectWorkspaceRootAbsent,
   requireProject,
   requireProjectAbsent,
+  requireTask,
+  requireTaskAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
@@ -23,6 +25,15 @@ import {
 import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+// Epoch-millis → ISO without touching the global Date constructor.
+const formatIsoMs = (epochMillis: number): string =>
+  DateTime.formatIso(DateTime.makeUnsafe(epochMillis));
+
+// Tolerated clock skew between a fire's observed due time and the task's
+// persisted nextFireAt. Small enough to reject genuinely early fires, large
+// enough to absorb millisecond jitter between tick clocks.
+const TASK_FIRE_CLOCK_SKEW_MS = 2_000;
 
 // Session adoption takes seconds; a user message still unadopted after this
 // window is a failed/stale start, not pending work. Mirrors the client's
@@ -1400,6 +1411,183 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [unsettledEvent, activityAppendedEvent];
+    }
+
+    case "task.schedule": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      const anchorThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (anchorThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is deleted and cannot anchor task '${command.taskId}'.`,
+        });
+      }
+      yield* requireTaskAbsent({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+
+      const occurredAt = yield* nowIso;
+      // Interval tasks anchor their first fire at scheduling time so repeated
+      // fires never drift; "once" tasks fire exactly at `at`. A due time in
+      // the past would create a task that is armed and overdue at once —
+      // reject instead of silently normalizing (mirrors thread.snooze).
+      const occurredAtMs = Date.parse(occurredAt);
+      const nextFireAt =
+        command.schedule.kind === "once"
+          ? command.schedule.at
+          : formatIsoMs(occurredAtMs + command.schedule.everyMs);
+      if (!(Date.parse(nextFireAt) > occurredAtMs)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `task ${command.taskId} first fire time ${nextFireAt} is not in the future`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.scheduled",
+        payload: {
+          taskId: command.taskId,
+          projectId: command.projectId,
+          threadId: command.threadId,
+          ...(command.name !== undefined ? { name: command.name } : {}),
+          prompt: command.prompt,
+          schedule: command.schedule,
+          nextFireAt,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "task.cancel": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      // Idempotent by re-emission (see thread.unsnooze): cancelling an
+      // already-cancelled task keeps the original timestamps.
+      const alreadyCancelled = task.cancelledAt !== null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.cancelled",
+        payload: {
+          taskId: command.taskId,
+          cancelledAt: alreadyCancelled ? task.cancelledAt : occurredAt,
+          updatedAt: alreadyCancelled ? task.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "task.fire": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      if (task.cancelledAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `task ${command.taskId} is cancelled and cannot fire`,
+        });
+      }
+      if (task.nextFireAt === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `task ${command.taskId} has no pending fire`,
+        });
+      }
+      // Early-fire guard: a fire observed ahead of nextFireAt (stray command,
+      // replayed envelope) is rejected modulo a small clock-skew allowance.
+      const nextFireAtMs = Date.parse(task.nextFireAt);
+      if (Number.isNaN(nextFireAtMs)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `task ${command.taskId} has unparseable next fire time ${task.nextFireAt}`,
+          }),
+        );
+      }
+      const dueAtMs = Date.parse(command.dueAt);
+      if (dueAtMs < nextFireAtMs - TASK_FIRE_CLOCK_SKEW_MS) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `task ${command.taskId} cannot fire at ${command.dueAt} ahead of its due time ${task.nextFireAt}`,
+          }),
+        );
+      }
+      // The anchor thread's current modes ride on the fire event so the
+      // turn-starting reactor can build a complete `thread.turn.start`
+      // without a read-model lookup. A deleted anchor fails here, before the
+      // task's nextFireAt advances.
+      const anchorThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: task.threadId,
+      });
+      if (anchorThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `task ${command.taskId} anchor thread '${task.threadId}' is deleted and cannot fire`,
+        });
+      }
+      const firedAt = yield* nowIso;
+      const nowMs = Math.max(dueAtMs, Date.parse(firedAt));
+      // Interval slots are derived from the PREVIOUS due slot, never from
+      // "now", so fires stay anchored to the schedule. Downtime coalesces:
+      // one fire steps over every missed slot and lands on the first slot in
+      // the future, instead of stampeding catch-up turns after a restart.
+      const nextFireAt =
+        task.schedule.kind === "once"
+          ? null
+          : formatIsoMs(
+              nextFireAtMs +
+                (Math.floor((nowMs - nextFireAtMs) / task.schedule.everyMs) + 1) *
+                  task.schedule.everyMs,
+            );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt: firedAt,
+          commandId: command.commandId,
+        })),
+        type: "task.fired",
+        payload: {
+          taskId: command.taskId,
+          projectId: task.projectId,
+          threadId: task.threadId,
+          prompt: task.prompt,
+          firedAt,
+          dueAt: command.dueAt,
+          nextFireAt,
+          runtimeMode: anchorThread.runtimeMode,
+          interactionMode: anchorThread.interactionMode,
+          updatedAt: firedAt,
+        },
+      };
     }
 
     default: {

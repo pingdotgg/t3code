@@ -15,6 +15,7 @@ import type {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
+  OrchestrationTask,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
@@ -104,6 +105,22 @@ export interface ProjectionSnapshotQueryShape {
   readonly searchThreads: (
     input: OrchestrationSearchThreadsInput,
   ) => Effect.Effect<OrchestrationSearchThreadsResult, ProjectionRepositoryError>;
+
+  /**
+   * List scheduled tasks for a project, including cancelled ones so clients
+   * can render recent history without a second query.
+   */
+  readonly listTasks: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationTask>, ProjectionRepositoryError>;
+
+  /**
+   * List armed tasks whose nextFireAt has passed. Server-internal: consumed
+   * by the task scheduler tick loop.
+   */
+  readonly listDueTasks: (
+    nowIso: string,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationTask>, ProjectionRepositoryError>;
 
   /**
    * Read the latest projection snapshot sequence without hydrating read-model

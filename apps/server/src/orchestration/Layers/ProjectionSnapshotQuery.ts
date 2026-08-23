@@ -7,11 +7,13 @@ import {
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
+  OrchestrationTask,
   OrchestrationThreadSearchSource,
   OrchestrationShellSnapshot,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   ProjectScript,
+  TaskScheduleSpec,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
@@ -38,6 +40,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import {
   isPersistenceError,
+  PersistenceDecodeError,
   toPersistenceDecodeError,
   toPersistenceSqlError,
   type ProjectionRepositoryError,
@@ -52,6 +55,7 @@ import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionTh
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionTask } from "../../persistence/Services/ProjectionTasks.ts";
 import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
@@ -98,6 +102,21 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   }),
 );
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProjectionTaskDbRowSchema = ProjectionTask;
+
+const decodeTaskScheduleJson = Schema.decodeUnknownSync(Schema.fromJsonString(TaskScheduleSpec));
+const decodeTaskSchema = Schema.decodeUnknownEffect(OrchestrationTask);
+
+// Corrupt schedule JSON is a corrupt-database condition: fail loudly rather
+// than silently dropping the task from the read model. The schema parse also
+// validates the decoded spec.
+function parseScheduleJson(taskId: string, scheduleJson: string): TaskScheduleSpec {
+  try {
+    return decodeTaskScheduleJson(scheduleJson);
+  } catch (cause) {
+    throw new Error(`invalid schedule JSON for task ${taskId}`, { cause });
+  }
+}
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -441,6 +460,76 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
+      `,
+  });
+
+  const listTaskRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionTaskDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          task_id AS "taskId",
+          project_id AS "projectId",
+          thread_id AS "threadId",
+          name,
+          prompt,
+          schedule_json AS "scheduleJson",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          last_fired_at AS "lastFiredAt",
+          next_fire_at AS "nextFireAt",
+          cancelled_at AS "cancelledAt"
+        FROM projection_tasks
+        ORDER BY created_at ASC, task_id ASC
+      `,
+  });
+
+  const listTaskRowsByProject = SqlSchema.findAll({
+    Request: Schema.Struct({ projectId: ProjectId }),
+    Result: ProjectionTaskDbRowSchema,
+    execute: ({ projectId }) =>
+      sql`
+        SELECT
+          task_id AS "taskId",
+          project_id AS "projectId",
+          thread_id AS "threadId",
+          name,
+          prompt,
+          schedule_json AS "scheduleJson",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          last_fired_at AS "lastFiredAt",
+          next_fire_at AS "nextFireAt",
+          cancelled_at AS "cancelledAt"
+        FROM projection_tasks
+        WHERE project_id = ${projectId}
+        ORDER BY created_at ASC, task_id ASC
+      `,
+  });
+
+  const listDueTaskRows = SqlSchema.findAll({
+    Request: Schema.Struct({ nowIso: IsoDateTime }),
+    Result: ProjectionTaskDbRowSchema,
+    execute: ({ nowIso }) =>
+      sql`
+        SELECT
+          task_id AS "taskId",
+          project_id AS "projectId",
+          thread_id AS "threadId",
+          name,
+          prompt,
+          schedule_json AS "scheduleJson",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          last_fired_at AS "lastFiredAt",
+          next_fire_at AS "nextFireAt",
+          cancelled_at AS "cancelledAt"
+        FROM projection_tasks
+        WHERE next_fire_at IS NOT NULL
+          AND cancelled_at IS NULL
+          AND next_fire_at <= ${nowIso}
+        ORDER BY next_fire_at ASC, task_id ASC
       `,
   });
 
@@ -1517,6 +1606,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listTaskRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listTasks:query",
+                "ProjectionSnapshotQuery.getSnapshot:listTasks:decodeRows",
+              ),
+            ),
+          ),
         ]),
       )
       .pipe(
@@ -1531,6 +1628,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             checkpointRows,
             latestTurnRows,
             stateRows,
+            taskRows,
           ]) =>
             Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
@@ -1717,6 +1815,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 snapshotSequence: computeSnapshotSequence(stateRows),
                 projects,
                 threads,
+                tasks: yield* decodeTaskRows(taskRows),
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
               };
 
@@ -1787,11 +1886,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listTaskRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listTasks:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listTasks:decodeRows",
+              ),
+            ),
+          ),
         ]),
       )
       .pipe(
         Effect.flatMap(
-          ([projectRows, threadRows, proposedPlanRows, sessionRows, latestTurnRows, stateRows]) =>
+          ([
+            projectRows,
+            threadRows,
+            proposedPlanRows,
+            sessionRows,
+            latestTurnRows,
+            stateRows,
+            taskRows,
+          ]) =>
             Effect.sync(() => {
               let updatedAt: string | null = null;
               const projects: OrchestrationProject[] = [];
@@ -1925,6 +2040,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 snapshotSequence: computeSnapshotSequence(stateRows),
                 projects,
                 threads,
+                tasks: taskRows.map((row) => {
+                  if (!row) {
+                    throw new Error("unexpected missing task row");
+                  }
+                  return {
+                    taskId: row.taskId,
+                    projectId: row.projectId,
+                    threadId: row.threadId,
+                    ...(row.name !== null ? { name: row.name } : {}),
+                    prompt: row.prompt,
+                    schedule: parseScheduleJson(row.taskId, row.scheduleJson),
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt,
+                    lastFiredAt: row.lastFiredAt,
+                    nextFireAt: row.nextFireAt,
+                    cancelledAt: row.cancelledAt,
+                  } satisfies OrchestrationTask;
+                }),
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
               } satisfies OrchestrationReadModel;
             }),
@@ -2280,6 +2413,64 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       })),
     };
   });
+
+  const decodeTaskRows = (rows: ReadonlyArray<ProjectionTask>) =>
+    Effect.forEach(
+      rows,
+      (row) =>
+        Effect.try({
+          try: () => parseScheduleJson(row.taskId, row.scheduleJson),
+          catch: (cause) =>
+            new PersistenceDecodeError({
+              operation: "ProjectionSnapshotQuery.decodeTaskRows:scheduleJson",
+              issue: cause instanceof Error ? cause.message : String(cause),
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        }).pipe(
+          Effect.flatMap((schedule) =>
+            decodeTaskSchema({
+              taskId: row.taskId,
+              projectId: row.projectId,
+              threadId: row.threadId,
+              ...(row.name !== null ? { name: row.name } : {}),
+              prompt: row.prompt,
+              schedule,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+              lastFiredAt: row.lastFiredAt,
+              nextFireAt: row.nextFireAt,
+              cancelledAt: row.cancelledAt,
+            }).pipe(
+              Effect.mapError(
+                toPersistenceDecodeError("ProjectionSnapshotQuery.decodeTaskRows:decode"),
+              ),
+            ),
+          ),
+        ),
+      { concurrency: 1 },
+    );
+
+  const listTasks: ProjectionSnapshotQueryShape["listTasks"] = (projectId) =>
+    listTaskRowsByProject({ projectId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listTasks:query",
+          "ProjectionSnapshotQuery.listTasks:decodeRows",
+        ),
+      ),
+      Effect.flatMap(decodeTaskRows),
+    );
+
+  const listDueTasks: ProjectionSnapshotQueryShape["listDueTasks"] = (nowIso) =>
+    listDueTaskRows({ nowIso }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listDueTasks:query",
+          "ProjectionSnapshotQuery.listDueTasks:decodeRows",
+        ),
+      ),
+      Effect.flatMap(decodeTaskRows),
+    );
 
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
     (workspaceRoot) =>
@@ -2817,6 +3008,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getShellSnapshot,
     getArchivedShellSnapshot,
     searchThreads,
+    listTasks,
+    listDueTasks,
     getSnapshotSequence,
     getCounts,
     getActiveProjectByWorkspaceRoot,
