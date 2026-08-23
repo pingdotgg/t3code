@@ -119,7 +119,7 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
 
       {!isInstalled ? (
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground flex items-center gap-1.5 font-medium">
               <DownloadIcon className="size-3.5" /> Step 1: Install{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">agy</code>{" "}
