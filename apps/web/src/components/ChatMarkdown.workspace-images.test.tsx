@@ -163,6 +163,14 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("https://signed.test/workspace-image.svg");
   });
 
+  it("keeps raw workspace images inline for authored paragraph alignment", () => {
+    const html = render('<p align="center"><img src=".t3/workspace-image.svg" alt="logo"></p>');
+    const className = /<img[^>]*class="([^"]*)"/.exec(html)?.[1];
+
+    expect(className?.split(" ")).toContain("inline-block!");
+    expect(className?.split(" ")).not.toContain("block!");
+  });
+
   it("keeps a tall image placeholder and loaded image at the same proportional bounds", () => {
     const markdown = '<img src=".t3/workspace-image.svg" alt="sized" width="96" height="128">';
     const loadedStyle = firstInlineStyle(render(markdown));

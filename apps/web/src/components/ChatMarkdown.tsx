@@ -1014,11 +1014,13 @@ function authoredImageSizeStyle(
   return style.width === undefined && style.height === undefined ? undefined : style;
 }
 
-// block! outranks the unlayered `.chat-markdown img { display: inline-block }`
-// rule, keeping workspace images on the same block layout as their placeholder.
+// Forced inline-block keeps authored alignment wrappers working despite stray display
+// overrides. align-bottom removes the baseline gap, and every image state shares this layout.
+const CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME = "inline-block! align-bottom";
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
-  "my-1 block! rounded-lg border border-border/40",
+  CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
+  "my-1 rounded-lg border border-border/40",
 );
 
 function ChatMarkdownImageFallback(props: {
@@ -1028,10 +1030,15 @@ function ChatMarkdownImageFallback(props: {
   return (
     <span
       data-markdown-copy={props.copyMarkdown}
-      className="my-1 inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
+      className={cn(
+        CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
+        "my-1 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
+      )}
     >
-      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-      {props.alt.length > 0 ? `Image unavailable · ${props.alt}` : "Image unavailable"}
+      <span className="inline-flex items-center gap-1.5">
+        <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+        {props.alt.length > 0 ? `Image unavailable · ${props.alt}` : "Image unavailable"}
+      </span>
     </span>
   );
 }
@@ -1063,7 +1070,8 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
         role="status"
         aria-label="Loading image"
         className={cn(
-          "my-1 block aspect-video w-full rounded-lg bg-muted/60",
+          CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
+          "my-1 aspect-video w-full rounded-lg bg-muted/60",
           CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME,
         )}
         style={props.style}
