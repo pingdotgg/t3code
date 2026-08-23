@@ -2286,7 +2286,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   );
 
   it.effect(
-    "returns existing cross-repo PR metadata using the fork owner selector",
+    "returns existing cross-repo PR metadata for credentialed GitHub remotes",
     () =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -2298,7 +2298,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* configureVisibleRemoteUrlWithLocalRewrite(
           repoDir,
           "fork-seed",
-          "git@github.com:octocat/codething-mvp.git",
+          "https://x-access-token:ghp_ABC@github.com/octocat/codething-mvp.git",
           forkDir,
         );
 
