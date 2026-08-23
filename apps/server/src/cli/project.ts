@@ -220,8 +220,10 @@ const withProjectCliSessionToken = <A, E, R>(
     (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
   );
 
-const withProjectCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.timeout(PROJECT_CLI_LIVE_SERVER_TIMEOUT));
+const withProjectCliLiveServerTimeout = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  timeout: Duration.Duration = PROJECT_CLI_LIVE_SERVER_TIMEOUT,
+) => effect.pipe(Effect.timeout(timeout));
 
 const makeLiveServerClient = (origin: string) =>
   HttpApiClient.make(EnvironmentHttpApi, {
@@ -255,7 +257,7 @@ const resolveProjectTitle = Effect.fn("resolveProjectTitle")(function* (
   return basename.length > 0 ? basename : "project";
 });
 
-const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (input: {
+export const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (input: {
   readonly snapshot: OrchestrationReadModel;
   readonly identifier: string;
 }) {
@@ -308,7 +310,7 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   } satisfies ProjectMutationTarget;
 });
 
-const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
+export const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
   Effect.gen(function* () {
     const client = yield* makeLiveServerClient(origin);
     return yield* client.orchestration.snapshot({
@@ -319,10 +321,11 @@ const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
     Effect.mapError(projectCommandErrorFromLiveServerRequest),
   );
 
-const dispatchLiveOrchestrationCommand = (
+export const dispatchLiveOrchestrationCommand = (
   origin: string,
   bearerToken: string,
-  command: ProjectCliDispatchCommand,
+  command: ClientOrchestrationCommand,
+  options?: { readonly timeout?: Duration.Duration },
 ) =>
   Effect.gen(function* () {
     const client = yield* makeLiveServerClient(origin);
@@ -331,7 +334,7 @@ const dispatchLiveOrchestrationCommand = (
       payload: command,
     } as Parameters<typeof client.orchestration.dispatch>[0]);
   }).pipe(
-    withProjectCliLiveServerTimeout,
+    (effect) => withProjectCliLiveServerTimeout(effect, options?.timeout),
     Effect.mapError(projectCommandErrorFromLiveServerRequest),
   );
 
@@ -342,7 +345,7 @@ const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   return yield* projectionSnapshotQuery.getCommandReadModel();
 });
 
-const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
+export const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
   function* (
     environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
     config: ServerConfig.ServerConfig["Service"],
