@@ -2787,6 +2787,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       {
         fallbackErrorDetail: "git ls-files for .worktreeinclude failed",
         timeoutMs: WORKTREE_INCLUDE_LIST_TIMEOUT_MS,
+        // Truncate oversized listings instead of failing, so a huge match set
+        // still copies a partial set. splitNullSeparatedGitStdoutPaths drops
+        // the possibly-partial last entry.
+        appendTruncationMarker: true,
       },
     );
     if (listed.stdoutTruncated) {
@@ -2798,6 +2802,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     for (const relativePath of splitNullSeparatedGitStdoutPaths(listed)) {
       const targetFilePath = path.join(worktreePath, relativePath);
+      // A path untracked in the source checkout can still be tracked in the
+      // checked-out branch; the checked-out version wins over the local copy.
+      if (yield* fileSystem.exists(targetFilePath)) {
+        continue;
+      }
       yield* fileSystem.makeDirectory(path.dirname(targetFilePath), { recursive: true });
       yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
     }

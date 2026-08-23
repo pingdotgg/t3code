@@ -1455,6 +1455,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps checked-out files over .worktreeinclude copies on path collisions", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        yield* git(cwd, ["checkout", "-b", "tracked-config"]);
+        yield* writeTextFile(cwd, "config.json", "COMMITTED\n");
+        yield* git(cwd, ["add", "config.json"]);
+        yield* git(cwd, ["commit", "-m", "track config"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+
+        yield* writeTextFile(cwd, ".worktreeinclude", "config.json\n");
+        yield* writeTextFile(cwd, "config.json", "LOCAL\n");
+
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "include-collision-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: "tracked-config",
+        });
+
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(worktreePath, "config.json")),
+          "COMMITTED\n",
+        );
+        assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
+      }),
+    );
+
     it.effect("still creates the worktree when a .worktreeinclude copy fails", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
