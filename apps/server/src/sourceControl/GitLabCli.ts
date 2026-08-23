@@ -418,19 +418,28 @@ function isWebUrl(repository: string): boolean {
 /**
  * glab resolves API calls against its configured default host, whose value
  * may carry a relative install path (e.g. `example.com/gitlab` for
- * self-managed installs under a relative URL root). Return that path portion
- * with trailing slashes removed, or null when the host has none.
+ * self-managed installs under a relative URL root) and may or may not carry
+ * a scheme (`https://gitlab.com` is glab's documented default). Return that
+ * path portion with trailing slashes removed, or null when the host has
+ * none.
  */
 function basePathFromConfiguredHost(configuredHost: string): string | null {
   const trimmed = configuredHost.trim();
-  if (trimmed.length === 0 || !URL.canParse(`https://${trimmed}`)) {
+  if (trimmed.length === 0) {
     return null;
   }
-  const { pathname } = new URL(`https://${trimmed}`);
-  if (pathname === "/") {
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`;
+  if (!URL.canParse(candidate)) {
     return null;
   }
-  return pathname.replace(/\/+$/u, "");
+  const url = new URL(candidate);
+  if (!/^https?:$/u.test(url.protocol)) {
+    return null;
+  }
+  if (url.pathname === "/") {
+    return null;
+  }
+  return url.pathname.replace(/\/+$/u, "");
 }
 
 /**

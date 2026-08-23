@@ -273,6 +273,40 @@ layer("GitLabCli.layer", (it) => {
       }),
   );
 
+  it.effect("strips the base path when the configured host already carries a scheme", () =>
+    Effect.gen(function* () {
+      mockedRun
+        .mockReturnValueOnce(Effect.succeed(processOutput("https://example.com/gitlab\n")))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                path_with_namespace: "group/project",
+                web_url: "https://example.com/gitlab/group/project",
+                http_url_to_repo: "https://example.com/gitlab/group/project.git",
+                ssh_url_to_repo: "git@example.com:group/project.git",
+              }),
+            ),
+          ),
+        );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://example.com/gitlab/group/project.git",
+      });
+
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          args: ["api", `projects/${encodeURIComponent("group/project")}`],
+        }),
+      );
+      assert.deepStrictEqual(result.nameWithOwner, "group/project");
+    }),
+  );
+
   it.effect("normalizes a full repository URL with nested subgroups and no .git suffix", () =>
     Effect.gen(function* () {
       mockedRun
