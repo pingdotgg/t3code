@@ -1,4 +1,3 @@
-import { getClientRect } from "@dnd-kit/core";
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 interface PendingAnchor {
@@ -13,8 +12,8 @@ export interface SidebarDndLayout {
   readonly captureEntryPosition: (id: string | null) => void;
 }
 
-function layoutTop(node: HTMLElement): number {
-  return getClientRect(node, { ignoreTransform: true }).top;
+function visualTop(node: HTMLElement): number {
+  return node.getBoundingClientRect().top;
 }
 
 export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
@@ -30,7 +29,7 @@ export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
   const captureEntryPosition = useCallback((id: string | null) => {
     const node = id === null ? null : (entryNodesRef.current.get(id) ?? null);
     pendingAnchorRef.current =
-      node === null || !node.isConnected ? null : { node, top: layoutTop(node) };
+      node === null || !node.isConnected ? null : { node, top: visualTop(node) };
   }, []);
 
   useLayoutEffect(() => {
@@ -39,7 +38,7 @@ export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
     pendingAnchorRef.current = null;
     if (viewport === null || anchor === null || !anchor.node.isConnected) return;
 
-    const delta = layoutTop(anchor.node) - anchor.top;
+    const delta = visualTop(anchor.node) - anchor.top;
     if (Math.abs(delta) > 0.5) viewport.scrollTop += delta;
   }, [revision]);
 
@@ -49,7 +48,7 @@ export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
     const handleScroll = () => {
       const anchor = pendingAnchorRef.current;
       if (anchor === null || !anchor.node.isConnected) return;
-      anchor.top = layoutTop(anchor.node);
+      anchor.top = visualTop(anchor.node);
     };
     viewport.addEventListener("scroll", handleScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", handleScroll);

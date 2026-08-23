@@ -11,6 +11,7 @@ import {
   type DragMoveEvent,
   type DragOverEvent,
   type DragStartEvent,
+  type UniqueIdentifier,
 } from "@dnd-kit/core";
 import { getEventCoordinates } from "@dnd-kit/utilities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -520,13 +521,24 @@ export function useSidebarThreadDnd(input: {
   );
   const openSnoozeDropMenu = useCallback(
     (current: SidebarThreadDragTransaction, position: { x: number; y: number }) => {
+      const target = current.target;
+      if (target === null) {
+        finishTransaction();
+        return;
+      }
+      const entries = moveSidebarDndBoardThread({
+        entries: current.initialEntries,
+        threadKey: current.sourceThreadKey,
+        target,
+      });
       const epoch = snoozeDropEpochRef.current + 1;
       snoozeDropEpochRef.current = epoch;
+      captureInsertionPosition(entries, current.sourceThreadKey);
       setTransaction({
         ...current,
         phase: "awaiting-snooze-choice",
-        entries: current.initialEntries,
-        target: { section: "snoozed", threadKey: null, edge: null },
+        entries,
+        target,
         receiptSequencesByEnvironment: null,
       });
       void (async () => {
@@ -614,6 +626,7 @@ export function useSidebarThreadDnd(input: {
         }
       }
 
+      const sectionByContainerId = new Map<UniqueIdentifier, SidebarDndSection>();
       const validCandidates = args.droppableContainers.filter((container) => {
         if (container.id === args.active.id) return false;
         const boundarySection = parseSidebarDndSectionId(container.id);
@@ -630,11 +643,12 @@ export function useSidebarThreadDnd(input: {
         ) {
           return false;
         }
-        return (
+        const valid =
           section !== "pinned" ||
           targetThreadKey === null ||
-          input.reorderablePinnedKeys.has(targetThreadKey)
-        );
+          input.reorderablePinnedKeys.has(targetThreadKey);
+        if (valid) sectionByContainerId.set(container.id, section);
+        return valid;
       });
       const visualDroppableRects = new Map(args.droppableRects);
       let visualTop = Number.POSITIVE_INFINITY;
@@ -657,6 +671,13 @@ export function useSidebarThreadDnd(input: {
           pointerInsideBoardWidth = true;
         }
       }
+      const snoozedBoundary = validCandidates.find(
+        (container) => parseSidebarDndSectionId(container.id) === "snoozed",
+      );
+      const snoozedBoundaryTop =
+        snoozedBoundary === undefined
+          ? null
+          : (visualDroppableRects.get(snoozedBoundary.id)?.top ?? null);
       const settledBoundary = validCandidates.find(
         (container) => parseSidebarDndSectionId(container.id) === "settled",
       );
@@ -664,20 +685,19 @@ export function useSidebarThreadDnd(input: {
         settledBoundary === undefined
           ? null
           : (visualDroppableRects.get(settledBoundary.id)?.top ?? null);
-      const collisionCandidates =
-        args.pointerCoordinates !== null &&
-        settledBoundaryTop !== null &&
-        args.pointerCoordinates.y < settledBoundaryTop
-          ? validCandidates.filter((container) => {
-              const boundarySection = parseSidebarDndSectionId(container.id);
-              return (
-                (boundarySection ??
-                  (typeof container.id === "string"
-                    ? findSidebarDndBoardThreadSection(current.initialEntries, container.id)
-                    : null)) !== "settled"
-              );
-            })
-          : validCandidates;
+      const cardCenterY = args.collisionRect.top + args.collisionRect.height / 2;
+      const shelfSection =
+        settledBoundaryTop !== null && cardCenterY >= settledBoundaryTop
+          ? "settled"
+          : snoozedBoundaryTop !== null && cardCenterY >= snoozedBoundaryTop
+            ? "snoozed"
+            : null;
+      const collisionCandidates = validCandidates.filter((container) => {
+        const section = sectionByContainerId.get(container.id);
+        return shelfSection === null
+          ? section !== "snoozed" && section !== "settled"
+          : section === shelfSection;
+      });
       const pointerCollisions = pointerWithin({
         ...args,
         droppableContainers: collisionCandidates,
@@ -712,7 +732,7 @@ export function useSidebarThreadDnd(input: {
       }
       return rectIntersection({
         ...args,
-        droppableContainers: validCandidates,
+        droppableContainers: collisionCandidates,
         droppableRects: visualDroppableRects,
       });
     },
@@ -831,25 +851,36 @@ export function useSidebarThreadDnd(input: {
     [canDropThreadInSection, input.reorderablePinnedKeys, layout],
   );
   const resolveDragTranslation = useCallback(
-    (current: SidebarThreadDragTransaction, delta: DragMoveEvent["delta"]) => {
-      const sourceNode = layout.getEntryNode(current.sourceThreadKey);
-      if (sourceNode === null) return current.dragTranslation;
-      const sourceRect = getClientRect(sourceNode);
+    (
+      current: SidebarThreadDragTransaction,
+      pointer: { readonly x: number; readonly y: number } | null,
+    ) => {
+      if (pointer === null) return current.dragTranslation;
+      const activationPointer = {
+        x: current.sourceRect.left + current.pointerAnchor.x * current.sourceRect.width,
+        y: current.sourceRect.top + current.pointerAnchor.y * current.sourceRect.height,
+      };
+      const pointerDeltaY = pointer.y - activationPointer.y;
+      const viewport = layout.viewportRef.current;
+      const viewportRect = viewport === null ? null : getClientRect(viewport);
       return {
-        x: delta.x + sourceRect.left - current.sourceRect.left,
-        y: delta.y + sourceRect.top - current.sourceRect.top,
+        x: 0,
+        y:
+          viewportRect === null
+            ? pointerDeltaY
+            : Math.min(
+                viewportRect.bottom - current.sourceRect.top - current.sourceRect.height,
+                Math.max(viewportRect.top - current.sourceRect.top, pointerDeltaY),
+              ),
       };
     },
     [layout],
   );
   const updateDragTarget = useCallback(
-    (over: DragMoveEvent["over"], dragTranslation?: DragMoveEvent["delta"]) => {
+    (over: DragMoveEvent["over"]) => {
       const current = transactionRef.current;
       if (current === null || current.phase !== "dragging") return;
-      const nextDragTranslation =
-        dragTranslation === undefined
-          ? current.dragTranslation
-          : resolveDragTranslation(current, dragTranslation);
+      const nextDragTranslation = resolveDragTranslation(current, pointerCoordinatesRef.current);
       const translationChanged =
         current.dragTranslation.x !== nextDragTranslation.x ||
         current.dragTranslation.y !== nextDragTranslation.y;
@@ -928,7 +959,7 @@ export function useSidebarThreadDnd(input: {
     planPinnedInsertion,
   ]);
   const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
+    (_event: DragEndEvent) => {
       const current = transactionRef.current;
       const releasePoint = pointerCoordinatesRef.current;
       pointerCoordinatesRef.current = null;
@@ -945,7 +976,7 @@ export function useSidebarThreadDnd(input: {
         finishTransaction();
         return;
       }
-      const releaseTranslation = resolveDragTranslation(current, event.delta);
+      const releaseTranslation = resolveDragTranslation(current, releasePoint);
       const released: SidebarThreadDragTransaction = {
         ...current,
         target,
@@ -959,10 +990,7 @@ export function useSidebarThreadDnd(input: {
       };
       if (action === "snooze") {
         if (releasePoint === null) finishTransaction();
-        else {
-          captureInsertionPosition(current.initialEntries, current.sourceThreadKey);
-          openSnoozeDropMenu(released, releasePoint);
-        }
+        else openSnoozeDropMenu(released, releasePoint);
         return;
       }
       const projectedTarget =
@@ -1058,7 +1086,7 @@ export function useSidebarThreadDnd(input: {
         sensors,
         collisionDetection,
         onDragStart: handleDragStart,
-        onDragMove: (event: DragMoveEvent) => updateDragTarget(event.over, event.delta),
+        onDragMove: (event: DragMoveEvent) => updateDragTarget(event.over),
         onDragOver: (event: DragOverEvent) => updateDragTarget(event.over),
         onDragCancel: () => finishTransaction(),
         onDragEnd: handleDragEnd,

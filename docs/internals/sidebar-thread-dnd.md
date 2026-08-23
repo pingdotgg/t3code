@@ -80,18 +80,23 @@ midpoint. Other paths filter out the active row and domain-invalid destinations,
 reports a valid collision.
 Each category boundary uses its wrapper for sortable movement and registers its visible header,
 divider, or empty rail as the droppable node. Gaps between visible droppables resolve to the closest
-target so the sortable projection cannot alternate between a row and no target. When the pointer
-leaves the viewport vertically but remains within the board width, `closestCenter` uses dnd-kit's
-constrained active rectangle. The top and bottom insertion slots therefore remain sortable.
+target so the sortable projection cannot alternate between a row and no target. Snoozed and Settled
+own collisions only after the center of dnd-kit's constrained active rectangle crosses their visible
+header. A card can overlap a shelf while the last slot in the preceding category remains reachable.
+After a shelf owns the collision, normal pointer and closest-center selection chooses its row. When
+the pointer leaves the viewport vertically but remains within the board width, `closestCenter` uses
+the same constrained active rectangle. The top and bottom insertion slots therefore remain sortable.
 
 The strategy adapter contains no DOM measurements, animation state, direction lock, or
 category-specific correction. For cross-category moves it computes the index that the pure flat-array
-move would produce, passes that index to `verticalListSortingStrategy`, then adjusts rows after the
-projected insertion by the difference between the measured source height and the card or compact
-presentation height. Same-category Pinned reorder bypasses the projected index and uses dnd-kit's
-`overIndex`. The adapter is necessary elsewhere because the domain target distinguishes before,
-after, and the first slot after a category boundary, while dnd-kit's strategy receives only an
-`overIndex`.
+move would produce and passes that index to `verticalListSortingStrategy`. It adjusts only the rows
+between the source and projected index so they move by the card or compact presentation height rather
+than dnd-kit's measured active height. When a compact source grows into a card above its source slot,
+the adapter also moves the rows after that slot by the height difference. This prevents overlap
+without changing the source placeholder or any collision rectangle. Same-category Pinned reorder
+bypasses the projected index and uses dnd-kit's `overIndex`. The adapter is necessary elsewhere
+because the domain target distinguishes before, after, and the first slot after a category boundary,
+while dnd-kit's strategy receives only an `overIndex`.
 
 Pointer movement updates only the semantic target, dragged-row variant, and dragged-row translation.
 It does not change DOM order, row height, scroll range, or measured rectangles. The
@@ -100,14 +105,15 @@ dnd-kit disables transitions for one frame on every pointer update. A layout rev
 cannot create another collision under the same sensor event.
 
 The active sortable row is the pointer visual. Its outer element keeps the dimensions measured at
-activation, while the normal `SidebarThreadRow` renderer changes between card and compact layouts
-around the captured pointer offset. Dragging does not use a second, simplified copy of the row.
-dnd-kit's delta includes compensation for movement of the source placeholder. The row renderer adds
-the placeholder's current viewport offset back before applying the delta to its fixed child. This
-keeps dnd-kit's viewport restriction and auto-scroll behavior without letting list layout changes
-move the card away from the pointer. The fixed card cannot increase the list's scroll range. The board
-ignores pointer hit-testing so rows under the active row do not show hover actions or tooltips. The
-active sensor keeps tracking pointer movement at the document level.
+activation. The normal `SidebarThreadRow` renderer changes between card and compact layouts around the
+captured pointer offset. Dragging does not use a second, simplified copy of the row.
+The fixed child derives its translation from dnd-kit's pointer coordinates and the activation pointer
+captured inside the source rectangle. List layout and scroll offsets never enter that translation.
+The source-sized outer rectangle clamps the visual only at the sidebar viewport edges. The fixed card
+cannot increase the list's scroll range. The board ignores pointer hit-testing so rows under the
+active row do not show hover actions or tooltips. The active sensor keeps tracking pointer movement at
+the document level, while dnd-kit still owns collision, auto-scroll, and surrounding sortable
+transforms.
 
 dnd-kit's derived layout transform is disabled only for an active row that crosses categories. Its
 source placeholder is not the card's visible release position, so that transform would replay a move
@@ -117,9 +123,11 @@ dnd-kit's sortable FLIP. The lifecycle command starts after this visual handoff,
 clients complete it immediately.
 
 The client owns one small piece of geometry that dnd-kit does not: viewport anchoring during a real
-React layout change. Before such a change, it records one stable entry's untransformed position.
-After React commits, it adjusts only the sidebar viewport's `scrollTop` by that entry's layout delta.
-The pointer and dragged row do not move. The list moves around them.
+React layout change. Before such a change, it records one stable entry's visible viewport position,
+including its current sortable transform. After React commits, it adjusts only the sidebar
+viewport's `scrollTop` by that entry's visual delta. The thread content disables native browser scroll
+anchoring so the browser and the client cannot both correct the same change. The pointer and dragged
+row do not move. The list moves around them.
 
 Hover updates need no correction because sortable transforms do not affect layout. Activation anchors
 the source while empty rails mount. Drop anchors the first stable entry after the resulting insertion
@@ -141,6 +149,12 @@ transaction.
 The projected row stays at the dropped position while the existing lifecycle command and shell
 projection complete. Reconciliation replaces the projected array with canonical order in one
 sortable layout animation. The drop handoff is client state and adds no server round trip.
+
+A Snooze drop keeps the hovered compact slot in flow while the standard duration menu is open. The
+fixed card remains at its release position above that slot. Choosing a duration moves the projected
+row to its naturally sorted slot before the drop handoff; cancelling restores the source order. The
+viewport anchor applies to both changes, so opening or closing the menu does not collapse the space
+under the card.
 
 Cross-category drops use the existing lifecycle commands. Their deciders atomically clear conflicting
 state while pinning, unpinning, settling, un-settling, snoozing, or waking the thread. Drag and drop

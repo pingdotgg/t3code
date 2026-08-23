@@ -3431,7 +3431,7 @@ export default function Sidebar() {
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         viewportRef={sidebarViewportRef}
-        className="gap-0"
+        className="gap-0 [overflow-anchor:none]"
         fixedHeader={
           // Lifted above the stage backdrop, whose fade bleeds below the
           // header and would otherwise paint across the search row's outline.

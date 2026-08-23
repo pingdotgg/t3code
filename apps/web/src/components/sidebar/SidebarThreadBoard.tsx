@@ -314,7 +314,8 @@ export function SidebarThreadBoard(props: {
             dragView = {
               kind: "holding",
               variant: sourceTransaction.dropAnimation.variant,
-              flowPlaceholderHeight: sourceTransaction.sourceRect.height,
+              flowPlaceholderHeight:
+                SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT[sourceTransaction.dropAnimation.variant],
               sourceRect: sourceTransaction.sourceRect,
               translation: sourceTransaction.dropAnimation.translation,
               pointerAnchor: sourceTransaction.pointerAnchor,
@@ -353,8 +354,6 @@ export function SidebarThreadBoard(props: {
     }
     return renderThread(entry, section);
   });
-  const dragSourceHeight =
-    dnd.transaction?.phase === "dragging" ? dnd.transaction.sourceRect.height : null;
   const dragPresentationHeight =
     dnd.dragPreviewVariant === null
       ? null
@@ -368,26 +367,34 @@ export function SidebarThreadBoard(props: {
       if (
         transform === null ||
         args.index === args.activeIndex ||
-        dragSourceHeight === null ||
         dragPresentationHeight === null
       ) {
         return transform;
       }
 
       const projectedIndex = dnd.sortingOverIndex ?? args.overIndex;
-      const followsProjectedActive =
-        projectedIndex < args.activeIndex
-          ? args.index >= projectedIndex
-          : args.index > projectedIndex;
-      if (!followsProjectedActive) return transform;
+      const activeHeight = args.rects[args.activeIndex]?.height ?? args.activeNodeRect?.height;
+      if (activeHeight === undefined) return transform;
 
-      const heightDelta = dragPresentationHeight - dragSourceHeight;
+      const heightDelta = dragPresentationHeight - activeHeight;
+      const shiftsUp =
+        projectedIndex > args.activeIndex &&
+        args.index > args.activeIndex &&
+        args.index <= projectedIndex;
+      const shiftsDown =
+        projectedIndex < args.activeIndex &&
+        args.index < args.activeIndex &&
+        args.index >= projectedIndex;
+      const extendsPastSource =
+        heightDelta > 0 && projectedIndex < args.activeIndex && args.index > args.activeIndex;
+      if (!shiftsUp && !shiftsDown && !extendsPastSource) return transform;
+
       return {
         ...transform,
-        y: transform.y + heightDelta,
+        y: transform.y + (shiftsUp ? -heightDelta : heightDelta),
       };
     },
-    [dnd.sortingOverIndex, dragPresentationHeight, dragSourceHeight],
+    [dnd.sortingOverIndex, dragPresentationHeight],
   );
   const sortableItems = useMemo(() => dnd.entries.map((entry) => entry.id), [dnd.entries]);
   const listRef = useRef<HTMLUListElement>(null);
