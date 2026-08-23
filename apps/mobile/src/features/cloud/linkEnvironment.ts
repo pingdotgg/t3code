@@ -497,6 +497,13 @@ const loadAgentAwarenessDeviceId = Effect.fn("mobile.cloud.loadAgentAwarenessDev
   },
 );
 
+const loadClientInstanceId = Effect.fn("mobile.cloud.loadClientInstanceId")(function* () {
+  const storage = yield* MobileStorage.MobileStorage;
+  return yield* storage.loadOrCreateClientInstanceId.pipe(
+    Effect.mapError(cloudEnvironmentLinkError("Could not load the client instance id.")),
+  );
+});
+
 const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManagedEnvironment")(
   function* (input: {
     readonly clerkToken: string;
@@ -557,7 +564,7 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
       httpBaseUrl: connect.endpoint.httpBaseUrl,
       credential: connect.credential,
       dpopProof: bootstrapDpop,
-      clientMetadata: authClientMetadata(),
+      clientMetadata: authClientMetadata({ instanceId: yield* loadClientInstanceId() }),
     }).pipe(
       Effect.mapError(
         cloudEnvironmentLinkError("Could not exchange a managed endpoint DPoP access token."),

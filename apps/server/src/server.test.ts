@@ -1057,6 +1057,7 @@ const exchangeAccessToken = (
       readonly label?: string;
       readonly deviceType?: string;
       readonly os?: string;
+      readonly instanceId?: string;
     };
   },
 ) =>
@@ -1081,6 +1082,9 @@ const exchangeAccessToken = (
           ? { client_device_type: options.clientMetadata.deviceType }
           : {}),
         ...(options?.clientMetadata?.os ? { client_os: options.clientMetadata.os } : {}),
+        ...(options?.clientMetadata?.instanceId
+          ? { client_instance_id: options.clientMetadata.instanceId }
+          : {}),
       }).toString(),
     });
     const body = yield* responseJsonEffect<{
@@ -1696,6 +1700,67 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         userAgent: "undici",
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "collapses repeated token exchanges with one client instance onto a single session",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          config: {
+            host: "0.0.0.0",
+          },
+        });
+
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: {
+            cookie: ownerCookie,
+          },
+          body: yield* HttpBody.json({}),
+        });
+        const pairingBody = (yield* pairingResponse.json) as {
+          readonly credential: string;
+        };
+
+        // Pairing credentials are one-time; the desktop bootstrap credential is
+        // long-lived, which is what repeated launches present.
+        const firstExchange = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          clientMetadata: {
+            label: "T3 Code Desktop",
+            deviceType: "desktop",
+            instanceId: "desktop-instance-1",
+          },
+        });
+        const secondExchange = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          clientMetadata: {
+            label: "T3 Code Desktop",
+            deviceType: "desktop",
+            instanceId: "desktop-instance-1",
+          },
+        });
+
+        const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+          headers: {
+            cookie: ownerCookie,
+          },
+        });
+        const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+          readonly current: boolean;
+          readonly client: {
+            readonly label?: string;
+            readonly instanceId?: string;
+          };
+        }>;
+        const instanceSessions = clients.filter(
+          (client) => client.client.instanceId === "desktop-instance-1",
+        );
+
+        assert.equal(firstExchange.response.status, 200);
+        assert.equal(secondExchange.response.status, 200);
+        assert.equal(clientsResponse.status, 200);
+        assert.equal(instanceSessions.length, 1);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect(

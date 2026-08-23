@@ -47,6 +47,9 @@ const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessi
   revoke: () => Effect.fail(repositoryFailure),
   revokeAllExcept: () => Effect.fail(repositoryFailure),
   setLastConnectedAt: () => Effect.void,
+  listActiveForIdentity: () => Effect.succeed([]),
+  updateExpiration: () => Effect.void,
+  prune: () => Effect.succeed(0),
 });
 
 const failingSessionLookupCredentialLayer = Layer.effect(
@@ -272,6 +275,95 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         expect(revokedClientWebSocket.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
       }
     }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("collapses repeated bootstraps from one client instance onto a single session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = { label: "T3 Code Desktop", deviceType: "desktop" as const };
+      const first = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "desktop-bootstrap",
+        scopes: ["orchestration:read"],
+        client: { ...client, instanceId: "instance-1" },
+      });
+      yield* TestClock.adjust(Duration.minutes(1));
+      const second = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "desktop-bootstrap",
+        scopes: ["orchestration:read"],
+        client: { ...client, instanceId: "instance-1" },
+      });
+      const thirdFromAnotherInstance = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "desktop-bootstrap",
+        scopes: ["orchestration:read"],
+        client: { ...client, instanceId: "instance-2" },
+      });
+
+      expect(second.sessionId).toBe(first.sessionId);
+      expect(second.token).not.toBe(first.token);
+      expect(thirdFromAnotherInstance.sessionId).not.toBe(first.sessionId);
+      expect(second.expiresAt.epochMilliseconds).toBeGreaterThan(first.expiresAt.epochMilliseconds);
+      expect(yield* sessions.verify(first.token)).toMatchObject({ sessionId: first.sessionId });
+      expect(yield* sessions.verify(second.token)).toMatchObject({ sessionId: first.sessionId });
+
+      const active = yield* sessions.listActive();
+      expect(active).toHaveLength(2);
+      expect(active.filter((entry) => entry.client.instanceId === "instance-1")).toHaveLength(1);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("replaces an instance session when requested scopes widen", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const narrow = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "desktop-bootstrap",
+        scopes: ["orchestration:read"],
+        client: { label: "Desktop", deviceType: "desktop", instanceId: "instance-1" },
+      });
+      const widened = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "desktop-bootstrap",
+        scopes: ["orchestration:read", "access:write"],
+        client: { label: "Desktop", deviceType: "desktop", instanceId: "instance-1" },
+      });
+
+      expect(widened.sessionId).not.toBe(narrow.sessionId);
+      // Rotated-away sessions are revoked and then pruned immediately, so the
+      // old token no longer resolves to a session at all.
+      const rejected = yield* Effect.flip(sessions.verify(narrow.token));
+      expect(rejected._tag).toBe("UnknownSessionTokenError");
+      expect((yield* sessions.listActive()).map((entry) => entry.sessionId)).toEqual([
+        widened.sessionId,
+      ]);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("prunes expired and revoked sessions on issuance", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "short-lived",
+        ttl: Duration.seconds(1),
+      });
+      const revoked = yield* sessions.issue({ subject: "revoked-soon" });
+      yield* sessions.revoke(revoked.sessionId);
+
+      yield* TestClock.adjust(Duration.seconds(2));
+      const replacement = yield* sessions.issue({
+        method: "bearer-access-token",
+        subject: "replacement",
+      });
+
+      expect((yield* sessions.listActive()).map((entry) => entry.sessionId)).toEqual([
+        replacement.sessionId,
+      ]);
+      const prunedRevoked = yield* Effect.flip(sessions.verify(revoked.token));
+      expect(prunedRevoked._tag).toBe("UnknownSessionTokenError");
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 
   it.effect("persists lastConnectedAt on first connect and updates it after reconnect", () =>

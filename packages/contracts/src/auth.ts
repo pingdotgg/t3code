@@ -169,6 +169,10 @@ export const AuthClientPresentationMetadata = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   deviceType: Schema.optionalKey(AuthClientMetadataDeviceType),
   os: Schema.optionalKey(TrimmedNonEmptyString),
+  // Stable per-install identifier. Lets the server collapse repeated
+  // bootstraps from the same client onto one session instead of accumulating
+  // a row per launch.
+  instanceId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthClientPresentationMetadata = typeof AuthClientPresentationMetadata.Type;
 
@@ -181,6 +185,7 @@ export const AuthTokenExchangeRequest = Schema.Struct({
   client_label: Schema.optionalKey(TrimmedNonEmptyString),
   client_device_type: Schema.optionalKey(AuthClientMetadataDeviceType),
   client_os: Schema.optionalKey(TrimmedNonEmptyString),
+  client_instance_id: Schema.optionalKey(TrimmedNonEmptyString),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthTokenExchangeRequest = typeof AuthTokenExchangeRequest.Type;
 
@@ -225,6 +230,7 @@ export const AuthClientMetadata = Schema.Struct({
   deviceType: AuthClientMetadataDeviceType,
   os: Schema.optionalKey(TrimmedNonEmptyString),
   browser: Schema.optionalKey(TrimmedNonEmptyString),
+  instanceId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 

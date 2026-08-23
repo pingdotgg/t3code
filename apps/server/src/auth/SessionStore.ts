@@ -441,6 +441,7 @@ function toClientMetadata(record: {
   readonly deviceType: AuthClientMetadata["deviceType"];
   readonly os: string | null;
   readonly browser: string | null;
+  readonly instanceId: string | null;
 }): AuthClientMetadata {
   return {
     ...(record.label ? { label: record.label } : {}),
@@ -449,6 +450,7 @@ function toClientMetadata(record: {
     deviceType: record.deviceType,
     ...(record.os ? { os: record.os } : {}),
     ...(record.browser ? { browser: record.browser } : {}),
+    ...(record.instanceId ? { instanceId: record.instanceId } : {}),
   };
 }
 
@@ -501,7 +503,7 @@ export const make = Effect.gen(function* () {
           subject: row.value.subject,
           scopes: row.value.scopes,
           method: row.value.method,
-          client: toClientMetadata(row.value.client),
+          client: toClientMetadata({ ...row.value.client, instanceId: row.value.instanceId }),
           issuedAt: row.value.issuedAt,
           expiresAt: row.value.expiresAt,
           lastConnectedAt: row.value.lastConnectedAt,
@@ -571,24 +573,118 @@ export const make = Effect.gen(function* () {
     );
 
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
+
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
+      const now = yield* DateTime.now;
+      const client = input?.client ?? createDefaultClientMetadata();
+      const subject = input?.subject ?? "browser";
+      const method = input?.method ?? "browser-session-cookie";
+      const scopes = input?.scopes ?? AuthStandardClientScopes;
+      const expiresAt = DateTime.add(now, {
+        milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
+      });
+
+      // A client that presents a stable instance id collapses repeated
+      // bootstraps onto its existing session instead of accumulating rows.
+      // DPoP credentials are excluded because their key thumbprint is not
+      // persisted, so a reused session could not be safely re-signed.
+      if (client.instanceId !== undefined && input?.proofKeyThumbprint === undefined) {
+        const candidates = yield* authSessions
+          .listActiveForIdentity({
+            now,
+            subject,
+            method,
+            instanceId: client.instanceId,
+          })
+          .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause })));
+        const reusable = candidates.find((row) =>
+          scopes.every((scope) => row.scopes.includes(scope)),
+        );
+        if (reusable !== undefined) {
+          yield* authSessions
+            .updateExpiration({ sessionId: reusable.sessionId, expiresAt })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SessionCredentialIssueError({ sessionId: reusable.sessionId, cause }),
+              ),
+            );
+          const claims: SessionClaims = {
+            v: 1,
+            kind: "session",
+            sid: reusable.sessionId,
+            sub: reusable.subject,
+            scopes: reusable.scopes,
+            method: reusable.method,
+            iat: now.epochMilliseconds,
+            exp: expiresAt.epochMilliseconds,
+          };
+          const token = yield* encodeClaims(claims).pipe(
+            Effect.map(base64UrlEncode),
+            Effect.map(
+              (encodedPayload) => `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`,
+            ),
+            Effect.mapError(
+              (cause) =>
+                new SessionCredentialIssueError({
+                  sessionId: reusable.sessionId,
+                  cause: new SessionClaimsEncodingError({
+                    sessionId: reusable.sessionId,
+                    operation: "encode_session_claims",
+                    cause,
+                  }),
+                }),
+            ),
+          );
+          yield* loadActiveSession(reusable.sessionId).pipe(
+            Effect.flatMap((session) =>
+              Option.isSome(session) ? emitUpsert(session.value) : Effect.void,
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logError("Failed to publish reused-session auth update.").pipe(
+                Effect.annotateLogs({
+                  sessionId: reusable.sessionId,
+                  cause,
+                }),
+              ),
+            ),
+          );
+          return {
+            sessionId: reusable.sessionId,
+            token,
+            method: reusable.method,
+            client,
+            expiresAt,
+            scopes: reusable.scopes,
+          } satisfies IssuedSession;
+        }
+        for (const stale of candidates) {
+          yield* authSessions
+            .revoke({ sessionId: stale.sessionId, revokedAt: now })
+            .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause })));
+          yield* Ref.update(connectedSessionsRef, (current) => {
+            const next = new Map(current);
+            next.delete(stale.sessionId);
+            return next;
+          });
+          yield* emitRemoved(stale.sessionId);
+        }
+      }
+
       const sessionId = AuthSessionId.make(
         yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) => new SessionCredentialIssueError({ cause })),
         ),
       );
-      const issuedAt = yield* DateTime.now;
-      const expiresAt = DateTime.add(issuedAt, {
-        milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
-      });
+      const issuedAt = now;
       const claims: SessionClaims = {
         v: 1,
         kind: "session",
         sid: sessionId,
-        sub: input?.subject ?? "browser",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
-        method: input?.method ?? "browser-session-cookie",
+        sub: subject,
+        scopes,
+        method,
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
@@ -609,7 +705,6 @@ export const make = Effect.gen(function* () {
         ),
       );
       const signature = signPayload(encodedPayload, signingSecret);
-      const client = input?.client ?? createDefaultClientMetadata();
       yield* authSessions
         .create({
           sessionId,
@@ -624,10 +719,18 @@ export const make = Effect.gen(function* () {
             os: client.os ?? null,
             browser: client.browser ?? null,
           },
+          instanceId: client.instanceId ?? null,
           issuedAt,
           expiresAt,
         })
         .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+      yield* authSessions
+        .prune({ now })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to prune expired auth sessions.", { cause }),
+          ),
+        );
       yield* emitUpsert(
         toAuthClientSession({
           sessionId,
@@ -707,7 +810,7 @@ export const make = Effect.gen(function* () {
         sessionId: claims.sid,
         token,
         method: claims.method,
-        client: toClientMetadata(row.value.client),
+        client: toClientMetadata({ ...row.value.client, instanceId: row.value.instanceId }),
         expiresAt: expiresAt.value,
         subject: claims.sub,
         scopes: claims.scopes,
@@ -813,7 +916,7 @@ export const make = Effect.gen(function* () {
       sessionId: row.value.sessionId,
       token,
       method: row.value.method,
-      client: toClientMetadata(row.value.client),
+      client: toClientMetadata({ ...row.value.client, instanceId: row.value.instanceId }),
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
       scopes: row.value.scopes,
@@ -832,7 +935,7 @@ export const make = Effect.gen(function* () {
           subject: row.subject,
           scopes: row.scopes,
           method: row.method,
-          client: toClientMetadata(row.client),
+          client: toClientMetadata({ ...row.client, instanceId: row.instanceId }),
           issuedAt: row.issuedAt,
           expiresAt: row.expiresAt,
           lastConnectedAt: row.lastConnectedAt,

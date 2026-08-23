@@ -50,11 +50,23 @@ requested_token_type=urn:ietf:params:oauth:token-type:access_token
 scope=orchestration:read orchestration:operate terminal:operate review:write relay:read
 ```
 
-Clients may additionally submit `client_label`, `client_device_type`, and
-`client_os` extension parameters so the authorized-clients UI can identify the
-device that established the session. These are presentation hints only; the
-environment derives transport metadata such as IP address and user agent from
-the request and does not use these fields for authorization.
+Clients may additionally submit `client_label`, `client_device_type`,
+`client_os`, and `client_instance_id` extension parameters so the
+authorized-clients UI can identify the device that established the session.
+These are presentation hints only; the environment derives transport metadata
+such as IP address and user agent from the request and does not use these
+fields for authorization.
+
+`client_instance_id` is a stable per-install identifier. When it is present on
+a bearer exchange, issuance collapses onto the client's existing session: a
+compatible active session for the same subject, method, and instance id has its
+expiry extended and a fresh token is signed against it, so app relaunches and
+window reloads do not accumulate authorized-client rows. If no compatible
+session exists (for example when requested scopes widen), prior sessions for
+that instance are revoked before the replacement is issued. DPoP exchanges are
+exempt because their key thumbprint is not persisted, so their sessions cannot
+be safely reused. Issuance also prunes sessions whose rows have expired or been
+revoked.
 
 The response has the token-exchange shape:
 

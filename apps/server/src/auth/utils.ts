@@ -180,5 +180,6 @@ export function deriveAuthClientMetadata(input: {
     deviceType: input.presented?.deviceType ?? inferDeviceType(userAgent),
     ...(os ? { os } : {}),
     ...(browser ? { browser } : {}),
+    ...(input.presented?.instanceId ? { instanceId: input.presented.instanceId } : {}),
   };
 }

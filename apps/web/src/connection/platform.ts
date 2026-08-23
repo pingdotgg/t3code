@@ -21,7 +21,10 @@ import {
   PrimaryConnectionTarget,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
-import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import {
+  bootstrapRemoteBearerSession,
+  readOrCreateClientInstanceId,
+} from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
@@ -50,6 +53,7 @@ import {
 } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
+import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
@@ -120,7 +124,19 @@ function clientMetadata() {
     label: desktop ? "T3 Code Desktop" : "T3 Code Web",
     deviceType: "desktop" as const,
     ...(platform === "" ? {} : { os: platform }),
+    instanceId: clientInstanceId(),
   };
+}
+
+// Persisted per browser profile (Electron renderers included) so repeated
+// bootstraps reuse one authorized-client session instead of adding a row per
+// reload.
+function clientInstanceId(): string {
+  return readOrCreateClientInstanceId({
+    read: (key) => globalThis.localStorage?.getItem(key) ?? null,
+    write: (key, value) => globalThis.localStorage?.setItem(key, value),
+    createId: randomUUID,
+  });
 }
 
 function sshPreparationError(cause: unknown) {

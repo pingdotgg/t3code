@@ -24,6 +24,7 @@ export const PersistenceErrorCorrelation = Schema.Union([
   Schema.Struct({ currentSessionId: Schema.String }),
   Schema.Struct({ pairingLinkId: Schema.String }),
   Schema.Struct({ threadId: Schema.String }),
+  Schema.Struct({ instanceId: Schema.String }),
 ]);
 export type PersistenceErrorCorrelation = typeof PersistenceErrorCorrelation.Type;
 

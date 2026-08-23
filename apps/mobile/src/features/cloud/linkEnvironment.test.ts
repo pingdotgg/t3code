@@ -90,6 +90,7 @@ function cloudClientLayer() {
         saveConnection: () => Effect.void,
         clearSavedConnection: () => Effect.void,
         loadOrCreateAgentAwarenessDeviceId: Effect.succeed("device-1"),
+        loadOrCreateClientInstanceId: Effect.succeed("client-instance-1"),
         loadAgentAwarenessDeviceId: Effect.succeed("device-1"),
         loadAgentAwarenessRegistrationRecord: Effect.succeed(null),
         saveAgentAwarenessRegistrationRecord: () => Effect.void,
@@ -489,6 +490,7 @@ describe("mobile cloud link environment client", () => {
       expect(environmentTokenBody.get("client_label")).toBe("T3 Code Mobile");
       expect(environmentTokenBody.get("client_device_type")).toBe("mobile");
       expect(environmentTokenBody.get("client_os")).toBe("iOS");
+      expect(environmentTokenBody.get("client_instance_id")).toBe("client-instance-1");
     }),
   );
 

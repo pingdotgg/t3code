@@ -300,6 +300,9 @@ export const authHttpApiLayer = HttpApiBuilder.group(
                     ? { deviceType: args.payload.client_device_type }
                     : {}),
                   ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+                  ...(args.payload.client_instance_id
+                    ? { instanceId: args.payload.client_instance_id }
+                    : {}),
                 },
               }),
               proofKeyThumbprint ? { proofKeyThumbprint } : undefined,

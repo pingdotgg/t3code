@@ -46,6 +46,7 @@ describe("persistence error correlation", () => {
           os: null,
           browser: null,
         },
+        instanceId: null,
         issuedAt,
         expiresAt,
       });
@@ -81,6 +82,7 @@ describe("persistence error correlation", () => {
             os: null,
             browser: null,
           },
+          instanceId: null,
           issuedAt,
           expiresAt,
         }),

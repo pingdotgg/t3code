@@ -1,15 +1,19 @@
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 export class DesktopLocalEnvironmentAuthBackendNotConfiguredError extends Schema.TaggedErrorClass<DesktopLocalEnvironmentAuthBackendNotConfiguredError>()(
   "DesktopLocalEnvironmentAuthBackendNotConfiguredError",
@@ -45,8 +49,47 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const tokenRef = yield* Ref.make(Option.none<string>());
+  const instanceIdRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
+
+  // Persisted once per desktop install so every launch reuses the same
+  // authorized-client session on the local backend instead of adding one.
+  const resolveInstanceId = Effect.gen(function* () {
+    const cached = yield* Ref.get(instanceIdRef);
+    if (Option.isSome(cached)) {
+      return cached.value;
+    }
+    const instanceIdPath = path.join(environment.stateDir, "client-instance-id");
+    const stored = yield* fileSystem.readFileString(instanceIdPath).pipe(Effect.option);
+    const instanceId =
+      Option.isSome(stored) && stored.value.trim() !== ""
+        ? stored.value.trim()
+        : yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError(
+              (cause) => new DesktopLocalEnvironmentAuthSessionBootstrapError({ cause }),
+            ),
+          );
+    if (Option.isNone(stored)) {
+      yield* fileSystem
+        .makeDirectory(path.dirname(instanceIdPath), { recursive: true })
+        .pipe(Effect.ignore);
+      yield* fileSystem.writeFileString(instanceIdPath, `${instanceId}\n`).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to persist the desktop client instance id.", {
+            instanceIdPath,
+            cause,
+          }),
+        ),
+      );
+    }
+    yield* Ref.set(instanceIdRef, Option.some(instanceId));
+    return instanceId;
+  }).pipe(Effect.withSpan("desktop.localEnvironmentAuth.resolveInstanceId"));
 
   const getBearerToken = mutex
     .withPermits(1)(
@@ -73,6 +116,7 @@ export const make = Effect.gen(function* () {
           clientMetadata: {
             label: "T3 Code Desktop",
             deviceType: "desktop",
+            instanceId: yield* resolveInstanceId,
           },
         }).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
