@@ -28,8 +28,9 @@ export function providerInteractionModeControlsEnabled(input: {
   if (!input.planModeEnabled || !input.modelSelection) {
     return false;
   }
+  const selectedInstanceId = input.modelSelection.instanceId;
   return (
-    input.providers.find((provider) => provider.instanceId === input.modelSelection.instanceId)
+    input.providers.find((provider) => provider.instanceId === selectedInstanceId)
       ?.showInteractionModeToggle ?? true
   );
 }
