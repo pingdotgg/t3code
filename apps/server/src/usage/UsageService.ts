@@ -84,6 +84,7 @@ const RatesCacheFile = Schema.Struct({
 interface TranscriptSource {
   readonly provider: UsageProviderKind;
   readonly dir: string;
+  readonly inspectionFailed?: boolean;
 }
 const decodeRatesCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(RatesCacheFile as unknown as Schema.Codec<typeof RatesCacheFile.Type>),
@@ -283,7 +284,13 @@ export const make = Effect.gen(function* () {
       source.provider === "kimi"
         ? fileSystem.realPath(source.dir).pipe(
             Effect.map((dir) => ({ ...source, dir })),
-            Effect.orElseSucceed(() => ({ ...source, dir: path.resolve(source.dir) })),
+            Effect.catch((error) =>
+              Effect.succeed({
+                ...source,
+                dir: path.resolve(source.dir),
+                inspectionFailed: error.reason._tag !== "NotFound",
+              }),
+            ),
           )
         : Effect.succeed(source),
     );
@@ -442,19 +449,22 @@ export const make = Effect.gen(function* () {
     for (const source of dirs) {
       const { provider, dir } = source;
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      const exists = source.inspectionFailed
+        ? null
+        : yield* fileSystem.exists(dir).pipe(Effect.catchCause(() => Effect.succeed(null)));
 
-      if (!exists) {
+      if (exists !== true) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "missing",
+          status: exists === null ? "failed" : "missing",
           scannedFiles: 0,
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+          message:
+            exists === null
+              ? "Transcript directory could not be inspected."
+              : "No transcript directory on this environment.",
         });
         continue;
       }
