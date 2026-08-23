@@ -59,6 +59,7 @@ function writeTextWithExecCommand(value: string): boolean {
   textarea.style.top = "0";
   textarea.style.left = "0";
   textarea.style.opacity = "0";
+  textarea.style.fontSize = "16px";
 
   const previouslyFocused = document.activeElement;
   document.body.appendChild(textarea);

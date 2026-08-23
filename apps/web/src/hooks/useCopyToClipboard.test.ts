@@ -59,6 +59,7 @@ describe("writeTextToClipboard", () => {
     await expect(writeTextToClipboard("remote command", "command")).resolves.toBe(true);
 
     expect(textarea.value).toBe("remote command");
+    expect(textarea.style).toMatchObject({ fontSize: "16px" });
     expect(appendChild).toHaveBeenCalledWith(textarea);
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(select).toHaveBeenCalledOnce();
