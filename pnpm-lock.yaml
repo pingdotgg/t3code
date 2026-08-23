@@ -929,8 +929,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/tailscale
       agent-app-benchmark:
-        specifier: github:kyashrathore/agent-app-benchmark#d804dbc
-        version: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20
+        specifier: github:kyashrathore/agent-app-benchmark#fff5e2392fe93ee8a918198f964b867b6ea8afe8
+        version: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/fff5e2392fe93ee8a918198f964b867b6ea8afe8
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
@@ -5294,8 +5294,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20:
-    resolution: {gitHosted: true, integrity: sha512-M9rNY9tZJaFHNL2F7ia4Md5KSeUTYV1Q25oDShIjyKcp1pETQoTgZBxTPpCPpRpJdLp25akdc3WQuLmCN2Ia2g==, tarball: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20}
+  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/fff5e2392fe93ee8a918198f964b867b6ea8afe8:
+    resolution: {gitHosted: true, integrity: sha512-DuMXLhZC2AJ9Rmo6Ha4wjoEhqk3BaGzItVDbuB8xSxQ7SFHwrG3eKkuXYr9jWrkpYeXOe6spvvw1SttQoHA/fg==, tarball: https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/fff5e2392fe93ee8a918198f964b867b6ea8afe8}
     version: 0.1.0
     engines: {node: '>=22'}
     hasBin: true
@@ -15419,7 +15419,7 @@ snapshots:
 
   acorn@8.16.0: {}
 
-  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/d804dbc4b25c55282f306ba514d60ec943805f20:
+  agent-app-benchmark@https://codeload.github.com/kyashrathore/agent-app-benchmark/tar.gz/fff5e2392fe93ee8a918198f964b867b6ea8afe8:
     dependencies:
       ajv: 8.20.0
 
