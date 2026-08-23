@@ -462,20 +462,31 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
+  const resetInstallAction = Effect.all(
+    [
+      finishUpdateAction("install"),
+      Ref.set(installRecoveryInstancesRef, []),
+      Ref.set(desktopState.quitting, false),
+      Effect.sync(desktopWindow.resetQuitPreparation),
+    ],
+    { discard: true },
+  );
+
   const recoverInstallAction = Effect.gen(function* () {
     const instances = yield* Ref.getAndSet(installRecoveryInstancesRef, []);
-    yield* finishUpdateAction("install");
-    desktopWindow.resetQuitPreparation();
 
     yield* Effect.forEach(instances, (instance) => instance.start, {
       concurrency: "unbounded",
       discard: true,
     }).pipe(
-      Effect.catchCause((cause) =>
-        logUpdaterWarning("failed to restart backends after update install recovery", {
-          cause: Cause.pretty(cause),
-        }),
-      ),
+      Effect.catchCause((cause) => {
+        const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
+        return logUpdaterWarning(error.message, {
+          errorTag: error._tag,
+          action: error.action,
+          stage: "backend-restart",
+        });
+      }),
     );
 
     const primary = instances.find(
@@ -485,14 +496,16 @@ export const make = Effect.gen(function* () {
       yield* primary.waitForReady(Duration.seconds(60));
     }
     yield* desktopWindow.activate.pipe(
-      Effect.catchCause((cause) =>
-        logUpdaterWarning("failed to restore window after update install recovery", {
-          cause: Cause.pretty(cause),
-        }),
-      ),
+      Effect.catchCause((cause) => {
+        const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
+        return logUpdaterWarning(error.message, {
+          errorTag: error._tag,
+          action: error.action,
+          stage: "window-activation",
+        });
+      }),
     );
-    yield* Ref.set(desktopState.quitting, false);
-  });
+  }).pipe(Effect.ensuring(resetInstallAction));
 
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
@@ -542,6 +555,7 @@ export const make = Effect.gen(function* () {
       });
       return { accepted: true, completed: false };
     }).pipe(
+      Effect.onInterrupt(() => resetInstallAction),
       Effect.catchTags({
         ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
           function* (error) {
@@ -559,10 +573,13 @@ export const make = Effect.gen(function* () {
           },
         ),
       }),
-      Effect.onInterrupt(() => recoverInstallAction),
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
           if (Cause.hasInterruptsOnly(cause)) {
+            const activeAction = yield* activeUpdateAction;
+            if (Option.isSome(activeAction) && activeAction.value === "install") {
+              yield* resetInstallAction;
+            }
             return yield* Effect.failCause(cause);
           }
           yield* recoverInstallAction;

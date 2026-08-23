@@ -1,9 +1,9 @@
 import * as Context from "effect/Context";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
@@ -14,6 +14,30 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+
+export class DesktopTrayActionError extends Schema.TaggedErrorClass<DesktopTrayActionError>()(
+  "DesktopTrayActionError",
+  {
+    action: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Windows tray action "${this.action}" failed.`;
+  }
+}
+
+export class DesktopTrayConfigurationError extends Schema.TaggedErrorClass<DesktopTrayConfigurationError>()(
+  "DesktopTrayConfigurationError",
+  {
+    stage: Schema.Literal("setup"),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Windows tray setup failed; close-to-background disabled.";
+  }
+}
 
 export class DesktopTray extends Context.Service<
   DesktopTray,
@@ -40,12 +64,13 @@ export const make = Effect.gen(function* () {
       effect.pipe(
         Effect.annotateLogs({ action }),
         Effect.withSpan("desktop.tray.action"),
-        Effect.catchCause((cause) =>
-          logTrayWarning("Windows tray action failed", {
-            action,
-            cause: Cause.pretty(cause),
-          }),
-        ),
+        Effect.catchCause((cause) => {
+          const error = new DesktopTrayActionError({ action, cause });
+          return logTrayWarning(error.message, {
+            errorTag: error._tag,
+            action: error.action,
+          });
+        }),
       ),
     );
   };
@@ -100,11 +125,13 @@ export const make = Effect.gen(function* () {
     );
     yield* logTrayInfo("Windows tray configured");
   }).pipe(
-    Effect.catchCause((cause) =>
-      logTrayWarning("Windows tray setup failed; close-to-background disabled", {
-        cause: Cause.pretty(cause),
-      }),
-    ),
+    Effect.catchCause((cause) => {
+      const error = new DesktopTrayConfigurationError({ stage: "setup", cause });
+      return logTrayWarning(error.message, {
+        errorTag: error._tag,
+        stage: error.stage,
+      });
+    }),
     Effect.withSpan("desktop.tray.configure"),
   );
 

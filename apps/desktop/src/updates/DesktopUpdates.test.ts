@@ -33,6 +33,7 @@ interface UpdatesHarnessOptions {
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly backendDesiredRunning?: boolean;
+  readonly waitForReady?: Effect.Effect<boolean>;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly env?: Record<string, string | undefined>;
 }
@@ -157,7 +158,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartAttempt: 0,
       restartScheduled: false,
     }),
-    waitForReady: () => Effect.succeed(true),
+    waitForReady: () => options.waitForReady ?? Effect.succeed(true),
   };
   const backendLayer = DesktopBackendPool.layerTest([stubBackendInstance]);
 
@@ -816,6 +817,73 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("does not restart backends when update installation is interrupted", () =>
+    Effect.gen(function* () {
+      const stopStarted = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        stopBackend: Deferred.succeed(stopStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const installFiber = yield* updates.install.pipe(Effect.forkScoped);
+          yield* Deferred.await(stopStarted);
+          yield* Fiber.interrupt(installFiber);
+
+          assert.isFalse(yield* Ref.get(desktopState.quitting));
+          assert.equal(harness.resetQuitPreparationCount(), 1);
+          assert.equal(harness.backendStartCount(), 0);
+          assert.equal(harness.windowActivationCount(), 0);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("clears quitting state when update recovery is interrupted", () =>
+    Effect.gen(function* () {
+      const recoveryStarted = yield* Deferred.make<void>();
+      const installError = new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+        channel: null,
+        isSilent: true,
+        isForceRunAfter: true,
+        cause: new Error("installer launch failed"),
+      });
+      const harness = makeHarness({
+        quitAndInstall: Effect.fail(installError),
+        waitForReady: Deferred.succeed(recoveryStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const installFiber = yield* updates.install.pipe(Effect.forkScoped);
+          yield* Deferred.await(recoveryStarted);
+          assert.isTrue(yield* Ref.get(desktopState.quitting));
+
+          yield* Fiber.interrupt(installFiber);
+
+          assert.isFalse(yield* Ref.get(desktopState.quitting));
+          assert.equal(harness.resetQuitPreparationCount(), 1);
+          assert.equal(harness.backendStartCount(), 1);
+          assert.equal(harness.windowActivationCount(), 0);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
 
   it.effect("persists channel changes through the settings service", () => {
     const harness = makeHarness();
