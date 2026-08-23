@@ -1242,6 +1242,24 @@ it.layer(
     }),
   );
 
+  it.effect("preserves Unicode split across terminal output chunks", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("before \ud83d");
+      process.emitData("\ude00 after\r");
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect(yield* historyLogPath(logsDir).pipe(Effect.flatMap(readFileString))).toBe(
+        "before 😀 after\r",
+      );
+    }),
+  );
+
   it.effect("strips replay-unsafe terminal query and reply sequences from persisted history", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

@@ -1018,6 +1018,10 @@ function sanitizeTerminalHistoryChunk(
       continue;
     }
 
+    if (codePoint >= 0xd800 && codePoint <= 0xdbff && index + 1 === input.length) {
+      return { visibleText, pendingControlSequence: input.slice(index) };
+    }
+
     append(input[index] ?? "");
     index += 1;
   }
