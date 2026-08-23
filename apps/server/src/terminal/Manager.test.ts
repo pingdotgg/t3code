@@ -1439,6 +1439,49 @@ it.layer(
     }),
   );
 
+  it.effect("retains failed history across repeated retries without a session", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const failedWrite = yield* Deferred.make<void>();
+      const cause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "writeFileString",
+        pathOrDescriptor: "terminal-history",
+      });
+      let rejectHistoryWrites = true;
+      const recoveringFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (path, contents, options) => {
+          if (path.endsWith(".log") && rejectHistoryWrites) {
+            return Deferred.succeed(failedWrite, undefined).pipe(
+              Effect.andThen(Effect.fail(cause)),
+            );
+          }
+          return fileSystem.writeFileString(path, contents, options);
+        },
+      });
+      const { manager, ptyAdapter } = yield* createManager(100).pipe(
+        Effect.provideService(FileSystem.FileSystem, recoveringFileSystem),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("survives repeated retry\n");
+      yield* Deferred.await(failedWrite);
+      yield* manager.close({ threadId: "thread-1" });
+      yield* manager.close({ threadId: "thread-1" });
+
+      rejectHistoryWrites = false;
+      yield* manager.close({ threadId: "thread-1" });
+      const reopened = yield* manager.open(openInput());
+
+      expect(reopened.history).toBe("survives repeated retry\n");
+    }),
+  );
+
   it.effect("recovers a failed truncate with the latest capped history", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

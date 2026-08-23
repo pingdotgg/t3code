@@ -1472,6 +1472,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const failedPersistByKey = new Map<string, PersistHistoryRequest>();
+  const discardedPersistKeys = new Set<string>();
   const persistWorker = yield* makeKeyedCoalescingWorker<
     string,
     PersistHistoryRequest,
@@ -1510,10 +1511,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           Effect.matchEffect({
             onFailure: (error) =>
               modifyManagerState((state) => {
-                if (state.sessions.has(sessionKey)) {
-                  failedPersistByKey.set(sessionKey, nextRequest);
-                } else {
+                if (discardedPersistKeys.has(sessionKey)) {
                   failedPersistByKey.delete(sessionKey);
+                } else {
+                  failedPersistByKey.set(sessionKey, nextRequest);
                 }
                 return [undefined, state] as const;
               }).pipe(
@@ -1549,6 +1550,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* drainPersist(threadId, terminalId);
     const failedRequest = failedPersistByKey.get(sessionKey);
     if (failedRequest === undefined) {
+      discardedPersistKeys.delete(sessionKey);
       return;
     }
     yield* persistWorker.enqueue(sessionKey, {
@@ -1559,6 +1561,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       immediate: true,
     });
     yield* drainPersist(threadId, terminalId);
+    discardedPersistKeys.delete(sessionKey);
   });
 
   const queuePersist = Effect.fn("terminal.queuePersist")(function* (
@@ -1837,12 +1840,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const evictInactiveSessionsIfNeeded = Effect.fn("terminal.evictInactiveSessionsIfNeeded")(
     function* () {
-      yield* modifyManagerState((state) => {
+      const evictedSessionKeys = yield* modifyManagerState((state) => {
+        const evictedSessionKeys: Array<string> = [];
         const inactiveSessions = [...state.sessions.values()].filter(
           (session) => session.status !== "running",
         );
         if (inactiveSessions.length <= maxRetainedInactiveSessions) {
-          return [undefined, state] as const;
+          return [evictedSessionKeys, state] as const;
         }
 
         inactiveSessions.sort(
@@ -1859,10 +1863,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           const key = toSessionKey(session.threadId, session.terminalId);
           sessions.delete(key);
           failedPersistByKey.delete(key);
+          discardedPersistKeys.add(key);
+          evictedSessionKeys.push(key);
         }
 
-        return [undefined, { ...state, sessions }] as const;
+        return [evictedSessionKeys, { ...state, sessions }] as const;
       });
+
+      yield* Effect.forEach(
+        evictedSessionKeys,
+        (sessionKey) => persistWorker.drainKey(sessionKey),
+        { concurrency: "unbounded", discard: true },
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const sessionKey of evictedSessionKeys) {
+              discardedPersistKeys.delete(sessionKey);
+            }
+          }),
+        ),
+      );
     },
   );
 
@@ -2872,6 +2892,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const existingSession = yield* getSession(input.threadId, terminalId);
         let session: TerminalSessionState;
         if (Option.isNone(existingSession)) {
+          yield* persistWorker.drainKey(sessionKey);
+          discardedPersistKeys.delete(sessionKey);
           const cols = input.cols ?? DEFAULT_OPEN_COLS;
           const rows = input.rows ?? DEFAULT_OPEN_ROWS;
           session = {
