@@ -659,6 +659,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         Alert.alert("Invalid Goal command", goalCommand.message);
         return null;
       }
+      if (props.selectedThread.session === null) {
+        Alert.alert(
+          "Start the Codex thread first",
+          "Send a message before managing its native Goal.",
+        );
+        return null;
+      }
       const target = {
         environmentId: props.environmentId,
         input: { threadId: props.selectedThread.id },
