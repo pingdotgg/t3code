@@ -74,6 +74,7 @@ function makeLayer(input: {
       input.backgroundModeChanges.push(enabled);
     },
     prepareForQuit: () => undefined,
+    resetQuitPreparation: () => undefined,
     dispatchMenuAction: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,

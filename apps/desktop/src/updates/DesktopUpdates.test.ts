@@ -20,6 +20,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
 interface UpdatesHarnessOptions {
@@ -31,6 +32,7 @@ interface UpdatesHarnessOptions {
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly stopBackend?: Effect.Effect<void>;
+  readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly env?: Record<string, string | undefined>;
 }
 
@@ -43,6 +45,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
+  let resetQuitPreparationCount = 0;
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -84,7 +87,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       checkCount += 1;
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.void,
-    quitAndInstall: () => Effect.void,
+    quitAndInstall: () => options.quitAndInstall ?? Effect.void,
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -112,6 +115,26 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     destroyAll: Effect.void,
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
+
+  const desktopWindowLayer = Layer.succeed(DesktopWindow.DesktopWindow, {
+    createMain: Effect.die("unexpected window creation"),
+    ensureMain: Effect.die("unexpected window creation"),
+    revealOrCreateMain: Effect.die("unexpected window creation"),
+    activate: Effect.die("unexpected window activation"),
+    createMainIfBackendReady: Effect.die("unexpected window creation"),
+    showConnectingSplash: Effect.die("unexpected splash creation"),
+    handleBackendReady: () => Effect.die("unexpected backend-ready handling"),
+    handleBackendNotReady: Effect.die("unexpected backend-not-ready handling"),
+    flushMainWindowBounds: Effect.void,
+    setBackgroundModeEnabled: () => undefined,
+    prepareForQuit: () => undefined,
+    resetQuitPreparation: () => {
+      resetQuitPreparationCount += 1;
+    },
+    dispatchMenuAction: () => Effect.die("unexpected menu action"),
+    zoomMain: () => Effect.die("unexpected window zoom"),
+    syncAppearance: Effect.die("unexpected appearance sync"),
+  } satisfies DesktopWindow.DesktopWindow["Service"]);
 
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
@@ -193,6 +216,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const layer = DesktopUpdates.layer.pipe(
     Layer.provideMerge(updaterLayer),
     Layer.provideMerge(windowLayer),
+    Layer.provideMerge(desktopWindowLayer),
     Layer.provideMerge(backendLayer),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(settingsLayer),
@@ -213,6 +237,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkCount: () => checkCount,
     feedUrls: () => feedUrls,
     fullChangelog: () => fullChangelog,
+    resetQuitPreparationCount: () => resetQuitPreparationCount,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,
@@ -713,6 +738,7 @@ describe("DesktopUpdates", () => {
         assert.isTrue(result.accepted);
         assert.isFalse(result.completed);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.resetQuitPreparationCount(), 1);
 
         const failedState = yield* updates.getState;
         assert.equal(failedState.status, "downloaded");
@@ -721,6 +747,56 @@ describe("DesktopUpdates", () => {
 
         const changedState = yield* updates.setChannel("nightly");
         assert.equal(changedState.channel, "nightly");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("restores window quit behavior after quit-and-install fails", () => {
+    const installError = new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+      channel: null,
+      isSilent: true,
+      isForceRunAfter: true,
+      cause: new Error("installer launch failed"),
+    });
+    const harness = makeHarness({ quitAndInstall: Effect.fail(installError) });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.resetQuitPreparationCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("restores window quit behavior after an active install reports an error", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.isTrue(yield* Ref.get(desktopState.quitting));
+
+        harness.emit("error", new Error("installer exited"));
+        yield* flushCallbacks;
+
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.resetQuitPreparationCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

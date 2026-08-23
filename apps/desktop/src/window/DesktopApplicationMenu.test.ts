@@ -82,6 +82,7 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     flushMainWindowBounds: Effect.void,
     setBackgroundModeEnabled: () => undefined,
     prepareForQuit: () => undefined,
+    resetQuitPreparation: () => undefined,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
     zoomMain: (direction) =>
       Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),

@@ -560,6 +560,12 @@ describe("DesktopWindow", () => {
         close(quitClose);
         assert.equal(quitClose.preventDefault.mock.calls.length, 0);
         assert.equal(fakeWindow.hide.mock.calls.length, 1);
+
+        desktopWindow.resetQuitPreparation();
+        const recoveredClose = { preventDefault: vi.fn() };
+        close(recoveredClose);
+        assert.equal(recoveredClose.preventDefault.mock.calls.length, 1);
+        assert.equal(fakeWindow.hide.mock.calls.length, 2);
       }).pipe(Effect.provide(layer));
     }),
   );

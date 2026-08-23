@@ -92,6 +92,7 @@ function makePoolLayer(
           flushMainWindowBounds: Effect.void,
           setBackgroundModeEnabled: () => undefined,
           prepareForQuit: () => undefined,
+          resetQuitPreparation: () => undefined,
           dispatchMenuAction: () => Effect.die("unexpected menu action"),
           zoomMain: () => Effect.die("unexpected zoom"),
           syncAppearance: Effect.void,

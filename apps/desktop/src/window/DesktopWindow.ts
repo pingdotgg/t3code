@@ -103,6 +103,7 @@ export class DesktopWindow extends Context.Service<
     // be accepted or cancelled before its listener returns.
     readonly setBackgroundModeEnabled: (enabled: boolean) => void;
     readonly prepareForQuit: () => void;
+    readonly resetQuitPreparation: () => void;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
@@ -886,6 +887,9 @@ export const make = Effect.gen(function* () {
     },
     prepareForQuit: () => {
       quitPrepared = true;
+    },
+    resetQuitPreparation: () => {
+      quitPrepared = false;
     },
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });

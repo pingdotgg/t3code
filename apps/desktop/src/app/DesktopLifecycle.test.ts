@@ -95,6 +95,7 @@ function makeDesktopWindowLayer(
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
     setBackgroundModeEnabled: () => undefined,
     prepareForQuit: input.prepareForQuit ?? (() => undefined),
+    resetQuitPreparation: () => undefined,
     dispatchMenuAction: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
@@ -123,7 +124,15 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(makeElectronWindowLayer()),
         Layer.provideMerge(desktopWindowLayer),
         Layer.provideMerge(environmentLayer),
-        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopShutdown.DesktopShutdown, {
+            request: Effect.void,
+            awaitRequest: Effect.void,
+            markComplete: Effect.void,
+            awaitComplete: Effect.void,
+            isComplete: Effect.succeed(true),
+          }),
+        ),
         Layer.provideMerge(DesktopState.layer),
       );
 
@@ -150,6 +159,15 @@ describe("DesktopLifecycle", () => {
 
           const state = yield* DesktopState.DesktopState;
           assert.isTrue(yield* Ref.get(state.quitting));
+
+          yield* Ref.set(state.quitting, false);
+          let recoveryPrevented = false;
+          appListeners.get("before-quit")?.({
+            preventDefault: () => {
+              recoveryPrevented = true;
+            },
+          } as Electron.Event);
+          assert.isTrue(recoveryPrevented, "updater quit permission must be consumed once");
         }),
       ).pipe(Effect.provide(layer));
     });
