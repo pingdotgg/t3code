@@ -115,6 +115,18 @@ export type AcpParsedSessionEvent =
       readonly streamKind: AcpTextStreamKind;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "SessionInfoUpdated";
+      readonly title: string;
+      readonly updatedAt?: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly usedTokens: number;
+      readonly maxTokens?: number;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -514,11 +526,13 @@ export function syntheticLoadSessionResponseFromInitialize(
 
 export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotification): {
   readonly modeId?: string;
+  readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly events: ReadonlyArray<AcpParsedSessionEvent>;
 } {
   const upd = params.update;
   const events: Array<AcpParsedSessionEvent> = [];
   let modeId: string | undefined;
+  let configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
 
   switch (upd.sessionUpdate) {
     case "current_mode_update": {
@@ -529,6 +543,32 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           modeId,
         });
       }
+      break;
+    }
+    case "config_option_update": {
+      configOptions = upd.configOptions;
+      break;
+    }
+    case "session_info_update": {
+      const title = upd.title?.trim();
+      if (title) {
+        const updatedAt = upd.updatedAt?.trim();
+        events.push({
+          _tag: "SessionInfoUpdated",
+          title,
+          ...(updatedAt ? { updatedAt } : {}),
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "usage_update": {
+      events.push({
+        _tag: "UsageUpdated",
+        usedTokens: upd.used,
+        ...(upd.size > 0 ? { maxTokens: upd.size } : {}),
+        rawPayload: params,
+      });
       break;
     }
     case "plan": {
@@ -589,5 +629,9 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       break;
   }
 
-  return { ...(modeId !== undefined ? { modeId } : {}), events };
+  return {
+    ...(modeId !== undefined ? { modeId } : {}),
+    ...(configOptions !== undefined ? { configOptions } : {}),
+    events,
+  };
 }

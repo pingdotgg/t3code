@@ -353,6 +353,51 @@ describe("AcpRuntimeModel", () => {
         text: "considering options",
       },
     ]);
+
+    const metadataResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "session_info_update",
+        title: " Updated title ",
+        updatedAt: " 2026-08-23T12:00:00.000Z ",
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(metadataResult.events).toMatchObject([
+      {
+        _tag: "SessionInfoUpdated",
+        title: "Updated title",
+        updatedAt: "2026-08-23T12:00:00.000Z",
+      },
+    ]);
+
+    const usageResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1_024,
+        size: 262_144,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(usageResult.events).toMatchObject([
+      { _tag: "UsageUpdated", usedTokens: 1_024, maxTokens: 262_144 },
+    ]);
+
+    const configOptions = [
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        category: "thought_level" as const,
+        type: "select" as const,
+        currentValue: "high",
+        options: [{ value: "high", name: "High" }],
+      },
+    ];
+    expect(
+      parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: { sessionUpdate: "config_option_update", configOptions },
+      } satisfies EffectAcpSchema.SessionNotification).configOptions,
+    ).toEqual(configOptions);
   });
 
   it("keeps permission request parsing compatible with loose extension payloads", () => {

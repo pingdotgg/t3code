@@ -57,6 +57,8 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpThreadMetadataUpdatedEvent,
+  makeAcpThreadTokenUsageUpdatedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import {
@@ -866,6 +868,32 @@ export function makeCursorAdapter(
                         ...(event.itemId ? { itemId: event.itemId } : {}),
                         streamKind: event.streamKind,
                         text: event.text,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "SessionInfoUpdated":
+                    yield* offerRuntimeEvent(
+                      makeAcpThreadMetadataUpdatedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        title: event.title,
+                        ...(event.updatedAt ? { updatedAt: event.updatedAt } : {}),
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "UsageUpdated":
+                    yield* offerRuntimeEvent(
+                      makeAcpThreadTokenUsageUpdatedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        usedTokens: event.usedTokens,
+                        ...(event.maxTokens ? { maxTokens: event.maxTokens } : {}),
                         rawPayload: event.rawPayload,
                       }),
                     );

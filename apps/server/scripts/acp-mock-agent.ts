@@ -17,6 +17,10 @@ const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitThoughtChunks = process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1";
+const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
+const emitSessionInfoUpdate = process.env.T3_ACP_EMIT_SESSION_INFO_UPDATE === "1";
+const emitConfigOptionUpdate = process.env.T3_ACP_EMIT_CONFIG_OPTION_UPDATE === "1";
+const emitPromptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
@@ -869,6 +873,51 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitConfigOptionUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: [
+              {
+                id: "reasoning",
+                name: "Reasoning",
+                category: "thought_level",
+                type: "select",
+                currentValue: "high",
+                options: [
+                  { value: "low", name: "Low" },
+                  { value: "high", name: "High" },
+                ],
+              },
+            ],
+          },
+        });
+      }
+
+      if (emitSessionInfoUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "session_info_update",
+            title: "Grok investigated the workspace",
+            updatedAt: "2026-08-23T12:00:00.000Z",
+          },
+        });
+      }
+
+      if (emitUsageUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1_024,
+            size: 262_144,
+            cost: { amount: 0.02, currency: "USD" },
+          },
+        });
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -906,7 +955,20 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      return {
+        stopReason: "end_turn",
+        ...(emitPromptUsage
+          ? {
+              usage: {
+                inputTokens: 900,
+                outputTokens: 124,
+                totalTokens: 1_024,
+                cachedReadTokens: 300,
+                thoughtTokens: 24,
+              },
+            }
+          : {}),
+      };
     }),
   );
 

@@ -424,6 +424,58 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("refreshes config and emits standard ACP metadata and usage updates", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+
+      expect(yield* runtime.getConfigOptions).toMatchObject([
+        { id: "reasoning", currentValue: "high" },
+      ]);
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 6)));
+      expect(notes.map((note) => note._tag)).toEqual([
+        "SessionInfoUpdated",
+        "UsageUpdated",
+        "PlanUpdated",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+      ]);
+      expect(notes[0]).toMatchObject({
+        _tag: "SessionInfoUpdated",
+        title: "Grok investigated the workspace",
+      });
+      expect(notes[1]).toMatchObject({
+        _tag: "UsageUpdated",
+        usedTokens: 1_024,
+        maxTokens: 262_144,
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_CONFIG_OPTION_UPDATE: "1",
+              T3_ACP_EMIT_SESSION_INFO_UPDATE: "1",
+              T3_ACP_EMIT_USAGE_UPDATE: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("suppresses generic placeholder tool updates until completion", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

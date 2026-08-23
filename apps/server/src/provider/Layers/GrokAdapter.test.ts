@@ -298,6 +298,76 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("maps standard ACP session metadata, context usage, and prompt usage", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-standard-session-updates");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_SESSION_INFO_UPDATE: "1",
+          T3_ACP_EMIT_USAGE_UPDATE: "1",
+          T3_ACP_EMIT_PROMPT_USAGE: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "report usage", attachments: [] });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+
+      const metadataUpdated = runtimeEvents.find(
+        (event) => event.type === "thread.metadata.updated",
+      );
+      assert.equal(
+        metadataUpdated?.type === "thread.metadata.updated"
+          ? metadataUpdated.payload.name
+          : undefined,
+        "Grok investigated the workspace",
+      );
+      const usageUpdated = runtimeEvents.find(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.deepStrictEqual(
+        usageUpdated?.type === "thread.token-usage.updated"
+          ? usageUpdated.payload.usage
+          : undefined,
+        { usedTokens: 1_024, maxTokens: 262_144 },
+      );
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.deepStrictEqual(
+        completed?.type === "turn.completed" ? completed.payload.usage : undefined,
+        {
+          inputTokens: 900,
+          outputTokens: 124,
+          totalTokens: 1_024,
+          cachedReadTokens: 300,
+          thoughtTokens: 24,
+        },
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
