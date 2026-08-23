@@ -1,5 +1,5 @@
 import type { DesktopSpeechStatus } from "@t3tools/contracts";
-import { MicIcon, SquareIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, MicIcon, SquareIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -38,7 +38,9 @@ export function ComposerSpeechButton(props: {
             <Button
               type="button"
               size="icon-sm"
-              variant={recording ? "destructive" : "ghost"}
+              variant={
+                recording ? "destructive" : state === "error" ? "destructive-outline" : "ghost"
+              }
               aria-label={label}
               aria-pressed={recording}
               aria-disabled={inactive}
@@ -53,7 +55,7 @@ export function ComposerSpeechButton(props: {
                 <>
                   <span
                     aria-hidden
-                    className="absolute inset-0 rounded-[inherit] bg-white/20 transition-transform"
+                    className="absolute inset-0 rounded-[inherit] bg-white/20 transition-transform motion-reduce:transition-none"
                     style={{ transform: `scale(${0.84 + Math.min(1, props.level) * 0.16})` }}
                   />
                   <SquareIcon className="relative size-3 fill-current" />
@@ -61,7 +63,7 @@ export function ComposerSpeechButton(props: {
               ) : busy ? (
                 <Spinner aria-hidden />
               ) : state === "error" ? (
-                <XIcon />
+                <CircleAlertIcon />
               ) : (
                 <MicIcon />
               )}
