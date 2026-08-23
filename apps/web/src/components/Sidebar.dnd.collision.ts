@@ -10,6 +10,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 
 import {
   parseSidebarDndSectionId,
+  SIDEBAR_DND_SECTIONS,
   type SidebarDndSection,
   type SidebarThreadDragTransaction,
 } from "./Sidebar.dnd.logic";
@@ -21,7 +22,6 @@ interface SidebarThreadCollisionInput {
   readonly transaction: SidebarThreadDragTransaction;
   readonly sourceThread: EnvironmentThreadShell;
   readonly reorderablePinnedKeys: ReadonlySet<string>;
-  readonly viewport: HTMLDivElement | null;
   readonly canDropThreadInSection: (
     thread: EnvironmentThreadShell,
     source: SidebarDndSection,
@@ -58,40 +58,8 @@ export function detectSidebarThreadCollision(input: SidebarThreadCollisionInput)
     else sectionByThreadKey.set(entry.id, entrySection);
   }
 
-  if (transaction.sourceSection === "pinned" && args.pointerCoordinates !== null) {
-    const pinnedContainers = args.droppableContainers.filter(
-      (container) =>
-        typeof container.id === "string" &&
-        sectionByThreadKey.get(container.id) === "pinned" &&
-        input.reorderablePinnedKeys.has(container.id),
-    );
-    const pinnedRects = pinnedContainers.flatMap((container) => {
-      const rect = args.droppableRects.get(container.id);
-      return rect === undefined ? [] : [rect];
-    });
-    const regularBoundary = args.droppableContainers.find(
-      (container) => parseSidebarDndSectionId(container.id) === "regular",
-    );
-    const regularBoundaryTop =
-      regularBoundary === undefined
-        ? null
-        : (args.droppableRects.get(regularBoundary.id)?.top ?? null);
-    const pointerOwnsPinned =
-      pinnedRects.length > 0 &&
-      args.pointerCoordinates.x >= Math.min(...pinnedRects.map((rect) => rect.left)) &&
-      args.pointerCoordinates.x <= Math.max(...pinnedRects.map((rect) => rect.right)) &&
-      (regularBoundaryTop === null || args.pointerCoordinates.y < regularBoundaryTop);
-    if (pointerOwnsPinned) {
-      return closestCenter({
-        ...args,
-        droppableContainers: pinnedContainers,
-      });
-    }
-  }
-
   const sectionByContainerId = new Map<UniqueIdentifier, SidebarDndSection>();
   const validCandidates = args.droppableContainers.filter((container) => {
-    if (container.id === args.active.id) return false;
     const section = containerSection({ containerId: container.id, sectionByThreadKey });
     if (
       section === null ||
@@ -112,15 +80,16 @@ export function detectSidebarThreadCollision(input: SidebarThreadCollisionInput)
   });
 
   const visualDroppableRects = new Map(args.droppableRects);
-  let visualTop = Number.POSITIVE_INFINITY;
-  let visualBottom = Number.NEGATIVE_INFINITY;
+  const sectionTop = new Map<SidebarDndSection, number>();
   let pointerInsideBoardWidth = false;
   for (const container of validCandidates) {
     const rect = visualRect(args, container);
     if (rect === undefined) continue;
     visualDroppableRects.set(container.id, rect);
-    visualTop = Math.min(visualTop, rect.top);
-    visualBottom = Math.max(visualBottom, rect.bottom);
+    const section = sectionByContainerId.get(container.id);
+    if (section !== undefined) {
+      sectionTop.set(section, Math.min(sectionTop.get(section) ?? rect.top, rect.top));
+    }
     if (
       args.pointerCoordinates !== null &&
       rect.left <= args.pointerCoordinates.x &&
@@ -130,39 +99,37 @@ export function detectSidebarThreadCollision(input: SidebarThreadCollisionInput)
     }
   }
 
-  const snoozedBoundary = validCandidates.find(
-    (container) => parseSidebarDndSectionId(container.id) === "snoozed",
-  );
-  const snoozedBoundaryTop =
-    snoozedBoundary === undefined
-      ? null
-      : (visualDroppableRects.get(snoozedBoundary.id)?.top ?? null);
-  const settledBoundary = validCandidates.find(
-    (container) => parseSidebarDndSectionId(container.id) === "settled",
-  );
-  const settledBoundaryTop =
-    settledBoundary === undefined
-      ? null
-      : (visualDroppableRects.get(settledBoundary.id)?.top ?? null);
-  // DragOverlay is allowed to morph between the card and slim presentations.
-  // Shelf ownership must stay based on the source row geometry, otherwise the
-  // overlay resize changes the collision result that selected its own shape.
-  const cardCenterY =
+  const sourceCollisionRect =
     args.pointerCoordinates === null
-      ? args.collisionRect.top + args.collisionRect.height / 2
-      : args.pointerCoordinates.y +
-        (0.5 - transaction.pointerAnchor.y) * transaction.sourceRect.height;
-  const shelfSection =
-    settledBoundaryTop !== null && cardCenterY >= settledBoundaryTop
-      ? "settled"
-      : snoozedBoundaryTop !== null && cardCenterY >= snoozedBoundaryTop
-        ? "snoozed"
-        : null;
+      ? args.collisionRect
+      : {
+          top:
+            args.pointerCoordinates.y - transaction.pointerAnchor.y * transaction.sourceRect.height,
+          bottom:
+            args.pointerCoordinates.y +
+            (1 - transaction.pointerAnchor.y) * transaction.sourceRect.height,
+          left:
+            args.pointerCoordinates.x - transaction.pointerAnchor.x * transaction.sourceRect.width,
+          right:
+            args.pointerCoordinates.x +
+            (1 - transaction.pointerAnchor.x) * transaction.sourceRect.width,
+          width: transaction.sourceRect.width,
+          height: transaction.sourceRect.height,
+        };
+  const cardCenterY = sourceCollisionRect.top + sourceCollisionRect.height / 2;
+  let ownedSection: SidebarDndSection | null = null;
+  for (const section of SIDEBAR_DND_SECTIONS) {
+    const top = sectionTop.get(section);
+    if (top === undefined) continue;
+    const ownershipY =
+      section === "regular" && args.pointerCoordinates !== null
+        ? args.pointerCoordinates.y
+        : cardCenterY;
+    if (ownedSection === null || ownershipY >= top) ownedSection = section;
+  }
   const collisionCandidates = validCandidates.filter((container) => {
     const section = sectionByContainerId.get(container.id);
-    return shelfSection === null
-      ? section !== "snoozed" && section !== "settled"
-      : section === shelfSection;
+    return section === ownedSection;
   });
 
   const pointerCollisions = pointerWithin({
@@ -174,16 +141,9 @@ export function detectSidebarThreadCollision(input: SidebarThreadCollisionInput)
 
   if (args.pointerCoordinates !== null) {
     if (!pointerInsideBoardWidth) return [];
-    const { x, y } = args.pointerCoordinates;
-    const viewportRect = input.viewport === null ? null : getClientRect(input.viewport);
-    const hitAreaTop = viewportRect?.top ?? visualTop;
-    const hitAreaBottom = viewportRect?.bottom ?? visualBottom;
     return closestCenter({
       ...args,
-      collisionRect:
-        y < hitAreaTop || y > hitAreaBottom
-          ? args.collisionRect
-          : { width: 0, height: 0, top: y, bottom: y, left: x, right: x },
+      collisionRect: sourceCollisionRect,
       droppableContainers: collisionCandidates,
       droppableRects: visualDroppableRects,
     });
@@ -191,6 +151,7 @@ export function detectSidebarThreadCollision(input: SidebarThreadCollisionInput)
 
   return rectIntersection({
     ...args,
+    collisionRect: sourceCollisionRect,
     droppableContainers: collisionCandidates,
     droppableRects: visualDroppableRects,
   });

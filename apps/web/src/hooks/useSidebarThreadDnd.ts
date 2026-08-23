@@ -586,11 +586,10 @@ export function useSidebarThreadDnd(input: {
         transaction: current,
         sourceThread,
         reorderablePinnedKeys: input.reorderablePinnedKeys,
-        viewport: layout.viewportRef.current,
         canDropThreadInSection,
       });
     },
-    [canDropThreadInSection, currentSourceThread, input.reorderablePinnedKeys, layout],
+    [canDropThreadInSection, currentSourceThread, input.reorderablePinnedKeys],
   );
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
