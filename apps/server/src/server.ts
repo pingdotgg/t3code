@@ -108,7 +108,10 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
-import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import {
+  OrchestrationInfrastructureLayerLive,
+  OrchestrationLayerLive,
+} from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -386,7 +389,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(
-    ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(OrchestrationLayerLive)),
+    // Drivers only read the projection (skill workspace discovery), so the
+    // narrower infrastructure layer — snapshot query, event store, pipeline,
+    // background registries, no engine — satisfies them. Same layer reference
+    // as the full orchestration wiring below, so Effect memoizes one instance.
+    ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(OrchestrationInfrastructureLayerLive)),
   ),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and

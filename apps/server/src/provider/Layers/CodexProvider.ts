@@ -25,7 +25,11 @@ import type {
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { normalizeProviderSkillWorkspacePath } from "@t3tools/shared/providerSkills";
+import {
+  compareWorkspaceScopedEntries,
+  normalizeProviderSkillWorkspacePath,
+  workspaceScopedInventoryKey,
+} from "@t3tools/shared/providerSkills";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
@@ -342,19 +346,14 @@ export function parseCodexSkillsListResponse(
     for (const skill of entry.skills) {
       const projectScoped = !isCodexUserScopedSkill(skill.scope ?? undefined);
       const sourceCwd = projectScoped ? resolvedEntryCwd : undefined;
-      const key =
-        sourceCwd === undefined ? `user:${skill.name}` : `cwd:${sourceCwd}\0${skill.name}`;
-      skillsByKey.set(key, parseCodexSkillEntry(skill, sourceCwd));
+      skillsByKey.set(
+        workspaceScopedInventoryKey(skill.name, sourceCwd),
+        parseCodexSkillEntry(skill, sourceCwd),
+      );
     }
   }
 
-  return [...skillsByKey.values()].sort((left, right) => {
-    const byName = left.name.localeCompare(right.name);
-    if (byName !== 0) {
-      return byName;
-    }
-    return (left.sourceCwd ?? "").localeCompare(right.sourceCwd ?? "");
-  });
+  return [...skillsByKey.values()].sort(compareWorkspaceScopedEntries);
 }
 
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
@@ -577,6 +576,16 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
   return { status: "ready", auth };
 }
 
+export interface CheckCodexProviderStatusOptions {
+  readonly environment?: NodeJS.ProcessEnv;
+  /**
+   * Workspace paths for `skills/list` (project roots + worktrees). Defaults
+   * to [process.cwd()]. The app-server process itself always spawns at the
+   * server's cwd — skill scope must not change where the binary runs.
+   */
+  readonly skillCwds?: ReadonlyArray<string>;
+}
+
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
@@ -592,22 +601,17 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     CodexErrors.CodexAppServerError,
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
-  environment?: NodeJS.ProcessEnv,
-  /**
-   * Workspace paths for `skills/list` (project roots + worktrees). Spawn uses
-   * the first path (or process.cwd()). Defaults to [process.cwd()].
-   */
-  skillCwds: ReadonlyArray<string> = [process.cwd()],
+  options: CheckCodexProviderStatusOptions = {},
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
   ChildProcessSpawner.ChildProcessSpawner
 > {
-  const resolvedEnvironment = environment ?? process.env;
+  const resolvedEnvironment = options.environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
-  const resolvedSkillCwds = skillCwds.length > 0 ? [...skillCwds] : [process.cwd()];
-  const spawnCwd = resolvedSkillCwds[0] ?? process.cwd();
+  const resolvedSkillCwds =
+    options.skillCwds && options.skillCwds.length > 0 ? [...options.skillCwds] : [process.cwd()];
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
@@ -630,7 +634,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
-    cwd: spawnCwd,
+    cwd: process.cwd(),
     skillCwds: resolvedSkillCwds,
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,

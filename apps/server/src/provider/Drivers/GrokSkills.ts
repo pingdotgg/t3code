@@ -16,7 +16,12 @@
 import * as NodeOS from "node:os";
 
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
-import { normalizeProviderSkillWorkspacePath } from "@t3tools/shared/providerSkills";
+import {
+  compareWorkspaceScopedEntries,
+  nonEmptyTrimmed,
+  normalizeProviderSkillWorkspacePath,
+  workspaceScopedInventoryKey,
+} from "@t3tools/shared/providerSkills";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -116,27 +121,12 @@ export interface GrokHarnessCatalog {
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 }
 
-function nonEmptyTrimmed(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
 function isGrokProjectSkillSource(sourceType: string): boolean {
   return GROK_PROJECT_SKILL_SOURCE_TYPES.has(sourceType.trim().toLowerCase());
 }
 
-function skillInventoryKey(name: string, sourceCwd: string | undefined): string {
-  return sourceCwd === undefined ? `user:${name}` : `cwd:${sourceCwd}\0${name}`;
-}
-
 function sortGrokSkills(skills: Iterable<ServerProviderSkill>): ServerProviderSkill[] {
-  return [...skills].sort((left, right) => {
-    const byName = left.name.localeCompare(right.name);
-    if (byName !== 0) {
-      return byName;
-    }
-    return (left.sourceCwd ?? "").localeCompare(right.sourceCwd ?? "");
-  });
+  return [...skills].sort(compareWorkspaceScopedEntries);
 }
 
 function parseInspectJsonObject(text: string): unknown {
@@ -223,7 +213,7 @@ export function parseGrokInspectReport(report: unknown, sourceCwd?: string): Gro
     const scope = nonEmptyTrimmed(skill.source.type);
     const description = nonEmptyTrimmed(skill.description);
 
-    skillsByKey.set(skillInventoryKey(name, skillSourceCwd), {
+    skillsByKey.set(workspaceScopedInventoryKey(name, skillSourceCwd), {
       name,
       path: skillPath,
       enabled: true,
@@ -318,7 +308,7 @@ export function parseGrokAvailableCommands(
       continue;
     }
     const skillName = skillMeta.bareName ?? name;
-    skillsByKey.set(skillInventoryKey(skillName, skillSourceCwd), {
+    skillsByKey.set(workspaceScopedInventoryKey(skillName, skillSourceCwd), {
       name: skillName,
       path: skillMeta.path,
       enabled: true,
@@ -342,11 +332,11 @@ export function mergeGrokHarnessCatalogs(
 
   for (const catalog of catalogs) {
     for (const skill of catalog.skills) {
-      skillsByKey.set(skillInventoryKey(skill.name, skill.sourceCwd), skill);
+      skillsByKey.set(workspaceScopedInventoryKey(skill.name, skill.sourceCwd), skill);
     }
     for (const command of catalog.slashCommands) {
       slashCommandsByName.set(
-        skillInventoryKey(command.name.toLowerCase(), command.sourceCwd),
+        workspaceScopedInventoryKey(command.name.toLowerCase(), command.sourceCwd),
         command,
       );
     }
@@ -354,31 +344,37 @@ export function mergeGrokHarnessCatalogs(
 
   return {
     skills: sortGrokSkills(skillsByKey.values()),
-    slashCommands: [...slashCommandsByName.values()],
+    slashCommands: [...slashCommandsByName.values()].sort(compareWorkspaceScopedEntries),
   };
 }
 
 /**
  * Inspect is the skill authority when the harness returned a report. When
  * inspect is missing, union filesystem skills with any ACP-advertised skills
- * so a single-cwd ACP probe cannot wipe other worktrees. ACP slash commands
- * win when the session advertised a menu.
+ * so a single-cwd ACP probe cannot wipe other worktrees.
+ *
+ * The ACP menu only reflects the one cwd its probe session ran in, so its
+ * slash commands MERGE into the catalog instead of replacing it: same-key
+ * entries prefer the live menu (it is what the harness honors), while other
+ * workspaces keep their inspect-derived commands. Project-scoped ACP entries
+ * arrive pre-tagged with the probed cwd by `parseGrokAvailableCommands`.
  */
 export function resolveGrokPickerCatalog(input: {
   readonly filesystemSkills: ReadonlyArray<ServerProviderSkill>;
   readonly inspectCatalog?: GrokHarnessCatalog;
   readonly acpCatalog?: GrokHarnessCatalog;
 }): GrokHarnessCatalog {
+  const harnessCatalogs: ReadonlyArray<GrokHarnessCatalog> = [
+    ...(input.inspectCatalog ? [input.inspectCatalog] : []),
+    ...(input.acpCatalog ? [input.acpCatalog] : []),
+  ];
   const skills = input.inspectCatalog
     ? input.inspectCatalog.skills
     : mergeGrokHarnessCatalogs([
         { skills: input.filesystemSkills, slashCommands: [] },
-        input.acpCatalog ?? { skills: [], slashCommands: [] },
+        ...harnessCatalogs,
       ]).skills;
-  const slashCommands = input.acpCatalog
-    ? input.acpCatalog.slashCommands
-    : (input.inspectCatalog?.slashCommands ?? []);
-  return { skills, slashCommands };
+  return { skills, slashCommands: mergeGrokHarnessCatalogs(harnessCatalogs).slashCommands };
 }
 
 const discoverGrokProjectSkills = Effect.fn("discoverGrokProjectSkills")(function* (

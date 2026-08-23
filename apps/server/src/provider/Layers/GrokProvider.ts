@@ -185,25 +185,35 @@ const runGrokVersionCommand = (
     );
   });
 
-export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
-  grokSettings: GrokSettings,
-  environment: NodeJS.ProcessEnv = process.env,
+export interface CheckGrokProviderStatusOptions {
+  readonly environment?: NodeJS.ProcessEnv;
   /**
    * Workspace path(s) for project-scoped skill discovery: registered project
-   * roots, thread worktrees, and server cwd (see resolveSkillWorkspaceCwds).
+   * roots and thread worktrees (see resolveSkillWorkspaceCwds). Defaults to
+   * the process cwd.
    */
-  cwd: string | ReadonlyArray<string> = process.cwd(),
+  readonly skillCwds?: string | ReadonlyArray<string>;
+}
+
+export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
+  grokSettings: GrokSettings,
+  options: CheckGrokProviderStatusOptions = {},
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
+  const environment = options.environment ?? process.env;
+  const skillCwdList =
+    typeof options.skillCwds === "string"
+      ? [options.skillCwds]
+      : (options.skillCwds ?? [process.cwd()]);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
   const binaryPath = grokSettings.binaryPath || "grok";
 
   if (!grokSettings.enabled) {
-    const filesystemSkills = yield* discoverGrokSkills(cwd);
+    const filesystemSkills = yield* discoverGrokSkills(skillCwdList);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: false,
@@ -230,7 +240,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     yield* Effect.logWarning("Grok CLI health check failed.", {
       errorTag: error._tag,
     });
-    const filesystemSkills = yield* discoverGrokSkills(cwd);
+    const filesystemSkills = yield* discoverGrokSkills(skillCwdList);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -250,7 +260,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   if (Option.isNone(versionResult.success)) {
-    const filesystemSkills = yield* discoverGrokSkills(cwd);
+    const filesystemSkills = yield* discoverGrokSkills(skillCwdList);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -275,7 +285,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       stdoutLength: versionOutput.stdout.length,
       stderrLength: versionOutput.stderr.length,
     });
-    const filesystemSkills = yield* discoverGrokSkills(cwd);
+    const filesystemSkills = yield* discoverGrokSkills(skillCwdList);
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
@@ -296,17 +306,17 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     [
       queryGrokInspectCatalog({
         binaryPath,
-        cwd,
+        cwd: skillCwdList,
         environment,
       }),
-      discoverGrokModelsViaAcp(grokSettings, environment, firstGrokWorkspaceCwd(cwd)).pipe(
+      discoverGrokModelsViaAcp(grokSettings, environment, firstGrokWorkspaceCwd(skillCwdList)).pipe(
         Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
         Effect.exit,
       ),
     ],
     { concurrency: 2 },
   );
-  const filesystemSkills = inspectCatalog ? [] : yield* discoverGrokSkills(cwd);
+  const filesystemSkills = inspectCatalog ? [] : yield* discoverGrokSkills(skillCwdList);
   const inspectPicker = resolveGrokPickerCatalog({
     filesystemSkills,
     ...(inspectCatalog ? { inspectCatalog } : {}),

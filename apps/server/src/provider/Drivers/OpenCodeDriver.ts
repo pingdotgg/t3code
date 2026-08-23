@@ -150,15 +150,24 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = Effect.gen(function* () {
-        const skillCwds = yield* resolveSkillWorkspaceCwds;
-        return yield* checkOpenCodeProviderStatus(effectiveConfig, skillCwds, processEnv);
+        // Services are captured from create()'s scope; the check itself stays
+        // requirement-free for makeManagedServerProvider.
+        const activeWorkspaceCwds = yield* projectionSnapshotQuery
+          .getActiveWorkspaceCwds()
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+        return yield* checkOpenCodeProviderStatus(effectiveConfig, {
+          skillCwds: resolveSkillWorkspaceCwds({
+            path,
+            serverCwd: serverConfig.cwd,
+            activeWorkspaceCwds,
+          }),
+          environment: processEnv,
+        });
       }).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(ServerConfig, serverConfig),
-        Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

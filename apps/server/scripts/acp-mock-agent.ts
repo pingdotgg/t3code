@@ -32,6 +32,8 @@ const emitAvailableCommandsBeforeLoadFailure =
   process.env.T3_ACP_EMIT_AVAILABLE_COMMANDS_BEFORE_LOAD_FAILURE === "1";
 const emitForeignAvailableCommandsDuringLoad =
   process.env.T3_ACP_EMIT_FOREIGN_AVAILABLE_COMMANDS_DURING_LOAD === "1";
+const emitForeignAvailableCommandsDuringInit =
+  process.env.T3_ACP_EMIT_FOREIGN_AVAILABLE_COMMANDS_DURING_INIT === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
@@ -317,6 +319,17 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
+      if (emitForeignAvailableCommandsDuringInit) {
+        // Advertise under a foreign/child session id before the runtime knows
+        // its own session id — the startup capture window must reject this.
+        yield* agent.client.sessionUpdate({
+          sessionId: "foreign-init-session-id",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "foreign-command", description: "Foreign init command" }],
+          },
+        });
+      }
       yield* agent.client.sessionUpdate({
         sessionId,
         update: {

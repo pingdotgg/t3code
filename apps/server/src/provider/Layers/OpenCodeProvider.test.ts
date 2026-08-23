@@ -23,7 +23,7 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 /**
  * The legacy `OpenCodeProviderLive` Layer + `OpenCodeProvider` service tag
  * are deleted. The snapshot-producing logic they wrapped now lives in the
- * standalone `checkOpenCodeProviderStatus(settings, cwd)` Effect, which
+ * standalone `checkOpenCodeProviderStatus(settings, options)` Effect, which
  * drivers call directly when building their per-instance snapshot
  * `ServerProviderShape`. Tests mirror that shape: build a settings payload,
  * invoke the check, assert on the returned snapshot.
@@ -149,7 +149,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   it.effect("shows a codex-style missing binary message", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), {
+        skillCwds: process.cwd(),
+      });
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, false);
@@ -163,7 +165,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   it.effect("hides generic Effect.tryPromise text for local CLI probe failures", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("An error occurred in Effect.tryPromise");
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), {
+        skillCwds: process.cwd(),
+      });
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, true);
@@ -203,7 +207,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ],
       };
 
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), {
+        skillCwds: process.cwd(),
+      });
       const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
 
       NodeAssert.ok(model);
@@ -228,7 +234,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
   it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
     Effect.gen(function* () {
-      yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), { skillCwds: process.cwd() });
 
       NodeAssert.equal(runtimeMock.state.closeCalls, 0);
       NodeAssert.equal(runtimeMock.state.inventoryCwd, process.cwd());
@@ -238,7 +244,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   it.effect("reports local model inventory failures without treating them as empty", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventoryError = new Error("opencode models failed");
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), {
+        skillCwds: process.cwd(),
+      });
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, true);
@@ -267,10 +275,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         ["/workspace/b", JSON.stringify({ command: { shared: { template: "..." } } })],
       ]);
 
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), [
-        "/workspace/a",
-        "/workspace/b",
-      ]);
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), {
+        skillCwds: ["/workspace/a", "/workspace/b"],
+      });
 
       const byName = (name: string) =>
         snapshot.slashCommands.find((command) => command.name === name);
@@ -283,7 +290,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
   it.effect("degrades to built-in slash commands when debug config is unavailable", () =>
     Effect.gen(function* () {
-      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), {
+        skillCwds: process.cwd(),
+      });
 
       NodeAssert.deepEqual(
         snapshot.slashCommands.map((command) => command.name),
@@ -302,7 +311,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
           serverUrl: "http://127.0.0.1:9999",
           serverPassword: "secret-password",
         }),
-        process.cwd(),
+        { skillCwds: process.cwd() },
       );
 
       NodeAssert.equal(snapshot.status, "error");
@@ -324,7 +333,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
           serverUrl: "http://127.0.0.1:9999",
           serverPassword: "secret-password",
         }),
-        process.cwd(),
+        { skillCwds: process.cwd() },
       );
 
       NodeAssert.equal(snapshot.status, "error");

@@ -1,5 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
+import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkillDisplay";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,

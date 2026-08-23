@@ -6,7 +6,11 @@
  * @module provider/Drivers/SkillDiscovery
  */
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { normalizeProviderSkillWorkspacePath } from "@t3tools/shared/providerSkills";
+import {
+  compareWorkspaceScopedEntries,
+  normalizeProviderSkillWorkspacePath,
+  workspaceScopedInventoryKey,
+} from "@t3tools/shared/providerSkills";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -134,15 +138,6 @@ export function normalizeSkillWorkspaceCwds(
 }
 
 /**
- * Collision key: user/global skills collide by name only; project skills
- * collide by (sourceCwd, name) so the same skill name can exist in two
- * workspaces without one wiping the other from the inventory.
- */
-function skillInventoryKey(name: string, sourceCwd: string | undefined): string {
-  return sourceCwd === undefined ? `user:${name}` : `cwd:${sourceCwd}\0${name}`;
-}
-
-/**
  * Collect skills from ordered roots. Later roots override earlier ones on
  * name collision within the same inventory key (callers should list user
  * roots first, then project roots for a given workspace, so project wins —
@@ -191,7 +186,7 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
         continue;
       }
 
-      skillsByKey.set(skillInventoryKey(name, sourceCwd), {
+      skillsByKey.set(workspaceScopedInventoryKey(name, sourceCwd), {
         name,
         path: skillPath,
         enabled: true,
@@ -204,11 +199,5 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
     }
   }
 
-  return [...skillsByKey.values()].sort((left, right) => {
-    const byName = left.name.localeCompare(right.name);
-    if (byName !== 0) {
-      return byName;
-    }
-    return (left.sourceCwd ?? "").localeCompare(right.sourceCwd ?? "");
-  });
+  return [...skillsByKey.values()].sort(compareWorkspaceScopedEntries);
 });

@@ -130,6 +130,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           const grokPath = path.join(dir, "grok");
           yield* fs.writeFileString(
             path.join(dir, "inspect.json"),
+            // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed harness-owned fixture document.
             JSON.stringify({
               skills: [
                 {
@@ -164,8 +165,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            process.env,
-            workspace,
+            { environment: process.env, skillCwds: workspace },
           );
         }),
       );
@@ -211,8 +211,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            process.env,
-            workspace,
+            { environment: process.env, skillCwds: workspace },
           );
         }),
       );
@@ -251,8 +250,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           const result = yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: false, binaryPath: grokPath }),
-            process.env,
-            workspace,
+            { environment: process.env, skillCwds: workspace },
           );
           const inspectRan = yield* fs.exists(marker);
           expect(inspectRan).toBe(false);

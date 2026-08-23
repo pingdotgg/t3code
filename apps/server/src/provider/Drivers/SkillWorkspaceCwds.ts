@@ -6,43 +6,45 @@
  * is tagged with its `sourceCwd`; clients filter the `$` picker to the
  * active chat's worktree or project root (see filterProviderSkillsForWorkspace).
  *
+ * The server process cwd is a bootstrap root only: when no projects or
+ * worktrees are registered yet, discovery still has something to scan. Once
+ * real workspaces exist, the server's own directory would only add noise
+ * (and payload) to every snapshot, so it is dropped.
+ *
  * @module provider/Drivers/SkillWorkspaceCwds
  */
-import * as Effect from "effect/Effect";
-import * as Path from "effect/Path";
+import type * as Path from "effect/Path";
 
-import { ServerConfig } from "../../config.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+export interface SkillWorkspaceCwdsInput {
+  readonly path: Path.Path;
+  /** `ServerConfig.cwd` — used only while no active workspace is known. */
+  readonly serverCwd: string;
+  /**
+   * Active project `workspaceRoot`s and thread `worktreePath`s, typically
+   * from `ProjectionSnapshotQuery.getActiveWorkspaceCwds`. Best-effort
+   * callers pass an empty array on projection read failures.
+   */
+  readonly activeWorkspaceCwds: ReadonlyArray<string>;
+}
 
 /**
  * Unique absolute workspace paths for skill discovery:
- * 1. ServerConfig.cwd (bootstrap / fallback)
- * 2. Every active project `workspaceRoot`
- * 3. Every active thread `worktreePath`
- *
- * Best-effort: projection read failures still return the server cwd.
+ * 1. Every active project `workspaceRoot` and thread `worktreePath`.
+ * 2. `serverCwd` as fallback when that set is empty.
  */
-export const resolveSkillWorkspaceCwds: Effect.Effect<
-  ReadonlyArray<string>,
-  never,
-  ServerConfig | ProjectionSnapshotQuery | Path.Path
-> = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const serverConfig = yield* ServerConfig;
-  const projection = yield* ProjectionSnapshotQuery;
-
+export function resolveSkillWorkspaceCwds(input: SkillWorkspaceCwdsInput): ReadonlyArray<string> {
   const resolved = new Set<string>();
-  resolved.add(path.resolve(serverConfig.cwd));
-
-  const workspaceCwds = yield* projection
-    .getActiveWorkspaceCwds()
-    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-  for (const workspaceCwd of workspaceCwds) {
+  for (const workspaceCwd of input.activeWorkspaceCwds) {
     const trimmed = workspaceCwd.trim();
     if (trimmed.length > 0) {
-      resolved.add(path.resolve(trimmed));
+      resolved.add(input.path.resolve(trimmed));
     }
   }
-
+  if (resolved.size === 0) {
+    const trimmedServerCwd = input.serverCwd.trim();
+    if (trimmedServerCwd.length > 0) {
+      resolved.add(input.path.resolve(trimmedServerCwd));
+    }
+  }
   return [...resolved];
-}).pipe(Effect.withSpan("resolveSkillWorkspaceCwds"));
+}

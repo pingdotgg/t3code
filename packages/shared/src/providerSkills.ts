@@ -94,6 +94,41 @@ function normalizeWindowsSkillWorkspacePath(value: string): string {
   return normalizeProjectPathForComparison(collapsed);
 }
 
+/**
+ * Trim a string and drop whitespace-only values. Shared because every
+ * harness parser needs the same "present or absent" semantics for optional
+ * names/descriptions.
+ */
+export function nonEmptyTrimmed(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Collision key shared by server-side inventory builders so their map keys
+ * stay in lockstep with `filterProviderSkillsForWorkspace`: user/global
+ * entries collide by name only; project entries collide by
+ * (`sourceCwd`, name) so two workspaces can hold the same skill name.
+ */
+export function workspaceScopedInventoryKey(name: string, sourceCwd: string | undefined): string {
+  return sourceCwd === undefined ? `user:${name}` : `cwd:${sourceCwd}\0${name}`;
+}
+
+/**
+ * Canonical display order for skills and slash commands: name, then
+ * `sourceCwd` so same-named workspace bags group deterministically.
+ */
+export function compareWorkspaceScopedEntries(
+  left: { readonly name: string; readonly sourceCwd?: string | undefined },
+  right: { readonly name: string; readonly sourceCwd?: string | undefined },
+): number {
+  const byName = left.name.localeCompare(right.name);
+  if (byName !== 0) {
+    return byName;
+  }
+  return (left.sourceCwd ?? "").localeCompare(right.sourceCwd ?? "");
+}
+
 export interface FilterProviderSkillsForWorkspaceOptions {
   /**
    * Project `workspaceRoot`. When the chat cwd is a worktree of this project,

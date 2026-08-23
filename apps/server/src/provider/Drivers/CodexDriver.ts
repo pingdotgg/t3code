@@ -173,14 +173,22 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // updates. Pre-provide `ChildProcessSpawner` so the check fits
       // `makeManagedServerProvider.checkProvider`'s `R = never`.
       const checkProvider = Effect.gen(function* () {
-        const skillCwds = yield* resolveSkillWorkspaceCwds;
-        return yield* checkCodexProviderStatus(effectiveConfig, undefined, processEnv, skillCwds);
+        // Services are captured from create()'s scope; the check itself stays
+        // requirement-free for makeManagedServerProvider.
+        const activeWorkspaceCwds = yield* projectionSnapshotQuery
+          .getActiveWorkspaceCwds()
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+        return yield* checkCodexProviderStatus(effectiveConfig, undefined, {
+          environment: processEnv,
+          skillCwds: resolveSkillWorkspaceCwds({
+            path,
+            serverCwd: serverConfig.cwd,
+            activeWorkspaceCwds,
+          }),
+        });
       }).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(ServerConfig, serverConfig),
-        Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CodexSettings>>({

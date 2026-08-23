@@ -254,7 +254,7 @@ it("resolveGrokPickerCatalog unions filesystem and ACP skills when inspect is mi
   assert.equal(catalog.slashCommands[0]?.name, "compact");
 });
 
-it("resolveGrokPickerCatalog treats an empty ACP menu as authoritative", () => {
+it("resolveGrokPickerCatalog keeps inspect commands when the ACP menu is empty", () => {
   const catalog = resolveGrokPickerCatalog({
     filesystemSkills: [],
     inspectCatalog: {
@@ -264,7 +264,38 @@ it("resolveGrokPickerCatalog treats an empty ACP menu as authoritative", () => {
     acpCatalog: { skills: [], slashCommands: [] },
   });
 
-  assert.deepEqual(catalog.slashCommands, []);
+  assert.deepEqual(
+    catalog.slashCommands.map((command) => command.name),
+    ["inspect-only"],
+  );
+});
+
+it("resolveGrokPickerCatalog merges ACP commands under their probed cwd", () => {
+  // The ACP probe session runs in one workspace; its menu must not wipe
+  // inspect-derived commands from other workspaces.
+  const catalog = resolveGrokPickerCatalog({
+    filesystemSkills: [],
+    inspectCatalog: {
+      skills: [],
+      slashCommands: [{ name: "review", sourceCwd: "/repo-b" }],
+    },
+    acpCatalog: {
+      skills: [],
+      slashCommands: [
+        { name: "compact", description: "Compress history" },
+        { name: "review", sourceCwd: "/repo-a" },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    catalog.slashCommands.map((command) => [command.name, command.sourceCwd]),
+    [
+      ["compact", undefined],
+      ["review", "/repo-a"],
+      ["review", "/repo-b"],
+    ],
+  );
 });
 
 it("mergeGrokHarnessCatalogs keeps same-named workspace commands separate", () => {
@@ -404,6 +435,7 @@ it.layer(NodeServices.layer)("queryGrokInspectCatalog", (it) => {
         const grokPath = path.join(dir, "grok");
         yield* fs.writeFileString(
           path.join(dir, "inspect.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed harness-owned fixture document.
           JSON.stringify({
             skills: [
               {
@@ -547,6 +579,7 @@ it.layer(NodeServices.layer)("queryGrokInspectCatalog", (it) => {
         );
         yield* fs.writeFileString(
           path.join(dir, "inspect.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed harness-owned fixture document.
           JSON.stringify({
             skills: [
               {

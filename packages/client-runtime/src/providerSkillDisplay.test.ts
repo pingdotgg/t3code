@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatProviderSkillDisplayName,
   resolveProviderSkillSourceKind,
-} from "./providerSkills.ts";
+} from "./providerSkillDisplay.ts";
 
 describe("formatProviderSkillDisplayName", () => {
   it("prefers the provider display name", () => {

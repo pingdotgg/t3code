@@ -72,7 +72,7 @@ it.layer(NodeServices.layer)("parseOpenCodeSdkCommands", (it) => {
 });
 
 it.layer(NodeServices.layer)("mergeOpenCodeCommandCwds", (it) => {
-  it("keeps harness commands scoped even when every workspace reports the name", () => {
+  it("promotes a command reported by every queried workspace to global", () => {
     const merged = mergeOpenCodeCommandCwds([
       {
         cwd: "/workspace/a",
@@ -89,10 +89,26 @@ it.layer(NodeServices.layer)("mergeOpenCodeCommandCwds", (it) => {
       [
         ["a-only", "/workspace/a", "A command"],
         ["b-only", "/workspace/b", undefined],
-        ["global-cmd", "/workspace/a", undefined],
-        ["global-cmd", "/workspace/b", undefined],
+        ["global-cmd", undefined, undefined],
         ["init", undefined, "guided AGENTS.md setup"],
         ["review", undefined, "review changes [commit|branch|pr], defaults to uncommitted"],
+      ],
+    );
+  });
+
+  it("keeps commands tagged when a queried workspace failed, even if one list reports everything", () => {
+    const merged = mergeOpenCodeCommandCwds(
+      [{ cwd: "/workspace/a", commands: [{ name: "everywhere" }, { name: "a-only" }] }],
+      { queriedCwdCount: 2 },
+    );
+
+    assert.deepEqual(
+      merged
+        .filter((command) => command.name !== "init" && command.name !== "review")
+        .map((command) => [command.name, command.sourceCwd]),
+      [
+        ["a-only", "/workspace/a"],
+        ["everywhere", "/workspace/a"],
       ],
     );
   });
@@ -208,11 +224,13 @@ it.layer(testInfraLayer)("queryOpenCodeCommandCatalog", (it) => {
         const byName = (name: string) => commands.find((command) => command.name === name);
         assert.equal(byName("deploy-check")?.sourceCwd, workspaceA);
         assert.equal(byName("b-tool")?.sourceCwd, workspaceB);
+        // "shared" is reported by every queried workspace, so it promotes to
+        // global instead of staying tagged per workspace.
         assert.deepEqual(
           commands
             .filter((command) => command.name === "shared")
             .map((command) => command.sourceCwd),
-          [workspaceA, workspaceB],
+          [undefined],
         );
         assert.ok(byName("init"));
         assert.ok(byName("review"));

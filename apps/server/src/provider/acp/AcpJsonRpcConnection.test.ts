@@ -144,6 +144,32 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("ignores foreign available commands advertised during session/new", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+      expect(yield* runtime.getAvailableCommands).toEqual([
+        expect.objectContaining({ name: "compact" }),
+        expect.objectContaining({ name: "create-skill" }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_EMIT_FOREIGN_AVAILABLE_COMMANDS_DURING_INIT: "1" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("keeps assistant item IDs unique when a provider session restarts", () => {
     const collectFirstAssistantItemId = Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

@@ -988,18 +988,32 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
     return yield* runCursorCommand(cursorSettings, ["about"], environment);
   });
 
+export interface CheckCursorProviderStatusOptions {
+  readonly environment?: NodeJS.ProcessEnv;
+  /**
+   * Workspace path(s) for project-scoped skill discovery: registered project
+   * roots and thread worktrees (see resolveSkillWorkspaceCwds). Defaults to
+   * the process cwd.
+   */
+  readonly skillCwds?: string | ReadonlyArray<string>;
+}
+
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
-  environment?: NodeJS.ProcessEnv,
-  cwd: string | ReadonlyArray<string> = process.cwd(),
+  options: CheckCursorProviderStatusOptions = {},
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > {
+  const environment = options.environment;
+  const skillCwdList =
+    typeof options.skillCwds === "string"
+      ? [options.skillCwds]
+      : (options.skillCwds ?? [process.cwd()]);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
-  const skills = yield* discoverCursorSkills(cwd);
+  const skills = yield* discoverCursorSkills(skillCwdList);
 
   if (!cursorSettings.enabled) {
     return buildServerProvider({

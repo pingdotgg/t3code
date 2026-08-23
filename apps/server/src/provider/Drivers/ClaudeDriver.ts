@@ -169,20 +169,28 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
       const checkProvider = Effect.gen(function* () {
-        const skillCwds = yield* resolveSkillWorkspaceCwds;
+        // Services are captured from create()'s scope; the check itself stays
+        // requirement-free for makeManagedServerProvider.
+        const activeWorkspaceCwds = yield* projectionSnapshotQuery
+          .getActiveWorkspaceCwds()
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
         return yield* checkClaudeProviderStatus(
           effectiveConfig,
           () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
-          processEnv,
-          skillCwds,
+          {
+            environment: processEnv,
+            skillCwds: resolveSkillWorkspaceCwds({
+              path,
+              serverCwd: serverConfig.cwd,
+              activeWorkspaceCwds,
+            }),
+          },
         );
       }).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
-        Effect.provideService(ServerConfig, serverConfig),
-        Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

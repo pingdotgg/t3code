@@ -1,7 +1,7 @@
 import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
-} from "@t3tools/client-runtime/providerSkills";
+} from "@t3tools/client-runtime/providerSkillDisplay";
 import {
   type ProjectEntry,
   type ProviderDriverKind,

@@ -304,25 +304,30 @@ export const makePendingOpenCodeProvider = (
     });
   });
 
+export interface CheckOpenCodeProviderStatusOptions {
+  /**
+   * Workspace path(s) for skill discovery and the OpenCode SDK directory
+   * (first path). Prefer registered project roots + worktrees.
+   */
+  readonly skillCwds: string | ReadonlyArray<string>;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
-  /**
-   * Workspace path(s) for skill discovery and OpenCode SDK directory (first
-   * path). Prefer registered project roots + worktrees.
-   */
-  cwd: string | ReadonlyArray<string>,
-  environment?: NodeJS.ProcessEnv,
+  options: CheckOpenCodeProviderStatusOptions,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
   OpenCodeRuntime | FileSystem.FileSystem | Path.Path
 > {
   const openCodeRuntime = yield* OpenCodeRuntime;
-  const resolvedEnvironment = environment ?? process.env;
+  const resolvedEnvironment = options.environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
-  const skillCwds = typeof cwd === "string" ? [cwd] : [...cwd];
+  const skillCwds =
+    typeof options.skillCwds === "string" ? [options.skillCwds] : [...options.skillCwds];
   const primaryCwd = skillCwds[0] ?? process.cwd();
   // Filesystem skills for the `$` picker (snapshot → web/mobile).
   const skills = yield* discoverOpenCodeSkills(skillCwds);

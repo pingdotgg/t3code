@@ -458,8 +458,10 @@ describe("checkCursorProviderStatus", () => {
           customModels: [],
         },
         {
-          ...process.env,
-          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          environment: {
+            ...process.env,
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          },
         },
       ),
     );

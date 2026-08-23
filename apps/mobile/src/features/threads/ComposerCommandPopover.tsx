@@ -1,7 +1,7 @@
 import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
-} from "@t3tools/client-runtime/providerSkills";
+} from "@t3tools/client-runtime/providerSkillDisplay";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { memo } from "react";

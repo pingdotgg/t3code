@@ -299,6 +299,13 @@ export const make = (
     const availableCommandsRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.AvailableCommand>>(
       [],
     );
+    // Pre-start advertisements, keyed by the session id the agent claimed.
+    // The runtime cannot know its session id until session/new resolves, so
+    // buffered menus are adopted only when that id is known (or dropped on
+    // failure) — a foreign/child advertisement during init can never leak in.
+    const pendingAvailableCommandsRef = yield* Ref.make<
+      ReadonlyMap<string, ReadonlyArray<EffectAcpSchema.AvailableCommand>>
+    >(new Map());
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
@@ -373,21 +380,43 @@ export const make = (
       }),
     ).pipe(Effect.provideService(Scope.Scope, runtimeScope));
 
+    const adoptPendingAvailableCommands = (sessionId: string) =>
+      Effect.gen(function* () {
+        const pending = yield* Ref.getAndSet(pendingAvailableCommandsRef, new Map());
+        const commands = pending.get(sessionId);
+        if (commands !== undefined) {
+          yield* Ref.set(availableCommandsRef, commands);
+        }
+      });
+
     const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
 
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
-        if (notification.update.sessionUpdate === "available_commands_update") {
+        const update = notification.update;
+        if (update.sessionUpdate === "available_commands_update") {
+          const commands = update.availableCommands;
           const startState = yield* Ref.get(startStateRef);
-          // Capture during startup (Grok advertises before session/new returns)
-          // and from the live session; ignore child/foreign session updates.
-          const belongsToRuntime =
-            startState._tag === "Started"
-              ? notification.sessionId === startState.result.sessionId
-              : options.resumeSessionId === undefined ||
-                notification.sessionId === options.resumeSessionId;
-          if (belongsToRuntime) {
-            yield* Ref.set(availableCommandsRef, notification.update.availableCommands);
+          if (startState._tag === "Started") {
+            // Live session menu; child/foreign session updates are ignored.
+            if (notification.sessionId === startState.result.sessionId) {
+              yield* Ref.set(availableCommandsRef, commands);
+            }
+          } else if (
+            options.resumeSessionId !== undefined &&
+            notification.sessionId === options.resumeSessionId
+          ) {
+            // Resuming: the target session id is known up front.
+            yield* Ref.set(availableCommandsRef, commands);
+          } else if (options.resumeSessionId === undefined) {
+            // Fresh startup: Grok advertises before session/new returns, but
+            // the runtime's session id is not knowable yet. Buffer per
+            // advertised id; start() adopts the matching entry.
+            yield* Ref.update(pendingAvailableCommandsRef, (pending) => {
+              const next = new Map(pending);
+              next.set(notification.sessionId, commands);
+              return next;
+            });
           }
         }
         const gate = yield* Ref.get(sessionLoadGateRef);
@@ -692,13 +721,15 @@ export const make = (
             return [
               startOnce.pipe(
                 Effect.tap((result) =>
-                  Ref.set(startStateRef, { _tag: "Started", result }).pipe(
+                  adoptPendingAvailableCommands(result.sessionId).pipe(
+                    Effect.andThen(Ref.set(startStateRef, { _tag: "Started", result })),
                     Effect.andThen(Deferred.succeed(deferred, result)),
                   ),
                 ),
                 Effect.onError((cause) =>
                   Deferred.failCause(deferred, cause).pipe(
                     Effect.andThen(Ref.set(availableCommandsRef, [])),
+                    Effect.andThen(Ref.set(pendingAvailableCommandsRef, new Map())),
                     Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
                   ),
                 ),

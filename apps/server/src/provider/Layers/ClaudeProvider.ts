@@ -804,23 +804,27 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+export interface CheckClaudeProviderStatusOptions {
+  readonly environment?: NodeJS.ProcessEnv;
+  /**
+   * Workspace path(s) for project-scoped skill discovery (project roots +
+   * worktrees). Optional; user skills still load without it.
+   */
+  readonly skillCwds?: string | ReadonlyArray<string>;
+}
+
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
     claudeSettings: ClaudeSettings,
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
-  environment?: NodeJS.ProcessEnv,
-  /**
-   * Workspace path(s) for project-scoped skill discovery (project roots +
-   * worktrees). Optional; user skills still load without it.
-   */
-  cwd?: string | ReadonlyArray<string>,
+  options: CheckClaudeProviderStatusOptions = {},
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
-  const resolvedEnvironment = environment ?? process.env;
+  const resolvedEnvironment = options.environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
@@ -930,7 +934,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  const skills = yield* discoverClaudeSkills(
+    claudeSettings,
+    options.skillCwds,
+    resolvedEnvironment,
+  );
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 

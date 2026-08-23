@@ -763,6 +763,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // Lightweight workspace set for infrastructure like skill discovery. A
+  // dedicated DISTINCT scan avoids decoding every active thread row just to
+  // collect one column.
+  const listActiveWorkspaceCwdRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ path: Schema.String }),
+    execute: () =>
+      sql`
+        SELECT DISTINCT workspace_root AS path
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+          AND trim(workspace_root) <> ''
+        UNION
+        SELECT DISTINCT worktree_path AS path
+        FROM projection_threads
+        WHERE deleted_at IS NULL
+          AND archived_at IS NULL
+          AND worktree_path IS NOT NULL
+          AND trim(worktree_path) <> ''
+      `,
+  });
+
   const readProjectionCounts = SqlSchema.findOne({
     Request: Schema.Void,
     Result: ProjectionCountsRowSchema,
@@ -2081,54 +2103,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
 
   const getActiveWorkspaceCwds: ProjectionSnapshotQueryShape["getActiveWorkspaceCwds"] = () =>
-    sql
-      .withTransaction(
-        Effect.all([
-          listProjectRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listProjects:query",
-                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listProjects:decodeRows",
-              ),
-            ),
-          ),
-          listActiveThreadRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listThreads:query",
-                "ProjectionSnapshotQuery.getActiveWorkspaceCwds:listThreads:decodeRows",
-              ),
-            ),
-          ),
-        ]),
-      )
-      .pipe(
-        Effect.map(([projectRows, threadRows]) => {
-          const paths = new Set<string>();
-          for (const project of projectRows) {
-            if (project.deletedAt === null && project.workspaceRoot.trim().length > 0) {
-              paths.add(project.workspaceRoot);
-            }
-          }
-          for (const thread of threadRows) {
-            if (
-              thread.deletedAt === null &&
-              thread.worktreePath !== null &&
-              thread.worktreePath.trim().length > 0
-            ) {
-              paths.add(thread.worktreePath);
-            }
-          }
-          return [...paths];
-        }),
-        Effect.mapError((error) =>
-          isPersistenceError(error)
-            ? error
-            : toPersistenceSqlError("ProjectionSnapshotQuery.getActiveWorkspaceCwds:transaction")(
-                error,
-              ),
+    listActiveWorkspaceCwdRows(undefined).pipe(
+      Effect.map((rows) => rows.map((row) => row.path)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getActiveWorkspaceCwds:query",
+          "ProjectionSnapshotQuery.getActiveWorkspaceCwds:decodeRows",
         ),
-      );
+      ),
+    );
 
   const getArchivedShellSnapshot: ProjectionSnapshotQueryShape["getArchivedShellSnapshot"] = () =>
     sql

@@ -45,24 +45,31 @@ Provider status probes discover skills for every registered project root and act
 project skills are not limited to the server process cwd. Each project skill is tagged with
 `sourceCwd` on `ServerProviderSkill` in `packages/contracts`; user/global skills omit it.
 Stamps are absolute and passed through `normalizeProviderSkillWorkspacePath` so they match client
-path forms (trailing separators, `.` / `..`, mixed slashes).
+path forms (trailing separators, `.` / `..`, mixed slashes). The server's own cwd is a
+bootstrap root only (`Drivers/SkillWorkspaceCwds.ts`): it is scanned while no projects or
+worktrees are registered and dropped from discovery once real workspaces exist, since its bag
+would otherwise ride every snapshot without ever matching a chat.
 
 Grok prefers the harness over a filesystem reimplementation. `grok inspect --json` is the
 inventory Grok itself would load (bundled, user, project, plugin) and is the `$` picker
-authority when the report includes a `skills` array. ACP `available_commands_update` on
-session start is the live `/` menu: built-in features such as `compact` and `deep-research`,
-plus user-invocable skills. Filesystem scanning of `.grok/skills`, `.claude/skills`, and
-`.agents/skills` fills in when inspect is missing, including project skills from a workspace
-whose inspect probe failed.
+authority when the report includes a `skills` array; it queries every workspace. ACP
+`available_commands_update` reflects only the single cwd its probe session ran in, so its
+menu merges into the catalog under that cwd instead of replacing inspect-derived commands:
+same-key entries prefer the live menu, other workspaces keep their entries. Filesystem
+scanning of `.grok/skills`, `.claude/skills`, and `.agents/skills` fills in when inspect is
+missing, including project skills from a workspace whose inspect probe failed.
 
 OpenCode follows the same harness-first rule for the `/` picker. Local installs resolve
 commands through `opencode debug config` per workspace cwd — the exact `.opencode/command(s)`,
 `~/.config/opencode/command(s)`, and `opencode.json` entries the harness would load — while
 configured external servers are queried through the SDK `command.list` per directory, which
 also sees MCP- and plugin-contributed commands. A command the harness reports for every
-queried workspace is global; one reported for a subset keeps that workspace's `sourceCwd` on
-`ServerProviderSlashCommand`. Built-ins (`init`, `review`) are registered in harness code, not
-config, so they merge from a constant in `Drivers/OpenCodeCommands.ts`. The `$` picker stays
+successfully queried workspace is global; one reported for a subset keeps that workspace's
+`sourceCwd` on `ServerProviderSlashCommand`. When a workspace query fails, survivors stay
+tagged — an unqueried workspace cannot confirm or deny a command. Built-ins (`init`,
+`review`) are registered in harness code, not config, so they merge from a constant in
+`Drivers/OpenCodeCommands.ts`, and a project command sharing a built-in's name stays tagged
+beside it instead of overriding the global entry. The `$` picker stays
 filesystem-based (`Drivers/OpenCodeSkills.ts`, covering `.opencode/skill(s)` plus compat
 roots) because the status probe deliberately avoids spawning a server and skills need their
 on-disk paths.
@@ -85,10 +92,14 @@ projects.
 
 **Payload cost (accepted interim):** multi-workspace inventories grow with the number of open
 project/worktree bags and ride provider snapshots over the websocket. Prefer a later scoped
-`listSkills(cwd)` RPC if multi-project environments show measurable bloat; do not re-flatten by
-name across workspaces.
+`listSkills(cwd)` RPC if multi-project environments show measurable bloat. Do not re-flatten by
+name across workspaces, and do not collapse sibling-worktree entries that share one physical
+`path`: the client filter matches on `sourceCwd`, so a single surviving tag would hide the
+skill from its sibling worktree chats. The scoped RPC (or multi-cwd tagging) is the fix path;
+dropping stamps is not.
 
-See [project-scoped-skills.html](./project-scoped-skills.html).
+See the Provider skills section above for the current model; this page is the
+authoritative description.
 
 ## How provider work is requested
 

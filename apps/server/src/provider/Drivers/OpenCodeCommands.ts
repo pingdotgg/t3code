@@ -11,8 +11,11 @@
  *
  * Harness-discovered commands are tagged with each reporting workspace's
  * `sourceCwd` so clients can scope the picker per project (see
- * filterProviderSlashCommandsForWorkspace). The per-workspace inventory does
- * not expose enough provenance to infer that a command is global.
+ * filterProviderSlashCommandsForWorkspace). A command the harness reports for
+ * every successfully queried workspace is global; when any workspace query
+ * fails, remaining entries stay tagged — an unqueried workspace cannot
+ * confirm or deny a command, so inferring globality would leak one project's
+ * commands into another's picker.
  *
  * Harness built-ins (`init`, `review`) are registered in code rather than
  * config, so neither discovery path is guaranteed to see them; they are
@@ -21,7 +24,11 @@
  * @module provider/Drivers/OpenCodeCommands
  */
 import type { ServerProviderSlashCommand } from "@t3tools/contracts";
-import { normalizeProviderSkillWorkspacePath } from "@t3tools/shared/providerSkills";
+import {
+  compareWorkspaceScopedEntries,
+  nonEmptyTrimmed,
+  normalizeProviderSkillWorkspacePath,
+} from "@t3tools/shared/providerSkills";
 import type { Command as OpenCodeSdkCommand, OpencodeClient } from "@opencode-ai/sdk/v2";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -57,21 +64,10 @@ const decodeOpenCodeDebugConfigStdoutExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(OpenCodeDebugConfig),
 );
 
-function nonEmptyTrimmed(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
 function sortSlashCommands(
   commands: Iterable<ServerProviderSlashCommand>,
 ): ServerProviderSlashCommand[] {
-  return [...commands].sort((left, right) => {
-    const byName = left.name.localeCompare(right.name);
-    if (byName !== 0) {
-      return byName;
-    }
-    return (left.sourceCwd ?? "").localeCompare(right.sourceCwd ?? "");
-  });
+  return [...commands].sort(compareWorkspaceScopedEntries);
 }
 
 function commandsFromDebugConfig(
@@ -120,12 +116,27 @@ export interface OpenCodeCommandListForCwd {
   readonly commands: ReadonlyArray<ServerProviderSlashCommand>;
 }
 
+export interface MergeOpenCodeCommandCwdsOptions {
+  /**
+   * Total workspaces queried, including ones whose query failed. Global
+   * promotion only applies when every queried workspace reported the
+   * command; callers that drop failed cwds must pass this count so a
+   * partial inventory cannot masquerade as global.
+   */
+  readonly queriedCwdCount?: number;
+}
+
 /**
  * Merge per-cwd harness inventories into the picker list. Built-ins are
- * always present and harness entries remain tagged to their workspaces.
+ * always present. A harness entry reported by every successfully queried
+ * workspace is promoted to global — unless it collides with a built-in, in
+ * which case it stays tagged next to the built-in so a project override
+ * remains visible. When `queriedCwdCount` exceeds the number of successful
+ * lists, no promotion happens.
  */
 export function mergeOpenCodeCommandCwds(
   lists: ReadonlyArray<OpenCodeCommandListForCwd>,
+  options?: MergeOpenCodeCommandCwdsOptions,
 ): ServerProviderSlashCommand[] {
   const seenByName = new Map<
     string,
@@ -145,12 +156,30 @@ export function mergeOpenCodeCommandCwds(
     }
   }
 
+  const successfulCwds = new Set(
+    lists.map((list) => normalizeProviderSkillWorkspacePath(list.cwd)),
+  );
+  const allQueriedSucceeded =
+    options?.queriedCwdCount === undefined || successfulCwds.size === options.queriedCwdCount;
+
   const merged = new Map<string, ServerProviderSlashCommand>();
+  const builtInKeys = new Set(
+    OPENCODE_BUILT_IN_SLASH_COMMANDS.map((builtIn) => builtIn.name.toLowerCase()),
+  );
   for (const builtIn of OPENCODE_BUILT_IN_SLASH_COMMANDS) {
     merged.set(`global\0${builtIn.name.toLowerCase()}`, builtIn);
   }
   for (const { command, cwds } of seenByName.values()) {
     const key = command.name.toLowerCase();
+    if (
+      allQueriedSucceeded &&
+      successfulCwds.size > 0 &&
+      cwds.size === successfulCwds.size &&
+      !builtInKeys.has(key)
+    ) {
+      merged.set(`global\0${key}`, command);
+      continue;
+    }
     for (const sourceCwd of cwds) {
       merged.set(`cwd\0${sourceCwd}\0${key}`, { ...command, sourceCwd });
     }
@@ -212,6 +241,7 @@ export const queryOpenCodeCommandCatalog = Effect.fn("queryOpenCodeCommandCatalo
         const cwd = queryCwds[index];
         return commands !== undefined && cwd !== undefined ? [{ cwd, commands }] : [];
       }),
+      { queriedCwdCount: queryCwds.length },
     );
   },
 );
@@ -249,6 +279,7 @@ export const queryOpenCodeSdkCommandCatalog = Effect.fn("queryOpenCodeSdkCommand
         const cwd = queryCwds[index];
         return commands !== undefined && cwd !== undefined ? [{ cwd, commands }] : [];
       }),
+      { queriedCwdCount: queryCwds.length },
     );
   },
 );

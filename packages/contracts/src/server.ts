@@ -97,6 +97,13 @@ export const ServerProviderSkill = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   path: TrimmedNonEmptyString,
+  /**
+   * Harness-native scope string, passed through verbatim: Codex reports
+   * `user` / `repo`, Grok reports its `source.type` values (`bundled`,
+   * `project`, `local`, ...), filesystem discovery reports `user` /
+   * `project`. Clients map known values for display and render unknown
+   * ones generically — never branch on this for behavior.
+   */
   scope: Schema.optional(TrimmedNonEmptyString),
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
