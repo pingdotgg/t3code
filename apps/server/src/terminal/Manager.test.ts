@@ -26,7 +26,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
@@ -43,6 +43,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   readonly pid: number;
   writeFailure: unknown | undefined;
   resizeFailure: unknown | undefined;
+  killObserver: ((signal: string | undefined) => void) | undefined;
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
@@ -68,6 +69,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   kill(signal?: string): void {
     this.killed = true;
     this.killSignals.push(signal);
+    this.killObserver?.(signal);
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -368,6 +370,31 @@ it.layer(
           .map((event) => event.snapshot.status),
       ).toEqual(["running", "running", "running"]);
       expect(ptyAdapter.spawnInputs).toHaveLength(3);
+    }),
+  );
+
+  it.effect("delivers reopen errors after a terminal id is closed", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* manager.close({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        deleteHistory: true,
+      });
+      ptyAdapter.spawnFailures.push(new Error("permission denied"));
+      yield* manager.restart(restartInput());
+
+      expect((yield* Ref.get(attachEvents)).map((event) => event.type)).toEqual([
+        "snapshot",
+        "closed",
+        "error",
+      ]);
     }),
   );
 
@@ -754,7 +781,7 @@ it.layer(
     }),
   );
 
-  it.effect("drops delayed output published after a concurrent clear", () =>
+  it.effect("drops delayed output from a closed session after recreation", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
@@ -765,7 +792,7 @@ it.layer(
       const outputStarted = yield* Deferred.make<void>();
       const releaseOutput = yield* Deferred.make<void>();
       const outputFinished = yield* Deferred.make<void>();
-      const clearedDelivered = yield* Deferred.make<void>();
+      const restartedDelivered = yield* Deferred.make<void>();
       const blockerUnsubscribe = yield* manager.subscribe((event) =>
         Effect.gen(function* () {
           if (event.type === "output") {
@@ -780,7 +807,9 @@ it.layer(
       const attachUnsubscribe = yield* manager.attachStream(openInput(), (event) =>
         Ref.update(attachEvents, (events) => [...events, event]).pipe(
           Effect.andThen(
-            event.type === "cleared" ? Deferred.succeed(clearedDelivered, undefined) : Effect.void,
+            event.type === "restarted"
+              ? Deferred.succeed(restartedDelivered, undefined)
+              : Effect.void,
           ),
         ),
       );
@@ -791,20 +820,25 @@ it.layer(
       );
       yield* Effect.addFinalizer(() => Effect.sync(observerUnsubscribe));
 
-      process.emitData("before clear\n");
+      process.emitData("before recreation\n");
       yield* Deferred.await(outputStarted);
 
-      const clearFiber = yield* manager
-        .clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID })
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(clearedDelivered);
+      const recreateFiber = yield* manager
+        .close({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          deleteHistory: true,
+        })
+        .pipe(Effect.andThen(manager.restart(restartInput())), Effect.forkScoped);
+      yield* Deferred.await(restartedDelivered);
       yield* Deferred.succeed(releaseOutput, undefined);
-      yield* Fiber.join(clearFiber);
+      yield* Fiber.join(recreateFiber);
       yield* Deferred.await(outputFinished);
 
       expect((yield* Ref.get(attachEvents)).map((event) => event.type)).toEqual([
         "snapshot",
-        "cleared",
+        "closed",
+        "restarted",
       ]);
     }),
   );
@@ -1224,6 +1258,36 @@ it.layer(
       expect(writes.length).toBeGreaterThan(0);
       expect(writes.every((write) => write.flag === "a")).toBe(true);
       expect(writes.map((write) => write.contents).join("")).toBe("first redraw\rsecond redraw\r");
+    }),
+  );
+
+  it.effect("does not rescan coalesced history payloads", () =>
+    Effect.gen(function* () {
+      const byteLength = vi.spyOn(Buffer, "byteLength");
+      yield* Effect.addFinalizer(() => Effect.sync(() => byteLength.mockRestore()));
+      const lastOutputDelivered = yield* Deferred.make<void>();
+      const { manager, ptyAdapter } = yield* createManager(100);
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "c"
+          ? Deferred.succeed(lastOutputDelivered, undefined)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("a");
+      process.emitData("b");
+      process.emitData("c");
+      yield* Deferred.await(lastOutputDelivered);
+
+      expect(byteLength).not.toHaveBeenCalledWith("ab");
+      expect(byteLength).not.toHaveBeenCalledWith("bc");
+      expect(byteLength).not.toHaveBeenCalledWith("abc");
+      byteLength.mockRestore();
+      yield* manager.close({ threadId: "thread-1" });
     }),
   );
 
@@ -2148,24 +2212,54 @@ it.layer(
     }),
   );
 
-  it.effect("scoped runtime shutdown stops active terminals cleanly", () =>
+  it.effect("scoped runtime shutdown flushes history and stops active terminals", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const writes: Array<RecordedHistoryWrite> = [];
       const scope = yield* Scope.make("sequential");
       const { manager, ptyAdapter } = yield* createManager(5, {
         processKillGraceMs: 10,
-      }).pipe(Effect.provideService(Scope.Scope, scope));
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, recordHistoryWrites(fileSystem, writes)),
+        Effect.provideService(Scope.Scope, scope),
+      );
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
       expect(process).toBeDefined();
       if (!process) return;
+      const terminateStartedFiber = yield* Effect.callback<void>((resume) => {
+        process.killObserver = (signal) => {
+          if (signal === "SIGTERM") {
+            resume(Effect.void);
+          }
+        };
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const outputDelivered = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "saved during shutdown\r"
+          ? Deferred.succeed(outputDelivered, undefined)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      process.emitData("saved during shutdown\r");
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("40 millis");
+      yield* Deferred.await(outputDelivered);
 
       const closeScope = yield* Scope.close(scope, Exit.void).pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
+      yield* Fiber.join(terminateStartedFiber);
       yield* TestClock.adjust("10 millis");
       yield* Fiber.join(closeScope);
 
       assert.equal(process.killSignals[0], "SIGTERM");
       expect(process.killSignals).toContain("SIGKILL");
+      expect(
+        writes
+          .filter((write) => write.flag === "a")
+          .map((write) => write.contents)
+          .join(""),
+      ).toBe("saved during shutdown\r");
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
