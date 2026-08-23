@@ -10,7 +10,7 @@ import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./Gro
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
-describe("buildInitialGrokProviderSnapshot", () => {
+it.layer(NodeServices.layer)("buildInitialGrokProviderSnapshot", (it) => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
     Effect.gen(function* () {
       const snapshot = yield* buildInitialGrokProviderSnapshot(

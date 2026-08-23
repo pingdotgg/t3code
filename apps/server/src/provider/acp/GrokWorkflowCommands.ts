@@ -1,9 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-
 import type { ServerProviderSlashCommand } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 const SCRIPT_BYTE_CAP = 64 * 1024;
 
@@ -65,37 +63,31 @@ export function grokWorkflowSlashCommandFromMeta(
   };
 }
 
-function readWorkflowDir(dir: string, byName: Map<string, ServerProviderSlashCommand>): void {
-  let entries: NodeFS.Dirent[];
-  try {
-    entries = NodeFS.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
+const readWorkflowDir = Effect.fn("grok.readWorkflowDir")(function* (
+  dir: string,
+  byName: Map<string, ServerProviderSlashCommand>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* fileSystem
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".rhai")) {
+    if (!entry.endsWith(".rhai")) {
       continue;
     }
-    const filePath = NodePath.join(dir, entry.name);
-    let source: string;
-    try {
-      const stat = NodeFS.statSync(filePath);
-      if (!stat.isFile() || stat.size <= 0) {
-        continue;
-      }
-      const length = Math.min(stat.size, SCRIPT_BYTE_CAP);
-      const handle = NodeFS.openSync(filePath, "r");
-      try {
-        const buffer = Buffer.alloc(length);
-        const bytesRead = NodeFS.readSync(handle, buffer, 0, length, 0);
-        source = buffer.subarray(0, bytesRead).toString("utf8");
-      } finally {
-        NodeFS.closeSync(handle);
-      }
-    } catch {
+    const filePath = path.join(dir, entry);
+    const info = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => undefined));
+    if (!info || info.type !== "File" || info.size <= 0n) {
       continue;
     }
-    const fallbackName = NodePath.basename(entry.name, ".rhai");
+    const bytes = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => undefined));
+    if (!bytes) {
+      continue;
+    }
+    const source = new TextDecoder("utf8").decode(bytes.subarray(0, SCRIPT_BYTE_CAP));
+    const fallbackName = entry.endsWith(".rhai") ? entry.slice(0, -".rhai".length) : entry;
     const meta = parseGrokWorkflowScriptMeta(source, fallbackName);
     if (!meta) {
       continue;
@@ -103,7 +95,7 @@ function readWorkflowDir(dir: string, byName: Map<string, ServerProviderSlashCom
     const command = grokWorkflowSlashCommandFromMeta(meta);
     byName.set(command.name, command);
   }
-}
+});
 
 /**
  * Built-in `/workflow pause|resume|stop` plus `~/.grok/workflows` and
@@ -111,19 +103,24 @@ function readWorkflowDir(dir: string, byName: Map<string, ServerProviderSlashCom
  * of the same command name. T3 sends the slash text as a prompt — it does not
  * host Rhai.
  */
-export function readGrokWorkflowSlashCommands(input: {
-  readonly projectRoot?: string | undefined;
-  readonly homeDir?: string | undefined;
-}): ReadonlyArray<ServerProviderSlashCommand> {
-  const byName = new Map<string, ServerProviderSlashCommand>();
-  for (const command of GROK_WORKFLOW_CONTROL_COMMANDS) {
-    byName.set(command.name, command);
-  }
-  const homeDir = trimmed(input.homeDir) ?? NodeOS.homedir();
-  readWorkflowDir(NodePath.join(homeDir, ".grok", "workflows"), byName);
-  const projectRoot = trimmed(input.projectRoot);
-  if (projectRoot && NodePath.isAbsolute(projectRoot)) {
-    readWorkflowDir(NodePath.join(projectRoot, ".grok", "workflows"), byName);
-  }
-  return [...byName.values()];
-}
+export const readGrokWorkflowSlashCommands = Effect.fn("grok.readWorkflowSlashCommands")(
+  function* (input: {
+    readonly projectRoot?: string | undefined;
+    readonly homeDir?: string | undefined;
+  }) {
+    const path = yield* Path.Path;
+    const byName = new Map<string, ServerProviderSlashCommand>();
+    for (const command of GROK_WORKFLOW_CONTROL_COMMANDS) {
+      byName.set(command.name, command);
+    }
+    const homeDir = trimmed(input.homeDir);
+    if (homeDir) {
+      yield* readWorkflowDir(path.join(homeDir, ".grok", "workflows"), byName);
+    }
+    const projectRoot = trimmed(input.projectRoot);
+    if (projectRoot && path.isAbsolute(projectRoot)) {
+      yield* readWorkflowDir(path.join(projectRoot, ".grok", "workflows"), byName);
+    }
+    return [...byName.values()];
+  },
+);
