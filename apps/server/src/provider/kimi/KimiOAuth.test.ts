@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   ServerSettings,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -287,6 +288,59 @@ it.layer(NodeServices.layer)("signInWithKimi", (it) => {
     }),
   );
 
+  it.effect("expires by monotonic time after the wall clock moves backward", () =>
+    Effect.gen(function* () {
+      const testClock = yield* TestClock.testClockWith(Effect.succeed);
+      const wallClockMoved = yield* Deferred.make<void>();
+      const requests: Array<RecordedRequest> = [];
+      const httpLayer = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.gen(function* () {
+            const isDeviceAuthorization = request.url.includes("device_authorization");
+            requests.push({ url: request.url, params: new URLSearchParams() });
+            if (!isDeviceAuthorization) {
+              yield* testClock.setTime(-10_000);
+              yield* Deferred.succeed(wallClockMoved, undefined);
+            }
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                // @effect-diagnostics-next-line preferSchemaOverJson:off - mock wire payloads are free-form test fixtures.
+                JSON.stringify(
+                  isDeviceAuthorization
+                    ? { ...DEVICE_AUTHORIZATION_BODY, expires_in: 2, interval: 1 }
+                    : { error: "authorization_pending" },
+                ),
+                {
+                  status: isDeviceAuthorization ? 200 : 400,
+                  headers: { "content-type": "application/json" },
+                },
+              ),
+            );
+          }),
+        ),
+      );
+      const outcome = yield* signInWithKimi({}).pipe(
+        Stream.runCollect,
+        Effect.flip,
+        Effect.provide(httpLayer),
+        Effect.forkChild,
+      );
+
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(wallClockMoved);
+      yield* TestClock.adjust("1 second");
+      const completed = outcome.pollUnsafe();
+
+      expect(completed).toBeDefined();
+      expect(yield* Fiber.join(outcome)).toBeInstanceOf(KimiAuthExpiredError);
+      expect(requests.filter((request) => request.url.includes("/api/oauth/token"))).toHaveLength(
+        1,
+      );
+    }),
+  );
+
   it.effect("keeps raw OAuth wire failures out of stable error context", () =>
     Effect.gen(function* () {
       const rawDescription = "x".repeat(10_000);
@@ -375,7 +429,7 @@ it.layer(NodeServices.layer)("writeKimiCredentials", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-kimi-concurrent-creds-" });
       const temporaryPaths = yield* Ref.make<ReadonlyArray<string>>([]);
-      const recordingFileSystem: FileSystem.FileSystem["Service"] = {
+      const recordingFileSystem: FileSystem.FileSystem = {
         ...fs,
         writeFileString: (filePath) =>
           Ref.update(temporaryPaths, (current) => [...current, filePath]),

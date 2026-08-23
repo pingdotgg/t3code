@@ -60,6 +60,7 @@ const CREDENTIALS_FILE_NAME = "kimi-code.json";
 const DEFAULT_POLL_INTERVAL_SECONDS = 5;
 const DEFAULT_EXPIRES_IN_SECONDS = 600;
 const MAX_SIGN_IN_DURATION = Duration.minutes(15);
+const MAX_SIGN_IN_DURATION_NANOS = Duration.toNanosUnsafe(MAX_SIGN_IN_DURATION);
 
 /** Where the Kimi CLI resolves its data root, honoring a per-instance homePath. */
 export function resolveKimiCodeHome(homePath: string | null | undefined): string {
@@ -321,15 +322,24 @@ export function signInWithKimi(
       };
 
       const completion = Effect.gen(function* () {
-        const startedAtMs = yield* Clock.currentTimeMillis;
-        const deadlineMs =
-          startedAtMs + Math.min(expiresInSeconds * 1000, Duration.toMillis(MAX_SIGN_IN_DURATION));
+        const startedAtNanos = yield* Clock.monotonicTimeNanos;
+        const expiresInNanos = Duration.toNanosUnsafe(
+          Duration.seconds(Math.max(0, expiresInSeconds)),
+        );
+        const deadlineNanos =
+          startedAtNanos +
+          (expiresInNanos < MAX_SIGN_IN_DURATION_NANOS
+            ? expiresInNanos
+            : MAX_SIGN_IN_DURATION_NANOS);
         let intervalSeconds = Math.max(1, authorization.interval ?? DEFAULT_POLL_INTERVAL_SECONDS);
 
-        while ((yield* Clock.currentTimeMillis) < deadlineMs) {
-          const remainingMs = deadlineMs - (yield* Clock.currentTimeMillis);
-          yield* Effect.sleep(Duration.millis(Math.min(intervalSeconds * 1000, remainingMs)));
-          if ((yield* Clock.currentTimeMillis) >= deadlineMs) {
+        while ((yield* Clock.monotonicTimeNanos) < deadlineNanos) {
+          const remainingNanos = deadlineNanos - (yield* Clock.monotonicTimeNanos);
+          const intervalNanos = Duration.toNanosUnsafe(Duration.seconds(intervalSeconds));
+          yield* Effect.sleep(
+            Duration.nanos(intervalNanos < remainingNanos ? intervalNanos : remainingNanos),
+          );
+          if ((yield* Clock.monotonicTimeNanos) >= deadlineNanos) {
             break;
           }
           const poll = yield* pollToken(authorization.device_code);
