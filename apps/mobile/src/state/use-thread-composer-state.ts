@@ -1,5 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
+import { Alert } from "react-native";
+import * as Cause from "effect/Cause";
 
 import {
   CommandId,
@@ -11,6 +13,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -21,6 +24,7 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
+import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
 import {
@@ -41,6 +45,8 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { threadEnvironment } from "./threads";
+import { useAtomCommand } from "./use-atom-command";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -74,10 +80,13 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState() {
-  const { selectedThread: selectedThreadShell } = useThreadSelection();
+  const { selectedThread: selectedThreadShell, selectedEnvironmentRuntime } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
+    reportFailure: false,
+  });
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -143,6 +152,42 @@ export function useThreadComposerState() {
       return null;
     }
 
+    const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
+      (entry) => entry.instanceId === thread.modelSelection.instanceId,
+    );
+    const feedbackCommand =
+      attachments.length === 0 &&
+      (provider?.driver === "codex" || thread.session?.providerName === "codex")
+        ? parseCodexFeedbackCommand(text)
+        : null;
+    if (feedbackCommand) {
+      const result = await uploadThreadFeedback({
+        environmentId: selectedThreadShell.environmentId,
+        input: {
+          threadId: selectedThreadShell.id,
+          ...feedbackCommand,
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not send feedback to OpenAI",
+          error instanceof Error ? error.message : "An error occurred.",
+        );
+        return null;
+      }
+      clearComposerDraftContent(threadKey);
+      const feedbackId = result.value.feedbackId;
+      Alert.alert("Feedback sent to OpenAI", `Thread ID: ${feedbackId}`, [
+        { text: "OK", style: "cancel" },
+        {
+          text: "Copy ID",
+          onPress: () => copyTextWithHaptic(feedbackId, { target: "Codex feedback thread ID" }),
+        },
+      ]);
+      return null;
+    }
+
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
     // Enqueue publishes the queued atom synchronously (the durable write
@@ -175,7 +220,12 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [
+    selectedEnvironmentRuntime?.serverConfig?.providers,
+    selectedThreadDetail,
+    selectedThreadShell,
+    uploadThreadFeedback,
+  ]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
