@@ -1,9 +1,11 @@
 import {
+  defaultInstanceIdForDriver,
   isProviderDriverKind,
   isProviderAvailable,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderInstanceConfig,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -30,6 +32,26 @@ const getLegacyProviderSettings = (
   provider: ProviderDriverKind,
 ): LegacyProviderSettings | undefined =>
   (settings.providers as Record<string, LegacyProviderSettings | undefined>)[provider];
+
+/** Resolves enabled explicit and legacy-backed instances for one driver. */
+export function getEnabledProviderDriverInstances(
+  settings: ServerSettings,
+  driver: ProviderDriverKind,
+): readonly ProviderInstanceConfig[] {
+  const defaultInstanceId = defaultInstanceIdForDriver(driver);
+  const instances = Object.values(settings.providerInstances).filter(
+    (instance) => instance.driver === driver,
+  );
+
+  if (!(defaultInstanceId in settings.providerInstances)) {
+    const legacy = getLegacyProviderSettings(settings, driver);
+    if (legacy !== undefined) {
+      instances.unshift({ driver, config: legacy });
+    }
+  }
+
+  return instances.filter(resolveProviderInstanceEnabled);
+}
 
 export function isModelSelectionProviderEnabled(
   settings: ServerSettings,
