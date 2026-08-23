@@ -25,6 +25,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  type AntigravitySettings,
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
@@ -43,6 +44,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { AntigravityDriver } from "../Drivers/AntigravityDriver.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
@@ -129,6 +131,14 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   binaryPath: "opencode",
   serverUrl: "",
   serverPassword: "",
+  customModels: [],
+  ...overrides,
+});
+
+const makeAntigravityConfig = (overrides: Partial<AntigravitySettings>): AntigravitySettings => ({
+  enabled: false,
+  binaryPath: "antigravity-acp-server",
+  geminiHome: "",
   customModels: [],
   ...overrides,
 });
@@ -321,12 +331,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const antigravityId = ProviderInstanceId.make("antigravity_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const antigravityDriverKind = ProviderDriverKind.make("antigravity");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -362,10 +374,23 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
+        [antigravityId]: {
+          driver: antigravityDriverKind,
+          displayName: "Antigravity",
+          enabled: false,
+          config: makeAntigravityConfig({}),
+        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [
+          CodexDriver,
+          ClaudeDriver,
+          CursorDriver,
+          GrokDriver,
+          OpenCodeDriver,
+          AntigravityDriver,
+        ],
         configMap,
       });
 
@@ -375,9 +400,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId, antigravityId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -388,16 +413,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const antigravity = yield* registry.getInstance(antigravityId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
+      expect(antigravity?.driverKind).toBe(antigravityDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(antigravity?.displayName).toBe("Antigravity");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -410,6 +438,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
+        antigravity!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -418,6 +447,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
+        antigravity!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -426,6 +456,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
+        antigravity!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
@@ -467,6 +498,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.enabled).toBe(false);
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
+      );
+
+      const antigravitySnapshot = yield* antigravity!.snapshot.getSnapshot;
+      expect(antigravitySnapshot.instanceId).toBe(antigravityId);
+      expect(antigravitySnapshot.driver).toBe(antigravityDriverKind);
+      expect(antigravitySnapshot.enabled).toBe(false);
+      expect(antigravitySnapshot.continuation?.groupKey).toBe(
+        `${antigravityDriverKind}:instance:${antigravityId}`,
       );
     }).pipe(Effect.provide(testLayer)),
   );

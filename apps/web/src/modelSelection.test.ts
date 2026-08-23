@@ -176,6 +176,29 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("includes Antigravity custom models from the selected provider instance", () => {
+    const providers = [
+      provider({ provider: ProviderDriverKind.make("antigravity"), instanceId: "antigravity" }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("antigravity")]: {
+          driver: ProviderDriverKind.make("antigravity"),
+          config: { customModels: ["gemini-experimental-custom"] },
+        },
+      },
+    };
+    const antigravity = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "antigravity",
+    )!;
+
+    expect(
+      getAppModelOptionsForInstance(settings, antigravity).map((option) => option.slug),
+    ).toContain("gemini-experimental-custom");
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({

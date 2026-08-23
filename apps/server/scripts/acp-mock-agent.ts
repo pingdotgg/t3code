@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -278,18 +279,33 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
+const isAntigravity = process.env.T3_PROVIDER === "antigravity";
+
+const antigravityAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
+  { modelId: "gemini-3.7-flash", name: "Gemini 3.7 Flash" },
+  { modelId: "gemini-3.7-flash-high", name: "Gemini 3.7 Flash (High Thinking)" },
+  { modelId: "gemini-3.7-flash-medium", name: "Gemini 3.7 Flash (Medium Thinking)" },
+  { modelId: "gemini-3.7-flash-low", name: "Gemini 3.7 Flash (Low Thinking)" },
+  { modelId: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+];
+
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   { modelId: "grok-build", name: "Grok Build" },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
+const acpModels: ReadonlyArray<AcpSchema.ModelInfo> = isAntigravity
+  ? antigravityAcpModels
+  : grokAcpModels;
+
 function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+  const defaultModelId = isAntigravity ? "gemini-3.7-flash" : "grok-build";
+  const modelId = acpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : defaultModelId;
   return {
     currentModelId: modelId,
-    availableModels: grokAcpModels,
+    availableModels: acpModels,
   };
 }
 
@@ -382,7 +398,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!acpModels.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -433,10 +449,15 @@ const program = Effect.gen(function* () {
     }),
   );
 
+  const activePromptCancelDeferred = yield* Deferred.make<AcpSchema.PromptResponse>();
+
   yield* agent.handleCancel(({ sessionId }) =>
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      yield* Deferred.succeed(activePromptCancelDeferred, { stopReason: "cancelled" }).pipe(
+        Effect.ignore,
+      );
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -519,7 +540,7 @@ const program = Effect.gen(function* () {
       }
 
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
-        return yield* Effect.never;
+        return yield* Deferred.await(activePromptCancelDeferred);
       }
 
       if (emitXAiPromptCompleteThenHang) {

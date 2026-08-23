@@ -761,13 +761,11 @@ export const make = (
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
+            yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
             const activePromptFiber = yield* Ref.get(activePromptFiberRef);
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
             }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
           }),
         ),
       ),
