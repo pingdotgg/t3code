@@ -181,24 +181,29 @@ layer("GitLabCli.layer", (it) => {
         url: "https://gitlab.com/octocat/t3code",
         sshUrl: "git@gitlab.com:octocat/t3code.git",
       });
+      // Bare project paths resolve against glab's default host directly;
+      // no host-config roundtrip is needed.
+      expect(mockedRun).toHaveBeenCalledTimes(1);
     }),
   );
 
   it.effect("normalizes a full repository URL to a project path before the API call", () =>
     Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              path_with_namespace: "group/project",
-              web_url: "https://sourcecontrol.example.com/group/project",
-              http_url_to_repo: "https://sourcecontrol.example.com/group/project.git",
-              ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
-            }),
+      mockedRun
+        .mockReturnValueOnce(Effect.succeed(processOutput("sourcecontrol.example.com\n")))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                path_with_namespace: "group/project",
+                web_url: "https://sourcecontrol.example.com/group/project",
+                http_url_to_repo: "https://sourcecontrol.example.com/group/project.git",
+                ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
+              }),
+            ),
           ),
-        ),
-      );
+        );
 
       const glab = yield* GitLabCli.GitLabCli;
       const result = yield* glab.getRepositoryCloneUrls({
@@ -221,21 +226,70 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "strips the configured relative base path from a repository URL before the API call",
+    () =>
+      Effect.gen(function* () {
+        // Self-managed installs under a relative URL root configure their glab
+        // host as `host/base`; pasted web URLs repeat that prefix in their path
+        // but the projects/<path> API expects the namespace/project only.
+        mockedRun
+          .mockReturnValueOnce(Effect.succeed(processOutput("example.com/gitlab\n")))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              processOutput(
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                JSON.stringify({
+                  path_with_namespace: "group/project",
+                  web_url: "https://example.com/gitlab/group/project",
+                  http_url_to_repo: "https://example.com/gitlab/group/project.git",
+                  ssh_url_to_repo: "git@example.com:group/project.git",
+                }),
+              ),
+            ),
+          );
+
+        const glab = yield* GitLabCli.GitLabCli;
+        const result = yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://example.com/gitlab/group/project.git",
+        });
+
+        expect(mockedRun).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({
+            command: "glab",
+            cwd: "/repo",
+            args: ["config", "get", "host"],
+          }),
+        );
+        expect(mockedRun).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({
+            args: ["api", `projects/${encodeURIComponent("group/project")}`],
+          }),
+        );
+        assert.deepStrictEqual(result.nameWithOwner, "group/project");
+      }),
+  );
+
   it.effect("normalizes a full repository URL with nested subgroups and no .git suffix", () =>
     Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              path_with_namespace: "group/sub/project",
-              web_url: "https://gitlab.example.com/group/sub/project",
-              http_url_to_repo: "https://gitlab.example.com/group/sub/project.git",
-              ssh_url_to_repo: "git@gitlab.example.com:group/sub/project.git",
-            }),
+      mockedRun
+        .mockReturnValueOnce(Effect.succeed(processOutput("gitlab.example.com\n")))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                path_with_namespace: "group/sub/project",
+                web_url: "https://gitlab.example.com/group/sub/project",
+                http_url_to_repo: "https://gitlab.example.com/group/sub/project.git",
+                ssh_url_to_repo: "git@gitlab.example.com:group/sub/project.git",
+              }),
+            ),
           ),
-        ),
-      );
+        );
 
       const glab = yield* GitLabCli.GitLabCli;
       const result = yield* glab.getRepositoryCloneUrls({
@@ -243,7 +297,8 @@ layer("GitLabCli.layer", (it) => {
         repository: "https://gitlab.example.com/group/sub/project",
       });
 
-      expect(mockedRun).toHaveBeenCalledWith(
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        2,
         expect.objectContaining({
           args: ["api", `projects/${encodeURIComponent("group/sub/project")}`],
         }),

@@ -406,13 +406,42 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
+function isWebUrl(repository: string): boolean {
+  const trimmed = repository.trim();
+  if (!URL.canParse(trimmed)) {
+    return false;
+  }
+  const { protocol } = new URL(trimmed);
+  return protocol === "https:" || protocol === "http:";
+}
+
+/**
+ * glab resolves API calls against its configured default host, whose value
+ * may carry a relative install path (e.g. `example.com/gitlab` for
+ * self-managed installs under a relative URL root). Return that path portion
+ * with trailing slashes removed, or null when the host has none.
+ */
+function basePathFromConfiguredHost(configuredHost: string): string | null {
+  const trimmed = configuredHost.trim();
+  if (trimmed.length === 0 || !URL.canParse(`https://${trimmed}`)) {
+    return null;
+  }
+  const { pathname } = new URL(`https://${trimmed}`);
+  if (pathname === "/") {
+    return null;
+  }
+  return pathname.replace(/\/+$/u, "");
+}
+
 /**
  * `glab api projects/<path>` expects a bare, URL-encoded project path such
  * as `namespace/project`; passing a full web URL fails even though glab's
  * default host is correct. Reduce pasted `http(s)://host/group/project(.git)`
- * inputs to their path form and leave everything else untouched.
+ * inputs to their path form and leave everything else untouched. When the
+ * configured host carries a relative base path, that prefix is stripped so
+ * only the namespace/project remains.
  */
-function normalizeProjectPathInput(repository: string): string {
+function normalizeProjectPathInput(repository: string, basePath: string | null): string {
   const trimmed = repository.trim();
   if (!URL.canParse(trimmed)) {
     return trimmed;
@@ -428,6 +457,16 @@ function normalizeProjectPathInput(repository: string): string {
   const lastSegment = segments.at(-1);
   if (lastSegment && lastSegment.length > ".git".length && lastSegment.endsWith(".git")) {
     segments[segments.length - 1] = lastSegment.slice(0, -".git".length);
+  }
+  if (basePath && basePath !== "/") {
+    const baseSegments = basePath.split("/").filter((segment) => segment.length > 0);
+    if (
+      baseSegments.length > 0 &&
+      segments.length > baseSegments.length &&
+      baseSegments.every((segment, index) => segments[index] === segment)
+    ) {
+      segments.splice(0, baseSegments.length);
+    }
   }
   return segments.join("/");
 }
@@ -457,6 +496,18 @@ export const make = Effect.gen(function* () {
         { operation: "execute", command: "glab", cwd: input.cwd },
         error,
       ),
+    );
+
+  /**
+   * Read the path portion of glab's configured default host, if any. Used to
+   * strip the relative base path of self-managed installs from pasted web
+   * URLs; a failure here degrades to no base path rather than failing the
+   * lookup.
+   */
+  const resolveConfiguredBasePath = (cwd: string): Effect.Effect<string | null> =>
+    execute({ cwd, args: ["config", "get", "host"] }).pipe(
+      Effect.map((result) => basePathFromConfiguredHost(result.stdout)),
+      Effect.catch(() => Effect.succeed(null)),
     );
 
   const executeMergeRequest = (input: {
@@ -543,12 +594,20 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getRepositoryCloneUrls: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: [
-          "api",
-          `projects/${encodeURIComponent(normalizeProjectPathInput(input.repository))}`,
-        ],
+      Effect.gen(function* () {
+        // Only pasted web URLs can carry the configured base path; bare
+        // project paths resolve against glab's default host directly and
+        // skip the host-config roundtrip.
+        const basePath = isWebUrl(input.repository)
+          ? yield* resolveConfiguredBasePath(input.cwd)
+          : null;
+        return yield* execute({
+          cwd: input.cwd,
+          args: [
+            "api",
+            `projects/${encodeURIComponent(normalizeProjectPathInput(input.repository, basePath))}`,
+          ],
+        });
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
