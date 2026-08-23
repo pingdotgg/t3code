@@ -781,6 +781,41 @@ it.layer(
     }),
   );
 
+  it.effect("flushes output queued while close waits for the thread lock", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const clearPublished = yield* Deferred.make<void>();
+      const releaseClear = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "cleared"
+          ? Deferred.succeed(clearPublished, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseClear)),
+            )
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const clearFiber = yield* manager
+        .clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(clearPublished);
+      const closeFiber = yield* manager.close({ threadId: "thread-1" }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      process.emitData("last output before close\r");
+      yield* Deferred.succeed(releaseClear, undefined);
+      yield* Fiber.join(clearFiber);
+      yield* Fiber.join(closeFiber);
+
+      const historyPath = yield* historyLogPath(logsDir);
+      expect(yield* readFileString(historyPath)).toBe("last output before close\r");
+    }),
+  );
+
   it.effect("drops delayed output from a closed session after recreation", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1291,7 +1326,7 @@ it.layer(
     }),
   );
 
-  it.effect("retries a failed history append before close completes", () =>
+  it.effect("recovers a partially written history append before close completes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const failedAppend = yield* Deferred.make<void>();
@@ -1312,9 +1347,12 @@ it.layer(
             shouldFailAppend
           ) {
             shouldFailAppend = false;
-            return Deferred.succeed(failedAppend, undefined).pipe(
-              Effect.andThen(Effect.fail(cause)),
-            );
+            return fileSystem
+              .writeFileString(path, contents.slice(0, 4), options)
+              .pipe(
+                Effect.andThen(Deferred.succeed(failedAppend, undefined)),
+                Effect.andThen(Effect.fail(cause)),
+              );
           }
           return fileSystem.writeFileString(path, contents, options);
         },
