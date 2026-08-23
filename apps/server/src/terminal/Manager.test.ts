@@ -785,31 +785,36 @@ it.layer(
 
   it.effect("flushes output queued while close waits for the thread lock", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const clearWriteStarted = yield* Deferred.make<void>();
+      const releaseClearWrite = yield* Deferred.make<void>();
+      const blockingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        writeFileString: (path, contents, options) => {
+          if (path.endsWith(".log") && contents === "" && options?.flag === "w") {
+            return Deferred.succeed(clearWriteStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseClearWrite)),
+              Effect.andThen(fileSystem.writeFileString(path, contents, options)),
+            );
+          }
+          return fileSystem.writeFileString(path, contents, options);
+        },
+      });
+      const { manager, ptyAdapter, logsDir } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, blockingFileSystem),
+      );
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
       expect(process).toBeDefined();
       if (!process) return;
 
-      const clearPublished = yield* Deferred.make<void>();
-      const releaseClear = yield* Deferred.make<void>();
-      const unsubscribe = yield* manager.subscribe((event) =>
-        event.type === "cleared"
-          ? Deferred.succeed(clearPublished, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseClear)),
-            )
-          : Effect.void,
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-
       const clearFiber = yield* manager
         .clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID })
         .pipe(Effect.forkScoped);
-      yield* Deferred.await(clearPublished);
+      yield* Deferred.await(clearWriteStarted);
       const closeFiber = yield* manager.close({ threadId: "thread-1" }).pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
       process.emitData("last output before close\r");
-      yield* Deferred.succeed(releaseClear, undefined);
+      yield* Deferred.succeed(releaseClearWrite, undefined);
       yield* Fiber.join(clearFiber);
       yield* Fiber.join(closeFiber);
 
@@ -836,7 +841,7 @@ it.layer(
     }),
   );
 
-  it.effect("drops delayed output from a closed session after recreation", () =>
+  it.effect("delivers delayed output before close and recreation", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
@@ -885,13 +890,14 @@ it.layer(
           deleteHistory: true,
         })
         .pipe(Effect.andThen(manager.restart(restartInput())), Effect.forkScoped);
-      yield* Deferred.await(restartedDelivered);
       yield* Deferred.succeed(releaseOutput, undefined);
       yield* Fiber.join(recreateFiber);
       yield* Deferred.await(outputFinished);
+      yield* Deferred.await(restartedDelivered);
 
       expect((yield* Ref.get(attachEvents)).map((event) => event.type)).toEqual([
         "snapshot",
+        "output",
         "closed",
         "restarted",
       ]);
@@ -1492,6 +1498,24 @@ it.layer(
 
       const opened = yield* manager.open(openInput());
       const expected = oversizedHistory.slice(-12);
+
+      expect(opened.history).toBe(expected);
+      expect(yield* readFileString(historyPath)).toBe(expected);
+    }),
+  );
+
+  it.effect("retains a bounded oversized line that ends with a newline", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager(100, {
+        historyTargetBytes: 12,
+        historyMaxBytes: 24,
+      });
+      const historyPath = yield* historyLogPath(logsDir);
+      const oversizedHistory = `${"x".repeat(40)}\n`;
+      const expected = Buffer.from(oversizedHistory).subarray(-12).toString();
+      yield* writeFileString(historyPath, oversizedHistory);
+
+      const opened = yield* manager.open(openInput());
 
       expect(opened.history).toBe(expected);
       expect(yield* readFileString(historyPath)).toBe(expected);

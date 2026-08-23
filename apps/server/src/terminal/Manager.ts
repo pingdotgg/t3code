@@ -35,6 +35,7 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Chunk from "effect/Chunk";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -849,6 +850,7 @@ function capHistoryByBytes(history: string, targetBytes: number): string {
 
   const boundaryLength =
     suffix[boundaryIndex] === "\r" && suffix[boundaryIndex + 1] === "\n" ? 2 : 1;
+  if (boundaryIndex + boundaryLength === suffix.length) return suffix;
   return suffix.slice(boundaryIndex + boundaryLength);
 }
 
@@ -1292,6 +1294,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
       }
     });
+
+  const terminalEventWorker = yield* makeKeyedCoalescingWorker<
+    string,
+    Chunk.Chunk<TerminalEvent>,
+    never,
+    never
+  >({
+    merge: Chunk.appendAll,
+    process: Effect.fn("terminal.publishEventWorker")(function* (_threadId, events) {
+      yield* Effect.forEach(events, publishEvent, { discard: true });
+    }),
+  });
+
+  const enqueueTerminalEvent = (event: TerminalEvent) =>
+    terminalEventWorker.enqueue(event.threadId, Chunk.of(event));
+
+  const drainTerminalEvents = (threadId: string) => terminalEventWorker.drainKey(threadId);
 
   const historyPath = (threadId: string, terminalId: string) => {
     const threadPart = toSafeThreadId(threadId);
@@ -1910,6 +1929,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.history,
             );
           }
+          if (nextAction.type === "output") {
+            yield* enqueueTerminalEvent({
+              type: "output",
+              threadId: nextAction.threadId,
+              terminalId: nextAction.terminalId,
+              sequence: nextAction.sequence,
+              data: nextAction.data,
+            });
+          } else if (nextAction.type === "exit") {
+            yield* enqueueTerminalEvent({
+              type: "exited",
+              threadId: nextAction.threadId,
+              terminalId: nextAction.terminalId,
+              sequence: nextAction.sequence,
+              exitCode: nextAction.exitCode,
+              exitSignal: nextAction.exitSignal,
+            });
+          }
           return nextAction;
         }),
       );
@@ -1919,13 +1956,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (action.type === "output") {
-        yield* publishEvent({
-          type: "output",
-          threadId: action.threadId,
-          terminalId: action.terminalId,
-          sequence: action.sequence,
-          data: action.data,
-        });
+        yield* drainTerminalEvents(action.threadId);
         continue;
       }
 
@@ -1934,14 +1965,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         threadId: action.threadId,
         terminalId: action.terminalId,
       });
-      yield* publishEvent({
-        type: "exited",
-        threadId: action.threadId,
-        terminalId: action.terminalId,
-        sequence: action.sequence,
-        exitCode: action.exitCode,
-        exitSignal: action.exitSignal,
-      });
+      yield* drainTerminalEvents(action.threadId);
       yield* evictInactiveSessionsIfNeeded();
       return;
     }
@@ -2103,7 +2127,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               return [undefined, state] as const;
             });
 
-            yield* publishEvent({
+            yield* enqueueTerminalEvent({
               type: eventType,
               threadId: session.threadId,
               terminalId: session.terminalId,
@@ -2146,7 +2170,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* evictInactiveSessionsIfNeeded();
 
       const message = error.message;
-      yield* publishEvent({
+      yield* enqueueTerminalEvent({
         type: "error",
         threadId: session.threadId,
         terminalId: session.terminalId,
@@ -2193,7 +2217,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const closedEventSequence = Option.isSome(session)
         ? advanceEventSequence(session.value).sequence
         : 0;
-      yield* publishEvent({
+      yield* enqueueTerminalEvent({
         type: "closed",
         threadId,
         terminalId,
@@ -2259,40 +2283,46 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         processIds: next.processIds,
       });
       const nextChildLabel = next.hasRunningSubprocess ? next.childCommand : null;
-      const event = yield* modifyManagerState((state) => {
-        const liveSession: Option.Option<TerminalSessionState> = Option.fromNullishOr(
-          state.sessions.get(toSessionKey(session.threadId, session.terminalId)),
-        );
-        if (
-          Option.isNone(liveSession) ||
-          liveSession.value.status !== "running" ||
-          liveSession.value.pid !== terminalPid ||
-          (liveSession.value.hasRunningSubprocess === next.hasRunningSubprocess &&
-            liveSession.value.childCommandLabel === nextChildLabel)
-        ) {
-          return [Option.none(), state] as const;
-        }
+      yield* withThreadLock(
+        session.threadId,
+        Effect.gen(function* () {
+          const event = yield* modifyManagerState((state) => {
+            const liveSession: Option.Option<TerminalSessionState> = Option.fromNullishOr(
+              state.sessions.get(toSessionKey(session.threadId, session.terminalId)),
+            );
+            if (
+              Option.isNone(liveSession) ||
+              liveSession.value.status !== "running" ||
+              liveSession.value.pid !== terminalPid ||
+              (liveSession.value.hasRunningSubprocess === next.hasRunningSubprocess &&
+                liveSession.value.childCommandLabel === nextChildLabel)
+            ) {
+              return [Option.none(), state] as const;
+            }
 
-        liveSession.value.hasRunningSubprocess = next.hasRunningSubprocess;
-        liveSession.value.childCommandLabel = nextChildLabel;
-        const eventStamp = advanceEventSequence(liveSession.value);
+            liveSession.value.hasRunningSubprocess = next.hasRunningSubprocess;
+            liveSession.value.childCommandLabel = nextChildLabel;
+            const eventStamp = advanceEventSequence(liveSession.value);
 
-        return [
-          Option.some({
-            type: "activity" as const,
-            threadId: liveSession.value.threadId,
-            terminalId: liveSession.value.terminalId,
-            sequence: eventStamp.sequence,
-            hasRunningSubprocess: next.hasRunningSubprocess,
-            label: terminalWireLabel(liveSession.value),
-          }),
-          state,
-        ] as const;
-      });
+            return [
+              Option.some({
+                type: "activity" as const,
+                threadId: liveSession.value.threadId,
+                terminalId: liveSession.value.terminalId,
+                sequence: eventStamp.sequence,
+                hasRunningSubprocess: next.hasRunningSubprocess,
+                label: terminalWireLabel(liveSession.value),
+              }),
+              state,
+            ] as const;
+          });
 
-      if (Option.isSome(event)) {
-        yield* publishEvent(event.value);
-      }
+          if (Option.isSome(event)) {
+            yield* enqueueTerminalEvent(event.value);
+          }
+        }),
+      );
+      yield* drainTerminalEvents(session.threadId);
     });
 
     yield* Effect.forEach(runningSessions, checkSubprocessActivity, {
@@ -2502,7 +2532,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const open: TerminalManager["Service"]["open"] = (input) =>
-    withThreadLock(input.threadId, openLocked(input));
+    withThreadLock(input.threadId, openLocked(input)).pipe(
+      Effect.tap(() => drainTerminalEvents(input.threadId)),
+    );
 
   const openOrAttachForStream = (input: TerminalAttachInput) =>
     withThreadLock(
@@ -2552,7 +2584,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
         return snapshot(session);
       }),
-    );
+    ).pipe(Effect.tap(() => drainTerminalEvents(input.threadId)));
 
   const readAllTerminalMetadata = () =>
     readManagerState.pipe(
@@ -2800,14 +2832,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
         yield* resetPersistedHistory(input.threadId, terminalId, session.history);
-        yield* publishEvent({
+        yield* enqueueTerminalEvent({
           type: "cleared",
           threadId: input.threadId,
           terminalId,
           sequence: eventStamp.sequence,
         });
       }),
-    );
+    ).pipe(Effect.tap(() => drainTerminalEvents(input.threadId)));
 
   const restart: TerminalManager["Service"]["restart"] = (input) =>
     withThreadLock(
@@ -2889,7 +2921,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         );
         return snapshot(session);
       }),
-    );
+    ).pipe(Effect.tap(() => drainTerminalEvents(input.threadId)));
 
   const close: TerminalManager["Service"]["close"] = (input) =>
     withThreadLock(
@@ -2911,7 +2943,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           yield* deleteAllHistoryForThread(input.threadId);
         }
       }),
-    );
+    ).pipe(Effect.tap(() => drainTerminalEvents(input.threadId)));
 
   return TerminalManager.of({
     open,
