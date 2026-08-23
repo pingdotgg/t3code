@@ -203,19 +203,23 @@ function ChatRouteGlobalShortcuts() {
         const snapshot = changeRequestSnapshotByKey.get(threadKey);
         // While VCS status is still loading, resolveDisplayedThreadPr drops
         // non-terminal (open) snapshot PRs, which would let inactivity
-        // auto-settle classify a thread with an open PR as settled. Use the
-        // Sidebar's snapshot rule until the live status lands.
+        // auto-settle classify a thread with an open PR as settled. Until the
+        // live status lands, accept matching-branch snapshots plus terminal
+        // snapshots retained across a mismatch (the same rule
+        // resolveDisplayedThreadPr applies once status arrives).
+        const gitStatus = gitStatusQuery.isPending ? null : gitStatusQuery.data;
         const activeThreadPr =
-          gitStatusQuery.data !== null || !gitStatusQuery.isPending
+          gitStatus !== null
             ? resolveDisplayedThreadPr({
                 threadBranch: activeThreadShell.branch,
-                gitStatus: gitStatusQuery.data,
+                gitStatus,
                 snapshot,
                 retainTerminalOnBranchMismatch: activeThreadShell.worktreePath === null,
               })
             : snapshot != null &&
-                (activeThreadShell.worktreePath === null ||
-                  snapshot.branch === activeThreadShell.branch)
+                (snapshot.branch === activeThreadShell.branch ||
+                  (activeThreadShell.worktreePath === null &&
+                    (snapshot.pr.state === "merged" || snapshot.pr.state === "closed")))
               ? snapshot.pr
               : null;
         const changeRequest =
