@@ -27,9 +27,11 @@ import {
   GitCommandError,
   ProviderDriverKind,
   ProviderInstanceId,
+  SourceControlProviderError,
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as SourceControlProvider from "../sourceControl/SourceControlProvider.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -615,11 +617,40 @@ function preparePullRequestThread(
   return manager.preparePullRequestThread(input);
 }
 
+/**
+ * Stands in for what the registry hands back when a repository's remote is hosted somewhere no
+ * provider is registered for: an "unknown" provider whose every call fails. Records the calls it
+ * receives so a test can assert the change-request steps never reach it.
+ */
+function unsupportedSourceControlProvider(calls: string[]) {
+  const fail = (operation: string, cwd: string) => {
+    calls.push(operation);
+    return new SourceControlProviderError({
+      provider: "unknown",
+      operation,
+      cwd,
+      detail: "No unknown source control provider is registered.",
+    });
+  };
+
+  return SourceControlProvider.SourceControlProvider.of({
+    kind: "unknown",
+    listChangeRequests: (input) => fail("listChangeRequests", input.cwd),
+    getChangeRequest: (input) => fail("getChangeRequest", input.cwd),
+    createChangeRequest: (input) => fail("createChangeRequest", input.cwd),
+    getRepositoryCloneUrls: (input) => fail("getRepositoryCloneUrls", input.cwd),
+    createRepository: (input) => fail("createRepository", input.cwd),
+    getDefaultBranch: (input) => fail("getDefaultBranch", input.cwd),
+    checkoutChangeRequest: (input) => fail("checkoutChangeRequest", input.cwd),
+  });
+}
+
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  sourceControlProvider?: SourceControlProvider.SourceControlProvider["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -637,14 +668,15 @@ function makeManager(input?: {
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     GitHubSourceControlProvider.make.pipe(
-      Effect.map((provider) =>
-        SourceControlProviderRegistry.SourceControlProviderRegistry.of({
+      Effect.map((gitHubProvider) => {
+        const provider = input?.sourceControlProvider ?? gitHubProvider;
+        return SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
-        }),
-      ),
+        });
+      }),
       Effect.provide(Layer.succeed(GitHubCli.GitHubCli, gitHubCli)),
     ),
   );
@@ -2452,6 +2484,37 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           call.includes("pr create --base master --head feature/master-default"),
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect("commits and pushes but skips the PR step on an unsupported provider", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/unsupported-provider"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/unsupported-provider"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+
+      const providerCalls: string[] = [];
+      const { manager } = yield* makeManager({
+        sourceControlProvider: unsupportedSourceControlProvider(providerCalls),
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.push.status).toBe("pushed");
+      expect(result.pr.status).toBe("skipped_unsupported_provider");
+      expect(result.toast.description).toBe(
+        "Creating a change request is not supported for this remote.",
+      );
+      expect(result.toast.cta).toEqual({ kind: "none" });
+      expect(providerCalls).toEqual([]);
     }),
   );
 

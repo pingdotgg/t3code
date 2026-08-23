@@ -434,6 +434,13 @@ function summarizeGitActionResult(
     return withDescription(title, truncateText(result.pr.title));
   }
 
+  // The commit and push still happened, so they stay the headline; the note explains why no
+  // change request followed them.
+  const unsupportedProviderNote =
+    result.pr.status === "skipped_unsupported_provider"
+      ? `Creating a ${terms.singular} is not supported for this remote.`
+      : undefined;
+
   if (result.push.status === "pushed") {
     const shortSha = shortenSha(result.commit.commitSha);
     const branch = result.push.upstreamBranch ?? result.push.branch;
@@ -441,14 +448,18 @@ function summarizeGitActionResult(
     const branchPart = branch ? ` to ${branch}` : "";
     return withDescription(
       `Pushed${pushedCommitPart}${branchPart}`,
-      truncateText(result.commit.subject),
+      unsupportedProviderNote ?? truncateText(result.commit.subject),
     );
   }
 
   if (result.commit.status === "created") {
     const shortSha = shortenSha(result.commit.commitSha);
     const title = shortSha ? `Committed ${shortSha}` : "Committed changes";
-    return withDescription(title, truncateText(result.commit.subject));
+    return withDescription(title, unsupportedProviderNote ?? truncateText(result.commit.subject));
+  }
+
+  if (unsupportedProviderNote) {
+    return withDescription("Unsupported source control provider", unsupportedProviderNote);
   }
 
   return { title: "Done" };
@@ -1695,6 +1706,12 @@ export const make = Effect.gen(function* () {
     emit: GitActionProgressEmitter,
   ) {
     const provider = yield* sourceControlProvider(cwd);
+    // Remotes hosted somewhere we have no provider for resolve to the "unknown" kind, whose
+    // change-request calls only ever fail. Stop before touching them so the action reports an
+    // expected limitation instead of an internal provider error.
+    if (provider.kind === "unknown") {
+      return { status: "skipped_unsupported_provider" as const };
+    }
     const terms = getChangeRequestTerminologyForKind(provider.kind);
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;

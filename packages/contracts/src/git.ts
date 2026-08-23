@@ -41,7 +41,14 @@ const GitPushStepStatus = Schema.Literals([
   "skipped_up_to_date",
 ]);
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
-const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
+const GitPrStepStatus = Schema.Literals([
+  "created",
+  "opened_existing",
+  "skipped_not_requested",
+  // The repository's remote is hosted somewhere T3 Code has no source control provider for, so
+  // the change-request step is an expected no-op rather than a failure.
+  "skipped_unsupported_provider",
+]);
 const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
