@@ -670,12 +670,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   autoSettleOnMerge: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
-  // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
-  // actions: both move the thread out of Pinned. The glyph is also the
-  // in-row pin state cue (the pinned block has no header), so it always
-  // shows while pinned; it only becomes a clickable unpin quick-action once
-  // the pinning capability is confirmed, and stays a passive marker while
-  // the descriptor is not loaded. Pinning itself lives in the context menu.
+  // Pinned threads show the same pin marker in active, settled, and snoozed
+  // rows. The marker can unpin the thread when the server supports pinning.
   pinningSupported: boolean;
   isPinned: boolean;
   // Applied to the exact row root measured and transformed by dnd-kit.
@@ -990,6 +986,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [isRenaming, onStartRename, thread.title, threadRef],
   );
   const renameCommittedRef = useRef(false);
+  const rowElementRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (isRenaming) renameCommittedRef.current = false;
   }, [isRenaming]);
@@ -1281,6 +1278,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 />
               </span>
               {title}
+              {pinIndicator}
               {terminalStatusIcon}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
@@ -1449,31 +1447,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ) : (
                   <span className="flex-1" />
                 )}
-                {props.isPinned ? (
-                  props.pinningSupported ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            aria-label="Unpin thread"
-                            onClick={handleUnpinClick}
-                            className="inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                          />
-                        }
-                      >
-                        <PinIcon aria-hidden className="size-3 shrink-0" />
-                      </TooltipTrigger>
-                      <TooltipPopup>Unpin thread</TooltipPopup>
-                    </Tooltip>
-                  ) : (
-                    <PinIcon
-                      aria-label="Pinned"
-                      role="img"
-                      className="size-3 shrink-0 text-muted-foreground/65"
-                    />
-                  )
-                ) : null}
+                {pinIndicator}
                 {/* The visible state owns this slot's width: status at rest,
                   actions on hover/keyboard focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
@@ -2102,13 +2076,10 @@ export default function Sidebar() {
         snapshot != null && (thread.worktreePath === null || snapshot.branch === thread.branch)
           ? snapshot.pr
           : null;
-      // User lifecycle commands keep these categories exclusive. Snooze is
-      // checked first so a transient stale projection still honors "hide
-      // until Tuesday" instead of flashing the thread in another section.
+      // Snooze and settlement outrank pinning. Automatic settlement can move
+      // a pinned thread into the settled shelf without clearing its pin.
       if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
         snoozed.push(thread);
-      } else if (thread.pinnedAt != null) {
-        pinned.push(thread);
       } else if (
         supportsSettlement &&
         effectiveSettled(thread, {
@@ -3325,7 +3296,6 @@ export default function Sidebar() {
     return (
       <SidebarThreadRow
         thread={thread}
-        keybindings={keybindings}
         variant={rowVariant}
         variantAction={
           section === "snoozed" ? "unsnooze" : section === "settled" ? "unsettle" : "settle"
@@ -3341,7 +3311,7 @@ export default function Sidebar() {
         pinningSupported={
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinning === true
         }
-        isPinned={section === "pinned"}
+        isPinned={thread.pinnedAt != null}
         dnd={state.dnd}
         dndDragView={state.dragView}
         dndInert={state.inert}
@@ -3367,7 +3337,6 @@ export default function Sidebar() {
           providerEntriesByEnvironment.get(thread.environmentId) ?? EMPTY_PROVIDER_ENTRIES
         }
         timestampFormat={timestampFormat}
-        getCurrentShortcutContext={getCurrentSidebarShortcutContext}
         onThreadClick={handleThreadClick}
         onThreadActivate={navigateToThread}
         onStartRename={startThreadRename}
