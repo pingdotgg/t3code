@@ -492,6 +492,16 @@ function messageRoleForPart(
   return part.type === "tool" ? "assistant" : undefined;
 }
 
+// OpenCode carries a bash invocation at `state.input.command`; project it
+// into the command/rawOutput shape every client already renders (mirrors
+// Claude/Codex adapters). Without this, clients fall back to reading the
+// output in `detail` as the command (#7307).
+function commandFromToolInput(part: Extract<Part, { type: "tool" }>): string | undefined {
+  const input = (part.state as { input?: Record<string, unknown> }).input;
+  const command = typeof input?.command === "string" ? input.command.trim() : "";
+  return command || undefined;
+}
+
 function detailFromToolPart(part: Extract<Part, { type: "tool" }>): string | undefined {
   switch (part.state.status) {
     case "completed":
@@ -918,7 +928,9 @@ export function makeOpenCodeAdapter(
             const itemType = toToolLifecycleItemType(part.tool);
             const title =
               part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
-            const detail = detailFromToolPart(part);
+            const command =
+              itemType === "command_execution" ? commandFromToolInput(part) : undefined;
+            const detail = command ?? detailFromToolPart(part);
             const payload = {
               itemType,
               ...(part.state.status === "error"
@@ -930,7 +942,14 @@ export function makeOpenCodeAdapter(
               ...(detail ? { detail } : {}),
               data: {
                 tool: part.tool,
-                state: part.state,
+                ...(command
+                  ? {
+                      command,
+                      ...(part.state.status === "completed"
+                        ? { rawOutput: { content: part.state.output } }
+                        : {}),
+                    }
+                  : {}),
               },
             };
             const runtimeEvent: ProviderRuntimeEvent = {

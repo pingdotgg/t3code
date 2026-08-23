@@ -1150,6 +1150,87 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("projects bash tool parts as command plus raw output instead of output-as-detail", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-bash-projection");
+      const part = {
+        id: "part-bash",
+        callID: "call-bash",
+        sessionID: "http://127.0.0.1:9999/session",
+        messageID: "msg-bash",
+        type: "tool" as const,
+        tool: "bash",
+        state: {
+          status: "running" as const,
+          input: { command: "git status" },
+          title: "git status",
+          time: { start: 1 },
+        },
+      };
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: { sessionID: part.sessionID, part, time: 1 },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: part.sessionID,
+            part: {
+              ...part,
+              state: {
+                status: "completed" as const,
+                input: { command: "git status" },
+                title: "git status",
+                output: "On branch main\nnothing to commit\n",
+                time: { start: 1, end: 2 },
+              },
+            },
+            time: 2,
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "item.updated" || event.type === "item.completed"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.length, 2);
+      const updated = events[0];
+      const completed = events[1];
+      if (updated?.type !== "item.updated" || completed?.type !== "item.completed") {
+        NodeAssert.fail(`unexpected events: ${events.map((event) => event.type).join(", ")}`);
+      }
+      // The command itself is the detail/preview; the output rides in
+      // data.rawOutput so clients render it once in the expanded body.
+      NodeAssert.equal(updated.payload.detail, "git status");
+      NodeAssert.deepEqual(
+        (updated.payload.data as Record<string, unknown>).command,
+        "git status",
+      );
+      NodeAssert.equal(completed.payload.detail, "git status");
+      NodeAssert.deepEqual(completed.payload.data, {
+        tool: "bash",
+        command: "git status",
+        rawOutput: { content: "On branch main\nnothing to commit\n" },
+      });
+    }),
+  );
+
   it.effect("lets OpenCode own session title generation and emits title metadata updates", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

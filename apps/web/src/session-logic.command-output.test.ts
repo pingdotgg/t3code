@@ -82,4 +82,24 @@ describe("deriveWorkLogEntries command output", () => {
     expect(entry?.command).toBe("true");
     expect(entry?.detail).toBeUndefined();
   });
+
+  it("renders the OpenCode bash command as the preview and its output once", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("opencode-command", {
+        itemType: "command_execution",
+        title: "bash",
+        detail: "git status",
+        data: {
+          tool: "bash",
+          command: "git status",
+          rawOutput: { content: "On branch main\nnothing to commit" },
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      command: "git status",
+      detail: "On branch main\nnothing to commit",
+    });
+  });
 });
