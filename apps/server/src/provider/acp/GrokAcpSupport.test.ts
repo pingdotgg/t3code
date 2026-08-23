@@ -6,8 +6,22 @@ import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
   currentGrokModelSelectionFromSessionSetup,
+  grokAcpSessionCompatibilityGroup,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
+
+describe("grokAcpSessionCompatibilityGroup", () => {
+  it("collapses stock harnesses and keeps strict harnesses distinct", () => {
+    expect(grokAcpSessionCompatibilityGroup("grok-build")).toBe("grok-stock");
+    expect(grokAcpSessionCompatibilityGroup("grok-build-plan")).toBe("grok-stock");
+    expect(grokAcpSessionCompatibilityGroup("custom-user-agent")).toBe("grok-stock");
+    expect(grokAcpSessionCompatibilityGroup("codex")).toBe("grok-strict:codex");
+    expect(grokAcpSessionCompatibilityGroup("grok-build-orchestrator")).toBe(
+      "grok-strict:grok-build-orchestrator",
+    );
+    expect(grokAcpSessionCompatibilityGroup(undefined)).toBeUndefined();
+  });
+});
 
 describe("resolveGrokAcpBaseModelId", () => {
   it("normalizes empty and custom Grok model ids", () => {

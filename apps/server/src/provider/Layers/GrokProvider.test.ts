@@ -76,7 +76,7 @@ describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
           modelId: "grok-4.6",
           name: "Grok 4.6",
           _meta: {
-            agentType: "code",
+            agentType: "grok-build",
             supportsReasoningEffort: true,
             reasoningEffort: "high",
             reasoningEfforts: [
@@ -102,6 +102,7 @@ describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
           modelId: "grok-4.5",
           name: "Grok 4.5",
           _meta: {
+            agentType: "grok-build-plan",
             supportsReasoningEffort: true,
             reasoningEffort: "medium",
             reasoningEfforts: [
@@ -110,15 +111,20 @@ describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
             ],
           },
         },
+        {
+          modelId: "grok-codex",
+          name: "Grok Codex",
+          _meta: { agentType: "codex" },
+        },
       ],
     } satisfies EffectAcpSchema.SessionModelState);
 
-    expect(models).toHaveLength(2);
+    expect(models).toHaveLength(3);
     expect(models[0]).toMatchObject({
       slug: "grok-4.6",
       name: "Grok 4.6",
       isDefault: true,
-      sessionCompatibilityGroup: "code",
+      sessionCompatibilityGroup: "grok-stock",
       capabilities: {
         optionDescriptors: [
           {
@@ -145,6 +151,8 @@ describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
       },
     });
     expect(models[1]?.isDefault).toBeUndefined();
+    expect(models[1]?.sessionCompatibilityGroup).toBe("grok-stock");
+    expect(models[2]?.sessionCompatibilityGroup).toBe("grok-strict:codex");
   });
 
   it("keeps models with malformed effort metadata and drops invalid duplicates", () => {

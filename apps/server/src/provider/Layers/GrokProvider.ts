@@ -35,6 +35,7 @@ import {
 } from "../providerMaintenance.ts";
 import {
   makeGrokAcpRuntime,
+  grokAcpSessionCompatibilityGroup,
   parseGrokAcpModelMetadata,
   resolveGrokAcpBaseModelId,
 } from "../acp/GrokAcpSupport.ts";
@@ -173,12 +174,13 @@ export function buildGrokDiscoveredModelsFromSessionModelState(
       }
       seen.add(slug);
       const metadata = parseGrokAcpModelMetadata(model._meta);
+      const sessionCompatibilityGroup = grokAcpSessionCompatibilityGroup(metadata.agentType);
       return {
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
         ...(slug === currentModelId ? { isDefault: true } : {}),
-        ...(metadata.agentType ? { sessionCompatibilityGroup: metadata.agentType } : {}),
+        ...(sessionCompatibilityGroup ? { sessionCompatibilityGroup } : {}),
         capabilities: buildGrokModelCapabilities(model),
       };
     })

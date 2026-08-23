@@ -399,24 +399,31 @@ describe("getStartedThreadModelChangeBlockReason", () => {
     });
   });
 
-  it("blocks cross-agent Grok model changes only after the first turn", () => {
+  it("allows stock Grok harness changes and blocks strict ones after the first turn", () => {
     const instanceId = ProviderInstanceId.make("grok-compatible");
     const grokProviders = [
       {
         instanceId,
         models: [
           {
-            slug: "grok-code",
-            name: "Grok Code",
+            slug: "grok-build",
+            name: "Grok Build",
             isCustom: false,
-            sessionCompatibilityGroup: "code",
+            sessionCompatibilityGroup: "grok-stock",
             capabilities: null,
           },
           {
-            slug: "grok-research",
-            name: "Grok Research",
+            slug: "grok-build-plan",
+            name: "Grok Build Plan",
             isCustom: false,
-            sessionCompatibilityGroup: "research",
+            sessionCompatibilityGroup: "grok-stock",
+            capabilities: null,
+          },
+          {
+            slug: "grok-codex",
+            name: "Grok Codex",
+            isCustom: false,
+            sessionCompatibilityGroup: "grok-strict:codex",
             capabilities: null,
           },
         ],
@@ -425,19 +432,27 @@ describe("getStartedThreadModelChangeBlockReason", () => {
     const selection = {
       providers: grokProviders,
       hasStartedSession: true,
-      currentModelSelection: { instanceId, model: "grok-code" },
-      nextModelSelection: { instanceId, model: "grok-research" },
+      currentModelSelection: { instanceId, model: "grok-build" },
     } as const;
 
     expect(
       getStartedThreadModelChangeBlockReason({
         ...selection,
+        nextModelSelection: { instanceId, model: "grok-build-plan" },
+        hasConversationHistory: true,
+      }),
+    ).toBeNull();
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        ...selection,
+        nextModelSelection: { instanceId, model: "grok-codex" },
         hasConversationHistory: false,
       }),
     ).toBeNull();
     expect(
       getStartedThreadModelChangeBlockReason({
         ...selection,
+        nextModelSelection: { instanceId, model: "grok-codex" },
         hasConversationHistory: true,
       }),
     ).not.toBeNull();

@@ -11,9 +11,9 @@ advertise reasoning choices show a Reasoning selector in the model picker. T3 Co
 and reasoning choice together, so changing only the reasoning level also takes effect on the next
 turn.
 
-Reasoning changes and compatible model changes work in an existing thread. After the first turn,
-models from a different Grok agent family require a new thread and are marked that way in the
-picker. If another Grok Build client changes the same session, T3 Code follows the model and
+Reasoning changes and stock Grok Build model changes work in an existing thread. After the first
+turn, models that require a different strict agent harness need a new thread and are marked that way
+in the picker. If another Grok Build client changes the same session, T3 Code follows the model and
 reasoning level reported by Grok Build.
 
 `Grok Build` is the compatibility fallback shown when model discovery is unavailable. Selecting it

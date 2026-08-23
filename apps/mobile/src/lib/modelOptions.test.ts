@@ -11,7 +11,7 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
-  it("marks cross-agent Grok choices as new-thread-only after the first turn", () => {
+  it("allows stock Grok harness choices and marks strict ones as new-thread-only", () => {
     const instanceId = ProviderInstanceId.make("grok");
     const config = {
       providers: [
@@ -23,24 +23,31 @@ describe("mobile model options", () => {
           auth: { status: "authenticated" },
           models: [
             {
-              slug: "grok-code",
-              name: "Grok Code",
+              slug: "grok-build",
+              name: "Grok Build",
               isCustom: false,
-              sessionCompatibilityGroup: "code",
+              sessionCompatibilityGroup: "grok-stock",
               capabilities: null,
             },
             {
-              slug: "grok-research",
-              name: "Grok Research",
+              slug: "grok-build-plan",
+              name: "Grok Build Plan",
               isCustom: false,
-              sessionCompatibilityGroup: "research",
+              sessionCompatibilityGroup: "grok-stock",
+              capabilities: null,
+            },
+            {
+              slug: "grok-codex",
+              name: "Grok Codex",
+              isCustom: false,
+              sessionCompatibilityGroup: "grok-strict:codex",
               capabilities: null,
             },
           ],
         },
       ],
     } as unknown as ServerConfig;
-    const currentModelSelection = { instanceId, model: "grok-code" };
+    const currentModelSelection = { instanceId, model: "grok-build" };
     const options = buildModelOptions(config, currentModelSelection);
 
     const restricted = markModelOptionsRequiringNewThread({
@@ -50,8 +57,9 @@ describe("mobile model options", () => {
       hasConversationHistory: true,
     });
     expect(restricted[0]?.disabledReason).toBeUndefined();
-    expect(restricted[1]).toMatchObject({
-      selection: { model: "grok-research" },
+    expect(restricted[1]?.disabledReason).toBeUndefined();
+    expect(restricted[2]).toMatchObject({
+      selection: { model: "grok-codex" },
       disabledReason: "Start a new thread to use this model.",
     });
     expect(
@@ -60,7 +68,7 @@ describe("mobile model options", () => {
         providers: config.providers,
         currentModelSelection,
         hasConversationHistory: false,
-      })[1]?.disabledReason,
+      })[2]?.disabledReason,
     ).toBeUndefined();
   });
 

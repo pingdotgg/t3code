@@ -22,24 +22,24 @@ describe("model session compatibility", () => {
       instanceId,
       models: [
         {
-          slug: "grok-code",
-          name: "Grok Code",
+          slug: "grok-build",
+          name: "Grok Build",
           isCustom: false,
-          sessionCompatibilityGroup: "code",
+          sessionCompatibilityGroup: "grok-stock",
           capabilities: null,
         },
         {
-          slug: "grok-code-fast",
-          name: "Grok Code Fast",
+          slug: "grok-build-plan",
+          name: "Grok Build Plan",
           isCustom: false,
-          sessionCompatibilityGroup: "code",
+          sessionCompatibilityGroup: "grok-stock",
           capabilities: null,
         },
         {
-          slug: "grok-research",
-          name: "Grok Research",
+          slug: "grok-codex",
+          name: "Grok Codex",
           isCustom: false,
-          sessionCompatibilityGroup: "research",
+          sessionCompatibilityGroup: "grok-strict:codex",
           capabilities: null,
         },
       ],
@@ -49,21 +49,21 @@ describe("model session compatibility", () => {
   const requiresNewThread = (nextModel: string, hasConversationHistory: boolean) =>
     modelChangeRequiresNewThread({
       providers,
-      currentModelSelection: { instanceId, model: "grok-code" },
+      currentModelSelection: { instanceId, model: "grok-build" },
       nextModelSelection: { instanceId, model: nextModel },
       hasConversationHistory,
     });
 
-  it("allows same-agent model changes after conversation history", () => {
-    expect(requiresNewThread("grok-code-fast", true)).toBe(false);
+  it("allows stock Grok harness changes after conversation history", () => {
+    expect(requiresNewThread("grok-build-plan", true)).toBe(false);
   });
 
-  it("requires a new thread for cross-agent model changes after conversation history", () => {
-    expect(requiresNewThread("grok-research", true)).toBe(true);
+  it("requires a new thread when changing to a strict harness after conversation history", () => {
+    expect(requiresNewThread("grok-codex", true)).toBe(true);
   });
 
-  it("allows cross-agent model changes before the first turn", () => {
-    expect(requiresNewThread("grok-research", false)).toBe(false);
+  it("allows strict harness changes before the first turn", () => {
+    expect(requiresNewThread("grok-codex", false)).toBe(false);
   });
 
   it("allows changes when either model has unknown compatibility metadata", () => {

@@ -19,6 +19,8 @@ const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const GROK_LEGACY_DEFAULT_MODEL_ID = "grok-build";
+const GROK_STOCK_SESSION_COMPATIBILITY_GROUP = "grok-stock";
+const GROK_STRICT_AGENT_TYPES = new Set(["codex", "grok-build-orchestrator"]);
 const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
 const isUnknownRecord = Schema.is(UnknownRecord);
 
@@ -88,6 +90,19 @@ export function resolveGrokAcpBaseModelId(model: string | null | undefined): str
 
 function trimmedString(value: unknown): string | undefined {
   return typeof value === "string" ? value.trim() || undefined : undefined;
+}
+
+export function grokAcpSessionCompatibilityGroup(
+  agentType: string | undefined,
+): string | undefined {
+  if (!agentType) {
+    return undefined;
+  }
+  // Grok Build treats every non-strict harness, including custom names, as
+  // interchangeable. Strict harnesses can only switch to the same identity.
+  return GROK_STRICT_AGENT_TYPES.has(agentType)
+    ? `grok-strict:${agentType}`
+    : GROK_STOCK_SESSION_COMPATIBILITY_GROUP;
 }
 
 export interface GrokAcpReasoningEffortOption {
