@@ -2235,19 +2235,11 @@ it.layer(
         };
       }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      const outputDelivered = yield* Deferred.make<void>();
-      const unsubscribe = yield* manager.subscribe((event) =>
-        event.type === "output" && event.data === "saved during shutdown\r"
-          ? Deferred.succeed(outputDelivered, undefined)
-          : Effect.void,
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       process.emitData("saved during shutdown\r");
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("40 millis");
-      yield* Deferred.await(outputDelivered);
 
       const closeScope = yield* Scope.close(scope, Exit.void).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("40 millis");
       yield* Fiber.join(terminateStartedFiber);
       yield* TestClock.adjust("10 millis");
       yield* Fiber.join(closeScope);

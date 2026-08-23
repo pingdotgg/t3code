@@ -1208,6 +1208,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
   const historyTargetBytes = options.historyTargetBytes ?? DEFAULT_HISTORY_TARGET_BYTES;
   const historyMaxBytes = options.historyMaxBytes ?? DEFAULT_HISTORY_MAX_BYTES;
+
+  const applyHistoryOutput = (session: TerminalSessionState, data: string): HistoryWrite | null => {
+    const sanitized = sanitizeTerminalHistoryChunk(session.pendingHistoryControlSequence, data);
+    session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
+    if (sanitized.visibleText.length === 0) {
+      return null;
+    }
+
+    session.history = capHistory(`${session.history}${sanitized.visibleText}`, historyLineLimit);
+    session.persistedHistoryBytes += Buffer.byteLength(sanitized.visibleText);
+    if (session.persistedHistoryBytes <= historyMaxBytes) {
+      return { contents: sanitized.visibleText, mode: "append" };
+    }
+
+    session.history = capHistoryByBytes(session.history, historyTargetBytes);
+    session.persistedHistoryBytes = Buffer.byteLength(session.history);
+    return { contents: session.history, mode: "truncate" };
+  };
   const platform = yield* HostProcessPlatform;
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
@@ -1795,32 +1813,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             }
 
             if (nextEvent.type === "output") {
-              const sanitized = sanitizeTerminalHistoryChunk(
-                session.pendingHistoryControlSequence,
-                nextEvent.data,
-              );
-              session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
-              let historyWrite: HistoryWrite | null = null;
-              if (sanitized.visibleText.length > 0) {
-                session.history = capHistory(
-                  `${session.history}${sanitized.visibleText}`,
-                  historyLineLimit,
-                );
-                session.persistedHistoryBytes += Buffer.byteLength(sanitized.visibleText);
-                if (session.persistedHistoryBytes > historyMaxBytes) {
-                  session.history = capHistoryByBytes(session.history, historyTargetBytes);
-                  session.persistedHistoryBytes = Buffer.byteLength(session.history);
-                  historyWrite = {
-                    contents: session.history,
-                    mode: "truncate",
-                  };
-                } else {
-                  historyWrite = {
-                    contents: sanitized.visibleText,
-                    mode: "append",
-                  };
-                }
-              }
+              const historyWrite = applyHistoryOutput(session, nextEvent.data);
               const eventStamp = advanceEventSequence(session);
 
               return {
@@ -2295,9 +2288,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ) {
         const cleanup = yield* withThreadLock(
           session.threadId,
-          Effect.sync(() => {
+          Effect.gen(function* () {
             const process = session.process;
             cleanupProcessHandles(session);
+            for (
+              let index = session.pendingProcessEventIndex;
+              index < session.pendingProcessEvents.length;
+              index += 1
+            ) {
+              const event = session.pendingProcessEvents[index];
+              if (!event || event.type === "exit") {
+                break;
+              }
+              const historyWrite = applyHistoryOutput(session, event.data);
+              if (historyWrite !== null) {
+                yield* queuePersist(session.threadId, session.terminalId, historyWrite);
+              }
+            }
             session.process = null;
             session.pid = null;
             session.hasRunningSubprocess = false;
