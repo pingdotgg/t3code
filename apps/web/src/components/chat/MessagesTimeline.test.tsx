@@ -558,7 +558,7 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
-  it("does not reserve a blank viewport after the active turn starts tool work", () => {
+  it("keeps reserved end space when tool work starts while reading history", () => {
     const turnId = TurnId.make("turn-with-active-tool");
     const firstEntry = buildUserTimelineEntry("Run the command.");
     const markup = renderToStaticMarkup(
@@ -574,6 +574,7 @@ describe("MessagesTimeline", () => {
         }}
         runningTurnId={turnId}
         anchorMessageId={firstEntry.message.id}
+        liveFollowEnabled={false}
         timelineEntries={[
           firstEntry,
           {
@@ -596,8 +597,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).not.toContain("data-anchor-index=");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-anchor-index="0"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
   it("hands end-following back to the list once the send anchor is released", () => {
