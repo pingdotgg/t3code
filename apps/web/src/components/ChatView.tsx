@@ -1461,6 +1461,7 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const feedbackUploadsInFlightRef = useRef(new Set<string>());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -5091,7 +5092,8 @@ function ChatViewContent(props: ChatViewProps) {
       isSendBusy ||
       isConnecting ||
       threadDetailLoading ||
-      sendInFlightRef.current
+      sendInFlightRef.current ||
+      feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
       notifyDirectAnnotationAttached();
       return;
@@ -5186,7 +5188,7 @@ function ChatViewContent(props: ChatViewProps) {
         );
         return;
       }
-      sendInFlightRef.current = true;
+      feedbackUploadsInFlightRef.current.add(routeThreadKey);
       const result = await submitCodexFeedback({
         submission: {
           id: newMessageId(),
@@ -5220,7 +5222,7 @@ function ChatViewContent(props: ChatViewProps) {
             },
           }),
       }).finally(() => {
-        sendInFlightRef.current = false;
+        feedbackUploadsInFlightRef.current.delete(routeThreadKey);
       });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {

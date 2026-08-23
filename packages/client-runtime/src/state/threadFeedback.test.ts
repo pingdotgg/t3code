@@ -120,4 +120,43 @@ describe("submitCodexFeedback", () => {
 
     expect(states.at(-1)).toEqual({ ...submission, status: "interrupted" });
   });
+
+  it("lets another feedback submission finish while the first remains in flight", async () => {
+    let finishFirstUpload:
+      | ((result: ReturnType<typeof AsyncResult.success<{ feedbackId: string }>>) => void)
+      | undefined;
+    const firstUpload = new Promise<ReturnType<typeof AsyncResult.success<{ feedbackId: string }>>>(
+      (resolve) => {
+        finishFirstUpload = resolve;
+      },
+    );
+    const firstStates: CodexFeedbackSubmission[] = [];
+    const secondStates: CodexFeedbackSubmission[] = [];
+
+    const first = submitCodexFeedback({
+      submission,
+      clearDraft: () => undefined,
+      onUpdate: (state) => firstStates.push(state),
+      upload: () => firstUpload,
+    });
+    const second = await submitCodexFeedback({
+      submission: {
+        ...submission,
+        id: MessageId.make("feedback-message-2"),
+      },
+      clearDraft: () => undefined,
+      onUpdate: (state) => secondStates.push(state),
+      upload: () => Promise.resolve(AsyncResult.success({ feedbackId: "codex-thread-2" })),
+    });
+
+    expect(firstStates.at(-1)?.status).toBe("uploading");
+    expect(second._tag).toBe("Success");
+    expect(secondStates.at(-1)).toMatchObject({
+      status: "sent",
+      feedbackId: "codex-thread-2",
+    });
+
+    finishFirstUpload?.(AsyncResult.success({ feedbackId: "codex-thread-1" }));
+    await first;
+  });
 });

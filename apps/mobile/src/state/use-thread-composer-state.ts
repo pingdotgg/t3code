@@ -112,24 +112,16 @@ export function useThreadComposerState() {
     if (!selectedThreadDetail) {
       return [];
     }
-    const feed = buildThreadFeed(selectedThreadDetail);
     const submissions = selectedThreadKey
       ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
       : [];
-    const feedbackMessages = submissions.flatMap((submission) =>
-      submission.status === "interrupted"
-        ? []
-        : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
-    );
-    return [
-      ...feed,
-      ...feedbackMessages.map((message) => ({
-        type: "message" as const,
-        id: message.id,
-        createdAt: message.createdAt,
-        message,
-      })),
-    ];
+    return buildThreadFeed(selectedThreadDetail, {
+      localMessages: submissions.flatMap((submission) =>
+        submission.status === "interrupted"
+          ? []
+          : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
+      ),
+    });
   }, [feedbackSubmissionsByThreadKey, selectedThreadDetail, selectedThreadKey]);
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
