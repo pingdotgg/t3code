@@ -1347,6 +1347,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const acknowledgeComposerDraftModelSelection = useComposerDraftStore(
+    (store) => store.acknowledgeModelSelection,
+  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -5515,6 +5518,7 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        acknowledgeComposerDraftModelSelection(composerDraftTarget, ctxSelectedModelSelection);
         acknowledgeActiveThreadWoke();
       }
     }
@@ -5876,6 +5880,10 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (failure === null) {
+        acknowledgeComposerDraftModelSelection(
+          scopeThreadRef(activeThread.environmentId, threadIdForSend),
+          ctxSelectedModelSelection,
+        );
         acknowledgeActiveThreadWoke();
         sendInFlightRef.current = false;
         return;
@@ -5897,6 +5905,7 @@ function ChatViewContent(props: ChatViewProps) {
     [
       activeThread,
       activeProposedPlan,
+      acknowledgeComposerDraftModelSelection,
       acknowledgeActiveThreadWoke,
       beginLocalDispatch,
       isConnecting,

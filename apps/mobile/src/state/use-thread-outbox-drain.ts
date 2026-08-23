@@ -27,6 +27,7 @@ import {
   removeThreadOutboxMessage,
 } from "./thread-outbox";
 import {
+  completeThreadOutboxDelivery,
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
@@ -37,6 +38,7 @@ import {
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
 } from "./thread-outbox-model";
+import { acknowledgeComposerDraftModelSelection } from "./use-composer-drafts";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 import {
@@ -145,15 +147,33 @@ export function useThreadOutboxDrain(): void {
     const completeDelivery = async (
       deliveryResult: AtomCommandResult<unknown, unknown>,
     ): Promise<boolean> => {
-      if (reportFailure(deliveryResult, "start-turn")) {
-        return false;
-      }
+      const retry = reportFailure(deliveryResult, "start-turn");
 
       try {
-        await removeThreadOutboxMessage(queuedMessage);
-        return true;
+        return await completeThreadOutboxDelivery({
+          deliverySucceeded: AsyncResult.isSuccess(deliveryResult),
+          retry,
+          acknowledgeDraftSelection: async () => {
+            if (queuedMessage.modelSelection === undefined) {
+              return;
+            }
+            await acknowledgeComposerDraftModelSelection(
+              scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+              queuedMessage.modelSelection,
+            );
+          },
+          onAcknowledgeError: (error) => {
+            console.warn("[thread-outbox] failed to persist delivered model selection", {
+              environmentId: queuedMessage.environmentId,
+              threadId: queuedMessage.threadId,
+              messageId: queuedMessage.messageId,
+              error,
+            });
+          },
+          removeMessage: () => removeThreadOutboxMessage(queuedMessage),
+        });
       } catch (error) {
-        console.warn("[thread-outbox] failed to remove delivered queued message", {
+        console.warn("[thread-outbox] failed to finalize delivered queued message", {
           environmentId: queuedMessage.environmentId,
           threadId: queuedMessage.threadId,
           messageId: queuedMessage.messageId,

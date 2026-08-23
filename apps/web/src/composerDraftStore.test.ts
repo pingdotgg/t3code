@@ -14,7 +14,9 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 
 // The composer draft's `modelSelectionByProvider` and
@@ -24,9 +26,11 @@ const CODEX_INSTANCE = ProviderInstanceId.make("codex");
 const CODEX_SECONDARY_INSTANCE = ProviderInstanceId.make("codex_secondary");
 const CLAUDE_AGENT_INSTANCE = ProviderInstanceId.make("claudeAgent");
 const CURSOR_INSTANCE = ProviderInstanceId.make("cursor");
+const GROK_INSTANCE = ProviderInstanceId.make("grok");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const GROK_DRIVER = ProviderDriverKind.make("grok");
 
 type ProviderOptionSelectionBag = ReadonlyArray<ProviderOptionSelection>;
 type ProviderOptionSelectionsByProvider = Partial<Record<string, ProviderOptionSelectionBag>>;
@@ -60,6 +64,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -1275,6 +1280,93 @@ describe("composerDraftStore modelSelection", () => {
     expect(
       draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
     ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.4"));
+  });
+
+  it("consumes only the exact model selection accepted by a successful turn", () => {
+    const store = useComposerDraftStore.getState();
+    const grokSelection = modelSelection(GROK_DRIVER, "grok-4.5", {
+      reasoningEffort: "medium",
+    });
+    const claudeSelection = modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", {
+      effort: "max",
+    });
+    store.setModelSelection(threadRef, claudeSelection);
+    store.setModelSelection(threadRef, grokSelection);
+    store.setStickyModelSelection(grokSelection);
+
+    store.acknowledgeModelSelection(threadRef, grokSelection);
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.modelSelectionByProvider).toEqual({
+      [CLAUDE_AGENT_INSTANCE]: claudeSelection,
+    });
+    expect(draft?.activeProvider).toBeNull();
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[GROK_INSTANCE]).toEqual(
+      grokSelection,
+    );
+  });
+
+  it("preserves a newer picker selection when an older turn succeeds", () => {
+    const store = useComposerDraftStore.getState();
+    const sentSelection = modelSelection(GROK_DRIVER, "grok-4.5", {
+      reasoningEffort: "medium",
+    });
+    const newerSelection = modelSelection(GROK_DRIVER, "grok-4.6", {
+      reasoningEffort: "high",
+    });
+    store.setModelSelection(threadRef, newerSelection);
+
+    store.acknowledgeModelSelection(threadRef, sentSelection);
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[GROK_INSTANCE],
+    ).toEqual(newerSelection);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.activeProvider).toBe(GROK_INSTANCE);
+  });
+
+  it("falls back to provider-confirmed Grok options after consuming its draft override", () => {
+    const store = useComposerDraftStore.getState();
+    const sentSelection = modelSelection(GROK_DRIVER, "grok-4.5", {
+      reasoningEffort: "medium",
+    });
+    const providerSelection = modelSelection(GROK_DRIVER, "grok-4.6", {
+      reasoningEffort: "high",
+    });
+    store.setModelSelection(
+      threadRef,
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max" }),
+    );
+    store.setModelSelection(threadRef, sentSelection);
+    store.acknowledgeModelSelection(threadRef, sentSelection);
+
+    const grokProvider: ServerProvider = {
+      instanceId: GROK_INSTANCE,
+      driver: GROK_DRIVER,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [{ slug: "grok-4.6", name: "Grok 4.6", isCustom: false, capabilities: {} }],
+      slashCommands: [],
+      skills: [],
+    };
+    const effective = deriveEffectiveComposerModelState({
+      draft: draftFor(threadId, TEST_ENVIRONMENT_ID),
+      providers: [grokProvider],
+      selectedProvider: GROK_DRIVER,
+      selectedInstanceId: GROK_INSTANCE,
+      threadModelSelection: providerSelection,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(effective.selectedModel).toBe("grok-4.6");
+    expect(effective.modelOptions).toEqual({
+      [GROK_INSTANCE]: [{ id: "reasoningEffort", value: "high" }],
+      [CLAUDE_AGENT_INSTANCE]: [{ id: "effort", value: "max" }],
+    });
   });
 
   it("replaces only the targeted provider options on the current model selection", () => {
