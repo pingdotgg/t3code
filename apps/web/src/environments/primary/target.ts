@@ -189,14 +189,18 @@ function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
     return null;
   }
 
+  // Scheme checks run on the raw configured string, while the URL parser
+  // folds schemes to lowercase ("WSS://host" parses fine). Without the
+  // case folding an uppercase scheme would be classified as plaintext and
+  // swapped to http/ws, silently downgrading TLS.
   const resolvedHttpBaseUrl =
     configuredHttpBaseUrl ??
-    (configuredWsBaseUrl?.startsWith("wss:")
+    (configuredWsBaseUrl?.toLowerCase().startsWith("wss:")
       ? swapBaseUrlProtocol(configuredWsBaseUrl, "https:", "websocket-base-url")
       : swapBaseUrlProtocol(configuredWsBaseUrl!, "http:", "websocket-base-url"));
   const resolvedWsBaseUrl =
     configuredWsBaseUrl ??
-    (configuredHttpBaseUrl?.startsWith("https:")
+    (configuredHttpBaseUrl?.toLowerCase().startsWith("https:")
       ? swapBaseUrlProtocol(configuredHttpBaseUrl, "wss:", "http-base-url")
       : swapBaseUrlProtocol(configuredHttpBaseUrl!, "ws:", "http-base-url"));
 
