@@ -649,10 +649,11 @@ public struct WorkspaceView: View {
     }
 
     private func openNewTaskOrProjectCreation(initialProjectID: String?) {
-        if DailyUXCreationContext.shouldOpenNewTask(in: model.snapshot) {
+        switch DailyUXCreationContext.newTaskDestination(in: model.snapshot) {
+        case .newTask:
             newTaskInitialProjectID = initialProjectID
             showingNewTask = true
-        } else {
+        case .addProject:
             showingAddProject = true
         }
     }

@@ -1174,7 +1174,7 @@ struct DailyUXNewTaskTests {
             threads: []
         )
 
-        #expect(DailyUXCreationContext.shouldOpenNewTask(in: snapshot))
+        #expect(DailyUXCreationContext.newTaskDestination(in: snapshot) == .newTask)
     }
 
     @Test
@@ -1199,7 +1199,7 @@ struct DailyUXNewTaskTests {
             threads: []
         )
 
-        #expect(!DailyUXCreationContext.shouldOpenNewTask(in: snapshot))
+        #expect(DailyUXCreationContext.newTaskDestination(in: snapshot) == .addProject)
     }
 
     @Test
@@ -1229,11 +1229,82 @@ struct DailyUXNewTaskTests {
         )
 
         #expect(DailyUXCreationContext.projects(in: snapshot).map(\.id) == [project.id])
-        #expect(DailyUXCreationContext.shouldOpenNewTask(in: snapshot))
+        #expect(DailyUXCreationContext.newTaskDestination(in: snapshot) == .newTask)
         #expect(
             DailyUXCreationContext.unreachableEnvironments(in: snapshot).map(\.name)
                 == ["Studio Mac"]
         )
+    }
+
+    @Test
+    func unreachableRetryIsSingleFlightAndPresentsProgress() {
+        var retry = NewTaskRetryState()
+
+        #expect(!retry.isInProgress)
+        #expect(retry.buttonTitle == "Try again")
+        #expect(retry.begin())
+        #expect(retry.isInProgress)
+        #expect(retry.buttonTitle == "Trying again…")
+        #expect(!retry.begin())
+
+        retry.finish()
+
+        #expect(!retry.isInProgress)
+        #expect(retry.begin())
+    }
+
+    @Test
+    func zeroSearchMatchesKeepTheUnavailableEnvironmentNotice() {
+        let project = rankedProject("reachable", name: "Reachable")
+        let groups = DailyUXProjectGrouping.groups(projects: [project])
+        let unavailable = [
+            FeatureEnvironment(
+                id: "studio",
+                name: "Studio Mac",
+                endpoint: "http://studio",
+                connectionState: .disconnected
+            ),
+        ]
+        let filtered = NewTaskProjectPickerSearch.matching(
+            groups,
+            query: "no result",
+            environments: unavailable
+        )
+
+        let presentation = NewTaskProjectPickerPresentation(
+            groups: groups,
+            filteredGroups: filtered,
+            unavailableEnvironments: unavailable
+        )
+
+        #expect(presentation.projectContent == .noMatches)
+        #expect(presentation.unavailableEnvironments.map(\.name) == ["Studio Mac"])
+    }
+
+    @Test
+    func boundedUnavailableNoticeExposesEveryEnvironmentNameToAccessibility() {
+        let unavailable = (1 ... 5).map { index in
+            FeatureEnvironment(
+                id: "environment-\(index)",
+                name: "Environment \(index)",
+                endpoint: "http://environment-\(index)",
+                connectionState: .disconnected
+            )
+        }
+        let presentation = NewTaskProjectPickerPresentation(
+            groups: [],
+            filteredGroups: [],
+            unavailableEnvironments: unavailable
+        )
+
+        #expect(
+            presentation.visibleUnavailableEnvironments.map(\.name)
+                == ["Environment 1", "Environment 2", "Environment 3"]
+        )
+        #expect(presentation.additionalUnavailableEnvironmentCount == 2)
+        for environment in unavailable {
+            #expect(presentation.unavailableAccessibilityLabel.contains(environment.name))
+        }
     }
 
     private func rankedProject(

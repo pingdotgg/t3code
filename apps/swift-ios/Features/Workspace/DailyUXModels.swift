@@ -149,6 +149,71 @@ enum DailyUXSnoozePresets {
     }
 }
 
+enum DailyUXCreationDestination: Equatable {
+    case newTask
+    case addProject
+}
+
+struct NewTaskRetryState: Equatable {
+    private(set) var isInProgress = false
+
+    var buttonTitle: String {
+        isInProgress ? "Trying again…" : "Try again"
+    }
+
+    mutating func begin() -> Bool {
+        guard !isInProgress else { return false }
+        isInProgress = true
+        return true
+    }
+
+    mutating func finish() {
+        isInProgress = false
+    }
+}
+
+struct NewTaskProjectPickerPresentation: Equatable {
+    enum ProjectContent: Equatable {
+        case projects
+        case noProjects
+        case noMatches
+    }
+
+    static let visibleEnvironmentLimit = 3
+
+    let projectContent: ProjectContent
+    let unavailableEnvironments: [FeatureEnvironment]
+
+    init(
+        groups: [DailyUXProjectGroup],
+        filteredGroups: [DailyUXProjectGroup],
+        unavailableEnvironments: [FeatureEnvironment]
+    ) {
+        if groups.isEmpty {
+            projectContent = .noProjects
+        } else if filteredGroups.isEmpty {
+            projectContent = .noMatches
+        } else {
+            projectContent = .projects
+        }
+        self.unavailableEnvironments = unavailableEnvironments
+    }
+
+    var visibleUnavailableEnvironments: [FeatureEnvironment] {
+        Array(unavailableEnvironments.prefix(Self.visibleEnvironmentLimit))
+    }
+
+    var additionalUnavailableEnvironmentCount: Int {
+        max(0, unavailableEnvironments.count - Self.visibleEnvironmentLimit)
+    }
+
+    var unavailableAccessibilityLabel: String {
+        (["Unavailable environments"] + unavailableEnvironments.map {
+            "\($0.name) is unreachable"
+        }).joined(separator: ". ")
+    }
+}
+
 enum DailyUXCreationContext {
     static func projects(in snapshot: FeatureSnapshot) -> [FeatureProject] {
         guard !snapshot.environments.isEmpty else { return snapshot.projects }
@@ -174,8 +239,11 @@ enum DailyUXCreationContext {
         }
     }
 
-    static func shouldOpenNewTask(in snapshot: FeatureSnapshot) -> Bool {
-        !projects(in: snapshot).isEmpty || !unreachableEnvironments(in: snapshot).isEmpty
+    static func newTaskDestination(in snapshot: FeatureSnapshot) -> DailyUXCreationDestination {
+        if !projects(in: snapshot).isEmpty || !unreachableEnvironments(in: snapshot).isEmpty {
+            return .newTask
+        }
+        return .addProject
     }
 
     static func projectGroups(in snapshot: FeatureSnapshot) -> [DailyUXProjectGroup] {
