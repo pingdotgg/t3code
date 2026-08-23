@@ -60,7 +60,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 
@@ -414,7 +414,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(
-        ServerSettingsService.layerTest(
+        ServerSettings.layerTest(
           input?.worktreeBranchPrefix
             ? { worktreeBranchPrefix: input.worktreeBranchPrefix }
             : undefined,
