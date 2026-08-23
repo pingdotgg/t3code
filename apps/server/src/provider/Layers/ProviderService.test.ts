@@ -606,6 +606,68 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
 
 const routing = makeProviderServiceLayer();
 
+it.effect(
+  "ProviderServiceLive uploads feedback through the adapter that recovered the session",
+  () =>
+    Effect.gen(function* () {
+      const original = makeFakeCodexAdapter();
+      const replacement = makeFakeCodexAdapter();
+      const baseRegistry = makeAdapterRegistryMock({ [CODEX_DRIVER]: original.adapter });
+      let swapAfterFirstLookup = false;
+      let feedbackLookupCount = 0;
+      const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
+        ...baseRegistry,
+        getByInstance: (instanceId) => {
+          if (instanceId !== codexInstanceId) {
+            return baseRegistry.getByInstance(instanceId);
+          }
+          const useReplacement = swapAfterFirstLookup && feedbackLookupCount++ > 0;
+          return Effect.succeed(useReplacement ? replacement.adapter : original.adapter);
+        },
+      };
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-feedback-adapter-replacement");
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        yield* original.stopSession(threadId);
+        original.uploadFeedback.mockClear();
+        replacement.uploadFeedback.mockClear();
+        swapAfterFirstLookup = true;
+
+        const result = yield* provider.uploadFeedback({ threadId });
+
+        assert.deepStrictEqual(result, { feedbackId: `feedback-${threadId}` });
+        assert.strictEqual(original.uploadFeedback.mock.calls.length, 0);
+        assert.deepStrictEqual(replacement.uploadFeedback.mock.calls, [[{ threadId }]]);
+      }).pipe(Effect.provide(providerLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("ProviderServiceLive writes canonical events to the emitting thread segment", () =>
   Effect.gen(function* () {
     const codex = makeFakeCodexAdapter();
