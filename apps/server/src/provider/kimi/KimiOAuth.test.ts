@@ -13,6 +13,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -366,6 +367,39 @@ it.layer(NodeServices.layer)("writeKimiCredentials", (it) => {
       // No stray temp files left behind.
       const entries = yield* fs.readDirectory(path.join(home, "credentials"));
       expect(entries).toEqual(["kimi-code.json"]);
+    }),
+  );
+
+  it.effect("uses unique temporary files for concurrent credential writes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-kimi-concurrent-creds-" });
+      const temporaryPaths = yield* Ref.make<ReadonlyArray<string>>([]);
+      const recordingFileSystem: FileSystem.FileSystem["Service"] = {
+        ...fs,
+        writeFileString: (filePath) =>
+          Ref.update(temporaryPaths, (current) => [...current, filePath]),
+        rename: () => Effect.void,
+      };
+
+      const paths = yield* Effect.all(
+        [
+          writeKimiCredentials(home, {
+            access_token: "access-1",
+            refresh_token: "refresh-1",
+          }),
+          writeKimiCredentials(home, {
+            access_token: "access-2",
+            refresh_token: "refresh-2",
+          }),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.provideService(FileSystem.FileSystem, recordingFileSystem));
+      const observedTemporaryPaths = yield* Ref.get(temporaryPaths);
+
+      expect(paths[0]).toBe(paths[1]);
+      expect(observedTemporaryPaths).toHaveLength(2);
+      expect(new Set(observedTemporaryPaths).size).toBe(2);
     }),
   );
 

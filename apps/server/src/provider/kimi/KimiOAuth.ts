@@ -13,6 +13,7 @@
  *
  * @module provider/kimi/KimiOAuth
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
 import {
@@ -245,7 +246,7 @@ export const writeKimiCredentials = Effect.fn("kimi.oauth.write_credentials")(fu
 
   const credentialsDir = path.join(resolveKimiCodeHome(homePath), CREDENTIALS_DIR_NAME);
   const credentialsPath = path.join(credentialsDir, CREDENTIALS_FILE_NAME);
-  const temporaryPath = `${credentialsPath}.${process.pid}.${nowEpochMs}.tmp`;
+  const temporaryPath = `${credentialsPath}.${process.pid}.${nowEpochMs}.${NodeCrypto.randomUUID()}.tmp`;
 
   yield* Effect.gen(function* () {
     yield* fileSystem.makeDirectory(credentialsDir, { recursive: true, mode: 0o700 });
