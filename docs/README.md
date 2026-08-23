@@ -18,6 +18,7 @@
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
+- [Local voice input](./user/voice-input.md)
 - [Remote access](./user/remote-access.md)
 - [Guest links](./user/guest-links.md)
 - [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)

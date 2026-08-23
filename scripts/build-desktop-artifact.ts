@@ -2844,6 +2844,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             LSItemContentTypes: ["public.html", "public.xhtml"],
           },
         ],
+        NSMicrophoneUsageDescription:
+          "T3 Code uses your microphone for local voice input. Audio is processed on this device.",
       },
       protocols: [
         {

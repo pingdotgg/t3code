@@ -15,6 +15,7 @@
     "@crowecawcaw/xa11y": "0.13.0",
     "@effect/platform-node": "catalog:",
     "@napi-rs/keyring": "^1.3.0",
+    "@picovoice/pvrecorder-node": "1.2.9",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
@@ -29,7 +30,8 @@
     "ffi-rs": "1.3.2",
     "playwright-core": "1.60.0",
     "react-grab": "^0.1.32",
-    "tldts": "catalog:"
+    "tldts": "catalog:",
+    "transcribe-cpp": "0.2.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

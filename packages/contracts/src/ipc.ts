@@ -1,3 +1,4 @@
+import type { DesktopSpeechEvent, DesktopSpeechStatus } from "./speech.ts";
 import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
@@ -1142,6 +1143,15 @@ export interface DesktopBridge {
     setReady: (ready: boolean) => Promise<void>;
     complete: (response: DesktopAppActivationResponse) => Promise<void>;
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
+  };
+  /** Desktop-local speech input. Absent in older desktop shells and regular browsers. */
+  speech?: {
+    getStatus: () => Promise<DesktopSpeechStatus>;
+    start: () => Promise<DesktopSpeechStatus>;
+    stop: () => Promise<DesktopSpeechStatus>;
+    cancel: () => Promise<DesktopSpeechStatus>;
+    removeModel: () => Promise<DesktopSpeechStatus>;
+    onEvent: (listener: (event: DesktopSpeechEvent) => void) => () => void;
   };
   preview: DesktopPreviewBridge;
 }

@@ -320,6 +320,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  speech: {
+    getStatus: () => ipcRenderer.invoke(IpcChannels.SPEECH_GET_STATUS_CHANNEL),
+    start: () => ipcRenderer.invoke(IpcChannels.SPEECH_START_CHANNEL),
+    stop: () => ipcRenderer.invoke(IpcChannels.SPEECH_STOP_CHANNEL),
+    cancel: () => ipcRenderer.invoke(IpcChannels.SPEECH_CANCEL_CHANNEL),
+    removeModel: () => ipcRenderer.invoke(IpcChannels.SPEECH_REMOVE_MODEL_CHANNEL),
+    onEvent: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, speechEvent: unknown) => {
+        if (typeof speechEvent !== "object" || speechEvent === null) return;
+        listener(speechEvent as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.SPEECH_EVENT_CHANNEL, wrappedListener);
+      return () => ipcRenderer.removeListener(IpcChannels.SPEECH_EVENT_CHANNEL, wrappedListener);
+    },
+  },
   preview: {
     setForwardedShortcuts: (shortcuts) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_FORWARDED_SHORTCUTS_CHANNEL, shortcuts),
