@@ -2801,7 +2801,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    for (const relativePath of splitNullSeparatedGitStdoutPaths(listed)) {
+    const relativePaths = splitNullSeparatedGitStdoutPaths(listed);
+    if (relativePaths.length === 0) {
+      return;
+    }
+    const realWorktreeRoot = yield* fileSystem.realPath(worktreePath);
+    for (const relativePath of relativePaths) {
       const targetFilePath = path.join(worktreePath, relativePath);
       yield* Effect.gen(function* () {
         // A path untracked in the source checkout can still be tracked in the
@@ -2809,7 +2814,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (yield* fileSystem.exists(targetFilePath)) {
           return;
         }
-        yield* fileSystem.makeDirectory(path.dirname(targetFilePath), { recursive: true });
+        // Tracked symlinks in the checked-out tree could otherwise redirect
+        // the write outside the worktree (dangling link at the target path,
+        // or a symlinked parent directory).
+        const targetIsSymlink = yield* fileSystem.readLink(targetFilePath).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        if (targetIsSymlink) {
+          return yield* Effect.logWarning(
+            ".worktreeinclude entry resolves through a symlink; skipped",
+            { relativePath, worktreePath },
+          );
+        }
+        const targetDir = path.dirname(targetFilePath);
+        yield* fileSystem.makeDirectory(targetDir, { recursive: true });
+        const realTargetDir = yield* fileSystem.realPath(targetDir);
+        if (
+          realTargetDir !== realWorktreeRoot &&
+          !realTargetDir.startsWith(realWorktreeRoot + path.sep)
+        ) {
+          return yield* Effect.logWarning(
+            ".worktreeinclude entry resolves through a symlink; skipped",
+            { relativePath, worktreePath },
+          );
+        }
         yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
       }).pipe(
         // Best effort per entry: one broken file must not block the rest.

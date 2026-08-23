@@ -1490,6 +1490,39 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("never writes .worktreeinclude copies through tracked symlinks", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const outsideDir = yield* makeTmpDir("git-worktrees-outside-");
+
+        yield* git(cwd, ["checkout", "-b", "symlinked-shared"]);
+        yield* fileSystem.symlink(outsideDir, pathService.join(cwd, "shared"));
+        yield* git(cwd, ["add", "shared"]);
+        yield* git(cwd, ["commit", "-m", "track shared as symlink"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* fileSystem.remove(pathService.join(cwd, "shared"), { force: true });
+
+        yield* writeTextFile(cwd, ".worktreeinclude", ".env\n");
+        yield* writeTextFile(cwd, "shared/.env", "LEAK=1\n");
+
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "include-symlink-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: "symlinked-shared",
+        });
+
+        assert.equal(yield* fileSystem.exists(pathService.join(outsideDir, ".env")), false);
+      }),
+    );
+
     it.effect("still creates the worktree when a .worktreeinclude copy fails", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
