@@ -35,6 +35,7 @@ import {
   useRemoteConnectionStatus,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -518,6 +519,21 @@ function ThreadRouteContent(
     [navigation, selectedThread, selectedThreadProject?.workspaceRoot],
   );
 
+  const selectedThreadServerConfig = useEnvironmentServerConfig(
+    selectedThread?.environmentId ?? null,
+  );
+  const previewProxySupported =
+    selectedThreadServerConfig?.environment.capabilities.previewProxy === true;
+  const handleOpenPreview = useCallback(() => {
+    if (!selectedThread) {
+      return;
+    }
+    void navigation.navigate("ThreadPreview", {
+      environmentId: String(selectedThread.environmentId),
+      threadId: String(selectedThread.id),
+    });
+  }, [navigation, selectedThread]);
+
   const handleOpenNewTerminal = useCallback(() => {
     terminalDebugLog("terminal-menu:open-new", {
       hasThread: Boolean(selectedThread),
@@ -703,6 +719,13 @@ function ThreadRouteContent(
         onPress: () => handleOpenTerminal(null),
       });
     }
+    if (previewProxySupported) {
+      actions.push({
+        accessibilityLabel: "Open dev server preview",
+        icon: "safari",
+        onPress: handleOpenPreview,
+      });
+    }
     actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -721,7 +744,9 @@ function ThreadRouteContent(
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
+    handleOpenPreview,
     handleToggleInspector,
+    previewProxySupported,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,

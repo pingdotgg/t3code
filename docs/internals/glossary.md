@@ -11,6 +11,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
+- [Preview](#preview)
 
 ## Concepts
 
@@ -140,6 +141,21 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
 
+### Preview
+
+#### Preview proxy
+
+The server-side reverse proxy that lets a paired remote client (the mobile WebView) browse a
+loopback dev server through the environment origin. Tickets and cookie sessions live in
+[ProxyAccess.ts][25]; the routes and origin-claiming middleware live in [ProxyRoutes.ts][26]. See
+[the preview proxy doc][27].
+
+#### Preview ticket
+
+A single-use, HMAC-signed entry credential minted over the authenticated WebSocket by
+`preview.createProxyTicket`. Redeeming it sets the HttpOnly preview session cookie and redirects
+into the proxied dev server. Implementation in [ProxyAccess.ts][25].
+
 ## Practical Shortcuts
 
 - If you see `requested`, think "intent recorded".
@@ -179,3 +195,6 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/preview/ProxyAccess.ts
+[26]: ../../apps/server/src/preview/ProxyRoutes.ts
+[27]: ./preview-proxy.md

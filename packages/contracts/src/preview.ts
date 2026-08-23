@@ -314,6 +314,62 @@ export const DiscoveredLocalServerList = Schema.Struct({
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
 
+/**
+ * Fixed preview-proxy control path shared by the server routes and the mobile
+ * client: a GET here clears the preview session cookie. The entry path is not
+ * a constant because clients receive it from `preview.createProxyTicket`.
+ */
+export const PREVIEW_PROXY_EXIT_PATH = "/api/preview/exit";
+
+/**
+ * Unary snapshot of the discovered localhost dev servers, for clients that
+ * want a one-shot list (the mobile preview picker) instead of holding the
+ * `subscribeDiscoveredLocalServers` stream open.
+ */
+export const PreviewListLocalServersInput = Schema.Struct({
+  configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
+});
+export type PreviewListLocalServersInput = typeof PreviewListLocalServersInput.Type;
+
+export const PreviewProxyTicketInput = Schema.Struct({
+  /** URL of a discovered localhost dev server, as returned by discovery. */
+  url: Url,
+});
+export type PreviewProxyTicketInput = typeof PreviewProxyTicketInput.Type;
+
+export const PreviewProxyTicketResult = Schema.Struct({
+  /**
+   * Relative path on the environment origin that a client navigates to (in a
+   * WebView) to start the proxied preview session. Single use: entering
+   * exchanges the ticket for an HttpOnly session cookie and redirects into
+   * the proxied dev server.
+   */
+  entryPath: TrimmedNonEmptyString,
+  /** Epoch milliseconds after which the entry ticket is no longer accepted. */
+  expiresAt: Schema.Number,
+});
+export type PreviewProxyTicketResult = typeof PreviewProxyTicketResult.Type;
+
+export class PreviewProxyTicketError extends Schema.TaggedErrorClass<PreviewProxyTicketError>()(
+  "PreviewProxyTicketError",
+  {
+    reason: Schema.Literals(["invalid-url", "not-local", "not-discovered", "issuance-failed"]),
+  },
+) {
+  override get message() {
+    switch (this.reason) {
+      case "invalid-url":
+        return "The preview target is not a valid URL.";
+      case "not-local":
+        return "The preview target is not a loopback address on this environment.";
+      case "not-discovered":
+        return "The preview target does not match a discovered local dev server.";
+      case "issuance-failed":
+        return "The preview ticket could not be issued.";
+    }
+  }
+}
+
 export class PreviewSessionLookupError extends Schema.TaggedErrorClass<PreviewSessionLookupError>()(
   "PreviewSessionLookupError",
   {

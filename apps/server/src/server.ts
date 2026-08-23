@@ -19,6 +19,11 @@ import {
   httpCompressionLayer,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+import {
+  previewProxyEntryRouteLayer,
+  previewProxyExitRouteLayer,
+  previewProxyMiddlewareLayer,
+} from "./preview/ProxyRoutes.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -456,11 +461,17 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    previewProxyEntryRouteLayer,
+    previewProxyExitRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
+  // Runs before auth-free routes resolve: requests holding a preview session
+  // cookie are proxied to the pinned dev server unless they carry T3
+  // credentials or target reserved T3 paths.
+  Layer.provide(previewProxyMiddlewareLayer),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),

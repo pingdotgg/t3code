@@ -114,6 +114,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewRefresh]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewClose]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
+  [WS_METHODS.previewListLocalServers]: AuthOrchestrationReadScope,
+  // Minting a ticket opens content access to a host-local server, which is an
+  // operation on the environment, not a read of orchestration state.
+  [WS_METHODS.previewCreateProxyTicket]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewReportStatus]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
