@@ -401,8 +401,8 @@ export const OrchestrationThread = Schema.Struct({
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  // A pin overrides the settled/snoozed lifecycle: while pinnedAt is set the
-  // thread renders in the pinned block and never classifies into a shelf.
+  // Active pinned threads render in the pinned block. Settled and snoozed
+  // threads remain in their respective shelves even when pinned.
   // Optional so payloads from pre-pinning servers still decode.
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Fractional index for user-arranged pinned order. Keyed threads sort by

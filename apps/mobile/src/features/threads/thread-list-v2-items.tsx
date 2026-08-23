@@ -506,7 +506,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   } satisfies MenuAction,
                 ]
               : []),
-            pinnedRow
+            thread.pinnedAt != null
               ? { id: "unpin", title: "Unpin", image: "pin.slash" }
               : { id: "pin", title: "Pin", image: "pin" },
           ]
@@ -517,6 +517,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       props.canMovePinnedUp,
       props.pinReorderSupported,
       props.pinningSupported,
+      thread.pinnedAt,
     ],
   );
   const titleRegenerationMenuItems = useMemo<MenuAction[]>(
@@ -552,8 +553,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [pinMenuItem, titleRegenerationMenuItems],
   );
   const slimMenuActions = useMemo<MenuAction[]>(
-    () => [SLIM_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SLIM_MENU_ACTIONS[1]!],
-    [titleRegenerationMenuItems],
+    () => [
+      SLIM_MENU_ACTIONS[0]!,
+      ...(thread.pinnedAt != null ? pinMenuItem : []),
+      ...titleRegenerationMenuItems,
+      SLIM_MENU_ACTIONS[1]!,
+    ],
+    [pinMenuItem, thread.pinnedAt, titleRegenerationMenuItems],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [SNOOZED_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SNOOZED_MENU_ACTIONS[1]!],
