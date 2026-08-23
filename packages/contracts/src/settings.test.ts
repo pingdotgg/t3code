@@ -246,6 +246,21 @@ describe("ServerSettings worktree defaults", () => {
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
   });
+
+  it("defaults legacy configs to the T3 Code branch prefix", () => {
+    expect(decodeServerSettings({}).worktreeBranchPrefix).toBe("t3code");
+  });
+
+  it("accepts branch prefix updates", () => {
+    expect(
+      decodeServerSettingsPatch({ worktreeBranchPrefix: "codex/feature" }).worktreeBranchPrefix,
+    ).toBe("codex/feature");
+  });
+
+  it("rejects branch prefixes that are not canonical Git namespaces", () => {
+    expect(() => decodeServerSettingsPatch({ worktreeBranchPrefix: "Codex Branch" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ worktreeBranchPrefix: "team//feature" })).toThrow();
+  });
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {

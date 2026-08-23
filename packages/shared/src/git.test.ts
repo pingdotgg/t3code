@@ -3,11 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  buildGeneratedWorktreeBranchName,
   buildTemporaryWorktreeBranchName,
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
+  extractTemporaryWorktreeBranchPrefix,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  normalizeWorktreeBranchPrefix,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
-  WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
 describe("normalizeGitRemoteUrl", () => {
@@ -75,38 +78,76 @@ describe("isTemporaryWorktreeBranch", () => {
   });
 
   it("matches generated temporary worktree refs", () => {
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
-    expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
+    expect(isTemporaryWorktreeBranch(`${DEFAULT_WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
+    expect(isTemporaryWorktreeBranch(` ${DEFAULT_WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
+    expect(isTemporaryWorktreeBranch("codex/feature/DEADBEEF", "codex/feature")).toBe(true);
   });
 
   it("normalizes a UUID-shaped random callback to the canonical 8-hex form", () => {
     expect(buildTemporaryWorktreeBranchName(() => "f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12")).toBe(
-      `${WORKTREE_BRANCH_PREFIX}/f4ae4e0e`,
+      `${DEFAULT_WORKTREE_BRANCH_PREFIX}/f4ae4e0e`,
     );
   });
 
   it("matches legacy UUID-shaped temporary worktree refs from older mobile builds", () => {
     expect(
-      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12`),
+      isTemporaryWorktreeBranch(
+        `${DEFAULT_WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12`,
+      ),
     ).toBe(true);
   });
 
   it("rejects UUID-shaped refs that are not RFC 4122 v4", () => {
     // version nibble is not 4
     expect(
-      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-1d48-b4f2-9cf0aa54ab12`),
+      isTemporaryWorktreeBranch(
+        `${DEFAULT_WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-1d48-b4f2-9cf0aa54ab12`,
+      ),
     ).toBe(false);
     // variant nibble is not [89ab]
     expect(
-      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-c4f2-9cf0aa54ab12`),
+      isTemporaryWorktreeBranch(
+        `${DEFAULT_WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-c4f2-9cf0aa54ab12`,
+      ),
     ).toBe(false);
   });
 
   it("rejects non-temporary refName names", () => {
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${DEFAULT_WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${DEFAULT_WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(
+      false,
+    );
+    expect(isTemporaryWorktreeBranch("release/20260714")).toBe(false);
+    expect(isTemporaryWorktreeBranch("codex/feature/deadbeef", "codex/team")).toBe(false);
+    expect(isTemporaryWorktreeBranch("codex/team/release/deadbeef", "codex/team")).toBe(false);
+  });
+});
+
+describe("worktree branch prefixes", () => {
+  it("normalizes user input into a stable Git namespace", () => {
+    expect(normalizeWorktreeBranchPrefix(" refs/heads/Codex Team//Feature/ ")).toBe(
+      "codex-team/feature",
+    );
+    expect(normalizeWorktreeBranchPrefix(" ")).toBe(DEFAULT_WORKTREE_BRANCH_PREFIX);
+  });
+
+  it("uses the configured prefix for temporary and generated branches", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "DEADBEEF", "codex/feature")).toBe(
+      "codex/feature/deadbeef",
+    );
+    expect(extractTemporaryWorktreeBranchPrefix("codex/feature/deadbeef", "codex/feature")).toBe(
+      "codex/feature",
+    );
+    expect(extractTemporaryWorktreeBranchPrefix("t3code/deadbeef", "codex/feature")).toBe(
+      DEFAULT_WORKTREE_BRANCH_PREFIX,
+    );
+    expect(buildGeneratedWorktreeBranchName("codex/feature/add-search", "codex/feature")).toBe(
+      "codex/feature/add-search",
+    );
+    expect(buildGeneratedWorktreeBranchName("Fix Search", "codex/feature")).toBe(
+      "codex/feature/fix-search",
+    );
   });
 });
 

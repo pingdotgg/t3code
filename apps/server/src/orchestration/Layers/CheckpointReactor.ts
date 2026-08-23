@@ -8,6 +8,7 @@ import {
   TurnId,
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
+  type ServerSettingsError,
   type VcsStatusLocalResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -30,6 +31,7 @@ import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
@@ -88,6 +90,7 @@ const make = Effect.gen(function* () {
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+  const serverSettingsService = yield* ServerSettingsService;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -568,14 +571,19 @@ const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly local: VcsStatusLocalResult;
   }) {
-    // Detached HEAD has no branch to adopt; a temporary placeholder checkout
-    // means the first-turn auto-rename is still in flight — don't race it.
+    // Detached HEAD has no branch to adopt.
     const checkedOutBranch = input.local.refName;
-    if (checkedOutBranch === null || isTemporaryWorktreeBranch(checkedOutBranch)) {
+    if (checkedOutBranch === null) {
       return;
     }
 
     yield* Effect.gen(function* () {
+      // A temporary placeholder checkout means the first-turn auto-rename is
+      // still in flight — don't race it.
+      const { worktreeBranchPrefix } = yield* serverSettingsService.getSettings;
+      if (isTemporaryWorktreeBranch(checkedOutBranch, worktreeBranchPrefix)) {
+        return;
+      }
       const thread = yield* projectionSnapshotQuery
         .getThreadShellById(input.threadId)
         .pipe(Effect.map(Option.getOrUndefined));
@@ -585,7 +593,7 @@ const make = Effect.gen(function* () {
         thread.branch === checkedOutBranch ||
         thread.worktreePath === null ||
         thread.worktreePath !== input.cwd ||
-        isTemporaryWorktreeBranch(thread.branch)
+        isTemporaryWorktreeBranch(thread.branch, worktreeBranchPrefix)
       ) {
         return;
       }
@@ -891,7 +899,10 @@ const make = Effect.gen(function* () {
     input: ReactorInput,
   ): Effect.Effect<
     void,
-    CheckpointStoreError | OrchestrationDispatchError | PlatformError.PlatformError,
+    | CheckpointStoreError
+    | OrchestrationDispatchError
+    | PlatformError.PlatformError
+    | ServerSettingsError,
     never
   > =>
     input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
