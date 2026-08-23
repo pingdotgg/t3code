@@ -71,14 +71,13 @@ it.layer(AntigravityAdapterTestLayer)("AntigravityAdapter", (it) => {
           ["#!/bin/sh", ...stubEvents.map((e) => `printf '%s\\n' '${e}'`), "exit 0", ""].join("\n"),
         );
         yield* fs.chmod(stubScript, 0o755);
-
         const adapter = yield* makeAntigravityAdapter(
           decodeAntigravitySettings({ binaryPath: stubScript }),
         );
 
-        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(
-          Effect.forkChild,
-        );
+        const eventsFiber = yield* Stream.runCollect(
+          adapter.streamEvents.pipe(Stream.takeUntil((e) => e.type === "turn.completed")),
+        ).pipe(Effect.forkChild);
 
         const threadId = asThreadId("thread-agy-turn-test");
         yield* adapter.startSession({
@@ -100,6 +99,7 @@ it.layer(AntigravityAdapterTestLayer)("AntigravityAdapter", (it) => {
         expect(eventTypes).toContain("turn.started");
         expect(eventTypes).toContain("content.delta");
         expect(eventTypes).toContain("item.started");
+        expect(eventTypes).toContain("turn.completed");
 
         const textDelta = collectedEvents.find((e) => e.type === "content.delta");
         expect(textDelta).toBeDefined();
@@ -107,6 +107,123 @@ it.layer(AntigravityAdapterTestLayer)("AntigravityAdapter", (it) => {
           expect(textDelta.payload.delta).toBe("Hello from Antigravity!");
         }
 
+        // Verify thread snapshot is populated after turn completion
+        const threadSnapshot = yield* adapter.readThread(threadId);
+        expect(threadSnapshot.turns.length).toBe(1);
+        expect(threadSnapshot.turns[0]?.id).toBe(turnResult.turnId);
+
+        const rollbackSnapshot = yield* adapter.rollbackThread(threadId, 1);
+        expect(rollbackSnapshot.turns.length).toBe(0);
+
+        yield* adapter.stopSession(threadId);
+      }),
+    ),
+  );
+
+  it.effect("handles tool step error state and emits failed item completion", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-agy-tool-err-" });
+        const stubScript = path.join(dir, "agy-stub-tool-err.sh");
+
+        const stubEvents = [
+          '{"event":"init","conversation_id":"conv-err-1"}',
+          '{"event":"step_update","step_update":{"conversation_id":"conv-err-1","step_index":0,"state":"ACTIVE","step_type":"tool","tool_name":"run_command"}}',
+          '{"event":"step_update","step_update":{"conversation_id":"conv-err-1","step_index":0,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"output":"Command failed"}}}',
+          '{"event":"result","result":{"conversation_id":"conv-err-1","status":"SUCCESS","response":"Recovered from tool failure"}}',
+        ];
+
+        yield* fs.writeFileString(
+          stubScript,
+          ["#!/bin/sh", ...stubEvents.map((e) => `printf '%s\\n' '${e}'`), "exit 0", ""].join("\n"),
+        );
+        yield* fs.chmod(stubScript, 0o755);
+
+        const adapter = yield* makeAntigravityAdapter(
+          decodeAntigravitySettings({ binaryPath: stubScript }),
+        );
+
+        const eventsFiber = yield* Stream.runCollect(
+          adapter.streamEvents.pipe(Stream.takeUntil((e) => e.type === "turn.completed")),
+        ).pipe(Effect.forkChild);
+
+        const threadId = asThreadId("thread-agy-tool-err-test");
+        yield* adapter.startSession({
+          threadId,
+          cwd: dir,
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Run failing command",
+        });
+
+        const collectedEvents = yield* Fiber.join(eventsFiber);
+        const itemCompleted = collectedEvents.find(
+          (e) =>
+            e.type === "item.completed" &&
+            e.payload &&
+            "status" in e.payload &&
+            (e.payload as { status: string }).status === "failed",
+        );
+        expect(itemCompleted).toBeDefined();
+
+        yield* adapter.stopSession(threadId);
+      }),
+    ),
+  );
+
+  it.effect("rejects a second sendTurn when a turn is already in progress", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-agy-concurrent-" });
+        const stubScript = path.join(dir, "agy-stub-slow.sh");
+
+        // Stub that stays active until interrupted
+        yield* fs.writeFileString(
+          stubScript,
+          [
+            "#!/bin/sh",
+            'printf \'%s\\n\' \'{"event":"init","conversation_id":"conv-slow-1"}\'',
+            "sleep 10",
+            "exit 0",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(stubScript, 0o755);
+
+        const adapter = yield* makeAntigravityAdapter(
+          decodeAntigravitySettings({ binaryPath: stubScript }),
+        );
+
+        const threadId = asThreadId("thread-agy-concurrent-test");
+        yield* adapter.startSession({
+          threadId,
+          cwd: dir,
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Slow turn 1",
+        });
+
+        const secondTurnResult = yield* adapter
+          .sendTurn({
+            threadId,
+            input: "Overlapping turn 2",
+          })
+          .pipe(Effect.flip);
+
+        expect(secondTurnResult._tag).toBe("ProviderAdapterValidationError");
+        expect(secondTurnResult.message).toContain("already in progress");
+
+        yield* adapter.interruptTurn(threadId);
         yield* adapter.stopSession(threadId);
       }),
     ),

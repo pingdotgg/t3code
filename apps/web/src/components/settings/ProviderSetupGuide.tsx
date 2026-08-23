@@ -10,6 +10,8 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
+
 interface ProviderSetupGuideProps {
   readonly driverKind: ProviderDriverKind | null;
   readonly provider: ServerProvider | undefined;
@@ -55,8 +57,15 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
           <span>Antigravity CLI is installed and authenticated</span>
         </div>
         {authEmail ? (
-          <p className="mt-1 text-muted-foreground">
-            Signed in as <span className="font-mono text-foreground">{authEmail}</span>
+          <p className="mt-1 flex items-center gap-1 text-muted-foreground">
+            <span>Signed in as</span>
+            <RedactedSensitiveText
+              value={authEmail}
+              ariaLabel="Signed in Google account email"
+              revealTooltip="Click to reveal account email"
+              hideTooltip="Click to hide account email"
+              className="text-foreground"
+            />
           </p>
         ) : null}
       </div>

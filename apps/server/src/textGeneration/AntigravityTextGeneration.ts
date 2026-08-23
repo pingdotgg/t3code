@@ -131,8 +131,15 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           Effect.forkScoped,
         );
 
+        const stderrFiber = yield* child.stderr.pipe(
+          Stream.decodeText(),
+          Stream.runForEach(() => Effect.void),
+          Effect.forkScoped,
+        );
+
         const exitCode = yield* child.exitCode;
         yield* Fiber.join(stdoutFiber).pipe(Effect.catch(() => Effect.void));
+        yield* Fiber.join(stderrFiber).pipe(Effect.catch(() => Effect.void));
         yield* Effect.yieldNow;
 
         if (exitCode !== 0) {
@@ -252,6 +259,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
+        policy: input.policy,
       });
 
       const generated = yield* runAgyJson({

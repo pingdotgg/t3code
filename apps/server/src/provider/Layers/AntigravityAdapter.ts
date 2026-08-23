@@ -163,8 +163,30 @@ function parseAgyJsonLine(line: string): AgyEvent | undefined {
   }
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    if (parsed.event === "init" || parsed.event === "step_update" || parsed.event === "result") {
-      return parsed as unknown as AgyEvent;
+    if (!parsed || typeof parsed !== "object") {
+      return undefined;
+    }
+    if (parsed.event === "init") {
+      if (typeof parsed.conversation_id === "string" && parsed.conversation_id.trim()) {
+        return parsed as unknown as AgyEvent;
+      }
+      return undefined;
+    }
+    if (parsed.event === "step_update") {
+      if (
+        parsed.step_update &&
+        typeof parsed.step_update === "object" &&
+        typeof (parsed.step_update as { step_index?: unknown }).step_index === "number"
+      ) {
+        return parsed as unknown as AgyEvent;
+      }
+      return undefined;
+    }
+    if (parsed.event === "result") {
+      if (parsed.result && typeof parsed.result === "object") {
+        return parsed as unknown as AgyEvent;
+      }
+      return undefined;
     }
     return undefined;
   } catch {
@@ -335,6 +357,14 @@ export function makeAntigravityAdapter(
             return yield* new ProviderAdapterSessionClosedError({
               provider: PROVIDER,
               threadId: input.threadId,
+            });
+          }
+
+          if (context.activeTurnId) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: `Turn '${context.activeTurnId}' is already in progress on thread '${input.threadId}'.`,
             });
           }
 
@@ -520,7 +550,8 @@ export function makeAntigravityAdapter(
                   }
 
                   const toolName = step.tool_name ?? step.tool_info?.name ?? "tool";
-                  const isDone = step.state === "DONE";
+                  const isDone = step.state === "DONE" || step.state === "ERROR";
+                  const isFailed = step.state === "ERROR";
                   const toolStamp = yield* makeEventStamp();
 
                   yield* offerRuntimeEvent({
@@ -532,7 +563,7 @@ export function makeAntigravityAdapter(
                     itemId: RuntimeItemId.make(toolItemId),
                     payload: {
                       itemType: "dynamic_tool_call",
-                      status: isDone ? "completed" : "inProgress",
+                      status: isFailed ? "failed" : isDone ? "completed" : "inProgress",
                       title: toolName,
                       ...(step.tool_info?.parameters ? { data: step.tool_info.parameters } : {}),
                       ...(step.tool_info?.output ? { detail: step.tool_info.output } : {}),
@@ -665,6 +696,28 @@ export function makeAntigravityAdapter(
               },
             });
 
+            const turnItemsList = Array.from(activeToolItems.values()).map((itemId) => ({
+              id: itemId,
+              type: "tool",
+            }));
+            turnItemsList.push({ id: assistantItemId, type: "assistant_message" });
+
+            context.turns.push({
+              id: turnId,
+              items: turnItemsList,
+            });
+
+            context.activeTurnId = undefined;
+            context.activeFiber = undefined;
+            context.activeTurnInterrupt = undefined;
+
+            context.session = {
+              ...context.session,
+              status: isSuccess ? "ready" : "error",
+              activeTurnId: undefined,
+              updatedAt: yield* nowIso,
+            };
+
             // Complete turn
             const compTurnStamp = yield* makeEventStamp();
             yield* offerRuntimeEvent({
@@ -678,13 +731,6 @@ export function makeAntigravityAdapter(
                 ...(errorMessage ? { errorMessage } : {}),
               },
             });
-
-            context.session = {
-              ...context.session,
-              status: isSuccess ? "ready" : "error",
-              activeTurnId: undefined,
-              updatedAt: yield* nowIso,
-            };
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
@@ -703,6 +749,22 @@ export function makeAntigravityAdapter(
                   },
                 });
 
+                context.turns.push({
+                  id: turnId,
+                  items: [{ id: assistantItemId, type: "assistant_message" }],
+                });
+
+                context.activeTurnId = undefined;
+                context.activeFiber = undefined;
+                context.activeTurnInterrupt = undefined;
+
+                context.session = {
+                  ...context.session,
+                  status: "ready",
+                  activeTurnId: undefined,
+                  updatedAt: yield* nowIso,
+                };
+
                 const intTurnStamp = yield* makeEventStamp();
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
@@ -714,13 +776,6 @@ export function makeAntigravityAdapter(
                     state: "interrupted",
                   },
                 });
-
-                context.session = {
-                  ...context.session,
-                  status: "ready",
-                  activeTurnId: undefined,
-                  updatedAt: yield* nowIso,
-                };
               }),
             ),
             Effect.scoped,
