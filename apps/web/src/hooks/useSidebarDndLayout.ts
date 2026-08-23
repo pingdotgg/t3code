@@ -12,10 +12,6 @@ export interface SidebarDndLayout {
   readonly captureEntryPosition: (id: string | null) => void;
 }
 
-function visualTop(node: HTMLElement): number {
-  return node.getBoundingClientRect().top;
-}
-
 export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
   const viewportRef = useRef<HTMLDivElement>(null);
   const entryNodesRef = useRef(new Map<string, HTMLElement>());
@@ -29,7 +25,7 @@ export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
   const captureEntryPosition = useCallback((id: string | null) => {
     const node = id === null ? null : (entryNodesRef.current.get(id) ?? null);
     pendingAnchorRef.current =
-      node === null || !node.isConnected ? null : { node, top: visualTop(node) };
+      node === null || !node.isConnected ? null : { node, top: node.getBoundingClientRect().top };
   }, []);
 
   useLayoutEffect(() => {
@@ -38,7 +34,7 @@ export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
     pendingAnchorRef.current = null;
     if (viewport === null || anchor === null || !anchor.node.isConnected) return;
 
-    const delta = visualTop(anchor.node) - anchor.top;
+    const delta = anchor.node.getBoundingClientRect().top - anchor.top;
     if (Math.abs(delta) > 0.5) viewport.scrollTop += delta;
   }, [revision]);
 
@@ -48,7 +44,7 @@ export function useSidebarDndLayout(revision: unknown): SidebarDndLayout {
     const handleScroll = () => {
       const anchor = pendingAnchorRef.current;
       if (anchor === null || !anchor.node.isConnected) return;
-      anchor.top = visualTop(anchor.node);
+      anchor.top = anchor.node.getBoundingClientRect().top;
     };
     viewport.addEventListener("scroll", handleScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", handleScroll);

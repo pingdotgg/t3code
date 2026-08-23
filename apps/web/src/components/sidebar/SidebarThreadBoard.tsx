@@ -29,7 +29,6 @@ import {
   SidebarThreadDndBoundary,
   SidebarThreadDndRow,
   SIDEBAR_THREAD_DRAG_PRESENTATION_HEIGHT,
-  type SidebarThreadDndBoundaryBag,
   type SidebarThreadDndRowBag,
   type SidebarThreadDragView,
 } from "./SidebarThreadDnd";
@@ -54,7 +53,7 @@ export interface SidebarThreadRenderState {
   readonly inert: boolean;
 }
 
-export interface SidebarThreadBoardDnd {
+interface SidebarThreadBoardDnd {
   readonly contextProps: SidebarThreadDndContextProps;
   readonly layout: SidebarDndLayout;
   readonly transaction: SidebarThreadDragTransaction | null;
@@ -70,16 +69,6 @@ export interface SidebarThreadBoardDnd {
     source: SidebarDndSection,
     destination: SidebarDndSection,
   ) => boolean;
-}
-
-function sortableStyle(bag: {
-  readonly transform: SidebarThreadDndBoundaryBag["transform"];
-  readonly transition: string | undefined;
-}): CSSProperties {
-  return {
-    transform: CSS.Translate.toString(bag.transform),
-    transition: bag.transition,
-  };
 }
 
 function SidebarThreadShelfHeader(props: {
@@ -268,7 +257,10 @@ export function SidebarThreadBoard(props: {
             ref={bag.setNodeRef}
             data-sidebar-thread-section-boundary={entry.section}
             className={cn("relative list-none", content === null && "h-0")}
-            style={sortableStyle(bag)}
+            style={{
+              transform: CSS.Translate.toString(bag.transform),
+              transition: bag.transition,
+            }}
           >
             {content}
           </li>

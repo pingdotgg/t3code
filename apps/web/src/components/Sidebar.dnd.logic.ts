@@ -25,7 +25,7 @@ export type SidebarDndAction =
 
 export type SidebarDndPreviewVariant = "card" | "slim";
 
-export interface SidebarDndPointerAnchor {
+interface SidebarDndPointerAnchor {
   readonly x: number;
   readonly y: number;
 }
@@ -63,13 +63,13 @@ export interface SidebarThreadDraggingTransaction extends SidebarThreadDragTrans
   readonly target: SidebarThreadDropTarget | null;
 }
 
-export interface SidebarThreadSnoozeChoiceTransaction extends SidebarThreadTargetedTransaction {
+interface SidebarThreadSnoozeChoiceTransaction extends SidebarThreadTargetedTransaction {
   readonly phase: "awaiting-snooze-choice";
   readonly snoozePreset: SnoozePreset | null;
 }
 
-export type SidebarThreadDropAction = Exclude<SidebarDndAction, "noop">;
-export type SidebarThreadCommitAction = Exclude<SidebarThreadDropAction, "reorder-pinned">;
+type SidebarThreadDropAction = Exclude<SidebarDndAction, "noop">;
+type SidebarThreadCommitAction = Exclude<SidebarThreadDropAction, "reorder-pinned">;
 
 export type SidebarThreadDroppingTransaction =
   | (SidebarThreadTargetedTransaction & {
@@ -87,7 +87,7 @@ export interface SidebarThreadCommittingTransaction extends SidebarThreadTargete
   readonly action: SidebarThreadCommitAction;
 }
 
-export interface SidebarThreadReconcilingTransaction extends SidebarThreadTargetedTransaction {
+interface SidebarThreadReconcilingTransaction extends SidebarThreadTargetedTransaction {
   readonly phase: "reconciling";
   readonly action: SidebarThreadCommitAction;
   readonly receiptSequencesByEnvironment: ReadonlyMap<

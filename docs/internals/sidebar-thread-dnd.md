@@ -6,30 +6,30 @@ Status: accepted
 
 ## Context
 
-The sidebar renders Pinned, Regular, Snoozed, and Settled as categories, but the user drags through
-them as one vertical list. A thread may move between any supported categories. Pinned has manual
-ordering. The other categories keep their existing natural order. Pinned and Regular use cards;
-Snoozed and Settled use compact rows and may be collapsed or empty.
+The sidebar shows Pinned, Regular, Snoozed, and Settled as categories, but the user drags through
+them as one vertical list. Pinned has manual ordering. The other categories keep their existing
+sort order. Pinned and Regular use cards; Snoozed and Settled use compact rows and may be collapsed
+or empty.
 
-The previous implementation represented those categories as separate drag containers. Moving a row
-changed one container's height before the next collision pass. Everything below it moved, so the row
-under the pointer stopped being the target. Portal rails, target locks, extra indicators, and
-category-specific scroll corrections hid individual cases but left several systems changing the same
-geometry.
+Earlier implementations used separate drag containers or changed the rendered array on every
+hover. Both approaches changed category geometry before the next collision pass. The target moved
+away from a stationary pointer, which caused oscillation, cursor drift, scroll jumps, and, with
+continuous measurement, a React update loop.
 
-Later flat-list versions removed the container boundary but still changed the DOM order during every
-hover. The active row then changed the collision rectangles used to choose its next position. This
-produced oscillation under a stationary pointer and, with continuous measurement, a React update
-loop. Flattening the DOM was necessary but not sufficient. Drag-time layout also has to stay stable.
+The interaction needs two stable points:
+
+- The point grabbed inside the dragged row stays under the pointer while the row changes shape.
+- The category or row under the pointer stays in the same viewport position when real layout
+  changes occur.
 
 ## Decision
 
-Web and desktop use one flat sidebar drag board. Mobile keeps its existing menu actions.
+Web and desktop use one flat drag board. Mobile keeps its menu actions.
 
-### One rendered list
+### One sortable board
 
-The board has one `DndContext`, one `SortableContext`, and one direct `<ul>`. The sortable entries are
-stable category boundaries followed by their visible thread rows:
+The board has one `DndContext`, one `SortableContext`, and one direct `<ul>`. Its sortable entries
+are stable category boundaries followed by visible thread rows:
 
 ```text
 Pinned boundary
@@ -42,170 +42,147 @@ Settled boundary
 Settled threads
 ```
 
-Each boundary and thread is a keyed sibling. Boundaries use `useSortable` with dragging disabled and
-dropping enabled. The nearest preceding boundary determines a thread's category.
+Every boundary and row is a keyed sibling. Boundaries use `useSortable` with dragging disabled.
+Their visible divider, header, or empty rail is the droppable node. The nearest preceding boundary
+defines a row's category.
 
-Drag start snapshots this array. React keeps the snapshot in the same DOM order while the pointer is
-down. Pinned reorder uses dnd-kit's row collision and `overIndex` directly. Cross-category collision
-produces a semantic target consisting of a category and either a row edge or category boundary. A
-small sorting-strategy adapter converts that target to a prospective index and delegates to dnd-kit's
-`verticalListSortingStrategy`. When card and compact heights differ, the adapter applies that fixed
-height difference to every sibling whose projected position follows the active row. This sizes the
-target gap and moves the remaining tail as one projected list. The active row and affected siblings
-move with dnd-kit's sortable FLIP behavior without changing collision rectangles.
+Drag start snapshots the rendered entries. React keeps that order while the pointer is down. Hover
+updates only the semantic target and the dragged presentation. dnd-kit moves surrounding rows with
+sortable transforms, so collision rectangles and scroll height stay stable.
 
-On release, Pinned keeps the hovered insertion target because its order is manual. Regular and
-Settled replace the hover target with the result of their normal sidebar sorter. Snoozed waits for the
-duration choice, then sorts using the selected wake time. React applies that projected natural order
-once. The active row keeps its fixed pointer presentation while its new in-flow position acts as an
-invisible target slot. The client measures both viewport rectangles and animates the active row into
-that slot. dnd-kit FLIP-animates every other row affected by the sort. The same projected array remains
-rendered while the command is pending. React replaces it with canonical order after reconciliation.
+The transaction is a discriminated union. `dragging` may have no target. Later phases require a
+target. `dropping` stores the resolved action, `committing` stores only a command action, and only
+`reconciling` stores receipt sequences. The transaction also owns the starting sidebar scope and a
+selected snooze preset, so those values cannot drift in parallel refs.
 
-Collapsed Snoozed and Settled sections omit their canonical rows, but their boundaries remain mounted
-and droppable. Empty destinations expose a fixed-height boundary target while the pointer is down.
-On release, the projected row and normal category header replace that temporary target before the
-client measures the drop slot. Drag-over never changes pagination.
+### Pointer visual and morph
 
-The sortable gap is the insertion feedback. There is no separate drop indicator.
+dnd-kit's `DragOverlay` is the pointer visual. It renders the same `SidebarThreadRow` component as
+the list, with interaction disabled. The source row stays in the list at zero opacity, preserving
+its measured slot without showing a duplicate.
 
-### Geometry ownership
+Drag start records the pointer's normalized position inside the source row. The overlay keeps that
+point fixed while its inner content morphs between the card and compact presentations. The morph is
+a short FLIP animation around the captured pointer origin. It never changes list geometry.
 
-dnd-kit owns pointer sensing, droppable measurement, collision rectangles, sortable transforms, and
-auto-scroll. Within Pinned, same-category reorder keeps the active row in the collision set and uses
-`closestCenter`, matching dnd-kit's normal sortable-list behavior. The dragged card changes slots when
-its center becomes closer to another row instead of when the pointer crosses the target row's
-midpoint. Other paths filter out the active row and domain-invalid destinations, then use
-`pointerWithin` followed by `rectIntersection`. The client clears the target when neither strategy
-reports a valid collision.
-Each category boundary uses its wrapper for sortable movement and registers its visible header,
-divider, or empty rail as the droppable node. Gaps between visible droppables resolve to the closest
-target so the sortable projection cannot alternate between a row and no target. Snoozed and Settled
-own collisions only after the center of dnd-kit's constrained active rectangle crosses their visible
-header. A card can overlap a shelf while the last slot in the preceding category remains reachable.
-After a shelf owns the collision, normal pointer and closest-center selection chooses its row. When
-the pointer leaves the viewport vertically but remains within the board width, `closestCenter` uses
-the same constrained active rectangle. The top and bottom insertion slots therefore remain sortable.
+The overlay uses dnd-kit's transform, vertical-axis restriction, and first-scrollable-ancestor
+restriction. Rows below it ignore pointer events, so their hover controls and tooltips do not open
+during a drag.
 
-The strategy adapter contains no DOM measurements, animation state, direction lock, or
-category-specific correction. For cross-category moves it computes the index that the pure flat-array
-move would produce and passes that index to `verticalListSortingStrategy`. It adjusts only the rows
-between the source and projected index so they move by the card or compact presentation height rather
-than dnd-kit's measured active height. When a compact source grows into a card above its source slot,
-the adapter also moves the rows after that slot by the height difference. This prevents overlap
-without changing the source placeholder or any collision rectangle. Same-category Pinned reorder
-bypasses the projected index and uses dnd-kit's `overIndex`. The adapter is necessary elsewhere
-because the domain target distinguishes before, after, and the first slot after a category boundary,
-while dnd-kit's strategy receives only an `overIndex`.
+### Collision ownership
 
-Pointer movement updates only the semantic target, dragged-row variant, and dragged-row translation.
-It does not change DOM order, row height, scroll range, or measured rectangles. The
-`SortableContext.items` array keeps the same identity while the snapshot is unchanged; otherwise
-dnd-kit disables transitions for one frame on every pointer update. A layout revision therefore
-cannot create another collision under the same sensor event.
+dnd-kit owns sensing, droppable measurement, sortable transforms, auto-scroll, and collision
+ranking. The client adds only the category rules that dnd-kit cannot infer.
 
-The active sortable row is the pointer visual. Its outer element keeps the dimensions measured at
-activation. The normal `SidebarThreadRow` renderer changes between card and compact layouts around the
-captured pointer offset. Dragging does not use a second, simplified copy of the row.
-The fixed child derives its translation from dnd-kit's pointer coordinates and the activation pointer
-captured inside the source rectangle. List layout and scroll offsets never enter that translation.
-The source-sized outer rectangle clamps the visual only at the sidebar viewport edges. The fixed card
-cannot increase the list's scroll range. The board ignores pointer hit-testing so rows under the
-active row do not show hover actions or tooltips. The active sensor keeps tracking pointer movement at
-the document level, while dnd-kit still owns collision, auto-scroll, and surrounding sortable
-transforms.
+The overlay may change height, but category ownership always uses a collision rectangle rebuilt
+from the original source size and captured pointer position. Morphing therefore cannot select the
+category that controls its own size.
 
-dnd-kit's derived layout transform is disabled only for an active row that crosses categories. Its
-source placeholder is not the card's visible release position, so that transform would replay a move
-from the source category. A short client-side FLIP instead measures the fixed card and its projected
-target slot, then animates between those exact viewport rectangles. Surrounding rows continue to use
-dnd-kit's sortable FLIP. The lifecycle command starts after this visual handoff, and reduced-motion
-clients complete it immediately.
+The visible top of each category defines its boundary. The cursor crossing the thin Regular divider
+switches between Pinned and Regular. This makes pinning and unpinning symmetric at the divider.
+Snoozed and Settled take ownership only after the source row center crosses their visible header,
+so touching a shelf does not steal the last Regular slot.
 
-The client owns one small piece of geometry that dnd-kit does not: viewport anchoring during a real
-React layout change. Before such a change, it records one stable entry's visible viewport position,
-including its current sortable transform. After React commits, it adjusts only the sidebar
-viewport's `scrollTop` by that entry's visual delta. The thread content disables native browser scroll
-anchoring so the browser and the client cannot both correct the same change. The pointer and dragged
-row do not move. The list moves around them.
+After one category owns the drag, invalid destinations are removed. `pointerWithin` chooses an exact
+row or boundary when possible; `closestCenter` fills the gaps between visible droppables. The active
+row remains a candidate, which preserves dnd-kit's normal sortable behavior inside Pinned. Leaving
+the board width clears the target.
 
-Hover updates need no correction because sortable transforms do not affect layout. Activation anchors
-the source while empty rails mount. Drop anchors the first stable entry after the resulting insertion
-slot. Transaction teardown uses the same rule when the projected array returns to canonical order.
-User scroll and dnd-kit auto-scroll establish a new anchor baseline. The board does not add synthetic
-scroll headroom because auto-scroll would expose it as blank space at the viewport edges.
+### Sortable projection and FLIP
 
-Pinned reorder uses the same release-to-slot handoff as a cross-category drop, then commits its
-optimistic order without viewport correction. It keeps the same rows, category structure, and total
-height, so surrounding rows can FLIP without changing `scrollTop`.
+Pinned keeps the hovered before or after edge because its order is manual. Regular and Settled
+resolve the source through their normal sidebar sorters on release. Snoozed resolves its natural
+position after the user chooses a wake time.
+
+While dragging, a small sorting-strategy adapter turns the semantic target into a prospective flat
+index and delegates to `verticalListSortingStrategy`. It adjusts dnd-kit's displacement only when
+the card and compact heights differ. This opens a correctly sized target slot while the source row
+continues to occupy its original slot. Same-category Pinned reorder uses dnd-kit's `overIndex`
+without that projected-index override.
+
+On release, React renders the projected target order. The destination copy remains invisible and
+acts as the overlay's drop target. dnd-kit's `DragOverlay` drop animation moves the visible row from
+its release rectangle to that target. Other rows use dnd-kit's sortable FLIP. The destination copy
+disables its own cross-category layout transition so it does not replay a second source-to-target
+move. The lifecycle command starts after the overlay animation completes. Reduced-motion clients
+complete the handoff immediately.
+
+The sortable gap is the insertion feedback. There is no separate line indicator. Snoozed and
+Settled use an absolutely positioned category outline during hover; it takes no list space.
+
+### Viewport stability
+
+dnd-kit auto-scroll is limited to the sidebar viewport and uses its vertical layout-shift
+compensation. The board does not add synthetic scroll headroom, which would expose blank space at
+the viewport edges.
+
+Some React changes still affect real layout: empty rails appear at activation, projected entries
+mount on release, and canonical entries replace the projection after reconciliation. Before those
+changes, the client records one stable entry's viewport position. After React commits, it changes
+only the sidebar `scrollTop` by that entry's visual delta. The content disables native scroll
+anchoring so the browser and the client do not both compensate. User scroll and dnd-kit auto-scroll
+update the anchor baseline.
+
+Pinned reorder does not need manual viewport correction after release. Its membership, category
+structure, and total height stay unchanged, so dnd-kit's layout animation is sufficient.
 
 ### Persistence
 
-Drag start snapshots the rendered flat order. Canonical thread content may update during the drag,
-but canonical membership does not rewrite the snapshot. If the source disappears, becomes
-archived, loses the needed capability, or leaves the current sidebar scope, the client cancels the
-transaction.
-
-The projected row stays at the dropped position while the existing lifecycle command and shell
-projection complete. Reconciliation replaces the projected array with canonical order in one
-sortable layout animation. The drop handoff is client state and adds no server round trip.
-
-A Snooze drop keeps the hovered compact slot in flow while the standard duration menu is open. The
-fixed card remains at its release position above that slot. Choosing a duration moves the projected
-row to its naturally sorted slot before the drop handoff; cancelling restores the source order. The
-viewport anchor applies to both changes, so opening or closing the menu does not collapse the space
-under the card.
-
-Cross-category drops use the existing lifecycle commands. Their deciders atomically clear conflicting
-state while pinning, unpinning, settling, un-settling, snoozing, or waking the thread. Drag and drop
-adds no command, event, capability, or protocol compatibility path.
+Cross-category drops use the existing lifecycle commands. Their deciders emit the primary event and
+any events needed to clear conflicting pinned, settled, or snoozed state in one decision. Drag and
+drop adds no command, event, or compatibility path.
 
 `thread.pin.reorder` remains key-only. Moving into Pinned computes the order keys for the visible
-position, then pins the source. Pinned threads preserve that manual order. Regular, Snoozed, and
-Settled use the same sort functions for drop projection and canonical rendering, so reconciliation
-does not introduce a second unsignalled move.
+position, prepares any neighbor keys, then pins the source with its key. Pinned preserves that
+manual order. The other categories use the same sort functions for drop projection and canonical
+rendering.
 
-The client keeps the projected row until each affected environment's shell snapshot reaches its
-receipt sequence. Concurrent canonical state wins at reconciliation.
+A Snoozed drop holds the projected compact slot while the standard duration menu is open. Choosing
+a duration sorts the row by wake time before the drop animation. Cancelling restores the source
+order.
+
+The projected row remains rendered while the command is pending. Reconciliation ends only after
+each affected environment's shell snapshot reaches its receipt sequence. Canonical state then wins.
+If the source disappears, becomes archived, loses the needed capability, or leaves the starting
+sidebar scope during an interactive phase, the client cancels the transaction.
 
 ## Consequences
 
-There is one immutable drag snapshot, one semantic target, and one projected order. Category rendering
-cannot move a collision target while the pointer is down. dnd-kit performs hover motion and surrounding
-layout FLIP; the client performs only the active card's final rectangle-to-rectangle handoff. The
-sidebar code maps domain rules to an index and preserves the viewport around the few real layout
-changes.
+There is one drag snapshot, one semantic target, and one projected order. dnd-kit owns pointer
+movement, hover sorting, auto-scroll, surrounding-row FLIP, and the final overlay drop animation.
+The client owns category semantics, the card-to-compact morph, and one viewport-anchor correction
+for real layout changes.
 
-The board must keep boundaries mounted and their dimensions stable for the full transaction. New
-sidebar categories must join the same flat order instead of adding another nested sortable context.
+New sidebar categories must join the same flat order. They must define a visible ownership boundary
+and use the same transaction and viewport rules.
 
 ## Rejected alternatives
 
 ### Multiple sortable containers
 
-Separate containers match the server projection but not the interaction. Moving a row changes later
+Separate containers match the projected data but not the interaction. Moving a row changes later
 containers' positions between collision passes and makes the target escape the pointer.
 
-### Physically reorder on hover
+### Physically reorder on every hover
 
-Changing the flat DOM array on every collision also changes the next collision's rectangles. The
-active row can cover the pointer while being excluded from collision, or move a category boundary
-away from the pointer. Updating from `onDragMove` instead of `onDragOver` avoids a React feedback loop
-but does not remove this geometric feedback. Sortable transforms provide the same visible movement
-without changing layout.
+Changing the DOM array on every collision changes the rectangles used by the next collision. A
+stationary pointer can alternate between targets. Sortable transforms provide the same visual
+movement without changing layout.
 
-### A separate drag overlay
+### Move the real row under the pointer
 
-An overlay duplicates the active row and requires hiding the original copy. Keeping the sortable row
-as the pointer visual gives dnd-kit one transform to own. A source-sized outer row isolates the
-card-to-compact morph from list geometry.
+The real row must keep its source slot measured while dnd-kit sorts siblings. Making that node fixed
+or moving it between categories couples its card-to-compact height change to list geometry and hit
+testing. A `DragOverlay` separates the pointer visual from the invisible source slot and supplies a
+tested drop animation.
 
 ### A separate drop indicator
 
-The sortable gap already shows the resulting index. Another indicator duplicates the same state.
+The sortable gap already shows the insertion index. Another line duplicates the same state. Category
+outlines communicate shelf ownership without consuming list space.
 
-### Target locks and category-specific corrections
+### Target locks and category-specific scroll corrections
 
-Locks, hysteresis, portal rails, and per-category scroll rules preserve stale geometry. They make one
-case look stable by changing collision or layout elsewhere. The flat list and one anchor rule remove
-the underlying container shift.
+Locks, hysteresis, portal rails, and per-category scroll rules preserve stale geometry. The flat
+board, source-sized collision rectangle, dnd-kit layout-shift compensation, and one anchor rule cover
+the underlying layout changes directly.

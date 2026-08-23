@@ -1,9 +1,9 @@
 # Organizing threads
 
-The sidebar groups threads into Pinned, Regular, Snooze, and Settled. On web and desktop, drag
+The sidebar groups threads into Pinned, Regular, Snoozed, and Settled. On web and desktop, drag
 any thread between these sections. The sidebar keeps the dragged thread under the pointer and holds
 your scroll position while a section appears or changes.
-Empty Pinned, Regular, Snooze, and Settled sections appear as drop targets while you drag.
+Empty Pinned, Regular, Snoozed, and Settled sections appear as drop targets while you drag.
 
 The destination chooses the thread's state:
 
@@ -12,7 +12,7 @@ The destination chooses the thread's state:
 - Drop in **Regular** to unpin, wake, or un-settle it as needed. Regular keeps its normal sort
   order.
 - Drop in **Settled** to settle it. Settled threads keep their normal history order.
-- Drop in **Snooze** to open the usual snooze menu. Choose when the thread should wake. Snoozing
+- Drop in **Snoozed** to open the usual snooze menu. Choose when the thread should wake. Snoozing
   removes it from the other sections, and the row or confirmation toast can wake it again.
 
 Pinning, settling, waking, and un-settling happen automatically when you drop. Snooze and Settled

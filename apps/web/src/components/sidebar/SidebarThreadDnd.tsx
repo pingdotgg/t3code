@@ -1,5 +1,15 @@
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { CSS } from "@dnd-kit/utilities";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+
+import { cn } from "~/lib/utils";
 
 import {
   createSidebarDndSectionId,
@@ -62,7 +72,7 @@ export function SidebarThreadDndRow(props: {
   });
 }
 
-export interface SidebarThreadDndBoundaryBag {
+interface SidebarThreadDndBoundaryBag {
   readonly setNodeRef: (node: HTMLElement | null) => void;
   readonly setDroppableNodeRef: (node: HTMLElement | null) => void;
   readonly transform: ReturnType<typeof useSortable>["transform"];
@@ -108,7 +118,54 @@ export interface SidebarThreadDragView {
   readonly pointerAnchor: { readonly x: number; readonly y: number };
 }
 
-export function SidebarThreadDragMorph(props: {
+export function SidebarThreadDndShell(props: {
+  threadKey: string;
+  variant: SidebarDndPreviewVariant;
+  dnd: SidebarThreadDndRowBag | undefined;
+  dragView: SidebarThreadDragView | null;
+  hidden: boolean;
+  inert: boolean;
+  onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => void;
+  children: ReactNode;
+}) {
+  const { dnd, dragView } = props;
+  return (
+    <li
+      data-thread-item
+      data-thread-key={props.threadKey}
+      data-sidebar-thread-section={dnd?.section}
+      data-dnd-source={props.hidden || dragView !== null || undefined}
+      data-dnd-transformed={(dnd?.isSortable === true && dnd.transform !== null) || undefined}
+      ref={dnd?.setNodeRef}
+      inert={props.inert ? true : undefined}
+      style={
+        dnd?.isSortable
+          ? {
+              transform: props.hidden ? undefined : CSS.Translate.toString(dnd.transform),
+              transition: props.hidden ? undefined : dnd.transition,
+            }
+          : undefined
+      }
+      {...(dnd?.listeners ?? {})}
+      onPointerDownCapture={dnd ? props.onPointerDownCapture : undefined}
+      className={cn(
+        "relative list-none",
+        dragView === null &&
+          (props.variant === "slim"
+            ? "[content-visibility:auto] [contain-intrinsic-size:auto_36px]"
+            : "py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]"),
+        dnd && "touch-pan-y cursor-grab active:cursor-grabbing",
+        dragView !== null && "z-20 cursor-grabbing",
+        props.hidden && "opacity-0",
+        props.inert && "pointer-events-none",
+      )}
+    >
+      <SidebarThreadDragMorph dragView={dragView}>{props.children}</SidebarThreadDragMorph>
+    </li>
+  );
+}
+
+function SidebarThreadDragMorph(props: {
   dragView: SidebarThreadDragView | null;
   children: ReactNode;
 }) {
