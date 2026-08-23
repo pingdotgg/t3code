@@ -1758,11 +1758,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const activeRunningTurnId =
-    activeThread?.session?.status === "running"
-      ? activeThread.session.activeTurnId
-      : activeLatestTurn?.state === "running"
-        ? activeLatestTurn.turnId
-        : null;
+    (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
+    (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
   // Reading a finished thread clears the sidebar's Done badge. The visit is
   // stamped at the turn's completion time — not now/updatedAt — so it clears
   // exactly the completion the user is looking at: a wake or completion that
