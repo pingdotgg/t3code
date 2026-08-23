@@ -14,6 +14,7 @@ describe("writeTextToClipboard", () => {
   it("reports unavailable clipboard support with structural context", async () => {
     vi.stubGlobal("window", {});
     vi.stubGlobal("navigator", {});
+    vi.stubGlobal("document", undefined);
 
     const error = await writeTextToClipboard("plan contents", "plan").then(
       () => undefined,
@@ -25,6 +26,43 @@ describe("writeTextToClipboard", () => {
       target: "plan",
     });
     expect((error as Error).message).not.toContain("plan contents");
+  });
+
+  it("falls back to a selected textarea when the Clipboard API is unavailable", async () => {
+    const focus = vi.fn();
+    const appendChild = vi.fn();
+    const execCommand = vi.fn(() => true);
+    const remove = vi.fn();
+    const select = vi.fn();
+    const setAttribute = vi.fn();
+    const setSelectionRange = vi.fn();
+    const textarea = {
+      remove,
+      select,
+      setAttribute,
+      setSelectionRange,
+      style: {},
+      value: "",
+    };
+
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("navigator", {});
+    vi.stubGlobal("document", {
+      activeElement: { focus },
+      body: { appendChild },
+      createElement: vi.fn(() => textarea),
+      execCommand,
+    });
+
+    await expect(writeTextToClipboard("remote command", "command")).resolves.toBe(true);
+
+    expect(textarea.value).toBe("remote command");
+    expect(appendChild).toHaveBeenCalledWith(textarea);
+    expect(select).toHaveBeenCalledOnce();
+    expect(setSelectionRange).toHaveBeenCalledWith(0, "remote command".length);
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(remove).toHaveBeenCalledOnce();
+    expect(focus).toHaveBeenCalledOnce();
   });
 
   it("preserves the exact clipboard failure without exposing copied contents", async () => {
