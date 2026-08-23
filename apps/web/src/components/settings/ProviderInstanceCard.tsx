@@ -15,11 +15,11 @@ import * as Result from "effect/Result";
 import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  type ProviderDriverKind,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
-  type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -27,6 +27,10 @@ import {
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import {
+  getGroupedProviderModelVariantSlugs,
+  getVisibleProviderModels,
+} from "../../providerModels";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -113,22 +117,32 @@ function nextConfigBlobWithValue(
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<string>;
+  readonly driverKind?: ProviderDriverKind | null;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
       model.isCustom ? Result.succeed([model.slug, model] as const) : Result.failVoid,
     ),
   );
-  const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      },
+  const rawServerModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
+  const groupedVariantSlugs = getGroupedProviderModelVariantSlugs(
+    rawServerModels,
+    input.driverKind,
   );
+  const serverModels = input.driverKind
+    ? getVisibleProviderModels(rawServerModels, input.driverKind)
+    : rawServerModels;
+  const customModels = input.customModels
+    .filter((slug) => !groupedVariantSlugs.has(slug))
+    .map(
+      (slug) =>
+        liveCustomModelsBySlug.get(slug) ?? {
+          slug,
+          name: slug,
+          isCustom: true,
+          capabilities: null,
+        },
+    );
   return [...serverModels, ...customModels];
 }
 
@@ -449,6 +463,7 @@ export function ProviderInstanceCard({
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
+    driverKind,
   });
 
   const updateDisplayName = (value: string) => {

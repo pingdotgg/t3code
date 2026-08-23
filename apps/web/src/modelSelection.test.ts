@@ -176,6 +176,69 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("does not append grouped Antigravity reasoning variants as custom models", () => {
+    const base = provider({
+      provider: ProviderDriverKind.make("agy"),
+      instanceId: "agy",
+      models: ["gemini-3.7-flash-high"],
+    });
+    const providers: ServerProvider[] = [
+      {
+        ...base,
+        models: [
+          {
+            ...base.models[0]!,
+            name: "Gemini 3.7 Flash",
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "medium", label: "Medium" },
+                    { id: "high", label: "High", isDefault: true },
+                  ],
+                  currentValue: "high",
+                },
+              ],
+            },
+          },
+          {
+            slug: "gemini-3.7-flash-medium",
+            name: "Gemini 3.7 Flash (Medium)",
+            isCustom: true,
+            capabilities: {},
+          },
+          {
+            slug: "gemini-3.7-flash-low",
+            name: "Gemini 3.7 Flash (Low)",
+            isCustom: false,
+            capabilities: {},
+          },
+        ],
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        [ProviderInstanceId.make("agy")]: {
+          driver: ProviderDriverKind.make("agy"),
+          config: {
+            customModels: ["gemini-3.7-flash-low", "gemini-3.7-flash-medium", "my-custom-model"],
+          },
+        },
+      },
+    };
+    const agy = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(getAppModelOptionsForInstance(settings, agy).map((option) => option.slug)).toEqual([
+      "gemini-3.7-flash-high",
+      "my-custom-model",
+    ]);
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({

@@ -54,15 +54,16 @@ yay -S t3code-nightly-bin
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider    | CLI                                                             | Default binary | Log in with           |
+| ----------- | --------------------------------------------------------------- | -------------- | --------------------- |
+| Codex       | [Codex CLI](https://developers.openai.com/codex/cli)            | `codex`        | `codex login`         |
+| Claude      | [Claude Code](https://claude.com/product/claude-code)           | `claude`       | `claude auth login`   |
+| Cursor      | [Cursor CLI](https://cursor.com/cli)                            | `cursor-agent` | `agent login`         |
+| Grok Build  | [Grok Build CLI](https://x.ai/cli)                              | `grok`         | `grok login`          |
+| OpenCode    | [OpenCode](https://opencode.ai)                                 | `opencode`     | `opencode auth login` |
+| Antigravity | [Antigravity CLI](https://antigravity.google/docs/cli/install/) | `agy`          | `agy`                 |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
+Codex, Claude, Cursor, and Antigravity are on by default. Grok Build and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
@@ -86,6 +87,7 @@ authenticated shows its status in **Settings** and fails at session start with t
 to run.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
+For Antigravity setup and behavior, see [Antigravity](./providers-antigravity.md).
 
 ## Next Steps
 

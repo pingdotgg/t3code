@@ -14,6 +14,57 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
+const AGY_DRIVER_KIND = ProviderDriverKind.make("agy");
+
+function getGroupedAgyModelVariants(models: ReadonlyArray<ServerProviderModel>): {
+  readonly canonicalSlugs: ReadonlySet<string>;
+  readonly variantSlugs: ReadonlySet<string>;
+} {
+  const canonicalSlugs = new Set<string>();
+  const variantSlugs = new Set<string>();
+  for (const model of models) {
+    const match = /^(.*)-(low|medium|high)$/.exec(model.slug);
+    const isIndividualVariant = / \((Low|Medium|High)\)$/.test(model.name);
+    const reasoning = model.capabilities?.optionDescriptors?.find(
+      (descriptor) => descriptor.id === "reasoningEffort" && descriptor.type === "select",
+    );
+    if (isIndividualVariant || !match?.[1] || !reasoning || reasoning.type !== "select") continue;
+
+    canonicalSlugs.add(model.slug);
+    for (const option of reasoning.options) {
+      variantSlugs.add(`${match[1]}-${option.id}`);
+    }
+  }
+  return { canonicalSlugs, variantSlugs };
+}
+
+export function getGroupedProviderModelVariantSlugs(
+  models: ReadonlyArray<ServerProviderModel>,
+  provider: ProviderDriverKind | null | undefined,
+): ReadonlySet<string> {
+  return provider === AGY_DRIVER_KIND ? getGroupedAgyModelVariants(models).variantSlugs : new Set();
+}
+
+export function getVisibleProviderModels(
+  models: ReadonlyArray<ServerProviderModel>,
+  provider: ProviderDriverKind,
+): ReadonlyArray<ServerProviderModel> {
+  if (provider !== AGY_DRIVER_KIND) return models;
+
+  const { canonicalSlugs, variantSlugs } = getGroupedAgyModelVariants(models);
+  return models.filter((model) => !variantSlugs.has(model.slug) || canonicalSlugs.has(model.slug));
+}
+
+export function getBuiltInProviderModelSlugs(
+  models: ReadonlyArray<ServerProviderModel>,
+  provider: ProviderDriverKind,
+): ReadonlySet<string> {
+  const slugs = new Set(models.filter((model) => !model.isCustom).map((model) => model.slug));
+  for (const slug of getGroupedProviderModelVariantSlugs(models, provider)) {
+    slugs.add(slug);
+  }
+  return slugs;
+}
 
 export function formatProviderDriverKindLabel(provider: ProviderDriverKind): string {
   return provider

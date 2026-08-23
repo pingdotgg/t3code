@@ -279,8 +279,20 @@ export function sortProviderInstanceEntries(
       byKind.set(entry.driverKind, [entry]);
     }
   }
+  const driverOrder = new Map(
+    Object.keys(PROVIDER_DISPLAY_NAMES).map((driverKind, index) => [driverKind, index] as const),
+  );
+  const firstSeenOrder = new Map(
+    [...byKind.keys()].map((driverKind, index) => [driverKind, index] as const),
+  );
+  const orderedKinds = [...byKind.keys()].toSorted((left, right) => {
+    const leftRank = driverOrder.get(left) ?? Number.POSITIVE_INFINITY;
+    const rightRank = driverOrder.get(right) ?? Number.POSITIVE_INFINITY;
+    return leftRank - rightRank || firstSeenOrder.get(left)! - firstSeenOrder.get(right)!;
+  });
   const sorted: ProviderInstanceEntry[] = [];
-  for (const bucket of byKind.values()) {
+  for (const driverKind of orderedKinds) {
+    const bucket = byKind.get(driverKind)!;
     const defaults = bucket.filter((entry) => entry.isDefault);
     const customs = bucket.filter((entry) => !entry.isDefault);
     sorted.push(...defaults, ...customs);

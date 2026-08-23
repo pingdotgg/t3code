@@ -10,6 +10,7 @@ import {
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
+  sortProviderInstanceEntries,
 } from "./providerInstances";
 
 function provider(input: {
@@ -132,6 +133,24 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.instanceId).toBe("codex_personal");
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
+  });
+});
+
+describe("sortProviderInstanceEntries", () => {
+  it("uses canonical provider order even when Antigravity is emitted first", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("agy"), instanceId: "agy" }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
+      provider({ provider: ProviderDriverKind.make("opencode"), instanceId: "opencode" }),
+    ]);
+
+    expect(sortProviderInstanceEntries(entries).map((entry) => entry.driverKind)).toEqual([
+      "codex",
+      "claudeAgent",
+      "opencode",
+      "agy",
+    ]);
   });
 });
 

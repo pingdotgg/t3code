@@ -15,11 +15,11 @@ import {
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
-import * as Arr from "effect/Array";
-import * as Result from "effect/Result";
 import {
+  getBuiltInProviderModelSlugs,
   getDefaultServerModel,
   getProviderModels,
+  getVisibleProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
@@ -153,13 +153,10 @@ export function getAppModelOptions(
   provider: ProviderDriverKind,
   _selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getProviderModels(providers, provider).map(toAppModelOption);
+  const providerModels = getVisibleProviderModels(getProviderModels(providers, provider), provider);
+  const options: AppModelOption[] = providerModels.map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
-  const builtInModelSlugs = new Set(
-    Arr.filterMap(getProviderModels(providers, provider), (model) =>
-      model.isCustom ? Result.failVoid : Result.succeed(model.slug),
-    ),
-  );
+  const builtInModelSlugs = getBuiltInProviderModelSlugs(providerModels, provider);
 
   // Read from the default instance's config first (that's where edits
   // now land), falling back to the legacy per-kind bucket so unmigrated
@@ -201,13 +198,10 @@ export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
   entry: ProviderInstanceEntry,
 ): AppModelOption[] {
-  const options: AppModelOption[] = entry.models.map(toAppModelOption);
+  const providerModels = getVisibleProviderModels(entry.models, entry.driverKind);
+  const options: AppModelOption[] = providerModels.map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
-  const builtInModelSlugs = new Set(
-    Arr.filterMap(entry.models, (model) =>
-      model.isCustom ? Result.failVoid : Result.succeed(model.slug),
-    ),
-  );
+  const builtInModelSlugs = getBuiltInProviderModelSlugs(providerModels, entry.driverKind);
 
   const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
